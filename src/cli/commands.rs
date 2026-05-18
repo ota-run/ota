@@ -118,7 +118,8 @@ use crate::provisioning::{
     apply_provisioning_request_with_target,
 };
 use crate::runner::{
-    CleanExecutionReport, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
+    CleanExecutionError, CleanExecutionFailure, CleanExecutionFailureReason, CleanExecutionReport,
+    CleanExecutionResourceKind, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
     ExecutionOverrides, HostRuntimeReadinessProbe, LoadedDeclaredEnvSource, ResolvedEnvValue,
     ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
@@ -21472,6 +21473,7 @@ pub fn clean(
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    let unresolved_target_display = unresolved_contract_target_path(path, file_override);
     if stale {
         let mut debug_lines = vec![
             String::from("DEBUG command=clean"),
@@ -21538,13 +21540,20 @@ pub fn clean(
                             }))),
                         }
                     }
-                    Err(error) => CommandOutput::failure(command_message_failure_text(
-                        "CLEAN",
-                        "ota clean --stale",
-                        "Stale cleanup failed",
-                        &error.to_string(),
-                        &[],
-                    )),
+                    Err(error) => match format {
+                        OutputFormat::Text => CommandOutput::failure(render_clean_failure_text(
+                            "ota clean --stale",
+                            &error,
+                            "Stale cleanup failed",
+                        )),
+                        OutputFormat::Json => {
+                            CommandOutput::failure(to_json_value(clean_failure_json_value(
+                                "ota clean --stale",
+                                &error,
+                                "Stale cleanup failed",
+                            )))
+                        }
+                    },
                 }
             },
             debug,
@@ -21580,7 +21589,11 @@ pub fn clean(
                                 ))
                             })
                     }
-                    OutputFormat::Json => CommandOutput::failure(error.to_string()),
+                    OutputFormat::Json => clean_generic_failure_json_output(
+                        &unresolved_target_display,
+                        "Contract target could not be resolved",
+                        error.to_string(),
+                    ),
                 },
                 debug,
                 vec![String::from("DEBUG command=clean")],
@@ -21612,14 +21625,21 @@ pub fn clean(
             ),
         ];
         return finalize_debug(
-            wrong_repo_contract_target_output(
-                "CLEAN",
-                &resolved_path,
-                "Wrong command target",
-                &why_lines,
-                wrong_target_next_steps_for_repo_command("ota clean", &resolved_path),
-                format,
-            ),
+            match format {
+                OutputFormat::Text => wrong_repo_contract_target_output(
+                    "CLEAN",
+                    &resolved_path,
+                    "Wrong command target",
+                    &why_lines,
+                    wrong_target_next_steps_for_repo_command("ota clean", &resolved_path),
+                    format,
+                ),
+                OutputFormat::Json => clean_generic_failure_json_output(
+                    &text_path_display,
+                    "Wrong command target",
+                    why_lines.join(" "),
+                ),
+            },
             debug,
             debug_lines,
         );
@@ -21629,68 +21649,90 @@ pub fn clean(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() => {
                 if let Some(workspace) = target.contract.workspace.as_ref() {
-                    let mut sections = match render_clean_text(
-                        &text_path_display,
-                        clean_execution_report(&target.contract, &target.contract_path),
-                    ) {
-                        Ok(section) => vec![section],
-                        Err(error) => {
-                            return finalize_debug(
-                                CommandOutput::failure(render_clean_failure_text(
-                                    &text_path_display,
-                                    &error,
-                                )),
-                                debug,
-                                debug_lines,
-                            );
-                        }
-                    };
+                    let mut sections =
+                        match clean_execution_report(&target.contract, &target.contract_path) {
+                            Ok(report) => vec![report],
+                            Err(error) => {
+                                return finalize_debug(
+                                    match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(render_clean_failure_text(
+                                                &text_path_display,
+                                                &error,
+                                                "Cleanup failed",
+                                            ))
+                                        }
+                                        OutputFormat::Json => CommandOutput::failure(
+                                            to_json_value(clean_failure_json_value(
+                                                &text_path_display,
+                                                &error,
+                                                "Cleanup failed",
+                                            )),
+                                        ),
+                                    },
+                                    debug,
+                                    debug_lines,
+                                );
+                            }
+                        };
 
                     for member in &workspace.members {
                         let member_target =
                             match load_and_validate_target(&resolved_path, Some(member.as_str())) {
                                 Ok(target) => target,
                                 Err(ContractProblem::Validation(errors)) => {
+                                    let error_lines = errors
+                                        .errors()
+                                        .iter()
+                                        .map(ToString::to_string)
+                                        .collect::<Vec<_>>();
                                     return finalize_debug(
-                                        invalid_repo_contract_output(
-                                            "CLEAN",
-                                            &resolved_path,
-                                            &errors
-                                                .errors()
-                                                .iter()
-                                                .map(ToString::to_string)
-                                                .collect::<Vec<_>>(),
-                                            vec![
-                                                format!(
-                                                    "repair {}",
-                                                    paint_code(&format!(
-                                                        "`{}`",
-                                                        compact_contract_path(&resolved_path)
-                                                    ))
-                                                ),
-                                                format!(
-                                                    "rerun {}",
-                                                    paint_code(&format!(
-                                                        "`{}`",
-                                                        command_for_contract(
-                                                            "ota validate",
-                                                            &resolved_path
-                                                        )
-                                                    ))
-                                                ),
-                                                format!(
-                                                    "rerun {}",
-                                                    paint_code(&format!(
-                                                        "`{}`",
-                                                        command_for_contract(
-                                                            "ota clean",
-                                                            &resolved_path
-                                                        )
-                                                    ))
-                                                ),
-                                            ],
-                                            format,
-                                        ),
+                                        match format {
+                                            OutputFormat::Text => invalid_repo_contract_output(
+                                                "CLEAN",
+                                                &resolved_path,
+                                                &error_lines,
+                                                vec![
+                                                    format!(
+                                                        "repair {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            compact_contract_path(&resolved_path)
+                                                        ))
+                                                    ),
+                                                    format!(
+                                                        "rerun {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            command_for_contract(
+                                                                "ota validate",
+                                                                &resolved_path
+                                                            )
+                                                        ))
+                                                    ),
+                                                    format!(
+                                                        "rerun {}",
+                                                        paint_code(&format!(
+                                                            "`{}`",
+                                                            command_for_contract(
+                                                                "ota clean",
+                                                                &resolved_path
+                                                            )
+                                                        ))
+                                                    ),
+                                                ],
+                                                format,
+                                            ),
+                                            OutputFormat::Json => {
+                                                clean_invalid_contract_json_output(
+                                                    &display_contract_target(
+                                                        &compact_path_display,
+                                                        Some(member.as_str()),
+                                                    ),
+                                                    &error_lines,
+                                                )
+                                            }
+                                        },
                                         debug,
                                         debug_lines,
                                     );
@@ -21737,14 +21779,14 @@ pub fn clean(
                                                 ),
                                             ),
                                             OutputFormat::Json => {
-                                                CommandOutput::failure(to_json(&ValidateFailure {
-                                                    summary: None,
-                                                    ok: false,
-                                                    path: &path_display,
-                                                    errors: Vec::new(),
-                                                    error: Some(error.to_string()),
-                                                    warnings: Vec::new(),
-                                                }))
+                                                clean_generic_failure_json_output(
+                                                    &display_contract_target(
+                                                        &compact_path_display,
+                                                        Some(member.as_str()),
+                                                    ),
+                                                    "Cleanup failed",
+                                                    error.to_string(),
+                                                )
                                             }
                                         },
                                         debug,
@@ -21752,23 +21794,35 @@ pub fn clean(
                                     );
                                 }
                             };
-                        match render_clean_text(
-                            &display_contract_target(&compact_path_display, Some(member.as_str())),
-                            clean_execution_report(
-                                &member_target.contract,
-                                &member_target.contract_path,
-                            ),
+                        match clean_execution_report(
+                            &member_target.contract,
+                            &member_target.contract_path,
                         ) {
-                            Ok(section) => sections.push(section),
+                            Ok(report) => sections.push(report),
                             Err(error) => {
                                 return finalize_debug(
-                                    CommandOutput::failure(render_clean_failure_text(
-                                        &display_contract_target(
-                                            &compact_path_display,
-                                            Some(member.as_str()),
+                                    match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(render_clean_failure_text(
+                                                &display_contract_target(
+                                                    &compact_path_display,
+                                                    Some(member.as_str()),
+                                                ),
+                                                &error,
+                                                "Cleanup failed",
+                                            ))
+                                        }
+                                        OutputFormat::Json => CommandOutput::failure(
+                                            to_json_value(clean_failure_json_value(
+                                                &display_contract_target(
+                                                    &compact_path_display,
+                                                    Some(member.as_str()),
+                                                ),
+                                                &error,
+                                                "Cleanup failed",
+                                            )),
                                         ),
-                                        &error,
-                                    )),
+                                    },
                                     debug,
                                     debug_lines,
                                 );
@@ -21776,17 +21830,76 @@ pub fn clean(
                         }
                     }
 
-                    CommandOutput::success(sections.join("\n\n"))
+                    match format {
+                        OutputFormat::Text => {
+                            let mut rendered =
+                                vec![render_clean_text(&text_path_display, &sections[0])];
+                            for (index, member) in workspace.members.iter().enumerate() {
+                                let report = &sections[index + 1];
+                                rendered.push(render_clean_text(
+                                    &display_contract_target(
+                                        &compact_path_display,
+                                        Some(member.as_str()),
+                                    ),
+                                    report,
+                                ));
+                            }
+                            CommandOutput::success(rendered.join("\n\n"))
+                        }
+                        OutputFormat::Json => {
+                            let root_report = &sections[0];
+                            let members_json = workspace
+                                .members
+                                .iter()
+                                .enumerate()
+                                .map(|(index, member)| {
+                                    let member_path = display_contract_target(
+                                        &compact_path_display,
+                                        Some(member.as_str()),
+                                    );
+                                    json!({
+                                        "member": member,
+                                        "report": clean_report_json_value(&member_path, &sections[index + 1])
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            CommandOutput::success(to_json_value(json!({
+                                "ok": true,
+                                "path": text_path_display,
+                                "workspace": {
+                                    "root": clean_report_json_value(&text_path_display, root_report),
+                                    "members": members_json
+                                }
+                            })))
+                        }
+                    }
                 } else {
-                    match render_clean_text(
-                        &text_path_display,
-                        clean_execution_report(&target.contract, &target.contract_path),
-                    ) {
-                        Ok(text) => CommandOutput::success(text),
-                        Err(error) => CommandOutput::failure(render_clean_failure_text(
-                            &text_path_display,
-                            &error,
-                        )),
+                    match clean_execution_report(&target.contract, &target.contract_path) {
+                        Ok(report) => match format {
+                            OutputFormat::Text => CommandOutput::success(render_clean_text(
+                                &text_path_display,
+                                &report,
+                            )),
+                            OutputFormat::Json => CommandOutput::success(to_json_value(
+                                clean_report_json_value(&text_path_display, &report),
+                            )),
+                        },
+                        Err(error) => match format {
+                            OutputFormat::Text => {
+                                CommandOutput::failure(render_clean_failure_text(
+                                    &text_path_display,
+                                    &error,
+                                    "Cleanup failed",
+                                ))
+                            }
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json_value(clean_failure_json_value(
+                                    &text_path_display,
+                                    &error,
+                                    "Cleanup failed",
+                                )))
+                            }
+                        },
                     }
                 }
             }
@@ -21797,46 +21910,56 @@ pub fn clean(
                         match load_and_validate_target(&resolved_path, Some(member.as_str())) {
                             Ok(target) => target,
                             Err(ContractProblem::Validation(errors)) => {
+                                let error_lines = errors
+                                    .errors()
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .collect::<Vec<_>>();
                                 return finalize_debug(
-                                    invalid_repo_contract_output(
-                                        "CLEAN",
-                                        &resolved_path,
-                                        &errors
-                                            .errors()
-                                            .iter()
-                                            .map(ToString::to_string)
-                                            .collect::<Vec<_>>(),
-                                        vec![
-                                            format!(
-                                                "repair {}",
-                                                paint_code(&format!(
-                                                    "`{}`",
-                                                    compact_contract_path(&resolved_path)
-                                                ))
+                                    match format {
+                                        OutputFormat::Text => invalid_repo_contract_output(
+                                            "CLEAN",
+                                            &resolved_path,
+                                            &error_lines,
+                                            vec![
+                                                format!(
+                                                    "repair {}",
+                                                    paint_code(&format!(
+                                                        "`{}`",
+                                                        compact_contract_path(&resolved_path)
+                                                    ))
+                                                ),
+                                                format!(
+                                                    "rerun {}",
+                                                    paint_code(&format!(
+                                                        "`{}`",
+                                                        command_for_contract(
+                                                            "ota validate",
+                                                            &resolved_path
+                                                        )
+                                                    ))
+                                                ),
+                                                format!(
+                                                    "rerun {}",
+                                                    paint_code(&format!(
+                                                        "`{}`",
+                                                        command_for_contract(
+                                                            "ota clean",
+                                                            &resolved_path
+                                                        )
+                                                    ))
+                                                ),
+                                            ],
+                                            format,
+                                        ),
+                                        OutputFormat::Json => clean_invalid_contract_json_output(
+                                            &display_contract_target(
+                                                &compact_path_display,
+                                                Some(member.as_str()),
                                             ),
-                                            format!(
-                                                "rerun {}",
-                                                paint_code(&format!(
-                                                    "`{}`",
-                                                    command_for_contract(
-                                                        "ota validate",
-                                                        &resolved_path
-                                                    )
-                                                ))
-                                            ),
-                                            format!(
-                                                "rerun {}",
-                                                paint_code(&format!(
-                                                    "`{}`",
-                                                    command_for_contract(
-                                                        "ota clean",
-                                                        &resolved_path
-                                                    )
-                                                ))
-                                            ),
-                                        ],
-                                        format,
-                                    ),
+                                            &error_lines,
+                                        ),
+                                    },
                                     debug,
                                     debug_lines,
                                 );
@@ -21880,36 +22003,46 @@ pub fn clean(
                                                 ],
                                             ))
                                         }
-                                        OutputFormat::Json => {
-                                            CommandOutput::failure(to_json(&ValidateFailure {
-                                                summary: None,
-                                                ok: false,
-                                                path: &path_display,
-                                                errors: Vec::new(),
-                                                error: Some(error.to_string()),
-                                                warnings: Vec::new(),
-                                            }))
-                                        }
+                                        OutputFormat::Json => clean_generic_failure_json_output(
+                                            &display_contract_target(
+                                                &compact_path_display,
+                                                Some(member.as_str()),
+                                            ),
+                                            "Cleanup failed",
+                                            error.to_string(),
+                                        ),
                                     },
                                     debug,
                                     debug_lines,
                                 );
                             }
                         };
-                    match render_clean_text(
-                        &display_contract_target(&compact_path_display, Some(member.as_str())),
-                        clean_execution_report(&target.contract, &target.contract_path),
-                    ) {
-                        Ok(section) => sections.push(section),
+                    match clean_execution_report(&target.contract, &target.contract_path) {
+                        Ok(report) => sections.push((member.clone(), report)),
                         Err(error) => {
                             return finalize_debug(
-                                CommandOutput::failure(render_clean_failure_text(
-                                    &display_contract_target(
-                                        &compact_path_display,
-                                        Some(member.as_str()),
-                                    ),
-                                    &error,
-                                )),
+                                match format {
+                                    OutputFormat::Text => {
+                                        CommandOutput::failure(render_clean_failure_text(
+                                            &display_contract_target(
+                                                &compact_path_display,
+                                                Some(member.as_str()),
+                                            ),
+                                            &error,
+                                            "Cleanup failed",
+                                        ))
+                                    }
+                                    OutputFormat::Json => CommandOutput::failure(to_json_value(
+                                        clean_failure_json_value(
+                                            &display_contract_target(
+                                                &compact_path_display,
+                                                Some(member.as_str()),
+                                            ),
+                                            &error,
+                                            "Cleanup failed",
+                                        ),
+                                    )),
+                                },
                                 debug,
                                 debug_lines,
                             );
@@ -21917,38 +22050,79 @@ pub fn clean(
                     }
                 }
 
-                CommandOutput::success(sections.join("\n\n"))
+                match format {
+                    OutputFormat::Text => CommandOutput::success(
+                        sections
+                            .iter()
+                            .map(|(member, report)| {
+                                render_clean_text(
+                                    &display_contract_target(
+                                        &compact_path_display,
+                                        Some(member.as_str()),
+                                    ),
+                                    report,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n\n"),
+                    ),
+                    OutputFormat::Json => CommandOutput::success(to_json_value(json!({
+                        "ok": true,
+                        "path": text_path_display,
+                        "members": sections.iter().map(|(member, report)| {
+                            let member_path = display_contract_target(
+                                &compact_path_display,
+                                Some(member.as_str()),
+                            );
+                            json!({
+                                "member": member,
+                                "report": clean_report_json_value(&member_path, report)
+                            })
+                        }).collect::<Vec<_>>()
+                    }))),
+                }
             }
-            Err(ContractProblem::Validation(errors)) => invalid_repo_contract_output(
-                "CLEAN",
-                &resolved_path,
-                &errors
+            Err(ContractProblem::Validation(errors)) => {
+                let error_lines = errors
                     .errors()
                     .iter()
                     .map(ToString::to_string)
-                    .collect::<Vec<_>>(),
-                vec![
-                    format!(
-                        "repair {}",
-                        paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                    .collect::<Vec<_>>();
+                match format {
+                    OutputFormat::Text => invalid_repo_contract_output(
+                        "CLEAN",
+                        &resolved_path,
+                        &error_lines,
+                        vec![
+                            format!(
+                                "repair {}",
+                                paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_repo_contract_target(
+                                        "ota validate",
+                                        &resolved_path
+                                    )
+                                ))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_repo_contract_target("ota clean", &resolved_path)
+                                ))
+                            ),
+                        ],
+                        format,
                     ),
-                    format!(
-                        "rerun {}",
-                        paint_code(&format!(
-                            "`{}`",
-                            command_for_repo_contract_target("ota validate", &resolved_path)
-                        ))
-                    ),
-                    format!(
-                        "rerun {}",
-                        paint_code(&format!(
-                            "`{}`",
-                            command_for_repo_contract_target("ota clean", &resolved_path)
-                        ))
-                    ),
-                ],
-                format,
-            ),
+                    OutputFormat::Json => {
+                        clean_invalid_contract_json_output(&text_path_display, &error_lines)
+                    }
+                }
+            }
             Err(ContractProblem::Load(error)) => match format {
                 OutputFormat::Text => CommandOutput::failure(clean_repo_contract_load_text(
                     "CLEAN",
@@ -21975,14 +22149,11 @@ pub fn clean(
                         ),
                     ],
                 )),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    summary: None,
-                    ok: false,
-                    path: &path_display,
-                    errors: Vec::new(),
-                    error: Some(error.to_string()),
-                    warnings: Vec::new(),
-                })),
+                OutputFormat::Json => clean_generic_failure_json_output(
+                    &text_path_display,
+                    "Cleanup failed",
+                    error.to_string(),
+                ),
             },
         },
         debug,
@@ -21990,180 +22161,146 @@ pub fn clean(
     )
 }
 
-fn render_clean_text<E: ToString>(
-    path: &str,
-    result: Result<CleanExecutionReport, E>,
-) -> Result<String, String> {
-    match result {
-        Ok(report) => {
-            if report.total_removed() == 0 && report.total_skipped_ambiguous() == 0 {
-                return Ok(format!("No cleanup needed for {path}"));
-            }
-
-            let header = if report.total_removed() > 0 {
-                format!("Cleaned {path}")
-            } else {
-                format!("Reviewed cleanup for {path}")
-            };
-            let mut lines = vec![header];
-            if report.removed_current_persistent_containers > 0 {
-                lines.push(format!(
-                    "  {} removed current persistent containers: {}",
-                    summary_bullet(),
-                    report.removed_current_persistent_containers
-                ));
-            }
-            if report.removed_drift_persistent_containers > 0 {
-                lines.push(format!(
-                    "  {} removed drifted persistent containers: {}",
-                    summary_bullet(),
-                    report.removed_drift_persistent_containers
-                ));
-            }
-            if report.removed_drift_attached_containers > 0 {
-                lines.push(format!(
-                    "  {} removed drifted volume-holding containers: {}",
-                    summary_bullet(),
-                    report.removed_drift_attached_containers
-                ));
-            }
-            if report.removed_current_dependency_isolation_volumes > 0 {
-                lines.push(format!(
-                    "  {} removed current dependency-isolation volumes: {}",
-                    summary_bullet(),
-                    report.removed_current_dependency_isolation_volumes
-                ));
-            }
-            if report.removed_drift_dependency_isolation_volumes > 0 {
-                lines.push(format!(
-                    "  {} removed drifted dependency-isolation volumes: {}",
-                    summary_bullet(),
-                    report.removed_drift_dependency_isolation_volumes
-                ));
-            }
-            if report.skipped_ambiguous_persistent_containers > 0
-                || report.skipped_ambiguous_dependency_isolation_volumes > 0
-            {
-                lines.push(format!(
-                    "  {} skipped ownership-ambiguous state (not removed): {} containers, {} volumes",
-                    summary_bullet(),
-                    report.skipped_ambiguous_persistent_containers,
-                    report.skipped_ambiguous_dependency_isolation_volumes
-                ));
-            }
-            if !report.queried_engines.is_empty() {
-                lines.push(format!(
-                    "  {} queried engines: {}",
-                    summary_bullet(),
-                    report.queried_engines.join(", ")
-                ));
-            }
-            Ok(lines.join("\n"))
-        }
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn render_clean_failure_text(path: &str, error: &str) -> String {
-    let compact_error = compact_backticked_paths(error);
-    if let Some(rendered) = render_clean_engine_unavailable_text(path, &compact_error) {
-        return rendered;
-    }
-    command_message_failure_text("CLEAN", path, "Cleanup failed", &compact_error, &[])
-}
-
-fn render_clean_engine_unavailable_text(path: &str, error: &str) -> Option<String> {
-    let parsed = parse_clean_engine_failure(error)?;
-    if !clean_engine_details_indicate_unavailable(parsed.details) {
-        return None;
+fn render_clean_text(path: &str, report: &CleanExecutionReport) -> String {
+    if report.total_removed() == 0 && report.total_skipped_ambiguous() == 0 {
+        return format!("No cleanup needed for {path}");
     }
 
-    let engine_label = display_container_engine_name(parsed.engine);
-    let why = match (parsed.state_kind.as_str(), parsed.state_name.as_deref()) {
-        ("persistent container", Some(state_name)) => format!(
-            "`ota clean` needs {engine_label} to remove persistent repo state for `{state_name}`, but {engine_label} is not reachable."
-        ),
-        ("dependency-isolation volume", Some(state_name)) => format!(
-            "`ota clean` needs {engine_label} to remove dependency-isolation repo state for `{state_name}`, but {engine_label} is not reachable."
-        ),
-        ("stale ota-managed containers", _) => format!(
-            "`ota clean` needs {engine_label} to inspect stale ota-managed container state, but {engine_label} is not reachable."
-        ),
-        _ => format!(
-            "`ota clean` needs {engine_label} to remove repo execution state, but {engine_label} is not reachable."
-        ),
+    let header = if report.total_removed() > 0 {
+        format!("Cleaned {path}")
+    } else {
+        format!("Reviewed cleanup for {path}")
     };
+    let mut lines = vec![header];
+    if report.removed_current_persistent_containers > 0 {
+        lines.push(format!(
+            "  {} removed current persistent containers: {}",
+            summary_bullet(),
+            report.removed_current_persistent_containers
+        ));
+    }
+    if report.removed_drift_persistent_containers > 0 {
+        lines.push(format!(
+            "  {} removed drifted persistent containers: {}",
+            summary_bullet(),
+            report.removed_drift_persistent_containers
+        ));
+    }
+    if report.removed_drift_attached_containers > 0 {
+        lines.push(format!(
+            "  {} removed drifted volume-holding containers: {}",
+            summary_bullet(),
+            report.removed_drift_attached_containers
+        ));
+    }
+    if report.removed_current_dependency_isolation_volumes > 0 {
+        lines.push(format!(
+            "  {} removed current dependency-isolation volumes: {}",
+            summary_bullet(),
+            report.removed_current_dependency_isolation_volumes
+        ));
+    }
+    if report.removed_drift_dependency_isolation_volumes > 0 {
+        lines.push(format!(
+            "  {} removed drifted dependency-isolation volumes: {}",
+            summary_bullet(),
+            report.removed_drift_dependency_isolation_volumes
+        ));
+    }
+    if report.skipped_ambiguous_persistent_containers > 0
+        || report.skipped_ambiguous_dependency_isolation_volumes > 0
+    {
+        lines.push(format!(
+            "  {} skipped ownership-ambiguous state (not removed): {} containers, {} volumes",
+            summary_bullet(),
+            report.skipped_ambiguous_persistent_containers,
+            report.skipped_ambiguous_dependency_isolation_volumes
+        ));
+    }
+    if !report.queried_engines.is_empty() {
+        lines.push(format!(
+            "  {} queried engines: {}",
+            summary_bullet(),
+            report.queried_engines.join(", ")
+        ));
+    }
+    lines.join("\n")
+}
 
-    let details = summarize_clean_engine_details(parsed.details);
-    Some(structured_error_text_with_details(
+fn render_clean_failure_text(path: &str, error: &CleanExecutionError, summary: &str) -> String {
+    match error {
+        CleanExecutionError::Cleanup(cleanup) => {
+            render_structured_clean_failure_text(path, cleanup)
+        }
+        CleanExecutionError::Other(error) => {
+            command_message_failure_text("CLEAN", path, summary, &error.to_string(), &[])
+        }
+    }
+}
+
+fn render_structured_clean_failure_text(path: &str, failure: &CleanExecutionFailure) -> String {
+    let (summary, why) = clean_failure_summary_and_why(failure);
+
+    let details = summarize_clean_engine_details(failure.details.as_str());
+    structured_error_text_with_details(
         "CLEAN",
         path,
-        "Container engine unavailable",
+        summary,
         &[why],
-        &clean_engine_unavailable_next_steps(parsed.engine),
+        &clean_failure_next_steps(failure),
         &[details],
-    ))
+    )
 }
 
-struct CleanEngineFailure<'a> {
-    engine: &'a str,
-    details: &'a str,
-    state_kind: String,
-    state_name: Option<&'a str>,
-}
-
-fn parse_clean_engine_failure(error: &str) -> Option<CleanEngineFailure<'_>> {
-    if let Some(remainder) = error.strip_prefix("task `clean` could not ") {
-        if let Some((action_and_container, details)) =
-            remainder.split_once(" using container engine `")
-        {
-            let (engine, details) = details.split_once("`: ")?;
-            if let Some((_, container)) = action_and_container.split_once(" persistent container `")
-            {
-                let container = container.strip_suffix('`')?;
-                return Some(CleanEngineFailure {
-                    engine,
-                    details,
-                    state_kind: String::from("persistent container"),
-                    state_name: Some(container),
-                });
-            }
-            if let Some((_, volume)) =
-                action_and_container.split_once(" dependency-isolation volume `")
-            {
-                let volume = volume.strip_suffix('`')?;
-                return Some(CleanEngineFailure {
-                    engine,
-                    details,
-                    state_kind: String::from("dependency-isolation volume"),
-                    state_name: Some(volume),
-                });
-            }
-        }
-    }
-
-    if let Some(remainder) = error.strip_prefix("container backend `") {
-        let (engine, details) = remainder.split_once("` could not list stale ota containers: ")?;
-        return Some(CleanEngineFailure {
-            engine,
-            details,
-            state_kind: String::from("stale ota-managed containers"),
-            state_name: None,
-        });
-    }
-
-    None
-}
-
-fn clean_engine_details_indicate_unavailable(details: &str) -> bool {
-    let lowered = details.to_ascii_lowercase();
-    lowered.contains("cannot connect to podman")
-        || lowered.contains("unable to connect to podman socket")
-        || lowered.contains("docker daemon is not running")
-        || lowered.contains("cannot connect to the docker daemon")
-        || lowered.contains("is the docker daemon running")
-        || lowered.contains("error while dialing")
-        || lowered.contains("connection refused")
+fn clean_failure_summary_and_why(failure: &CleanExecutionFailure) -> (&'static str, String) {
+    let engine_label = display_container_engine_name(failure.engine.as_str());
+    let summary = match failure.reason {
+        CleanExecutionFailureReason::EngineUnavailable => "Container engine unavailable",
+        CleanExecutionFailureReason::Other => "Cleanup failed",
+    };
+    let why = match (
+        &failure.resource_kind,
+        failure.resource_name.as_deref(),
+        &failure.reason,
+    ) {
+        (
+            CleanExecutionResourceKind::PersistentContainer,
+            Some(state_name),
+            CleanExecutionFailureReason::EngineUnavailable,
+        ) => format!(
+            "`ota clean` needs {engine_label} to remove persistent repo state for `{state_name}`, but {engine_label} is not reachable."
+        ),
+        (
+            CleanExecutionResourceKind::DependencyIsolationVolume,
+            Some(state_name),
+            CleanExecutionFailureReason::EngineUnavailable,
+        ) => format!(
+            "`ota clean` needs {engine_label} to remove dependency-isolation repo state for `{state_name}`, but {engine_label} is not reachable."
+        ),
+        (
+            CleanExecutionResourceKind::StaleContainers,
+            _,
+            CleanExecutionFailureReason::EngineUnavailable,
+        ) => format!(
+            "`ota clean` needs {engine_label} to inspect stale ota-managed container state, but {engine_label} is not reachable."
+        ),
+        (CleanExecutionResourceKind::PersistentContainer, Some(state_name), _) => format!(
+            "`ota clean` could not {} persistent repo state `{state_name}` using {engine_label}.",
+            failure.action
+        ),
+        (CleanExecutionResourceKind::DependencyIsolationVolume, Some(state_name), _) => format!(
+            "`ota clean` could not {} dependency-isolation repo state `{state_name}` using {engine_label}.",
+            failure.action
+        ),
+        (CleanExecutionResourceKind::StaleContainers, _, _) => format!(
+            "`ota clean` could not inspect stale ota-managed container state using {engine_label}."
+        ),
+        _ => format!(
+            "`ota clean` could not {} repo execution state using {engine_label}.",
+            failure.action
+        ),
+    };
+    (summary, why)
 }
 
 fn summarize_clean_engine_details(details: &str) -> String {
@@ -22176,23 +22313,131 @@ fn summarize_clean_engine_details(details: &str) -> String {
         .unwrap_or_else(|| details.trim().to_string())
 }
 
-fn clean_engine_unavailable_next_steps(engine: &str) -> Vec<String> {
-    match engine {
-        "podman" => vec![
-            String::from("start Podman and rerun `ota clean`"),
-            String::from("run `podman system connection list`"),
-            String::from("if needed, run `podman machine init` and `podman machine start`"),
-        ],
-        "docker" => vec![
-            String::from("start Docker and rerun `ota clean`"),
-            String::from("run `docker info`"),
-            String::from("if needed, start Docker Desktop or the Docker daemon"),
-        ],
-        _ => vec![
-            format!("start `{engine}` and rerun `ota clean`"),
-            format!("verify `{engine}` is reachable from this shell"),
-        ],
+fn clean_failure_next_steps(failure: &CleanExecutionFailure) -> Vec<String> {
+    if matches!(
+        failure.reason,
+        CleanExecutionFailureReason::EngineUnavailable
+    ) {
+        return match failure.engine.as_str() {
+            "podman" => vec![
+                String::from("start Podman and rerun `ota clean`"),
+                String::from("run `podman system connection list`"),
+                String::from("if needed, run `podman machine init` and `podman machine start`"),
+            ],
+            "docker" => vec![
+                String::from("start Docker and rerun `ota clean`"),
+                String::from("run `docker info`"),
+                String::from("if needed, start Docker Desktop or the Docker daemon"),
+            ],
+            _ => vec![
+                format!("start `{}` and rerun `ota clean`", failure.engine),
+                format!("verify `{}` is reachable from this shell", failure.engine),
+            ],
+        };
     }
+
+    let state_kind = match failure.resource_kind {
+        CleanExecutionResourceKind::PersistentContainer => "persistent container state",
+        CleanExecutionResourceKind::DependencyIsolationVolume => {
+            "dependency-isolation volume state"
+        }
+        CleanExecutionResourceKind::StaleContainers => "stale ota-managed container state",
+    };
+    vec![
+        format!("repair the selected {state_kind} and rerun `ota clean`"),
+        format!(
+            "verify `{}` is healthy before retrying cleanup",
+            failure.engine
+        ),
+    ]
+}
+
+fn clean_resource_kind_json_label(kind: &CleanExecutionResourceKind) -> &'static str {
+    match kind {
+        CleanExecutionResourceKind::PersistentContainer => "persistent_container",
+        CleanExecutionResourceKind::DependencyIsolationVolume => "dependency_isolation_volume",
+        CleanExecutionResourceKind::StaleContainers => "stale_containers",
+    }
+}
+
+fn clean_failure_reason_json_label(reason: &CleanExecutionFailureReason) -> &'static str {
+    match reason {
+        CleanExecutionFailureReason::EngineUnavailable => "engine_unavailable",
+        CleanExecutionFailureReason::Other => "other",
+    }
+}
+
+fn clean_report_json_value(path: &str, report: &CleanExecutionReport) -> JsonValue {
+    json!({
+        "ok": true,
+        "path": path,
+        "summary": {
+            "removed_current_persistent_containers": report.removed_current_persistent_containers,
+            "removed_drift_persistent_containers": report.removed_drift_persistent_containers,
+            "removed_drift_attached_containers": report.removed_drift_attached_containers,
+            "removed_current_dependency_isolation_volumes": report.removed_current_dependency_isolation_volumes,
+            "removed_drift_dependency_isolation_volumes": report.removed_drift_dependency_isolation_volumes,
+            "skipped_ambiguous_persistent_containers": report.skipped_ambiguous_persistent_containers,
+            "skipped_ambiguous_dependency_isolation_volumes": report.skipped_ambiguous_dependency_isolation_volumes,
+            "total_removed": report.total_removed(),
+            "total_skipped_ambiguous": report.total_skipped_ambiguous()
+        },
+        "queried_engines": report.queried_engines
+    })
+}
+
+fn clean_failure_json_value(path: &str, error: &CleanExecutionError, summary: &str) -> JsonValue {
+    match error {
+        CleanExecutionError::Cleanup(failure) => {
+            let (derived_summary, why) = clean_failure_summary_and_why(failure);
+            let next_steps = clean_failure_next_steps(failure);
+            json!({
+                "ok": false,
+                "path": path,
+                "summary": derived_summary,
+                "error": failure.to_string(),
+                "why": why,
+                "next": next_steps,
+                "reason": clean_failure_reason_json_label(&failure.reason),
+                "engine": failure.engine,
+                "action": failure.action,
+                "resource_kind": clean_resource_kind_json_label(&failure.resource_kind),
+                "resource_name": failure.resource_name,
+                "details": summarize_clean_engine_details(failure.details.as_str())
+            })
+        }
+        CleanExecutionError::Other(error) => json!({
+            "ok": false,
+            "path": path,
+            "summary": summary,
+            "error": error.to_string()
+        }),
+    }
+}
+
+fn clean_generic_failure_json_output(
+    path: &str,
+    summary: &str,
+    error: impl Into<String>,
+) -> CommandOutput {
+    CommandOutput::failure(to_json_value(json!({
+        "ok": false,
+        "path": path,
+        "summary": summary,
+        "error": error.into(),
+    })))
+}
+
+fn clean_invalid_contract_json_output(path: &str, errors: &[String]) -> CommandOutput {
+    clean_generic_failure_json_output(
+        path,
+        "Invalid contract",
+        if errors.len() == 1 {
+            errors[0].clone()
+        } else {
+            errors.join("; ")
+        },
+    )
 }
 
 fn display_container_engine_name(engine: &str) -> String {
@@ -37948,6 +38193,8 @@ mod tests {
     use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::thread;
@@ -37988,10 +38235,11 @@ mod tests {
     };
     use crate::provisioning::{ProvisioningExecutionTarget, apply_provisioning_request};
     use crate::runner::{
-        CleanExecutionReport, ExecutedTaskStep, ExecutionOverrides, RunError, ServiceTermination,
-        ServiceTerminationCause, ServiceTerminationKind, SharedLocalBackendEvidence,
-        TaskExecutionRelation, TaskTargetResolutionEvidence, TaskTargetResolutionSource,
-        ToolchainFulfillmentEvidence, simulate_run_interrupt_for_test,
+        CleanExecutionError, CleanExecutionFailure, CleanExecutionFailureReason,
+        CleanExecutionReport, CleanExecutionResourceKind, ExecutedTaskStep, ExecutionOverrides,
+        RunError, ServiceTermination, ServiceTerminationCause, ServiceTerminationKind,
+        SharedLocalBackendEvidence, TaskExecutionRelation, TaskTargetResolutionEvidence,
+        TaskTargetResolutionSource, ToolchainFulfillmentEvidence, simulate_run_interrupt_for_test,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskInputSpec, TaskTargetAddressView, ToolAcquisitionProvider,
@@ -40163,7 +40411,7 @@ tasks:
             ..CleanExecutionReport::default()
         };
 
-        let text = render_clean_text::<String>("./ota.yaml", Ok(report)).expect("clean text");
+        let text = render_clean_text("./ota.yaml", &report);
         let plain = strip_ansi_codes(&text);
 
         assert!(
@@ -40175,6 +40423,538 @@ tasks:
             plain.contains(
                 "skipped ownership-ambiguous state (not removed): 2 containers, 1 volumes"
             )
+        );
+    }
+
+    #[test]
+    fn clean_failure_json_uses_structured_engine_unavailable_fields() {
+        let failure = CleanExecutionFailure {
+            engine: String::from("podman"),
+            action: String::from("list"),
+            resource_kind: CleanExecutionResourceKind::DependencyIsolationVolume,
+            resource_name: Some(String::from("dev.ota.repo=repo-1")),
+            reason: CleanExecutionFailureReason::EngineUnavailable,
+            details: String::from(
+                "Cannot connect to Podman\nError: unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused",
+            ),
+        };
+
+        let value = super::clean_failure_json_value(
+            "./ota.yaml",
+            &CleanExecutionError::Cleanup(failure),
+            "Cleanup failed",
+        );
+
+        assert_eq!(
+            value.get("ok").and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            value.get("summary").and_then(|value| value.as_str()),
+            Some("Container engine unavailable")
+        );
+        assert_eq!(
+            value.get("reason").and_then(|value| value.as_str()),
+            Some("engine_unavailable")
+        );
+        assert_eq!(
+            value.get("resource_kind").and_then(|value| value.as_str()),
+            Some("dependency_isolation_volume")
+        );
+        assert_eq!(
+            value.get("engine").and_then(|value| value.as_str()),
+            Some("podman")
+        );
+        assert_eq!(
+            value.get("details").and_then(|value| value.as_str()),
+            Some(
+                "unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused"
+            )
+        );
+        assert!(
+            value
+                .get("next")
+                .and_then(|value| value.as_array())
+                .is_some_and(|items| items
+                    .iter()
+                    .any(|item| item.as_str() == Some("run `podman system connection list`")))
+        );
+    }
+
+    #[test]
+    fn clean_failure_json_uses_generic_envelope_for_unclassified_failures() {
+        let value = super::clean_failure_json_value(
+            "./ota.yaml",
+            &CleanExecutionError::Other(RunError::FileActionFailed {
+                task: String::from("dev"),
+                message: String::from(
+                    "projection `dev.http.host.port` must declare either `fixed` or `auto`",
+                ),
+            }),
+            "Cleanup failed",
+        );
+
+        assert_eq!(
+            value.get("ok").and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            value.get("summary").and_then(|value| value.as_str()),
+            Some("Cleanup failed")
+        );
+        assert_eq!(
+            value.get("error").and_then(|value| value.as_str()),
+            Some(
+                "file action for task `dev` failed: projection `dev.http.host.port` must declare either `fixed` or `auto`"
+            )
+        );
+        assert!(value.get("reason").is_none());
+        assert!(value.get("engine").is_none());
+        assert!(value.get("action").is_none());
+        assert!(value.get("resource_kind").is_none());
+        assert!(value.get("details").is_none());
+    }
+
+    #[test]
+    fn clean_report_json_exposes_repo_cleanup_counters() {
+        let report = CleanExecutionReport {
+            removed_current_persistent_containers: 1,
+            removed_drift_persistent_containers: 2,
+            removed_drift_attached_containers: 3,
+            removed_current_dependency_isolation_volumes: 4,
+            removed_drift_dependency_isolation_volumes: 5,
+            skipped_ambiguous_persistent_containers: 6,
+            skipped_ambiguous_dependency_isolation_volumes: 7,
+            queried_engines: vec![String::from("docker"), String::from("podman")],
+        };
+
+        let value = super::clean_report_json_value("./ota.yaml", &report);
+
+        assert_eq!(
+            value.get("ok").and_then(|value| value.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            value.get("path").and_then(|value| value.as_str()),
+            Some("./ota.yaml")
+        );
+        let summary = value.get("summary").expect("summary");
+        assert_eq!(
+            summary
+                .get("removed_current_persistent_containers")
+                .and_then(|value| value.as_u64()),
+            Some(1)
+        );
+        assert_eq!(
+            summary
+                .get("removed_drift_dependency_isolation_volumes")
+                .and_then(|value| value.as_u64()),
+            Some(5)
+        );
+        assert_eq!(
+            summary
+                .get("total_removed")
+                .and_then(|value| value.as_u64()),
+            Some(15)
+        );
+        assert_eq!(
+            summary
+                .get("total_skipped_ambiguous")
+                .and_then(|value| value.as_u64()),
+            Some(13)
+        );
+        assert!(
+            value
+                .get("queried_engines")
+                .and_then(|value| value.as_array())
+                .is_some_and(|items| items.len() == 2)
+        );
+    }
+
+    #[test]
+    fn clean_command_json_success_reports_repo_counters() {
+        let _cwd_guard = cwd_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  check:
+    run: echo ok
+"#,
+        )
+        .expect("write contract");
+
+        let cwd = env::current_dir().expect("cwd");
+        env::set_current_dir(repo.path()).expect("cd repo");
+        let output = super::clean(
+            Some(Path::new(".")),
+            None,
+            &[],
+            false,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+        env::set_current_dir(cwd).expect("restore cwd");
+
+        assert_eq!(output.exit_code, 0);
+        let body: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse clean json");
+        assert_eq!(body.get("ok").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(
+            body.get("path").and_then(|value| value.as_str()),
+            Some("./ota.yaml")
+        );
+        assert_eq!(
+            body.get("summary")
+                .and_then(|value| value.get("total_removed"))
+                .and_then(|value| value.as_u64()),
+            Some(0)
+        );
+        assert_eq!(
+            body.get("summary")
+                .and_then(|value| value.get("total_skipped_ambiguous"))
+                .and_then(|value| value.as_u64()),
+            Some(0)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_command_json_failure_reports_structured_engine_unavailable() {
+        let _cwd_guard = cwd_mutex_lock();
+        let _env_guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - podman
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  check:
+    context: app
+    run: echo ok
+"#,
+        )
+        .expect("write contract");
+        fs::create_dir_all(repo.path().join(".ota").join("state")).expect("state dir");
+        fs::write(
+            repo.path().join(".ota").join("state").join("ownership-id"),
+            "repo-1",
+        )
+        .expect("write ownership token");
+
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("bin dir");
+        let podman_path = bin_dir.join("podman");
+        fs::write(
+            &podman_path,
+            r#"#!/bin/sh
+if [ "$1" = "volume" ] && [ "$2" = "ls" ]; then
+  echo "Cannot connect to Podman" >&2
+  echo "Error: unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused" >&2
+  exit 125
+fi
+exit 0
+"#,
+        )
+        .expect("write fake podman");
+        let mut permissions = fs::metadata(&podman_path)
+            .expect("podman metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).expect("podman permissions");
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).expect("join path");
+
+        let cwd = env::current_dir().expect("cwd");
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+        env::set_current_dir(repo.path()).expect("cd repo");
+        let output = super::clean(
+            Some(Path::new(".")),
+            None,
+            &[],
+            false,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+        env::set_current_dir(cwd).expect("restore cwd");
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output.stdout.is_empty(),
+            "failure json should stay off stdout"
+        );
+        let body: serde_json::Value =
+            serde_json::from_str(output.stderr.as_deref().unwrap_or_default())
+                .expect("parse clean failure json");
+        assert_eq!(
+            body.get("ok").and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            body.get("summary").and_then(|value| value.as_str()),
+            Some("Container engine unavailable")
+        );
+        assert_eq!(
+            body.get("reason").and_then(|value| value.as_str()),
+            Some("engine_unavailable")
+        );
+        assert_eq!(
+            body.get("engine").and_then(|value| value.as_str()),
+            Some("podman")
+        );
+        assert_eq!(
+            body.get("resource_kind").and_then(|value| value.as_str()),
+            Some("dependency_isolation_volume")
+        );
+        assert!(
+            body.get("next")
+                .and_then(|value| value.as_array())
+                .is_some_and(|items| items
+                    .iter()
+                    .any(|item| item.as_str() == Some("run `podman system connection list`")))
+        );
+    }
+
+    #[test]
+    fn clean_stale_command_json_success_reports_empty_global_cleanup() {
+        let _env_guard = crate::test_support::env_mutex_lock();
+        let empty_bin = tempfile::tempdir().expect("empty bin");
+        let original_path = env::var_os("PATH");
+
+        unsafe {
+            env::set_var("PATH", empty_bin.path());
+        }
+        let output = super::clean(None, None, &[], true, false, OutputFormat::Json, false);
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let body: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse stale clean json");
+        assert_eq!(body.get("ok").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(
+            body.get("scope").and_then(|value| value.as_str()),
+            Some("stale")
+        );
+        assert_eq!(
+            body.get("summary")
+                .and_then(|value| value.get("matched_count"))
+                .and_then(|value| value.as_u64()),
+            Some(0)
+        );
+        assert_eq!(
+            body.get("summary")
+                .and_then(|value| value.get("removed_count"))
+                .and_then(|value| value.as_u64()),
+            Some(0)
+        );
+        assert!(
+            body.get("containers")
+                .and_then(|value| value.as_array())
+                .is_some_and(|items| items.is_empty())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_stale_command_json_failure_reports_structured_engine_unavailable() {
+        let _env_guard = crate::test_support::env_mutex_lock();
+        let bin_dir = tempfile::tempdir().expect("bin dir");
+        let podman_path = bin_dir.path().join("podman");
+        fs::write(
+            &podman_path,
+            r#"#!/bin/sh
+echo "Cannot connect to Podman" >&2
+echo "Error: unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused" >&2
+exit 125
+"#,
+        )
+        .expect("write fake podman");
+        let mut permissions = fs::metadata(&podman_path)
+            .expect("podman metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).expect("podman permissions");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", bin_dir.path());
+        }
+        let output = super::clean(None, None, &[], true, false, OutputFormat::Json, false);
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            output.stdout.is_empty(),
+            "failure json should stay off stdout"
+        );
+        let body: serde_json::Value =
+            serde_json::from_str(output.stderr.as_deref().unwrap_or_default())
+                .expect("parse stale clean failure json");
+        assert_eq!(
+            body.get("ok").and_then(|value| value.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            body.get("summary").and_then(|value| value.as_str()),
+            Some("Container engine unavailable")
+        );
+        assert_eq!(
+            body.get("reason").and_then(|value| value.as_str()),
+            Some("engine_unavailable")
+        );
+        assert_eq!(
+            body.get("engine").and_then(|value| value.as_str()),
+            Some("podman")
+        );
+        assert_eq!(
+            body.get("resource_kind").and_then(|value| value.as_str()),
+            Some("stale_containers")
+        );
+    }
+
+    #[test]
+    fn clean_workspace_command_json_success_reports_root_and_member_cleanup() {
+        let _cwd_guard = cwd_mutex_lock();
+        let repo = tempfile::tempdir().expect("workspace tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workspace-root
+workspace:
+  type: monorepo
+  members:
+    - api
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  check:
+    run: echo root
+"#,
+        )
+        .expect("write root contract");
+        fs::create_dir_all(repo.path().join("api")).expect("member dir");
+        fs::write(
+            repo.path().join("api").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: api
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  check:
+    run: echo api
+"#,
+        )
+        .expect("write member contract");
+
+        let cwd = env::current_dir().expect("cwd");
+        env::set_current_dir(repo.path()).expect("cd repo");
+        let output = super::clean(
+            Some(Path::new(".")),
+            None,
+            &[],
+            false,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+        env::set_current_dir(cwd).expect("restore cwd");
+
+        assert_eq!(output.exit_code, 0);
+        let body: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse workspace clean json");
+        assert_eq!(body.get("ok").and_then(|value| value.as_bool()), Some(true));
+        assert_eq!(
+            body.get("path").and_then(|value| value.as_str()),
+            Some("./ota.yaml")
+        );
+        let workspace = body.get("workspace").expect("workspace");
+        assert_eq!(
+            workspace
+                .get("root")
+                .and_then(|value| value.get("path"))
+                .and_then(|value| value.as_str()),
+            Some("./ota.yaml")
+        );
+        let members = workspace
+            .get("members")
+            .and_then(|value| value.as_array())
+            .expect("members array");
+        assert_eq!(members.len(), 1);
+        assert_eq!(
+            members[0].get("member").and_then(|value| value.as_str()),
+            Some("api")
+        );
+        assert_eq!(
+            members[0]
+                .get("report")
+                .and_then(|value| value.get("path"))
+                .and_then(|value| value.as_str()),
+            Some("./ota.yaml [member api]")
         );
     }
 

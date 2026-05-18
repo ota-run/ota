@@ -11,12 +11,15 @@
     "summary": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["error_count", "warn_count", "info_count", "step_count"],
+      "required": ["error_count", "warn_count", "info_count", "step_count", "repo_count", "ready_count", "not_ready_count"],
       "properties": {
         "error_count": { "type": "integer", "minimum": 0 },
         "warn_count": { "type": "integer", "minimum": 0 },
         "info_count": { "type": "integer", "minimum": 0 },
-        "step_count": { "type": "integer", "minimum": 0 }
+        "step_count": { "type": "integer", "minimum": 0 },
+        "repo_count": { "type": "integer", "minimum": 0 },
+        "ready_count": { "type": "integer", "minimum": 0 },
+        "not_ready_count": { "type": "integer", "minimum": 0 }
       }
     },
     "receipt": {
@@ -32,6 +35,7 @@
           "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"
         },
         "workspace": { "type": "string" },
+        "status": { "type": "string" },
         "backend": { "type": "string" },
         "lifecycle": { "type": "string" },
         "image": { "type": "string" },

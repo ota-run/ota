@@ -32,6 +32,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/agents.json](json-schemas/agents.json)
 - [json-schemas/doctor.json](json-schemas/doctor.json)
 - [json-schemas/check.json](json-schemas/check.json)
+- [json-schemas/clean.json](json-schemas/clean.json)
 - [json-schemas/receipt.json](json-schemas/receipt.json)
 - [json-schemas/init.json](json-schemas/init.json)
 - [json-schemas/policy-init.json](json-schemas/policy-init.json)
@@ -84,6 +85,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota workspace list --json` when you want lightweight workspace inventory and readiness
 - use `ota workspace check --json` when you want checks-only workspace readiness with a roll-up summary
 - use `ota receipt --json` when you want a read-only repo receipt artifact
+- use `ota clean --json` or `ota clean --stale --json` when you want deterministic cleanup reports or structured cleanup failure details instead of scraping text receipts
 - use `ota up --json` or `ota workspace up --json` when you want preparation or readiness roll-up data
 - use `ota workspace run --json` when you want coordinated multi-repo execution roll-up data and receipts
 - use `ota workspace receipt --json` when you want a read-only workspace receipt artifact
@@ -115,6 +117,7 @@ human text output:
 - `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
 - `ota workspace check --json`: use the top-level `summary`, per-repo findings, and per-repo `primary_blocker` when present
 - `ota receipt --json`: use the top-level `summary`, `receipt`, and `findings`
+- `ota clean --json` and `ota clean --stale --json`: use cleanup counters and `queried_engines` on success; on classified cleanup failures use `summary`, `reason`, `engine`, `resource_kind`, `resource_name`, `details`, and ordered `next` steps, while generic repo-state failures fall back to `summary` plus `error`
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results; workspace repo results may also include additive `next` / `next_steps`
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results; repo results may also include additive `next` / `next_steps`
 - `ota workspace receipt --json`: use the top-level `summary`, `receipt`, and per-repo results
@@ -138,9 +141,9 @@ Success:
 {
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
-  "mode": "native",
   "summary": {
-    "error_count": 0
+    "error_count": 0,
+    "warn_count": 0
   }
 }
 ```
@@ -157,7 +160,8 @@ Failure:
   "ok": false,
   "path": "/abs/path/to/ota.yaml",
   "summary": {
-    "error_count": 2
+    "error_count": 2,
+    "warn_count": 0
   },
   "errors": ["..."]
 }
@@ -170,7 +174,8 @@ Or:
   "ok": false,
   "path": "/abs/path/to/ota.yaml",
   "summary": {
-    "error_count": 1
+    "error_count": 1,
+    "warn_count": 0
   },
   "error": "..."
 }
@@ -3250,14 +3255,129 @@ readiness state without provisioning, starting services, or writing repo files.
 Add `--archive` to persist the JSON receipt in `.ota/receipts` for later audit; ota keeps
 the newest 50 archives.
 
-## `ota detect --json`
+## `ota clean --json`
+
+`ota clean --json` reports repo-scoped cleanup counters for the selected contract target. When
+the target is a monorepo root with workspace members, ota returns a root cleanup report plus
+member reports. When cleanup fails, ota returns either a classified cleanup failure with
+machine-readable engine and reason fields, or a generic repo-state failure when ota cannot
+honestly classify the issue as a cleanup engine/resource problem.
+
+Single-target success:
+
+```json
+{
+  "ok": true,
+  "path": "./ota.yaml",
+  "summary": {
+    "removed_current_persistent_containers": 1,
+    "removed_drift_persistent_containers": 0,
+    "removed_drift_attached_containers": 0,
+    "removed_current_dependency_isolation_volumes": 1,
+    "removed_drift_dependency_isolation_volumes": 0,
+    "skipped_ambiguous_persistent_containers": 0,
+    "skipped_ambiguous_dependency_isolation_volumes": 0,
+    "total_removed": 2,
+    "total_skipped_ambiguous": 0
+  },
+  "queried_engines": [
+    "docker"
+  ]
+}
+```
+
+Monorepo root success:
+
+```json
+{
+  "ok": true,
+  "path": "./ota.yaml",
+  "workspace": {
+    "root": {
+      "ok": true,
+      "path": "./ota.yaml",
+      "summary": {
+        "removed_current_persistent_containers": 0,
+        "removed_drift_persistent_containers": 0,
+        "removed_drift_attached_containers": 0,
+        "removed_current_dependency_isolation_volumes": 0,
+        "removed_drift_dependency_isolation_volumes": 0,
+        "skipped_ambiguous_persistent_containers": 0,
+        "skipped_ambiguous_dependency_isolation_volumes": 0,
+        "total_removed": 0,
+        "total_skipped_ambiguous": 0
+      },
+      "queried_engines": [
+        "docker"
+      ]
+    },
+    "members": [
+      {
+        "member": "api",
+        "report": {
+          "ok": true,
+          "path": "./ota.yaml#api",
+          "summary": {
+            "removed_current_persistent_containers": 1,
+            "removed_drift_persistent_containers": 0,
+            "removed_drift_attached_containers": 0,
+            "removed_current_dependency_isolation_volumes": 0,
+            "removed_drift_dependency_isolation_volumes": 0,
+            "skipped_ambiguous_persistent_containers": 0,
+            "skipped_ambiguous_dependency_isolation_volumes": 0,
+            "total_removed": 1,
+            "total_skipped_ambiguous": 0
+          },
+          "queried_engines": [
+            "docker"
+          ]
+        }
+      }
+    ]
+  }
+}
+```
+
+Failure:
+
+```json
+{
+  "ok": false,
+  "path": "./ota.yaml",
+  "summary": "Container engine unavailable",
+  "error": "task `clean` could not list dependency-isolation volume `dev.ota.repo=repo-1` using container engine `podman`: Cannot connect to Podman",
+  "why": "`ota clean` needs Podman to remove dependency-isolation repo state for `dev.ota.repo=repo-1`, but Podman is not reachable.",
+  "next": [
+    "start Podman and rerun `ota clean`",
+    "run `podman system connection list`",
+    "if needed, run `podman machine init` and `podman machine start`"
+  ],
+  "reason": "engine_unavailable",
+  "engine": "podman",
+  "action": "list",
+  "resource_kind": "dependency_isolation_volume",
+  "resource_name": "dev.ota.repo=repo-1",
+  "details": "unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused"
+}
+```
+
+Generic repo-state failure:
+
+```json
+{
+  "ok": false,
+  "path": "./ota.yaml",
+  "summary": "Cleanup failed",
+  "error": "projection `dev.http.host.port` must declare either `fixed` or `auto`"
+}
+```
 
 ## `ota clean --stale --json`
 
 `ota clean --stale --json` is contract-free. It reports exited ota-managed containers that match
 the local cleanup scan and tells automation whether the command removed them or only previewed
-them. If no local container engine can be queried, ota returns a cleanup error instead of this
-success shape.
+them. If no local container engine can be queried, ota returns the same structured cleanup failure
+shape used by `ota clean --json` instead of this success shape.
 
 ```json
 {
@@ -3289,6 +3409,8 @@ success shape.
 
 `ownership` is `label` for containers matched through ota's management labels and
 `legacy_name` for older `ota-*` containers that predate labels.
+
+## `ota detect --json`
 
 `ota detect --merge --json --dry-run` currently uses the same success shape as `ota detect --json
 --dry-run`, but requires an existing contract and includes `comparison`.

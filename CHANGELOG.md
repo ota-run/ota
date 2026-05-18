@@ -26,6 +26,31 @@
 
 ## Unreleased
 
+- improved `ota clean` container-engine failure handling across both text and JSON output:
+  cleanup errors now surface `Container engine unavailable` with structured engine/resource
+  semantics, concrete `Next:` guidance, and a compact `Details:` line instead of raw cleanup
+  failure text with an empty follow-up section
+- added schema-backed JSON conformance coverage for `ota clean --json` across repo, workspace,
+  stale, and structured engine-unavailable failure paths, so the published `clean.json` contract
+  is now validated against real command output instead of helper-only shaping
+- fixed the public `ota clean --json` command boundary so the CLI now accepts repo-scoped clean
+  JSON directly and preserves structured clean failure JSON on stderr instead of rewrapping it
+  into generic `Operation failed` prose
+- fixed the remaining generic `ota clean --json` failure paths so contract target resolution,
+  invalid-contract, wrong-target, and repo-load failures now stay inside the published
+  `clean.json` envelope instead of leaking `ValidateFailure` or bare raw-error payloads
+- expanded end-to-end JSON contract hardening beyond `clean`: representative success/failure stream
+  placement is now locked at the CLI boundary, `validate`, `env`, `doctor`, and
+  `workspace tasks` now have schema-backed command conformance coverage, `check`, `receipt`,
+  `up`, `workspace check`, `workspace doctor`, and `workspace up` now have end-to-end schema
+  coverage too, `validate.json` now admits the shipped `warn_count` summary field, `doctor.json`
+  now admits the shipped execution `default_context`, `contexts`, and env `source` fields,
+  `workspace-check.json` now admits shipped repo execution summaries, `up.json` now admits the
+  shipped preview execution `context` field, and `workspace-up.json` now admits the shipped
+  receipt `status` plus top-level repo readiness counts
+- wired the JSON contract suite into the canonical compatibility gate and GitHub release gate so
+  `json_output_conformance` now runs automatically alongside `json_schema_contracts`
+
 - improved runtime-proof failure classification when startup exits before readiness: proof output now
   prioritizes `Run task exited before readiness` over generic workflow-surface readiness blockers
   when both are present, so deterministic startup-exit root causes surface first

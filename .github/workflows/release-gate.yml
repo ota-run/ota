@@ -298,6 +298,12 @@ jobs:
         timeout-minutes: 10
         run: cargo test --test json_schema_contracts
 
+      - name: Run release gate (Windows) - JSON output conformance
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 10
+        run: cargo test --test json_output_conformance
+
       - name: Run release gate (Windows) - detect fixtures
         if: runner.os == 'Windows'
         shell: pwsh

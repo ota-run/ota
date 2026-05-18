@@ -23,24 +23,42 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(unix)]
+use std::{env, os::unix::fs::PermissionsExt};
 
 use jsonschema::{Draft, JSONSchema};
 use serde_json::Value;
 use tempfile::TempDir;
 
 fn run_ota(args: &[&str], cwd: &Path) -> Value {
+    run_ota_with_env(args, cwd, &[], true)
+}
+
+fn run_ota_with_env(
+    args: &[&str],
+    cwd: &Path,
+    envs: &[(&str, &str)],
+    expect_success: bool,
+) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_ota"))
         .args(args)
         .current_dir(cwd)
+        .envs(envs.iter().copied())
         .output()
         .expect("ota command should run");
-    assert!(
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
         output.status.success(),
-        "ota command failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        expect_success,
+        "ota command status mismatch\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    serde_json::from_slice(&output.stdout).expect("command should emit valid JSON")
+    let json_bytes = if expect_success {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+    serde_json::from_slice(json_bytes).expect("command should emit valid JSON")
 }
 
 fn schema_dir() -> PathBuf {
@@ -133,6 +151,20 @@ fn assert_matches_schema(schema_name: &str, instance: &Value) {
 
 fn write_contract(dir: &TempDir, contents: &str) {
     fs::write(dir.path().join("ota.yaml"), contents).expect("contract should be written");
+}
+
+fn write_workspace_contract(
+    dir: &TempDir,
+    workspace_contents: &str,
+    repo_rel_path: &str,
+    repo_contract_contents: &str,
+) {
+    let repo_dir = dir.path().join(repo_rel_path);
+    fs::create_dir_all(&repo_dir).expect("repo dir should be created");
+    fs::write(dir.path().join("ota.workspace.yaml"), workspace_contents)
+        .expect("workspace contract should be written");
+    fs::write(repo_dir.join("ota.yaml"), repo_contract_contents)
+        .expect("repo contract should be written");
 }
 
 #[test]
@@ -367,4 +399,638 @@ services:
         fixture.path(),
     );
     assert_matches_schema("services.json", &json);
+}
+
+#[test]
+fn validate_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: validate-demo
+tasks:
+  test:
+    run: echo ok
+"#,
+    );
+
+    let json = run_ota(
+        &["validate", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("validate.json", &json);
+}
+
+#[test]
+fn env_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: env-demo
+env:
+  vars:
+    OTA_TEST_SHARED:
+      required: true
+      default: workspace-policy
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    run: echo ok
+"#,
+    );
+
+    let json = run_ota(
+        &["env", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("env.json", &json);
+}
+
+#[test]
+fn doctor_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: doctor-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+env:
+  vars:
+    OTA_TEST_SHARED:
+      required: true
+      default: workspace-policy
+tasks:
+  setup:
+    context: host
+    run: echo ready
+agent:
+  default_task: setup
+  safe_tasks:
+    - setup
+"#,
+    );
+
+    let json = run_ota(
+        &["doctor", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("doctor.json", &json);
+}
+
+#[test]
+fn workspace_tasks_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_workspace_contract(
+        &fixture,
+        r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        "apps/web",
+        r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: echo ready
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "workspace",
+            "tasks",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("workspace-tasks.json", &json);
+}
+
+#[test]
+fn check_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: check-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    context: host
+    run: echo ready
+"#,
+    );
+
+    let json = run_ota(
+        &["check", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("check.json", &json);
+}
+
+#[test]
+fn receipt_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: receipt-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    context: host
+    run: echo ready
+"#,
+    );
+
+    let json = run_ota(
+        &["receipt", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("receipt.json", &json);
+}
+
+#[test]
+fn up_dry_run_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: up-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    context: host
+    run: echo ready
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "up",
+            "--json",
+            "--dry-run",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("up.json", &json);
+}
+
+#[test]
+fn workspace_check_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_workspace_contract(
+        &fixture,
+        r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        "apps/web",
+        r#"
+version: 1
+project:
+  name: web
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    context: host
+    run: echo ready
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "workspace",
+            "check",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("workspace-check.json", &json);
+}
+
+#[test]
+fn workspace_doctor_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_workspace_contract(
+        &fixture,
+        r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        "apps/web",
+        r#"
+version: 1
+project:
+  name: web
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+env:
+  vars:
+    OTA_TEST_SHARED:
+      required: true
+      default: workspace-policy
+tasks:
+  setup:
+    context: host
+    run: echo ready
+agent:
+  default_task: setup
+  safe_tasks:
+    - setup
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "workspace",
+            "doctor",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("workspace-doctor.json", &json);
+}
+
+#[test]
+fn workspace_up_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_workspace_contract(
+        &fixture,
+        r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        "apps/web",
+        r#"
+version: 1
+project:
+  name: web
+tasks:
+  setup:
+    run: echo ready
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "workspace",
+            "up",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("workspace-up.json", &json);
+}
+
+#[test]
+fn clean_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: clean-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  check:
+    run: echo ok
+"#,
+    );
+
+    let json = run_ota(
+        &["clean", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("clean.json", &json);
+}
+
+#[test]
+fn clean_workspace_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: clean-workspace
+workspace:
+  type: monorepo
+  members:
+    - api
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  check:
+    run: echo root
+"#,
+    );
+    let api_dir = fixture.path().join("api");
+    fs::create_dir_all(&api_dir).expect("member dir");
+    fs::write(
+        api_dir.join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: api
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  check:
+    run: echo api
+"#,
+    )
+    .expect("member contract");
+
+    let json = run_ota(
+        &["clean", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("clean.json", &json);
+}
+
+#[test]
+fn clean_stale_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    let empty_bin = fixture.path().join("bin");
+    fs::create_dir_all(&empty_bin).expect("bin dir");
+
+    let json = run_ota_with_env(
+        &["clean", "--stale", "--json"],
+        fixture.path(),
+        &[("PATH", empty_bin.to_str().unwrap())],
+        true,
+    );
+    assert_matches_schema("clean.json", &json);
+}
+
+#[cfg(unix)]
+#[test]
+fn clean_failure_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: clean-failure
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - podman
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  check:
+    context: app
+    run: echo ok
+"#,
+    );
+    fs::create_dir_all(fixture.path().join(".ota").join("state")).expect("state dir");
+    fs::write(
+        fixture
+            .path()
+            .join(".ota")
+            .join("state")
+            .join("ownership-id"),
+        "repo-1",
+    )
+    .expect("ownership token");
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("bin dir");
+    let podman_path = bin_dir.join("podman");
+    fs::write(
+        &podman_path,
+        r#"#!/bin/sh
+if [ "$1" = "volume" ] && [ "$2" = "ls" ]; then
+  echo "Cannot connect to Podman" >&2
+  echo "Error: unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused" >&2
+  exit 125
+fi
+exit 0
+"#,
+    )
+    .expect("fake podman");
+    let mut permissions = fs::metadata(&podman_path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&podman_path, permissions).expect("permissions");
+
+    let mut path_entries = vec![bin_dir.clone()];
+    if let Some(existing) = env::var_os("PATH") {
+        path_entries.extend(env::split_paths(&existing));
+    }
+    let joined_path = env::join_paths(path_entries).expect("join path");
+
+    let json = run_ota_with_env(
+        &["clean", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+        &[("PATH", joined_path.to_str().unwrap())],
+        false,
+    );
+    assert_matches_schema("clean.json", &json);
+}
+
+#[test]
+fn clean_generic_failure_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: clean-generic-failure
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  dev:
+    context: app
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port: {}
+"#,
+    );
+
+    let json = run_ota_with_env(
+        &["clean", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("clean.json", &json);
+}
+
+#[test]
+fn clean_invalid_contract_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: clean-invalid-contract
+execution:
+  preferred: host
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  check:
+    run: echo ok
+"#,
+    );
+
+    let json = run_ota_with_env(
+        &["clean", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("clean.json", &json);
+}
+
+#[test]
+fn clean_unresolved_target_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+
+    let json = run_ota_with_env(
+        &["clean", "--json", "missing-repo-target"],
+        fixture.path(),
+        &[],
+        false,
+    );
+    assert_matches_schema("clean.json", &json);
+}
+
+#[cfg(unix)]
+#[test]
+fn clean_stale_failure_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    let bin_dir = fixture.path().join("bin");
+    fs::create_dir_all(&bin_dir).expect("bin dir");
+    let podman_path = bin_dir.join("podman");
+    fs::write(
+        &podman_path,
+        r#"#!/bin/sh
+echo "Cannot connect to Podman" >&2
+echo "Error: unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused" >&2
+exit 125
+"#,
+    )
+    .expect("fake podman");
+    let mut permissions = fs::metadata(&podman_path).expect("metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&podman_path, permissions).expect("permissions");
+
+    let json = run_ota_with_env(
+        &["clean", "--stale", "--json"],
+        fixture.path(),
+        &[("PATH", bin_dir.to_str().unwrap())],
+        false,
+    );
+    assert_matches_schema("clean.json", &json);
 }

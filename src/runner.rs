@@ -1364,6 +1364,64 @@ pub struct StaleContainerCleanupReport {
     pub containers: Vec<StaleContainerCleanupTarget>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CleanExecutionResourceKind {
+    PersistentContainer,
+    DependencyIsolationVolume,
+    StaleContainers,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CleanExecutionFailureReason {
+    EngineUnavailable,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CleanExecutionFailure {
+    pub engine: String,
+    pub action: String,
+    pub resource_kind: CleanExecutionResourceKind,
+    pub resource_name: Option<String>,
+    pub reason: CleanExecutionFailureReason,
+    pub details: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CleanExecutionError {
+    #[error("{0}")]
+    Cleanup(CleanExecutionFailure),
+    #[error("{0}")]
+    Other(RunError),
+}
+
+impl std::fmt::Display for CleanExecutionFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match (&self.resource_kind, self.resource_name.as_deref()) {
+            (CleanExecutionResourceKind::PersistentContainer, Some(name)) => write!(
+                f,
+                "task `clean` could not {} persistent container `{}` using container engine `{}`: {}",
+                self.action, name, self.engine, self.details
+            ),
+            (CleanExecutionResourceKind::DependencyIsolationVolume, Some(name)) => write!(
+                f,
+                "task `clean` could not {} dependency-isolation volume `{}` using container engine `{}`: {}",
+                self.action, name, self.engine, self.details
+            ),
+            (CleanExecutionResourceKind::StaleContainers, _) => write!(
+                f,
+                "container backend `{}` could not {} stale ota containers: {}",
+                self.engine, self.action, self.details
+            ),
+            _ => write!(
+                f,
+                "task `clean` could not {} repo state using container engine `{}`: {}",
+                self.action, self.engine, self.details
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CleanExecutionReport {
     pub removed_current_persistent_containers: usize,
@@ -3101,11 +3159,21 @@ fn propagate_step_result_to_run_state(
     }
 }
 
-pub fn clean_execution(contract: &Contract, contract_path: &Path) -> Result<bool, RunError> {
+pub fn clean_execution(
+    contract: &Contract,
+    contract_path: &Path,
+) -> Result<bool, CleanExecutionError> {
     clean_execution_report(contract, contract_path).map(|report| report.cleaned_any())
 }
 
 pub fn clean_execution_report(
+    contract: &Contract,
+    contract_path: &Path,
+) -> Result<CleanExecutionReport, CleanExecutionError> {
+    clean_execution_report_inner(contract, contract_path).map_err(classify_clean_execution_error)
+}
+
+fn clean_execution_report_inner(
     contract: &Contract,
     contract_path: &Path,
 ) -> Result<CleanExecutionReport, RunError> {
@@ -3289,6 +3357,107 @@ pub fn clean_execution_report(
     write_repo_managed_engines("clean", working_dir, &engines_to_track)?;
 
     Ok(report)
+}
+
+pub fn clean_stale_execution(
+    dry_run: bool,
+) -> Result<StaleContainerCleanupReport, CleanExecutionError> {
+    clean_stale_execution_inner(dry_run).map_err(classify_clean_execution_error)
+}
+
+fn clean_stale_execution_inner(dry_run: bool) -> Result<StaleContainerCleanupReport, RunError> {
+    let engines = available_container_engines();
+    let mut containers = Vec::new();
+    let mut query_error = None;
+    let mut queried_engines = 0usize;
+
+    for engine in &engines {
+        match list_stale_ota_containers(engine) {
+            Ok(found) => {
+                queried_engines += 1;
+                containers.extend(found);
+            }
+            Err(error) => {
+                query_error.get_or_insert(error);
+            }
+        }
+    }
+
+    if !dry_run {
+        for container in &containers {
+            let _ = remove_persistent_container(&container.engine, &container.name, "clean")?;
+        }
+    }
+
+    if queried_engines == 0
+        && let Some(error) = query_error
+    {
+        return Err(error);
+    }
+
+    Ok(StaleContainerCleanupReport {
+        engines,
+        containers,
+    })
+}
+
+fn classify_clean_execution_error(error: RunError) -> CleanExecutionError {
+    match error {
+        RunError::PersistentContainerCleanupFailure {
+            action,
+            container,
+            engine,
+            details,
+            ..
+        } => CleanExecutionError::Cleanup(CleanExecutionFailure {
+            action,
+            resource_kind: CleanExecutionResourceKind::PersistentContainer,
+            resource_name: Some(container),
+            reason: classify_clean_execution_failure_reason(details.as_str()),
+            engine,
+            details,
+        }),
+        RunError::DependencyIsolationVolumeFailure {
+            action,
+            volume,
+            engine,
+            details,
+            ..
+        } => CleanExecutionError::Cleanup(CleanExecutionFailure {
+            action,
+            resource_kind: CleanExecutionResourceKind::DependencyIsolationVolume,
+            resource_name: Some(volume),
+            reason: classify_clean_execution_failure_reason(details.as_str()),
+            engine,
+            details,
+        }),
+        RunError::StaleContainerQueryFailed { engine, details } => {
+            CleanExecutionError::Cleanup(CleanExecutionFailure {
+                action: String::from("list"),
+                resource_kind: CleanExecutionResourceKind::StaleContainers,
+                resource_name: None,
+                reason: classify_clean_execution_failure_reason(details.as_str()),
+                engine,
+                details,
+            })
+        }
+        other => CleanExecutionError::Other(other),
+    }
+}
+
+fn classify_clean_execution_failure_reason(details: &str) -> CleanExecutionFailureReason {
+    let lowered = details.to_ascii_lowercase();
+    if lowered.contains("cannot connect to podman")
+        || lowered.contains("unable to connect to podman socket")
+        || lowered.contains("docker daemon is not running")
+        || lowered.contains("cannot connect to the docker daemon")
+        || lowered.contains("is the docker daemon running")
+        || lowered.contains("error while dialing")
+        || lowered.contains("connection refused")
+    {
+        return CleanExecutionFailureReason::EngineUnavailable;
+    }
+    CleanExecutionFailureReason::Other
 }
 
 fn remove_persistent_container_if_present(
@@ -3525,42 +3694,6 @@ fn persistent_cleanup_targets(
         }
     }
     Ok(targets)
-}
-
-pub fn clean_stale_execution(dry_run: bool) -> Result<StaleContainerCleanupReport, RunError> {
-    let engines = available_container_engines();
-    let mut containers = Vec::new();
-    let mut query_error = None;
-    let mut queried_engines = 0usize;
-
-    for engine in &engines {
-        match list_stale_ota_containers(engine) {
-            Ok(found) => {
-                queried_engines += 1;
-                containers.extend(found);
-            }
-            Err(error) => {
-                query_error.get_or_insert(error);
-            }
-        }
-    }
-
-    if !dry_run {
-        for container in &containers {
-            let _ = remove_persistent_container(&container.engine, &container.name, "clean")?;
-        }
-    }
-
-    if queried_engines == 0
-        && let Some(error) = query_error
-    {
-        return Err(error);
-    }
-
-    Ok(StaleContainerCleanupReport {
-        engines,
-        containers,
-    })
 }
 
 fn list_stale_ota_containers(engine: &str) -> Result<Vec<StaleContainerCleanupTarget>, RunError> {
@@ -40054,12 +40187,111 @@ tasks:
         }
 
         match error {
-            RunError::DependencyIsolationVolumeFailure { action, .. } => {
-                assert_eq!(action, "list");
+            super::CleanExecutionError::Cleanup(failure) => {
+                assert_eq!(failure.action, "list");
+                assert_eq!(
+                    failure.resource_kind,
+                    super::CleanExecutionResourceKind::DependencyIsolationVolume
+                );
             }
             other => panic!("expected discovery failure, got {other}"),
         }
         assert!(state_dir.join("volume.repo-1").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_report_classifies_engine_unavailable_failures() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - podman
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let podman_path = bin_dir.join("podman");
+        fs::write(
+            &podman_path,
+            r#"#!/bin/sh
+if [ "$1" = "volume" ] && [ "$2" = "ls" ]; then
+  echo "Cannot connect to Podman" >&2
+  echo "Error: unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused" >&2
+  exit 125
+fi
+exit 0
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(&ota_dir).unwrap();
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let error = clean_execution_report(&fixture.contract, fixture.file_path()).unwrap_err();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match error {
+            super::CleanExecutionError::Cleanup(failure) => {
+                assert_eq!(failure.engine, "podman");
+                assert_eq!(failure.action, "list");
+                assert_eq!(
+                    failure.resource_kind,
+                    super::CleanExecutionResourceKind::DependencyIsolationVolume
+                );
+                assert_eq!(
+                    failure.reason,
+                    super::CleanExecutionFailureReason::EngineUnavailable
+                );
+                assert!(failure.details.contains("connection refused"));
+            }
+            other => panic!("expected structured cleanup failure, got {other}"),
+        }
     }
 
     #[cfg(unix)]
@@ -40133,8 +40365,12 @@ tasks:
         }
 
         match error {
-            RunError::DependencyIsolationVolumeFailure { action, .. } => {
-                assert_eq!(action, "inspect");
+            super::CleanExecutionError::Cleanup(failure) => {
+                assert_eq!(failure.action, "inspect");
+                assert_eq!(
+                    failure.resource_kind,
+                    super::CleanExecutionResourceKind::DependencyIsolationVolume
+                );
             }
             other => panic!("expected inspection failure, got {other}"),
         }

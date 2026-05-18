@@ -2149,6 +2149,7 @@ Current behavior:
 - stale cleanup uses ota ownership labels first and falls back to legacy `ota-*` container names for older persistent backends
 - if a local container engine cannot answer `ps`, stale cleanup continues with other available engines and only fails when none of them can be queried
 - `ota clean --stale --dry-run` previews stale containers without removing them
+- `ota clean --json` emits structured repo/member/workspace cleanup counters on success and structured engine/resource failure details on failure
 - `ota clean --stale --json` emits the matched engines, containers, and cleanup counts for automation
 - `ota clean --stale` has its own exit-code contract and is separate from repo-scoped `ota clean`
 - remote backends do not currently define cleanup semantics; they report `No cleanup needed`

@@ -525,8 +525,8 @@ enum Commands {
         /// Preview stale cleanup without removing containers.
         #[arg(long, action = ArgAction::SetTrue, requires = "stale")]
         dry_run: bool,
-        /// Emit machine-readable JSON output for stale cleanup.
-        #[arg(long, action = ArgAction::SetTrue, requires = "stale")]
+        /// Emit machine-readable JSON output.
+        #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, conflicts_with = "stale", add = ArgValueCompleter::new(complete_repo_member_candidates))]
@@ -5623,6 +5623,7 @@ fn command_requests_json(command: &Commands) -> bool {
         | Commands::Receipt { json, .. }
         | Commands::Up { json, .. }
         | Commands::Detect { json, .. }
+        | Commands::Clean { json, .. }
         | Commands::Policy {
             json,
             command: None,
@@ -5662,7 +5663,6 @@ fn command_requests_json(command: &Commands) -> bool {
             | WorkspaceCommands::Run { json, .. } => *json,
         },
         Commands::Run { .. }
-        | Commands::Clean { .. }
         | Commands::Completion { .. }
         | Commands::Uninstall
         | Commands::SelfUpdate { .. }
@@ -11737,6 +11737,285 @@ exit 1
 
     #[cfg(unix)]
     #[test]
+    fn clean_json_failure_stays_machine_readable_on_stderr() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - podman
+      attachments:
+        isolated_paths:
+          - node_modules
+tasks:
+  check:
+    context: app
+    run: echo ok
+"#,
+        );
+
+        fs::create_dir_all(fixture.dir.path().join(".ota").join("state")).unwrap();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join(".ota")
+                .join("state")
+                .join("ownership-id"),
+            "repo-1",
+        )
+        .unwrap();
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "podman",
+            r#"#!/bin/sh
+if [ "$1" = "--version" ] || [ "$1" = "version" ]; then
+  printf "podman version 5.0.0\n"
+  exit 0
+fi
+if [ "$1" = "volume" ] && [ "$2" = "ls" ]; then
+  printf "Cannot connect to Podman\n" >&2
+  printf "Error: unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused\n" >&2
+  exit 125
+fi
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+exit 0
+"#,
+        );
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "clean", "--json", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        assert!(output.stdout.is_empty());
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(!stderr.contains("Operation failed"), "{stderr}");
+        let json: Value = serde_json::from_str(stderr).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["summary"], "Container engine unavailable");
+        assert_eq!(json["reason"], "engine_unavailable");
+        assert_eq!(json["engine"], "podman");
+        assert_eq!(json["resource_kind"], "dependency_isolation_volume");
+    }
+
+    #[test]
+    fn representative_json_failures_stay_machine_readable_on_stderr() {
+        let validate_fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota-monorepo
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        );
+        let execution_fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: execution-demo
+"#,
+        );
+        let workspace_fixture = WorkspaceFixture::new();
+
+        let cases: Vec<(&str, CommandOutput)> = vec![
+            (
+                "validate",
+                run_with(["ota", "validate", "--json", validate_fixture.path()]),
+            ),
+            (
+                "execution plan",
+                run_with([
+                    "ota",
+                    "execution",
+                    "plan",
+                    "--json",
+                    "--mode",
+                    "container",
+                    execution_fixture.path(),
+                ]),
+            ),
+            (
+                "workspace execution plan",
+                run_with([
+                    "ota",
+                    "workspace",
+                    "execution",
+                    "plan",
+                    "--json",
+                    "--repo",
+                    "missing",
+                    workspace_fixture.path(),
+                ]),
+            ),
+        ];
+
+        for (label, output) in cases {
+            assert_eq!(output.exit_code, 1, "{label} should fail");
+            assert!(
+                output.stdout.is_empty(),
+                "{label} should not emit failure json on stdout"
+            );
+            let stderr = output.stderr.as_deref().unwrap_or_default();
+            assert!(
+                !stderr.contains("Operation failed"),
+                "{label} failure json should not be rewrapped: {stderr}"
+            );
+            let json: Value = serde_json::from_str(stderr).unwrap_or_else(|error| {
+                panic!("{label} stderr should stay json: {error}\n{stderr}")
+            });
+            assert_eq!(json["ok"], false, "{label} should report ok=false");
+        }
+    }
+
+    #[test]
+    fn representative_json_successes_stay_machine_readable_on_stdout() {
+        let validate_fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: success-demo
+tasks:
+  test:
+    run: echo ok
+"#,
+        );
+        let topology_fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: topology-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  dev:
+    context: host
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        );
+        let clean_fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: clean-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  check:
+    run: echo ok
+"#,
+        );
+        let workspace_fixture = WorkspaceFixture::new();
+
+        let cases: Vec<(&str, CommandOutput)> = vec![
+            (
+                "validate",
+                run_with(["ota", "validate", "--json", validate_fixture.path()]),
+            ),
+            (
+                "tasks",
+                run_with(["ota", "tasks", "--json", validate_fixture.path()]),
+            ),
+            (
+                "execution topology",
+                run_with([
+                    "ota",
+                    "execution",
+                    "topology",
+                    "--json",
+                    topology_fixture.path(),
+                ]),
+            ),
+            (
+                "clean",
+                run_with(["ota", "clean", "--json", clean_fixture.path()]),
+            ),
+            (
+                "workspace list",
+                run_with([
+                    "ota",
+                    "workspace",
+                    "list",
+                    "--json",
+                    workspace_fixture.path(),
+                ]),
+            ),
+        ];
+
+        for (label, output) in cases {
+            assert_eq!(output.exit_code, 0, "{label} should succeed");
+            assert!(
+                output.stderr.as_deref().unwrap_or_default().is_empty(),
+                "{label} should keep stderr empty on success: {:?}",
+                output.stderr
+            );
+            assert!(
+                !output.stdout.is_empty(),
+                "{label} should emit success json on stdout"
+            );
+            let json: Value = serde_json::from_str(&output.stdout).unwrap_or_else(|error| {
+                panic!(
+                    "{label} stdout should stay json: {error}\n{}",
+                    output.stdout
+                )
+            });
+            assert_eq!(json["ok"], true, "{label} should report ok=true");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn clean_stale_continues_when_one_engine_queries_successfully() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
@@ -15899,6 +16178,763 @@ tasks:
             member: Vec::new(),
             path: None,
         }));
+    }
+
+    #[test]
+    fn clean_json_is_treated_as_json_at_the_cli_boundary() {
+        assert!(super::command_requests_json(&super::Commands::Clean {
+            stale: false,
+            dry_run: false,
+            json: true,
+            member: Vec::new(),
+            path: None,
+        }));
+    }
+
+    #[test]
+    fn all_json_capable_commands_are_marked_as_json_requested() {
+        let cases = vec![
+            (
+                "validate",
+                super::Commands::Validate {
+                    json: true,
+                    member: None,
+                    path: None,
+                },
+            ),
+            (
+                "tasks",
+                super::Commands::Tasks {
+                    json: true,
+                    all: false,
+                    use_cmd: false,
+                    member: Vec::new(),
+                    workflow: None,
+                    path: None,
+                },
+            ),
+            (
+                "workflows",
+                super::Commands::Workflows {
+                    json: true,
+                    member: Vec::new(),
+                    path: None,
+                },
+            ),
+            (
+                "services",
+                super::Commands::Services {
+                    json: true,
+                    member: Vec::new(),
+                    path: None,
+                },
+            ),
+            (
+                "env",
+                super::Commands::Env {
+                    json: true,
+                    member: None,
+                    task: None,
+                    path: None,
+                },
+            ),
+            (
+                "execution plan",
+                super::Commands::Execution {
+                    command: super::ExecutionCommands::Plan {
+                        json: true,
+                        backend: None,
+                        native: false,
+                        container: false,
+                        remote: false,
+                        lifecycle: None,
+                        persistent: false,
+                        ephemeral: false,
+                        member: None,
+                        workflow: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "execution topology",
+                super::Commands::Execution {
+                    command: super::ExecutionCommands::Topology {
+                        json: true,
+                        member: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "proof runtime",
+                super::Commands::Proof {
+                    command: super::ProofCommands::Runtime {
+                        json: true,
+                        backend: None,
+                        native: false,
+                        container: false,
+                        remote: false,
+                        lifecycle: None,
+                        persistent: false,
+                        ephemeral: false,
+                        member: None,
+                        workflow: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "assist declare-readiness",
+                super::Commands::Assist {
+                    command: super::AssistCommands::DeclareReadiness {
+                        json: true,
+                        write: false,
+                        member: None,
+                        task: None,
+                        service: None,
+                        style: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "assist declare-service",
+                super::Commands::Assist {
+                    command: super::AssistCommands::DeclareService {
+                        json: true,
+                        write: false,
+                        member: None,
+                        name: String::from("db"),
+                        manager: None,
+                        manager_name: None,
+                        compose_file: None,
+                        compose_service: None,
+                        endpoint: None,
+                        address: None,
+                        port: None,
+                        required: None,
+                        style: None,
+                        producer: None,
+                        producer_repo: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "assist wire-setup",
+                super::Commands::Assist {
+                    command: super::AssistCommands::WireSetup {
+                        json: true,
+                        write: false,
+                        member: None,
+                        run: None,
+                        script: None,
+                        copy_from: None,
+                        copy_to: None,
+                        services: Vec::new(),
+                        clear_services: false,
+                        internal: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "assist bind-task",
+                super::Commands::Assist {
+                    command: super::AssistCommands::BindTask {
+                        json: true,
+                        write: false,
+                        member: None,
+                        task: String::from("build"),
+                        target: String::from("api"),
+                        to: String::from("dev:http"),
+                        producer_member: None,
+                        address_view: None,
+                        activation: None,
+                        override_input: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "assist declare-env",
+                super::Commands::Assist {
+                    command: super::AssistCommands::DeclareEnv {
+                        json: true,
+                        write: false,
+                        member: None,
+                        task: None,
+                        name: None,
+                        value: None,
+                        required: None,
+                        secret: None,
+                        default: None,
+                        allowed: Vec::new(),
+                        prepend: Vec::new(),
+                        append: Vec::new(),
+                        source_kind: None,
+                        source_path: None,
+                        must_exist: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "assist add-task",
+                super::Commands::Assist {
+                    command: super::AssistCommands::AddTask {
+                        json: true,
+                        write: false,
+                        member: None,
+                        name: String::from("build"),
+                        kind: None,
+                        run: None,
+                        script: None,
+                        description: None,
+                        internal: None,
+                        listener: None,
+                        protocol: None,
+                        address: None,
+                        port: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "assist normalize",
+                super::Commands::Assist {
+                    command: super::AssistCommands::Normalize {
+                        json: true,
+                        write: false,
+                        member: None,
+                        task: String::from("bootstrap"),
+                        into: super::AssistNormalizeIntoArg::Setup,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "doctor",
+                super::Commands::Doctor {
+                    json: true,
+                    fix: false,
+                    dry_run: false,
+                    backend: None,
+                    native: false,
+                    container: false,
+                    remote: false,
+                    lifecycle: None,
+                    persistent: false,
+                    ephemeral: false,
+                    member: Vec::new(),
+                    workflow: None,
+                    path: None,
+                },
+            ),
+            (
+                "explain",
+                super::Commands::Explain {
+                    json: true,
+                    member: Vec::new(),
+                    path: None,
+                },
+            ),
+            (
+                "diff",
+                super::Commands::Diff {
+                    json: true,
+                    base: PathBuf::from("base.yaml"),
+                    target: PathBuf::from("target.yaml"),
+                },
+            ),
+            (
+                "extensions",
+                super::Commands::Extensions {
+                    json: true,
+                    run: None,
+                    publish: None,
+                    member: Vec::new(),
+                    path: None,
+                },
+            ),
+            (
+                "init",
+                super::Commands::Init {
+                    write: false,
+                    bootstrap: false,
+                    pack: None,
+                    package_manager: None,
+                    test_runner: None,
+                    packs: false,
+                    dry_run: false,
+                    json: true,
+                    path: None,
+                },
+            ),
+            (
+                "agents",
+                super::Commands::Agents {
+                    json: true,
+                    review: false,
+                    confirm: false,
+                    dry_run: false,
+                    write: false,
+                    output: None,
+                    path: None,
+                },
+            ),
+            (
+                "check",
+                super::Commands::Check {
+                    json: true,
+                    member: Vec::new(),
+                    workflow: None,
+                    path: None,
+                },
+            ),
+            (
+                "receipt",
+                super::Commands::Receipt {
+                    json: true,
+                    baseline: None,
+                    fail_on_new_blockers: false,
+                    history: false,
+                    archive: false,
+                    promote_baseline: false,
+                    backend: None,
+                    native: false,
+                    container: false,
+                    remote: false,
+                    lifecycle: None,
+                    persistent: false,
+                    ephemeral: false,
+                    member: None,
+                    path: None,
+                },
+            ),
+            (
+                "up",
+                super::Commands::Up {
+                    json: true,
+                    dry_run: false,
+                    stream: false,
+                    backend: None,
+                    native: false,
+                    container: false,
+                    remote: false,
+                    lifecycle: None,
+                    persistent: false,
+                    ephemeral: false,
+                    receipt: false,
+                    member: Vec::new(),
+                    workflow: None,
+                    path: None,
+                },
+            ),
+            (
+                "detect",
+                super::Commands::Detect {
+                    json: true,
+                    write: false,
+                    dry_run: false,
+                    contract: false,
+                    merge: false,
+                    apply: Vec::new(),
+                    apply_all: false,
+                    rewrite: false,
+                    yes: false,
+                    path: None,
+                },
+            ),
+            (
+                "clean",
+                super::Commands::Clean {
+                    stale: false,
+                    dry_run: false,
+                    json: true,
+                    member: Vec::new(),
+                    path: None,
+                },
+            ),
+            (
+                "policy",
+                super::Commands::Policy {
+                    json: true,
+                    command: None,
+                    path: None,
+                },
+            ),
+            (
+                "policy init",
+                super::Commands::Policy {
+                    json: false,
+                    command: Some(super::PolicyCommands::Init {
+                        preset: None,
+                        dry_run: false,
+                        json: true,
+                        path: None,
+                    }),
+                    path: None,
+                },
+            ),
+            (
+                "policy review",
+                super::Commands::Policy {
+                    json: false,
+                    command: Some(super::PolicyCommands::Review {
+                        json: true,
+                        path: None,
+                    }),
+                    path: None,
+                },
+            ),
+            (
+                "skills install",
+                super::Commands::Skills {
+                    command: super::SkillsCommands::Install {
+                        agent: super::SkillAgent::Codex,
+                        json: true,
+                    },
+                },
+            ),
+            (
+                "workspace init",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Init {
+                        write: false,
+                        bootstrap: false,
+                        dry_run: false,
+                        merge: false,
+                        json: true,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace detect",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Detect {
+                        write: false,
+                        dry_run: false,
+                        merge: false,
+                        rewrite: false,
+                        yes: false,
+                        json: true,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace validate",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Validate {
+                        json: true,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace tasks",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Tasks {
+                        json: true,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace list",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::List {
+                        json: true,
+                        status: None,
+                        repo: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace execution plan",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Execution {
+                        command: super::WorkspaceExecutionCommands::Plan {
+                            json: true,
+                            backend: None,
+                            native: false,
+                            container: false,
+                            remote: false,
+                            lifecycle: None,
+                            persistent: false,
+                            ephemeral: false,
+                            repo: None,
+                            path: None,
+                        },
+                    },
+                },
+            ),
+            (
+                "workspace doctor",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Doctor {
+                        json: true,
+                        stream: false,
+                        jobs: 1,
+                        status: super::WorkspaceDoctorStatusArg::All,
+                        severity: super::WorkspaceDoctorSeverityArg::All,
+                        repo: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace explain",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Explain {
+                        json: true,
+                        jobs: 1,
+                        status: super::WorkspaceDoctorStatusArg::All,
+                        severity: super::WorkspaceDoctorSeverityArg::All,
+                        repo: None,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace check",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Check {
+                        json: true,
+                        jobs: 1,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace up",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Up {
+                        json: true,
+                        jobs: 1,
+                        quiet: false,
+                        stream: false,
+                        receipt: false,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace refresh",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Refresh {
+                        json: true,
+                        jobs: 1,
+                        dry_run: false,
+                        force: false,
+                        prune: false,
+                        git_ref: None,
+                        quiet: false,
+                        stream: false,
+                        receipt: false,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace diff",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Diff {
+                        json: true,
+                        jobs: 1,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace status",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Status {
+                        json: true,
+                        jobs: 1,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace receipt",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Receipt {
+                        json: true,
+                        archive: false,
+                        jobs: 1,
+                        path: None,
+                    },
+                },
+            ),
+            (
+                "workspace run",
+                super::Commands::Workspace {
+                    command: super::WorkspaceCommands::Run {
+                        task: String::from("ci"),
+                        json: true,
+                        jobs: 1,
+                        stream: false,
+                        receipt: false,
+                        path: None,
+                        inputs: Vec::new(),
+                    },
+                },
+            ),
+        ];
+
+        for (label, command) in cases {
+            assert!(
+                super::command_requests_json(&command),
+                "{label} should be treated as a JSON-capable command"
+            );
+        }
+    }
+
+    #[test]
+    fn all_json_capable_command_argv_parse_and_request_json() {
+        let cases: Vec<(&str, Vec<&str>)> = vec![
+            ("validate", vec!["ota", "validate", "--json"]),
+            ("tasks", vec!["ota", "tasks", "--json"]),
+            ("workflows", vec!["ota", "workflows", "--json"]),
+            ("services", vec!["ota", "services", "--json"]),
+            ("env", vec!["ota", "env", "--json"]),
+            ("execution plan", vec!["ota", "execution", "plan", "--json"]),
+            (
+                "execution topology",
+                vec!["ota", "execution", "topology", "--json"],
+            ),
+            ("proof runtime", vec!["ota", "proof", "runtime", "--json"]),
+            (
+                "assist declare-readiness",
+                vec!["ota", "assist", "declare-readiness", "--json"],
+            ),
+            (
+                "assist declare-service",
+                vec!["ota", "assist", "declare-service", "--json", "--name", "db"],
+            ),
+            (
+                "assist wire-setup",
+                vec!["ota", "assist", "wire-setup", "--json"],
+            ),
+            (
+                "assist bind-task",
+                vec![
+                    "ota",
+                    "assist",
+                    "bind-task",
+                    "--json",
+                    "--task",
+                    "build",
+                    "--target",
+                    "api",
+                    "--to",
+                    "dev:http",
+                ],
+            ),
+            (
+                "assist declare-env",
+                vec!["ota", "assist", "declare-env", "--json"],
+            ),
+            (
+                "assist add-task",
+                vec!["ota", "assist", "add-task", "--json", "--name", "build"],
+            ),
+            (
+                "assist normalize",
+                vec![
+                    "ota",
+                    "assist",
+                    "normalize",
+                    "--json",
+                    "--task",
+                    "bootstrap",
+                    "--into",
+                    "setup",
+                ],
+            ),
+            ("doctor", vec!["ota", "doctor", "--json"]),
+            ("explain", vec!["ota", "explain", "--json"]),
+            ("init", vec!["ota", "init", "--json", "--dry-run"]),
+            ("agents", vec!["ota", "agents", "--json"]),
+            ("check", vec!["ota", "check", "--json"]),
+            ("receipt", vec!["ota", "receipt", "--json"]),
+            ("up", vec!["ota", "up", "--json"]),
+            ("clean", vec!["ota", "clean", "--json"]),
+            ("detect", vec!["ota", "detect", "--json", "--dry-run"]),
+            (
+                "diff",
+                vec!["ota", "diff", "--json", "base.yaml", "target.yaml"],
+            ),
+            ("policy", vec!["ota", "policy", "--json"]),
+            ("policy init", vec!["ota", "policy", "init", "--json"]),
+            ("policy review", vec!["ota", "policy", "review", "--json"]),
+            (
+                "skills install",
+                vec!["ota", "skills", "install", "--agent", "codex", "--json"],
+            ),
+            ("workspace init", vec!["ota", "workspace", "init", "--json"]),
+            (
+                "workspace detect",
+                vec!["ota", "workspace", "detect", "--json", "--dry-run"],
+            ),
+            (
+                "workspace validate",
+                vec!["ota", "workspace", "validate", "--json"],
+            ),
+            (
+                "workspace tasks",
+                vec!["ota", "workspace", "tasks", "--json"],
+            ),
+            ("workspace list", vec!["ota", "workspace", "list", "--json"]),
+            (
+                "workspace execution plan",
+                vec!["ota", "workspace", "execution", "plan", "--json"],
+            ),
+            (
+                "workspace doctor",
+                vec!["ota", "workspace", "doctor", "--json"],
+            ),
+            (
+                "workspace explain",
+                vec!["ota", "workspace", "explain", "--json"],
+            ),
+            (
+                "workspace check",
+                vec!["ota", "workspace", "check", "--json"],
+            ),
+            ("workspace up", vec!["ota", "workspace", "up", "--json"]),
+            (
+                "workspace refresh",
+                vec!["ota", "workspace", "refresh", "--json"],
+            ),
+            ("workspace diff", vec!["ota", "workspace", "diff", "--json"]),
+            (
+                "workspace status",
+                vec!["ota", "workspace", "status", "--json"],
+            ),
+            (
+                "workspace receipt",
+                vec!["ota", "workspace", "receipt", "--json"],
+            ),
+            (
+                "workspace run",
+                vec!["ota", "workspace", "run", "ci", "--json"],
+            ),
+        ];
+
+        for (label, argv) in cases {
+            let cli = super::Cli::try_parse_from(argv.clone())
+                .unwrap_or_else(|error| panic!("{label} should parse with --json: {error}"));
+            assert!(
+                super::command_requests_json(&cli.command),
+                "{label} should request json after parsing"
+            );
+        }
     }
 
     #[test]
