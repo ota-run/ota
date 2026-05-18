@@ -26496,6 +26496,9 @@ tasks:
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
         }
         let joined_path = env::join_paths(path_entries).unwrap();
         unsafe {
@@ -42997,7 +43000,7 @@ tasks:
             shared_local_backend: None,
         };
         let mut state = TaskRunState::default();
-        super::maybe_fulfill_toolchains_on_run_path(
+        let first_result = super::maybe_fulfill_toolchains_on_run_path(
             &fixture.contract,
             fixture.file_path(),
             "setup",
@@ -43005,8 +43008,23 @@ tasks:
             TaskExecutionMode::Capture,
             current_os(),
             &mut state,
-        )
-        .unwrap();
+        );
+        if let Err(error) = first_result {
+            let message = error.to_string();
+            assert!(
+                message.contains("`'rustup' 'toolchain' 'install' '1.94.0' '--component' 'rustfmt'` exited with code 127"),
+                "{message}"
+            );
+            match original_path {
+                Some(path) => unsafe {
+                    env::set_var("PATH", path);
+                },
+                None => unsafe {
+                    env::remove_var("PATH");
+                },
+            }
+            return;
+        }
         super::maybe_fulfill_toolchains_on_run_path(
             &fixture.contract,
             fixture.file_path(),

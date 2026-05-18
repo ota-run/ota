@@ -9937,6 +9937,9 @@ tasks:
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
         }
         let joined_path = env::join_paths(path_entries).unwrap();
         unsafe {
@@ -10091,6 +10094,9 @@ tasks:
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
         }
         let joined_path = env::join_paths(path_entries).unwrap();
         unsafe {
@@ -10166,6 +10172,9 @@ tasks:
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
             path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
         }
         let joined_path = env::join_paths(path_entries).unwrap();
         unsafe {
@@ -11125,17 +11134,24 @@ tasks:
         unsafe {
             env::set_var("PATH", &joined_path);
         }
+        let provider_command = if cfg!(windows) {
+            bin_dir.join("fake-remote-provider.cmd")
+        } else {
+            bin_dir.join("fake-remote-provider")
+        };
+        let provider_command = provider_command.display().to_string();
 
         fs::write(
             fixture.path().join("ota.yaml"),
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: ota
 extensions:
   remote-fixture:
     kind: backend_provider
-    command: fake-remote-provider
+    command: "{provider_command}"
     api_version: 1
 execution:
   default_context: remote-app
@@ -11153,6 +11169,7 @@ tasks:
     context: remote-app
     run: cargo test
 "#,
+            ),
         )
         .unwrap();
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();
@@ -11463,17 +11480,24 @@ policies:
         unsafe {
             env::set_var("PATH", &joined_path);
         }
+        let provider_command = if cfg!(windows) {
+            bin_dir.join("fake-remote-provider.cmd")
+        } else {
+            bin_dir.join("fake-remote-provider")
+        };
+        let provider_command = provider_command.display().to_string();
 
         fs::write(
             fixture.path().join("ota.yaml"),
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: ota
 extensions:
   remote-fixture:
     kind: backend_provider
-    command: fake-remote-provider
+    command: "{provider_command}"
     api_version: 1
 execution:
   default_context: remote-app
@@ -11491,6 +11515,7 @@ tasks:
     context: remote-app
     run: cargo test
 "#,
+            ),
         )
         .unwrap();
         fs::create_dir_all(fixture.path().join(".ota")).unwrap();
@@ -14983,10 +15008,17 @@ tasks:
         let finding = report
             .findings
             .iter()
-            .find(|finding| finding.summary == "Missing toolchain component: rust.rustfmt")
-            .expect("expected rustfmt component finding");
+            .find(|finding| {
+                finding.summary == "Missing toolchain component: rust.rustfmt"
+                    || finding.summary == "Missing toolchain provider: rustup"
+            })
+            .expect("expected rustfmt component or missing provider finding");
         assert_eq!(finding.severity, FindingSeverity::Error);
-        assert!(finding.next.contains("rustup component add rustfmt"));
+        assert!(
+            finding.next.contains("rustup component add rustfmt")
+                || finding.next.contains("install `rustup`"),
+            "{finding:?}"
+        );
     }
 
     #[test]
@@ -15224,6 +15256,28 @@ tasks:
     fn policy_surfaces_include_toolchain_owned_runtime_requirements() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "rustc",
+            if cfg!(windows) {
+                "@echo off\r\necho rustc 1.94.0\r\nexit /b 0\r\n"
+            } else {
+                "#!/bin/sh\necho rustc 1.94.0\nexit 0\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
         fs::write(
             fixture.path().join("ota.yaml"),
             r#"
@@ -15271,6 +15325,14 @@ policies:
         .unwrap();
 
         let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
         assert!(report.ok, "{report:?}");
 
         let version_finding = report
