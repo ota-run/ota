@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.14
+
 - inferred `launch.kind: command` executables as scoped tool requirements in workflow/task
   requirement surfaces, so `doctor`/`up` now diagnose and activate launch-command dependencies
   (for example `npx`) without requiring duplicate manual `requirements.tools` entries, and scoped
