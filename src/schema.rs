@@ -1026,19 +1026,20 @@ impl Contract {
                 continue;
             };
             saw_task = true;
-            if !task.requirements.runtimes.is_empty() {
+            let scoped_surface = task.scoped_requirement_surface();
+            if !scoped_surface.runtimes.is_empty() {
                 scoped_runtimes = true;
             }
-            if !task.requirements.tools.is_empty() {
+            if !scoped_surface.tools.is_empty() {
                 scoped_tools = true;
             }
-            for (name, requirement) in &task.requirements.runtimes {
+            for (name, requirement) in &scoped_surface.runtimes {
                 surface.runtimes.insert(
                     name.clone(),
                     self.resolve_scoped_runtime_requirement(name, requirement),
                 );
             }
-            for (name, requirement) in &task.requirements.tools {
+            for (name, requirement) in &scoped_surface.tools {
                 surface.tools.insert(
                     name.clone(),
                     self.resolve_scoped_tool_requirement(name, requirement),
@@ -2904,10 +2905,63 @@ impl TaskSpec {
     }
 
     pub fn scoped_requirement_surface(&self) -> RequirementSurface {
+        let mut tools = self.requirements.tools.clone();
+        for (name, requirement) in self.inferred_command_launch_tool_requirements() {
+            tools.entry(name).or_insert(requirement);
+        }
         RequirementSurface {
             runtimes: self.requirements.runtimes.clone(),
-            tools: self.requirements.tools.clone(),
+            tools,
         }
+    }
+
+    pub fn declared_command_launch_executables(&self) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        if let Some(TaskLaunchSpec::Command(command)) = self.launch.as_ref() {
+            let exe = command.exe.trim();
+            if !exe.is_empty() {
+                names.insert(exe.to_string());
+            }
+        }
+        if let Some(execution) = self.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                if let Some(TaskLaunchSpec::Command(command)) = branch.launch.as_ref() {
+                    let exe = command.exe.trim();
+                    if !exe.is_empty() {
+                        names.insert(exe.to_string());
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    pub fn effective_command_launch_executable_for_backend(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Option<String> {
+        let execution = self.resolved_execution_for_backend(backend, os)?;
+        let launch = execution.launch()?;
+        let TaskLaunchSpec::Command(command) = launch else {
+            return None;
+        };
+        let exe = command.exe.trim();
+        if exe.is_empty() {
+            return None;
+        }
+        Some(exe.to_string())
+    }
+
+    fn inferred_command_launch_tool_requirements(&self) -> BTreeMap<String, ToolRequirement> {
+        let mut tools = BTreeMap::new();
+        if let Some(TaskLaunchSpec::Command(command)) = self.launch.as_ref() {
+            let exe = command.exe.trim();
+            if !exe.is_empty() {
+                tools.insert(exe.to_string(), ToolRequirement::Simple(String::from("*")));
+            }
+        }
+        tools
     }
 }
 
@@ -4005,6 +4059,146 @@ workflows:
         assert_eq!(
             contract.selected_workflow_task_closure_names(Some("instant")),
             vec![String::from("quickstart")]
+        );
+    }
+
+    #[test]
+    fn task_requirement_surface_scopes_implicit_command_launch_tool_without_global_fallback() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  docker:
+    version: "*"
+tasks:
+  quickstart:
+    launch:
+      kind: command
+      exe: npx
+      args: [--yes, n8n]
+workflows:
+  default: instant
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        let surface = contract
+            .selected_workflow_task_requirement_surface(Some("instant"))
+            .expect("workflow requirement surface should resolve");
+
+        assert!(surface.tools.contains_key("npx"), "{surface:?}");
+        assert_eq!(
+            surface.tools["npx"].version(),
+            "*",
+            "implicit launch tool should default to wildcard version"
+        );
+        assert!(
+            !surface.tools.contains_key("docker"),
+            "global tool fallback should not include unrelated tools when launch tool scope exists"
+        );
+    }
+
+    #[test]
+    fn declared_command_launch_executables_include_base_and_mode_branches() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  app:
+    launch:
+      kind: command
+      exe: npx
+      args: [--yes, app]
+    execution:
+      modes:
+        container:
+          launch:
+            kind: command
+            exe: docker
+            args: [run, --rm, app]
+"#,
+        )
+        .unwrap();
+
+        let names = contract.tasks["app"].declared_command_launch_executables();
+        assert!(names.contains("npx"));
+        assert!(names.contains("docker"));
+    }
+
+    #[test]
+    fn scoped_requirement_surface_does_not_infer_mode_only_launch_tool_requirements() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  app:
+    run: echo app
+    execution:
+      modes:
+        container:
+          launch:
+            kind: command
+            exe: docker
+            args: [run, --rm, app]
+"#,
+        )
+        .unwrap();
+
+        let surface = contract.tasks["app"].scoped_requirement_surface();
+        assert!(
+            !surface.tools.contains_key("docker"),
+            "mode-specific launch requirements should be inferred from selected execution backend, not unconditional task scope"
+        );
+    }
+
+    #[test]
+    fn effective_command_launch_executable_for_backend_uses_selected_mode_execution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  app:
+    run: echo app
+    execution:
+      modes:
+        native:
+          launch:
+            kind: command
+            exe: npx
+            args: [app]
+        container:
+          launch:
+            kind: command
+            exe: docker
+            args: [run, --rm, app]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.tasks["app"]
+                .effective_command_launch_executable_for_backend(Backend::Native, "linux",),
+            Some(String::from("npx"))
+        );
+        assert_eq!(
+            contract.tasks["app"]
+                .effective_command_launch_executable_for_backend(Backend::Container, "linux",),
+            Some(String::from("docker"))
         );
     }
 
