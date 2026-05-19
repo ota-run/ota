@@ -3451,7 +3451,10 @@ fn classify_clean_execution_failure_reason(details: &str) -> CleanExecutionFailu
         || lowered.contains("unable to connect to podman socket")
         || lowered.contains("docker daemon is not running")
         || lowered.contains("cannot connect to the docker daemon")
+        || lowered.contains("failed to connect to the docker api")
         || lowered.contains("is the docker daemon running")
+        || lowered.contains("if the daemon is running")
+        || lowered.contains("pipe/docker_engine")
         || lowered.contains("error while dialing")
         || lowered.contains("connection refused")
     {
@@ -6656,6 +6659,7 @@ fn toolchain_fulfillment_cache_key(
     }
 }
 
+#[cfg(test)]
 fn toolchain_fulfillment_commands(
     toolchain_name: &str,
     toolchain: &ToolchainSpec,
@@ -40343,6 +40347,15 @@ exit 0
             }
             other => panic!("expected structured cleanup failure, got {other}"),
         }
+    }
+
+    #[test]
+    fn classify_clean_execution_failure_reason_matches_windows_docker_pipe_errors() {
+        let details = "failed to connect to the docker API at npipe:////./pipe/docker_engine; check if the path is correct and if the daemon is running: open //./pipe/docker_engine: The system cannot find the file specified.";
+        assert_eq!(
+            super::classify_clean_execution_failure_reason(details),
+            super::CleanExecutionFailureReason::EngineUnavailable
+        );
     }
 
     #[cfg(unix)]

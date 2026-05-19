@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- fixed `ota up`/`ota proof runtime` service-readiness proof behavior when the detached proof run
+  process exits successfully before readiness is observed: Ota now keeps probing for a short,
+  bounded grace window and only fails if readiness still does not arrive, preventing false
+  `Run task exited before readiness` outcomes on startup paths that finalize quickly
+- fixed detached `ota up` proof-run dependency behavior so `--skip-deps` is only applied when the
+  selected run task actually declares `depends_on`, preserving expected startup dependencies for
+  dependency-free run tasks
+- widened Windows container-engine unavailable classification for cleanup/proof teardown to include
+  Docker named-pipe API failure signatures (for example `pipe/docker_engine`), so proof cleanup
+  errors are classified consistently as engine-unavailable instead of generic cleanup failures
+
 ## 1.6.13
 
 - aligned the repo readiness contract with the container-first execution path: the root
