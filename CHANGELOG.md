@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- inferred `launch.kind: command` executables as scoped tool requirements in workflow/task
+  requirement surfaces, so `doctor`/`up` now diagnose and activate launch-command dependencies
+  (for example `npx`) without requiring duplicate manual `requirements.tools` entries, and scoped
+  workflow selection no longer falls back to unrelated global tools when launch-command tools are
+  the only task-level tool requirements
 - fixed `ota up`/`ota proof runtime` service-readiness proof behavior when the detached proof run
   process exits successfully before readiness is observed: Ota now keeps probing for a short,
   bounded grace window and only fails if readiness still does not arrive, preventing false

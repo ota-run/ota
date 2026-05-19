@@ -1392,6 +1392,11 @@ idempotent: if `to` already exists, Ota leaves it untouched.
   repo-global
 - use `tasks.<name>.requirements` when a prerequisite belongs only to one contributor, quickstart,
   or packaged-runtime path
+- `launch.kind: command` implicitly scopes `launch.exe` as a task-path tool requirement (default
+  version `*`) so selected-workflow precondition diagnosis and activation surfaces include launch
+  executables even when `requirements.tools` is omitted
+- declare `requirements.tools.<name>` explicitly when you need to pin a version, attach
+  acquisition metadata, or override defaults for that launch executable
 - use `requirements.native` when a task needs host-native build tools but Ota should diagnose and
   guide instead of silently installing OS packages
 - workflow-aware readiness commands evaluate the selected workflow's `prepare.task` / `setup.task` / `run.task`

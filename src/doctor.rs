@@ -227,6 +227,19 @@ struct ScopedPreconditionSelection {
     env_scoped: bool,
 }
 
+fn merge_effective_launch_command_tool_requirement(
+    surface: &mut RequirementSurface,
+    task: &crate::schema::TaskSpec,
+    backend: Backend,
+) {
+    if let Some(exe) = task.effective_command_launch_executable_for_backend(backend, current_os()) {
+        surface
+            .tools
+            .entry(exe)
+            .or_insert(ToolRequirement::Simple(String::from("*")));
+    }
+}
+
 #[derive(Debug, Clone)]
 struct BackendPreconditionSelection {
     backend: Backend,
@@ -269,7 +282,7 @@ fn selected_backend_precondition_selections(
         contract
             .tasks
             .get(task_name.as_str())
-            .is_some_and(|task| !task.requirements.tools.is_empty())
+            .is_some_and(|task| !task.scoped_requirement_surface().tools.is_empty())
     });
     let scoped_toolchains = task_names.iter().any(|task_name| {
         contract
@@ -306,13 +319,14 @@ fn selected_backend_precondition_selections(
                 selections.last_mut().expect("selection was just pushed")
             };
 
-        for (name, requirement) in &task.requirements.runtimes {
+        let scoped_surface = task.scoped_requirement_surface();
+        for (name, requirement) in &scoped_surface.runtimes {
             selection.requirement_surface.runtimes.insert(
                 name.clone(),
                 contract.resolve_scoped_runtime_requirement(name, requirement),
             );
         }
-        for (name, requirement) in &task.requirements.tools {
+        for (name, requirement) in &scoped_surface.tools {
             selection.requirement_surface.tools.insert(
                 name.clone(),
                 contract.resolve_scoped_tool_requirement(name, requirement),
@@ -329,6 +343,11 @@ fn selected_backend_precondition_selections(
                 .native_names
                 .extend(task.requirements.native.iter().cloned());
         }
+        merge_effective_launch_command_tool_requirement(
+            &mut selection.requirement_surface,
+            task,
+            backend,
+        );
 
         if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
             && let Some(context) = contract
@@ -470,7 +489,8 @@ fn selected_remote_task_requirement_selection(
         if !task.requirements.runtimes.is_empty() {
             target.scoped_runtimes = true;
         }
-        if !task.requirements.tools.is_empty() {
+        let scoped_surface = task.scoped_requirement_surface();
+        if !scoped_surface.tools.is_empty() {
             target.scoped_tools = true;
         }
         if !task.requirements.toolchains.is_empty() {
@@ -479,18 +499,19 @@ fn selected_remote_task_requirement_selection(
                 .toolchain_names
                 .extend(task.requirements.toolchains.iter().cloned());
         }
-        for (name, requirement) in &task.requirements.runtimes {
+        for (name, requirement) in &scoped_surface.runtimes {
             target.surface.runtimes.insert(
                 name.clone(),
                 contract.resolve_scoped_runtime_requirement(name, requirement),
             );
         }
-        for (name, requirement) in &task.requirements.tools {
+        for (name, requirement) in &scoped_surface.tools {
             target.surface.tools.insert(
                 name.clone(),
                 contract.resolve_scoped_tool_requirement(name, requirement),
             );
         }
+        merge_effective_launch_command_tool_requirement(&mut target.surface, task, Backend::Remote);
     }
 
     if !saw_task {
@@ -11008,6 +11029,63 @@ workflows:
                     && !finding.why.contains("pnpmx")
                     && !finding.next.contains("pnpmx")
             }),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn doctor_selected_workflow_infers_launch_command_tool_requirement() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  quickstart:
+    launch:
+      kind: command
+      exe: npx
+      args: [--yes, n8n]
+workflows:
+  default: instant
+  instant:
+    run:
+      task: quickstart
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("instant"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary.contains("Missing tool: npx")),
             "{report:?}"
         );
     }

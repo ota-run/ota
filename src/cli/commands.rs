@@ -14438,6 +14438,15 @@ fn selected_task_requirement_surface(
 ) -> Option<RequirementSurface> {
     let mut surface = contract.task_requirement_surface([task_name.to_string()])?;
     let effective = effective_task_execution(contract, task_name, overrides);
+    if let Some(task) = contract.tasks.get(task_name)
+        && let Some(exe) =
+            task.effective_command_launch_executable_for_backend(effective.backend, current_os())
+    {
+        surface
+            .tools
+            .entry(exe)
+            .or_insert(crate::schema::ToolRequirement::Simple(String::from("*")));
+    }
     if let Some(context_name) = effective.context_name
         && let Some((_, context)) = named_execution_context(contract, context_name)
     {
@@ -69510,10 +69519,18 @@ fn selected_workflow_task_requirement_surface(
     let mut surface = contract.task_requirement_surface(task_names)?;
 
     for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
-        if !contract.tasks.contains_key(task_name.as_str()) {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
-        }
+        };
         let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        if let Some(exe) =
+            task.effective_command_launch_executable_for_backend(effective.backend, current_os())
+        {
+            surface
+                .tools
+                .entry(exe)
+                .or_insert(crate::schema::ToolRequirement::Simple(String::from("*")));
+        }
         if let Some(context_name) = effective.context_name
             && let Some((_, context)) = named_execution_context(contract, context_name)
         {
