@@ -41,8 +41,8 @@ Start with the public templates and references:
   Node service with workflow, requirements, acquisition, and agent boundaries
 - [Python Service Template](https://github.com/ota-run/examples/tree/main/templates/python-service) for a real
   Python service with setup, lint, test, and acquisition
-- [Prepare, env, and proof](https://github.com/ota-run/examples/tree/main/reference/prepare-env-proof) when
-  the main question is how Ota models `.env.local` bootstrap, env contract truth, and one proofable service path together
+- [Canonical advanced repo](https://github.com/ota-run/examples/tree/main/reference/canonical-team-repo) when
+  the main question is how Ota models `.env.local` bootstrap, env contract truth, and one proofable workflow path together
 - [Tool Acquisition Flow](https://github.com/ota-run/examples/tree/main/reference/tool-acquisition-flow) when
   the main question is how Ota makes missing tools available instead of only checking for them
 - [Adoption Flow](https://github.com/ota-run/examples/tree/main/reference/adoption-flow) when you want to see
