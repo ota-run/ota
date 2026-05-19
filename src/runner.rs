@@ -3135,6 +3135,32 @@ fn task_command_output_reports_user_interruption(command_output: &TaskCommandOut
         || (command_output.interrupted && command_output.exit_code == 0)
 }
 
+fn normalize_native_service_startup_exit_code(
+    runtime_spec: Option<&TaskRuntimeSpec>,
+    resolved_runtime: Option<&ResolvedTaskRuntime>,
+    command_exit_code: i32,
+    interrupted: bool,
+    readiness_observed: bool,
+) -> (i32, Option<String>) {
+    let interruption_note = interruption_execution_note(interrupted, command_exit_code);
+    let service_requires_readiness = runtime_spec.is_some_and(|spec| {
+        spec.kind == TaskRuntimeKind::Service
+            && resolved_runtime.is_some_and(resolved_runtime_has_public_endpoint)
+    });
+    if service_requires_readiness && !readiness_observed && command_exit_code == 0 && !interrupted {
+        return (
+            1,
+            merge_execution_note(
+                interruption_note,
+                Some(String::from(
+                    "service failed to start; declared runtime endpoint did not become reachable before process exit",
+                )),
+            ),
+        );
+    }
+    (command_exit_code, interruption_note)
+}
+
 fn propagate_step_result_to_run_state(
     state: &mut TaskRunState,
     relation: &TaskExecutionRelation,
@@ -13690,6 +13716,7 @@ fn execute_native_task_command(
     mode: TaskExecutionMode,
     backend: &ResolvedExecutionBackend,
 ) -> Result<TaskCommandOutput, RunError> {
+    let runtime_spec = runtime;
     let mut process = shell_command(command);
     process.current_dir(working_dir).envs(env_overrides.iter());
     let activation_service_pidfile = matches!(mode, TaskExecutionMode::CaptureActivation)
@@ -13743,7 +13770,16 @@ fn execute_native_task_command(
                     })
                 });
 
-                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child, None)?;
+                let resolved_runtime =
+                    resolve_native_task_runtime(runtime_spec, task_name, &mut child, None)?;
+                let readiness_probe = start_runtime_readiness_probe(
+                    None,
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    false,
+                    None,
+                    interrupt_epoch,
+                );
                 let status = child.wait().map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
@@ -13762,16 +13798,26 @@ fn execute_native_task_command(
                     loader.stop();
                 }
 
-                let exit_code = status.code().unwrap_or(1);
+                let command_exit_code = status.code().unwrap_or(1);
                 let interrupted = interruption_observed_since(interrupt_epoch);
+                let readiness_observed = readiness_probe
+                    .map(RuntimeReadinessProbe::stop_and_collect)
+                    .unwrap_or(false);
+                let (exit_code, execution_note) = normalize_native_service_startup_exit_code(
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    command_exit_code,
+                    interrupted,
+                    readiness_observed,
+                );
                 Ok(TaskCommandOutput {
                     exit_code,
                     stdout,
                     stderr,
                     target: None,
-                    runtime,
+                    runtime: resolved_runtime,
                     service_termination: None,
-                    execution_note: interruption_execution_note(interrupted, exit_code),
+                    execution_note,
                     interrupted,
                 })
             } else {
@@ -13813,7 +13859,16 @@ fn execute_native_task_command(
                 } else {
                     None
                 };
-                let runtime = resolve_native_task_runtime(runtime, task_name, &mut child, None)?;
+                let resolved_runtime =
+                    resolve_native_task_runtime(runtime_spec, task_name, &mut child, None)?;
+                let readiness_probe = start_runtime_readiness_probe(
+                    None,
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    false,
+                    None,
+                    interrupt_epoch,
+                );
                 let status = child.wait().map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
@@ -13829,16 +13884,26 @@ fn execute_native_task_command(
                         source,
                     })?;
 
-                let exit_code = status.code().unwrap_or(1);
+                let command_exit_code = status.code().unwrap_or(1);
                 let interrupted = interruption_observed_since(interrupt_epoch);
+                let readiness_observed = readiness_probe
+                    .map(RuntimeReadinessProbe::stop_and_collect)
+                    .unwrap_or(false);
+                let (exit_code, execution_note) = normalize_native_service_startup_exit_code(
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    command_exit_code,
+                    interrupted,
+                    readiness_observed,
+                );
                 Ok(TaskCommandOutput {
                     exit_code,
                     stdout,
                     stderr,
                     target: None,
-                    runtime,
+                    runtime: resolved_runtime,
                     service_termination: None,
-                    execution_note: interruption_execution_note(interrupted, exit_code),
+                    execution_note,
                     interrupted,
                 })
             }
@@ -30782,6 +30847,52 @@ tasks:
 
         assert_eq!(outcome.exit_code, 17);
         assert!(outcome.service_termination.is_none());
+    }
+
+    #[test]
+    fn native_service_clean_exit_before_readiness_is_failure() {
+        let _guard = env_mutex_lock();
+        let reserved = TcpListener::bind("127.0.0.1:0").expect("should reserve free port");
+        let port = reserved
+            .local_addr()
+            .expect("reserved socket should expose local address")
+            .port();
+        drop(reserved);
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: exit 0
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+"#
+        ));
+
+        let outcome =
+            super::run_task_with_progress(&fixture.contract, fixture.file_path(), "dev", false)
+                .expect("native service run should return streaming output");
+
+        assert_eq!(outcome.exit_code, 1);
+        assert!(outcome.execution_note.as_deref().is_some_and(|note| {
+            note.contains("declared runtime endpoint did not become reachable before process exit")
+        }));
     }
 
     #[test]

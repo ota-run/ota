@@ -39983,7 +39983,100 @@ readiness:
             report
                 .findings
                 .iter()
-                .any(|finding| finding.summary == "Probe failed: backend-ready"),
+                .any(|finding| finding.summary.starts_with("Probe ")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn wait_for_proof_runtime_readiness_does_not_hide_surface_failure_when_service_run_exits_successfully()
+     {
+        let _guard = cwd_mutex_lock();
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: proof-runtime-regression
+surfaces:
+  site:
+    kind: http
+    port: 3000
+    path: /
+    readiness:
+      kind: http
+      method: GET
+      path: /
+      success:
+        status: [200]
+      interval: 1s
+      timeout: 1s
+      retries: 2
+tasks:
+  dev:
+    run: echo ok
+    runtime:
+      kind: service
+      surfaces:
+        site:
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - site
+"#,
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let mut child = if cfg!(windows) {
+            Command::new("cmd").args(["/C", "exit 0"]).spawn().unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap()
+        };
+
+        let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
+            &contract,
+            &contract_path,
+            Some("app"),
+            ExecutionOverrides::default(),
+            &mut child,
+            "ota run dev --stream",
+            Some(Duration::from_secs(3)),
+        )
+        .unwrap();
+
+        let _ = child.wait();
+
+        assert!(!proof_ok);
+        assert_eq!(phase, "service readiness");
+        let reason = up_failure.as_deref().unwrap_or_default();
+        assert!(reason.contains("exit code 0"), "{reason}");
+        assert!(!report.ok, "{report:?}");
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary.starts_with("Surface readiness")),
             "{report:?}"
         );
     }
@@ -40155,6 +40248,157 @@ readiness:
         );
 
         assert!(message.is_some());
+    }
+
+    #[test]
+    fn detached_run_failure_hint_prefers_bind_conflict_line() {
+        let dir = TempDir::new().expect("temp dir should create");
+        let log_path = dir.path().join("up-detached-run.log");
+        fs::write(
+            &log_path,
+            r#"
+> ota-site@1.0.0 dev
+> next dev
+
+Error: listen EADDRINUSE: address already in use :::3000
+
+RUN SUMMARY
+Status:      success
+"#,
+        )
+        .expect("log should write");
+
+        let hint = super::detached_run_failure_hint_from_log(&log_path);
+        assert_eq!(
+            hint.as_deref(),
+            Some("detached run output: address already in use (EADDRINUSE)")
+        );
+    }
+
+    #[test]
+    fn detached_run_failure_hint_falls_back_to_last_relevant_line() {
+        let dir = TempDir::new().expect("temp dir should create");
+        let log_path = dir.path().join("up-detached-run.log");
+        fs::write(
+            &log_path,
+            r#"
+RUN SUMMARY
+Status:      success
+Scope:       repo
+warning: command exited before readiness
+"#,
+        )
+        .expect("log should write");
+
+        let hint = super::detached_run_failure_hint_from_log(&log_path);
+        assert_eq!(
+            hint.as_deref(),
+            Some("detached run output: warning: command exited before readiness")
+        );
+    }
+
+    #[test]
+    fn up_declared_readiness_endpoint_hint_uses_workflow_surface_target() {
+        let _guard = cwd_mutex_lock();
+        let dir = TempDir::new().expect("temp dir should create");
+        let contract_path = dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: endpoint-hint
+surfaces:
+  site:
+    kind: http
+    port: 3000
+    path: /
+tasks:
+  dev:
+    run: echo ok
+    runtime:
+      kind: service
+      surfaces:
+        site:
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+workflows:
+  default: docs
+  docs:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - site
+"#,
+        )
+        .expect("contract should write");
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .expect("contract should parse");
+
+        let hint = super::up_declared_readiness_endpoint_hint(
+            &contract,
+            &contract_path,
+            Some("docs"),
+            ExecutionOverrides::default(),
+        );
+        assert_eq!(
+            hint.as_deref(),
+            Some("declared readiness endpoint: http://127.0.0.1:3000/")
+        );
+    }
+
+    #[test]
+    fn render_detached_run_failure_output_formats_why_and_next_sections() {
+        let rendered = super::render_detached_run_failure_output(
+            "`ota run dev --stream` exited while waiting for readiness (exit code 1)",
+            &[
+                String::from("detached run output: address already in use (EADDRINUSE)"),
+                String::from("declared readiness endpoint: http://127.0.0.1:3000/"),
+            ],
+            "./.ota/proof/default-task-path/up-detached-run.log",
+        );
+
+        assert!(
+            rendered.contains(
+                "`ota run dev --stream` exited while waiting for readiness (exit code 1)"
+            )
+        );
+        assert!(rendered.contains("Why:"));
+        assert!(rendered.contains("  » detached run output: address already in use (EADDRINUSE)"));
+        assert!(rendered.contains("  » declared readiness endpoint: http://127.0.0.1:3000/"));
+        assert!(rendered.contains("Next:"));
+        assert!(rendered.contains("  » free port 3000 or change the task's published port"));
+        assert!(rendered.contains(
+            "  » inspect `./.ota/proof/default-task-path/up-detached-run.log` for detached run task logs"
+        ));
+    }
+
+    #[test]
+    fn render_detached_run_failure_output_does_not_suggest_port_fix_without_bind_conflict() {
+        let rendered = super::render_detached_run_failure_output(
+            "`ota run dev --stream` exited while waiting for readiness (exit code 1)",
+            &[String::from(
+                "declared readiness endpoint: http://127.0.0.1:3000/",
+            )],
+            "./.ota/proof/default-task-path/up-detached-run.log",
+        );
+
+        assert!(!rendered.contains("free port 3000 or change the task's published port"));
+        assert!(rendered.contains("Next:"));
+        assert!(rendered.contains(
+            "  » inspect `./.ota/proof/default-task-path/up-detached-run.log` for detached run task logs"
+        ));
     }
 
     #[test]
@@ -56227,6 +56471,43 @@ policies:
         assert!(rendered.contains("Task output: bash: line 1: curl: command not found"));
     }
 
+    #[test]
+    fn up_run_failed_renders_exit_code_before_task_output() {
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+
+        let rendered = strip_ansi_codes(&render_up_section_from_parts(
+            "./ota.yaml",
+            None,
+            "RUN FAILED",
+            "run",
+            &report,
+            Some("native"),
+            None,
+            None,
+            None,
+            Some("dev"),
+            Some("npm run dev"),
+            Some(
+                "`ota run dev --stream` exited while waiting for readiness (exit code 1)\n\nWhy:\n  » detached run output: address already in use (EADDRINUSE)\n  » declared readiness endpoint: http://127.0.0.1:3000/\n\nNext:\n  » inspect `./.ota/proof/default-task-path/up-detached-run.log` for detached run task logs",
+            ),
+            Some(1),
+        ));
+
+        let exit_code_index = rendered
+            .find("Exit code: 1")
+            .expect("exit code should render");
+        let task_output_index = rendered
+            .find("Task output:")
+            .expect("task output should render");
+        assert!(exit_code_index < task_output_index, "{rendered}");
+    }
+
     #[cfg(unix)]
     #[test]
     fn up_bootstrapped_mise_from_home_local_bin_recovers_and_provisions_same_run() {
@@ -64901,11 +65182,9 @@ fn wait_for_proof_runtime_readiness(
                         && selected_up_run_task_is_service(contract, workflow_name)
                         && exit_status.success();
                     if successful_service_run_exit {
-                        let filtered_report =
-                            report_without_workflow_surface_readiness_findings(latest_report);
-                        let filtered_summary = doctor_summary(&filtered_report, agent_verdict);
-                        if filtered_report.ok && filtered_summary.verdict == DoctorVerdict::Ready {
-                            return Ok((filtered_report, "post-up diagnosis", true, None));
+                        let summary = doctor_summary(&latest_report, agent_verdict);
+                        if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+                            return Ok((latest_report, "post-up diagnosis", true, None));
                         }
                         deferred_service_run_exit_failure = Some(
                             proof_runtime_process_exit_failure(process_label, exit_status),
@@ -65623,6 +65902,21 @@ fn render_up_section_from_parts(
     if let Some(task_command) = task_command {
         stdout.push_str(&format!("\n{} {task_command}", paint_key("Command:")));
     }
+    if let Some(exit_code) = exit_code {
+        stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
+        if phase == "services" {
+            stdout.push_str(&format!(
+                "\n{} inspect the `Service command:` line and `Service output:`, then fix the reported issue",
+                finding_detail_key(FindingSeverity::Error, "Next:"),
+            ));
+        } else if phase == "setup" {
+            stdout.push_str(&format!(
+                "\n{} inspect the backend output first; if the backend is healthy, inspect the command and task output next",
+                finding_detail_key(FindingSeverity::Error, "Next:")
+            ));
+        }
+    }
+
     let should_render_phase_output = status != "READY" || exit_code.unwrap_or(0) != 0;
     if should_render_phase_output
         && let Some(stderr) = stderr.and_then(|stderr| {
@@ -65642,21 +65936,6 @@ fn render_up_section_from_parts(
             "Task output:"
         };
         stdout.push_str(&format!("\n{} {}", paint_key(output_label), stderr));
-    }
-
-    if let Some(exit_code) = exit_code {
-        stdout.push_str(&format!("\n{} {exit_code}", paint_key("Exit code:")));
-        if phase == "services" {
-            stdout.push_str(&format!(
-                "\n{} inspect the `Service command:` line and `Service output:`, then fix the reported issue",
-                finding_detail_key(FindingSeverity::Error, "Next:"),
-            ));
-        } else if phase == "setup" {
-            stdout.push_str(&format!(
-                "\n{} inspect the backend output first; if the backend is healthy, inspect the command and task output next",
-                finding_detail_key(FindingSeverity::Error, "Next:")
-            ));
-        }
     }
 
     for group in group_doctor_findings(report.findings.iter()) {
@@ -70760,6 +71039,7 @@ fn up_success_execution_context(
     )
 }
 
+#[cfg(test)]
 fn is_workflow_surface_readiness_finding(finding: &Finding) -> bool {
     finding.summary.starts_with("Surface readiness failed:")
         || finding.summary.starts_with("Surface readiness timed out:")
@@ -70777,6 +71057,7 @@ fn is_workflow_surface_readiness_finding(finding: &Finding) -> bool {
             .starts_with("Signal surface readiness could not be evaluated:")
 }
 
+#[cfg(test)]
 fn report_without_workflow_surface_readiness_findings(mut report: DoctorReport) -> DoctorReport {
     report
         .findings
@@ -70868,14 +71149,150 @@ fn run_up_task_detached_until_ready(
             .map(|blocker| blocker.summary.clone())
             .unwrap_or_else(|| String::from("detached run task did not reach readiness"))
     });
+    let mut failure_details = Vec::new();
+    if let Some(hint) = detached_run_failure_hint_from_log(&run_log_artifact_path)
+        && !failure.contains(hint.as_str())
+    {
+        failure_details.push(hint);
+    }
+    if let Some(endpoint_hint) =
+        up_declared_readiness_endpoint_hint(contract, resolved_path, workflow_name, overrides)
+        && !failure.contains(endpoint_hint.as_str())
+    {
+        failure_details.push(endpoint_hint);
+    }
     Ok(CommandRunResult {
         exit_code: 1,
         stdout: String::new(),
-        stderr: format!("{failure}\ninspect `{run_log_artifact}` for detached run task logs\n"),
+        stderr: render_detached_run_failure_output(
+            &failure,
+            &failure_details,
+            run_log_artifact.as_str(),
+        ),
         target: None,
         runtime: None,
         service_termination: None,
     })
+}
+
+fn render_detached_run_failure_output(
+    failure: &str,
+    failure_details: &[String],
+    run_log_artifact: &str,
+) -> String {
+    let mut lines = vec![failure.to_string()];
+    if !failure_details.is_empty() {
+        lines.push(format!("\n{}", error_key("Why:")));
+        lines.extend(failure_details.iter().map(|detail| {
+            format!(
+                "  {} {}",
+                finding_detail_bullet(FindingSeverity::Error),
+                detail
+            )
+        }));
+    }
+    lines.push(format!("\n{}", error_key("Next:")));
+    if let Some(port) = detached_run_bind_conflict_port_hint(failure, failure_details) {
+        lines.push(format!(
+            "  {} free port {port} or change the task's published port",
+            finding_detail_bullet(FindingSeverity::Error),
+        ));
+    }
+    lines.push(format!(
+        "  {} inspect `{run_log_artifact}` for detached run task logs",
+        finding_detail_bullet(FindingSeverity::Error),
+    ));
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn detached_run_bind_conflict_port_hint(failure: &str, failure_details: &[String]) -> Option<u16> {
+    let bind_conflict = failure.contains("EADDRINUSE")
+        || failure.contains("address already in use")
+        || failure_details.iter().any(|detail| {
+            detail.contains("EADDRINUSE") || detail.contains("address already in use")
+        });
+    if !bind_conflict {
+        return None;
+    }
+
+    for detail in failure_details {
+        let Some(endpoint) = detail.strip_prefix("declared readiness endpoint: ") else {
+            continue;
+        };
+        let endpoint = endpoint.trim();
+        let after_scheme = endpoint
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or(endpoint);
+        let host_port = after_scheme.split('/').next().unwrap_or(after_scheme);
+        let candidate = host_port.rsplit(':').next().unwrap_or_default().trim();
+        if let Ok(port) = candidate.parse::<u16>() {
+            return Some(port);
+        }
+    }
+    None
+}
+
+fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
+    let contents = fs::read_to_string(path).ok()?;
+    let mut fallback = None;
+    for raw_line in contents.lines().rev() {
+        let line = strip_ansi_codes(raw_line).trim().to_string();
+        if line.is_empty()
+            || line == "RUN SUMMARY"
+            || line == "UP SUMMARY"
+            || line == "Next:"
+            || line.starts_with("Status:")
+            || line.starts_with("Scope:")
+            || line.starts_with("Path:")
+            || line.starts_with("Contract:")
+            || line.starts_with("Mode:")
+            || line.starts_with("Task:")
+            || line.starts_with("External:")
+            || line.starts_with("Internal:")
+            || line.starts_with("Note:")
+            || line.starts_with("» ")
+            || line.starts_with("- ")
+        {
+            continue;
+        }
+        if line.contains("EADDRINUSE") {
+            return Some(String::from(
+                "detached run output: address already in use (EADDRINUSE)",
+            ));
+        }
+        if line.contains("address already in use") || line.starts_with("Error:") {
+            return Some(format!("detached run output: {line}"));
+        }
+        if fallback.is_none() {
+            fallback = Some(line);
+        }
+    }
+    fallback.map(|line| format!("detached run output: {line}"))
+}
+
+fn up_declared_readiness_endpoint_hint(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Option<String> {
+    let targets =
+        proof_runtime_readiness_targets(contract, contract_path, workflow_name, overrides).ok()?;
+    let target = targets.first()?;
+    let endpoint = match target.protocol.url_scheme() {
+        Some(scheme) => {
+            let path = target
+                .request
+                .as_ref()
+                .map(|request| request.path.as_str())
+                .unwrap_or("/");
+            format!("{scheme}://{}:{}{path}", target.address, target.port)
+        }
+        None => format!("tcp://{}:{}", target.address, target.port),
+    };
+    Some(format!("declared readiness endpoint: {endpoint}"))
 }
 
 fn cleanup_proof_owned_containers(owner_pid: u32) -> Result<(), String> {
@@ -72556,45 +72973,41 @@ fn execute_repo_up_with_behavior(
         }
     }
 
-    let proof_teardown_service_run = selected_up_run_task_is_service(contract, workflow_name)
-        && matches!(run_behavior, UpRunBehavior::DetachedProofTeardown);
-    if !proof_teardown_service_run {
-        let service_report =
-            diagnose_services_only_for_workflow(contract, resolved_path, workflow_name);
-        if !service_report.ok {
-            let mut receipt = repo_execution_receipt(
-                resolved_path,
-                contract,
-                native_phase_execution_context(),
-                "NOT READY",
-                "services",
-                None,
-                None,
-                &service_report.findings,
-                None,
-                service_report
-                    .findings
-                    .first()
-                    .map(|finding| finding.next.clone()),
-            );
-            receipt.native_prerequisites =
-                selected_up_receipt_native_prerequisites(contract, overrides, workflow_name, true);
-            return Ok(RepoUpResult {
-                ok: false,
-                status: "NOT READY",
-                phase: "services",
-                preview: None,
-                receipt,
-                report: service_report,
-                service: None,
-                service_command: None,
-                task: None,
-                task_command: None,
-                exit_code: None,
-                stdout,
-                stderr,
-            });
-        }
+    let service_report =
+        diagnose_services_only_for_workflow(contract, resolved_path, workflow_name);
+    if !service_report.ok {
+        let mut receipt = repo_execution_receipt(
+            resolved_path,
+            contract,
+            native_phase_execution_context(),
+            "NOT READY",
+            "services",
+            None,
+            None,
+            &service_report.findings,
+            None,
+            service_report
+                .findings
+                .first()
+                .map(|finding| finding.next.clone()),
+        );
+        receipt.native_prerequisites =
+            selected_up_receipt_native_prerequisites(contract, overrides, workflow_name, true);
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "NOT READY",
+            phase: "services",
+            preview: None,
+            receipt,
+            report: service_report,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
     }
 
     let mut diagnosis_overrides = doctor_mode_execution_overrides(doctor_mode, overrides.lifecycle);
@@ -72610,11 +73023,6 @@ fn execute_repo_up_with_behavior(
         workflow_name,
         diagnosis_overrides,
     );
-    let report = if proof_teardown_service_run {
-        report_without_workflow_surface_readiness_findings(report)
-    } else {
-        report
-    };
     let workloads = resolve_up_workloads(
         setup_task,
         setup_runtime.as_ref(),
