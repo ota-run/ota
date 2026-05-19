@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- scoped runtime-proof cleanup to the selected workflow/task closure instead of all declared
+  execution contexts, so `ota proof runtime --workflow <host-workflow>` no longer fails cleanup on
+  unrelated container contexts that are not part of the selected proof path
+- fixed runtime-proof JSON/result consistency for non-blocking informational findings: proof now
+  ignores `info`-severity primary blockers when computing `error`/`next` and success, preventing
+  false failed proof output when verdict is `ready`
+- improved container probe remediation when image manifests do not match the current engine
+  platform request (`no matching manifest ...`), including explicit guidance to align Docker mode
+  and image platform tag instead of surfacing only generic probe failure guidance
+
 ## 1.6.14
 
 - inferred `launch.kind: command` executables as scoped tool requirements in workflow/task

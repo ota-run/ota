@@ -3170,14 +3170,26 @@ pub fn clean_execution_report(
     contract: &Contract,
     contract_path: &Path,
 ) -> Result<CleanExecutionReport, CleanExecutionError> {
-    clean_execution_report_inner(contract, contract_path).map_err(classify_clean_execution_error)
+    clean_execution_report_inner(contract, contract_path, None)
+        .map_err(classify_clean_execution_error)
+}
+
+pub fn clean_execution_report_for_workflow(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+) -> Result<CleanExecutionReport, CleanExecutionError> {
+    let scope = persistent_cleanup_scope_for_workflow(contract, workflow_name);
+    clean_execution_report_inner(contract, contract_path, Some(&scope))
+        .map_err(classify_clean_execution_error)
 }
 
 fn clean_execution_report_inner(
     contract: &Contract,
     contract_path: &Path,
+    cleanup_scope: Option<&PersistentCleanupScope>,
 ) -> Result<CleanExecutionReport, RunError> {
-    let cleanup_targets = persistent_cleanup_targets(contract)?;
+    let cleanup_targets = persistent_cleanup_targets(contract, cleanup_scope)?;
 
     let working_dir = contract_working_dir(contract_path);
     let repo_ownership_token = repo_ownership_token("clean", contract_path)?;
@@ -3489,6 +3501,7 @@ fn remove_persistent_container_if_present(
 
 fn persistent_cleanup_targets(
     contract: &Contract,
+    cleanup_scope: Option<&PersistentCleanupScope>,
 ) -> Result<
     Vec<(
         Option<String>,
@@ -3505,6 +3518,9 @@ fn persistent_cleanup_targets(
     let mut targets = Vec::new();
     if let Some(execution) = contract.execution.as_ref() {
         for (name, context) in &execution.contexts {
+            if cleanup_scope.is_some_and(|scope| !scope.context_names.contains(name.as_str())) {
+                continue;
+            }
             if context.backend != Backend::Container {
                 continue;
             }
@@ -3581,6 +3597,17 @@ fn persistent_cleanup_targets(
                     .flatten()
                 })
             });
+            if let Some(scope) = cleanup_scope {
+                let scoped_by_backend = scope
+                    .shared_backend_names
+                    .contains(shared_backend_name.as_str());
+                let scoped_by_context = context_name
+                    .as_deref()
+                    .is_some_and(|context_name| scope.context_names.contains(context_name));
+                if !scoped_by_backend && !scoped_by_context {
+                    continue;
+                }
+            }
             let context = context_name.as_deref().and_then(|context_name| {
                 execution
                     .contexts
@@ -3697,6 +3724,35 @@ fn persistent_cleanup_targets(
         }
     }
     Ok(targets)
+}
+
+#[derive(Debug, Default)]
+struct PersistentCleanupScope {
+    context_names: BTreeSet<String>,
+    shared_backend_names: BTreeSet<String>,
+}
+
+fn persistent_cleanup_scope_for_workflow(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> PersistentCleanupScope {
+    let mut scope = PersistentCleanupScope::default();
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        let effective =
+            effective_task_execution(contract, task_name.as_str(), ExecutionOverrides::default());
+        if effective.backend != Backend::Container {
+            continue;
+        }
+        if let Some(task) = contract.tasks.get(task_name.as_str())
+            && let Some(binding_name) = task.backend_binding_for_backend(Backend::Container)
+        {
+            scope.shared_backend_names.insert(binding_name.to_string());
+        }
+        if let Some(context_name) = effective.context_name {
+            scope.context_names.insert(context_name.to_string());
+        }
+    }
+    scope
 }
 
 fn list_stale_ota_containers(engine: &str) -> Result<Vec<StaleContainerCleanupTarget>, RunError> {
@@ -40358,6 +40414,56 @@ exit 0
         );
     }
 
+    #[test]
+    fn clean_execution_scope_for_workflow_excludes_unselected_container_contexts() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:22-bookworm
+        engines:
+          - docker
+tasks:
+  dev:
+    context: host
+    run: echo host
+  dev:app:
+    context: app
+    run: echo app
+workflows:
+  default: instant
+  instant:
+    run:
+      task: dev
+  app:
+    run:
+      task: dev:app
+"#,
+        );
+
+        let scope =
+            super::persistent_cleanup_scope_for_workflow(&fixture.contract, Some("instant"));
+        assert!(
+            !scope.context_names.contains("app"),
+            "host-only workflow scope must not include unrelated container context"
+        );
+        assert!(scope.shared_backend_names.is_empty());
+
+        let app_scope =
+            super::persistent_cleanup_scope_for_workflow(&fixture.contract, Some("app"));
+        assert!(app_scope.context_names.contains("app"));
+    }
+
     #[cfg(unix)]
     #[test]
     fn clean_execution_surfaces_dependency_isolation_volume_inspection_failure() {
@@ -40719,7 +40825,7 @@ tasks:
             env::set_var("PATH", &joined_path);
         }
 
-        let cleanup_targets = persistent_cleanup_targets(&fixture.contract).unwrap();
+        let cleanup_targets = persistent_cleanup_targets(&fixture.contract, None).unwrap();
 
         match original_path {
             Some(path) => unsafe {

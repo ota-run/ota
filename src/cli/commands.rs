@@ -126,14 +126,14 @@ use crate::runner::{
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
     SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee, TaskExecutionRelation,
     TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence, clean_execution_report,
-    clean_stale_execution, effective_execution, effective_task_env_for_backend,
-    effective_task_env_for_selection, effective_task_execution, env_resolution_source_label,
-    ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
-    load_policy_env_overlay, named_execution_context, persistent_container_name,
-    reported_task_context_for_backend, resolve_declared_env_source_value,
-    resolve_effective_task_container_backend, resolve_execution_backend,
-    resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
-    resolve_task_env_details, resolve_task_env_details_for_task,
+    clean_execution_report_for_workflow, clean_stale_execution, effective_execution,
+    effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
+    env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
+    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
+    persistent_container_name, reported_task_context_for_backend,
+    resolve_declared_env_source_value, resolve_effective_task_container_backend,
+    resolve_execution_backend, resolve_execution_backend_with_contract_path,
+    resolve_named_readiness_probe, resolve_task_env_details, resolve_task_env_details_for_task,
     resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
@@ -1871,7 +1871,7 @@ pub fn proof_runtime(
                     Ok(child) => child,
                     Err(error) => return CommandOutput::failure(error),
                 };
-                let (proof_report, proof_phase, proof_ok, up_process_failure) =
+                let (proof_report, proof_phase, _proof_ok, up_process_failure) =
                     match wait_for_proof_runtime_readiness(
                         &target.contract,
                         &target.contract_path,
@@ -1922,9 +1922,13 @@ pub fn proof_runtime(
                     return CommandOutput::failure(error);
                 }
 
-                let cleanup_error = clean_execution_report(&target.contract, &target.contract_path)
-                    .err()
-                    .and_then(proof_runtime_cleanup_failure_message);
+                let cleanup_error = clean_execution_report_for_workflow(
+                    &target.contract,
+                    &target.contract_path,
+                    effective_workflow_name,
+                )
+                .err()
+                .and_then(proof_runtime_cleanup_failure_message);
                 let process_cleanup_error = stop_proof_runtime_up_process(&mut up_process)
                     .err()
                     .map(|error| error.to_string());
@@ -1943,14 +1947,13 @@ pub fn proof_runtime(
                 ) {
                     proof_summary_for_output.primary_blocker = Some(overridden_blocker);
                 }
-                let primary_blocker_error = proof_summary_for_output
-                    .primary_blocker
+                let primary_blocker =
+                    proof_runtime_blocking_primary_blocker(&proof_summary_for_output);
+                let primary_blocker_error = primary_blocker
                     .as_ref()
                     .map(|blocker| blocker.summary.clone());
-                let primary_blocker_next = proof_summary_for_output
-                    .primary_blocker
-                    .as_ref()
-                    .map(|blocker| blocker.next.clone());
+                let primary_blocker_next =
+                    primary_blocker.as_ref().map(|blocker| blocker.next.clone());
                 let proof_error = cleanup_error
                     .clone()
                     .or(primary_blocker_error)
@@ -1979,9 +1982,7 @@ pub fn proof_runtime(
                 } else {
                     proof_runtime_phase_label(proof_phase)
                 };
-                let ok = proof_ok
-                    && proof_summary.verdict == DoctorVerdict::Ready
-                    && cleanup_error.is_none();
+                let ok = proof_runtime_ok(&proof_summary_for_output, proof_error.as_deref());
 
                 match format {
                     OutputFormat::Text => CommandOutput {
@@ -39440,11 +39441,12 @@ mod tests {
     use crate::doctor::ProvisioningDiagnostics;
     use crate::doctor::{DoctorMode, DoctorReport, Finding, FindingSeverity};
     use crate::output::{
-        ContractIdentity, DetectComparison, DetectComparisonRemoval, DoctorVerdict,
-        EnvSourceStatus, ExecutionPlanResolved, ExecutionReceipt, ExecutionReceiptLogs,
-        ExecutionReceiptSummary, ExecutionSummary, ListedWorkflowSummary, ServiceEndpointSummary,
-        ServiceManagerSummary, ServiceProducerSummary, ServiceReadinessSummary, ServiceSummary,
-        TaskSummary, ToolchainSelectionSummary, WorkflowSummary,
+        ContractIdentity, DetectComparison, DetectComparisonRemoval, DoctorPrimaryBlocker,
+        DoctorSummary, DoctorVerdict, EnvSourceStatus, ExecutionPlanResolved, ExecutionReceipt,
+        ExecutionReceiptLogs, ExecutionReceiptSummary, ExecutionSummary, ListedWorkflowSummary,
+        ServiceEndpointSummary, ServiceManagerSummary, ServiceProducerSummary,
+        ServiceReadinessSummary, ServiceSummary, TaskSummary, ToolchainSelectionSummary,
+        WorkflowSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -40153,6 +40155,52 @@ readiness:
         );
 
         assert!(message.is_some());
+    }
+
+    #[test]
+    fn proof_runtime_blocking_primary_blocker_ignores_info_findings() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::Ready,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 1,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                severity: FindingSeverity::Info,
+                summary: String::from("Container readiness does not include host-only checks"),
+                why: String::from("container mode excludes host checks"),
+                next: String::from("run `ota doctor --mode native`"),
+                provenance: Some(String::from("repo contract")),
+                provenance_key: Some(String::from("repo_contract")),
+            }),
+        };
+
+        assert!(super::proof_runtime_blocking_primary_blocker(&summary).is_none());
+    }
+
+    #[test]
+    fn proof_runtime_ok_uses_verdict_and_error_only() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::Ready,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 1,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                severity: FindingSeverity::Info,
+                summary: String::from("Container readiness does not include host-only checks"),
+                why: String::from("container mode excludes host checks"),
+                next: String::from("run `ota doctor --mode native`"),
+                provenance: Some(String::from("repo contract")),
+                provenance_key: Some(String::from("repo_contract")),
+            }),
+        };
+
+        assert!(super::proof_runtime_ok(&summary, None));
+        assert!(!super::proof_runtime_ok(
+            &summary,
+            Some("timed out while waiting for readiness")
+        ));
     }
 
     #[test]
@@ -42369,6 +42417,7 @@ tasks:
     #[test]
     fn clean_command_json_success_reports_repo_counters() {
         let _cwd_guard = cwd_mutex_lock();
+        let _env_guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
             repo.path().join("ota.yaml"),
@@ -42665,6 +42714,7 @@ exit 125
     #[test]
     fn clean_workspace_command_json_success_reports_root_and_member_cleanup() {
         let _cwd_guard = cwd_mutex_lock();
+        let _env_guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("workspace tempdir");
         fs::write(
             repo.path().join("ota.yaml"),
@@ -47132,6 +47182,7 @@ tasks:
 
     #[test]
     fn workspace_up_honors_selected_repo_workflow() {
+        let _env_guard = crate::test_support::env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let repo_path = fixture.path().join("api");
         fs::create_dir_all(&repo_path).unwrap();
@@ -65054,6 +65105,19 @@ fn proof_runtime_cleanup_failure_message(error: CleanExecutionError) -> Option<S
         }) => None,
         other => Some(other.to_string()),
     }
+}
+
+fn proof_runtime_blocking_primary_blocker(
+    summary: &DoctorSummary,
+) -> Option<&DoctorPrimaryBlocker> {
+    summary
+        .primary_blocker
+        .as_ref()
+        .filter(|blocker| blocker.severity != FindingSeverity::Info)
+}
+
+fn proof_runtime_ok(summary: &DoctorSummary, proof_error: Option<&str>) -> bool {
+    summary.verdict == DoctorVerdict::Ready && proof_error.is_none()
 }
 
 fn proof_runtime_status_word(

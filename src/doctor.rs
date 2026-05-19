@@ -6391,9 +6391,11 @@ fn diagnose_command_version(
                                     probe.command
                                 ),
                             };
-                            let next = format!(
-                                "run `{}` inside the selected container image, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `{}`",
-                                probe.command, rerun_doctor
+                            let next = container_probe_failure_next_step(
+                                probe.command.as_str(),
+                                resolved_path.as_str(),
+                                rerun_doctor.as_str(),
+                                error.as_deref(),
                             );
                             (why, next)
                         }
@@ -6891,6 +6893,41 @@ fn remote_provisioning_target(
             None
         }
     }
+}
+
+fn container_probe_failure_next_step(
+    probe_command: &str,
+    resolved_path: &str,
+    rerun_doctor: &str,
+    error_message: Option<&str>,
+) -> String {
+    if let Some(mismatch_hint) = container_manifest_platform_mismatch_hint(error_message) {
+        return format!("{mismatch_hint}, then rerun `{rerun_doctor}`");
+    }
+    format!(
+        "run `{probe_command}` inside the selected container image, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `{rerun_doctor}`"
+    )
+}
+
+fn container_manifest_platform_mismatch_hint(error_message: Option<&str>) -> Option<String> {
+    let message = error_message?;
+    let lower = message.to_ascii_lowercase();
+    if !lower.contains("no matching manifest for") {
+        return None;
+    }
+    if lower.contains("no matching manifest for windows") {
+        return Some(String::from(
+            "the selected container image does not publish a Windows manifest for this engine request; switch Docker Desktop to Linux container mode or use a Windows-compatible image tag",
+        ));
+    }
+    if lower.contains("no matching manifest for linux") {
+        return Some(String::from(
+            "the selected container image does not publish a Linux manifest for this engine request; use a Linux-compatible image tag or switch the engine/container platform",
+        ));
+    }
+    Some(String::from(
+        "the selected container image does not publish a manifest compatible with the current engine platform request; align image platform and engine mode",
+    ))
 }
 
 fn remote_installability_failure(
@@ -10486,6 +10523,75 @@ tasks:
             .expect("expected tool probe failure finding");
         assert_eq!(finding.evidence().path, "node");
         assert_eq!(finding.owner(), "container_target");
+    }
+
+    #[test]
+    fn reports_container_tool_probe_platform_mismatch_guidance_for_manifest_errors() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\necho Unable to find image 'node:22-bookworm' locally\r\necho docker: no matching manifest for windows(10.0.26100)/amd64 in the manifest list entries 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\necho \"Unable to find image 'node:22-bookworm' locally\" >&2\necho \"docker: no matching manifest for windows(10.0.26100)/amd64 in the manifest list entries\" >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", &docker_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  backends:
+    container:
+      image: node:22-bookworm
+      engines: [docker]
+tools:
+  node: ">=22"
+tasks:
+  test:
+    run: node --version
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_contract_in_mode(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Container,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Tool probe failed: node")
+            .expect("expected tool probe failure finding");
+        assert!(finding.next.contains(
+            "switch Docker Desktop to Linux container mode or use a Windows-compatible image tag"
+        ));
     }
 
     #[test]
