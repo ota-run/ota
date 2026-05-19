@@ -35,6 +35,15 @@
 - improved container probe remediation when image manifests do not match the current engine
   platform request (`no matching manifest ...`), including explicit guidance to align Docker mode
   and image platform tag instead of surfacing only generic probe failure guidance
+- fixed `ota up` detached service-run readiness semantics: successful run-process exit no longer
+  drops workflow surface-readiness failures, so `up` now stays aligned with `doctor` instead of
+  reporting false `READY` when the declared workflow surface never becomes reachable
+- fixed native service-task startup classification when a command exits `0` before its declared
+  runtime endpoint is reachable: `ota run` now treats that path as a failed start instead of
+  reporting false success, which closes common `EADDRINUSE` startup-misclassification cases
+- improved detached `ota up` run-failure diagnostics by surfacing a sanitized tail hint from the
+  detached run log (for example explicit `address already in use (EADDRINUSE)`), so operator
+  output points to startup bind conflicts without requiring manual artifact triage first
 
 ## 1.6.14
 
