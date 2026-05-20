@@ -128,6 +128,12 @@
 - improved runtime-proof failure classification when startup exits before readiness: proof output now
   prioritizes `Run task exited before readiness` over generic workflow-surface readiness blockers
   when both are present, so deterministic startup-exit root causes surface first
+- fixed runtime-proof cleanup/backend scoping and severity handling: `ota proof runtime` now runs
+  owned cleanup only when the selected workflow/task closure actually uses a container backend,
+  and info-only doctor blockers no longer force `ok: false` proof wrappers
+- bounded container-backed cleanup command execution during `ota clean`/proof cleanup paths so a
+  stalled engine call cannot hang the CLI indefinitely; timeout exits now return explicit timeout
+  stderr context instead
 - added Windows crash-code decoding guidance for common negative exit codes in both run and doctor
   failure paths, including `0xC0000005` (access violation), `0xC0000409` (fast-fail/stack buffer
   overrun), and `0xC000013A` (interrupt), so remediation output is actionable without manual code

@@ -19149,6 +19149,57 @@ fn container_command_output(
     if let Some(working_dir) = working_dir {
         container.current_dir(working_dir);
     }
+    if task_name == "clean" {
+        const CLEAN_CONTAINER_COMMAND_TIMEOUT_SECS: u64 = 30;
+        let mut child = container.spawn().map_err(|source| RunError::SpawnFailed {
+            task: task_name.to_string(),
+            source,
+        })?;
+        let deadline = Instant::now() + Duration::from_secs(CLEAN_CONTAINER_COMMAND_TIMEOUT_SECS);
+        let mut timed_out = false;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() >= deadline => {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(100)),
+                Err(source) => {
+                    return Err(RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    });
+                }
+            }
+        }
+
+        let output = child
+            .wait_with_output()
+            .map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
+        let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let mut exit_code = output.status.code().unwrap_or(1);
+        if timed_out {
+            if !stderr.trim().is_empty() {
+                stderr.push('\n');
+            }
+            stderr.push_str("container command timed out while waiting for the engine");
+            if exit_code == 0 {
+                exit_code = 124;
+            }
+        }
+        return Ok(ContainerCommandOutput {
+            exit_code,
+            stdout: std::mem::take(&mut stdout),
+            stderr,
+        });
+    }
+
     let output = container.output().map_err(|source| RunError::SpawnFailed {
         task: task_name.to_string(),
         source,
