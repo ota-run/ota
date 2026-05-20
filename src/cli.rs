@@ -5887,7 +5887,7 @@ mod tests {
 
         assert_eq!(output.exit_code, 0, "{output:?}");
         assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("agent -> codex"));
+        assert!(output.stdout.contains("agent: codex"));
 
         let skill_dir = temp.path().join("codex-home").join("skills").join("ota");
         let skill = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
@@ -5907,7 +5907,7 @@ mod tests {
         let output = run_with(["ota", "skills", "install", "--agent", "codex"]);
 
         assert_eq!(output.exit_code, 0, "{output:?}");
-        assert!(output.stdout.contains("agent -> codex"));
+        assert!(output.stdout.contains("agent: codex"));
 
         let skill_dir = temp
             .path()
@@ -5933,7 +5933,7 @@ mod tests {
         let output = run_with(["ota", "skills", "install", "--agent", "claude"]);
 
         assert_eq!(output.exit_code, 0, "{output:?}");
-        assert!(output.stdout.contains("agent -> claude"));
+        assert!(output.stdout.contains("agent: claude"));
 
         let skill_dir = temp
             .path()
