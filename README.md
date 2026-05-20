@@ -30,9 +30,6 @@
     Give every repo one explicit contract for diagnosis, setup, execution, and safe automation
     instead of guessing from README drift.
   </p>
-    <p>
-      <img src="https://ota.run/brand/ota-social-card.png" alt="ota social card" width="100%" />
-    </p>
   <p>
     <a href="https://github.com/ota-run/ota/releases"><img src="https://img.shields.io/github/v/release/ota-run/ota?style=flat-square" alt="Latest release" /></a>
     <a href="https://github.com/ota-run/ota/actions/workflows/release-gate.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/release-gate.yml?branch=main&style=flat-square&label=release%20gate" alt="Release gate status" /></a>
@@ -41,6 +38,9 @@
 <!--     <a href="https://github.com/ota-run/ota/stargazers"><img src="https://img.shields.io/github/stars/ota-run/ota?style=flat-square" alt="GitHub stars" /></a> -->
   </p>
   <p><strong>Built for</strong> humans, CI, AI agents, containers, and multi-repo workspaces.</p>
+      <p>
+        <img src="https://ota.run/brand/ota-social-card.png" alt="ota social card" width="100%" />
+      </p>
   <p>
     <a href="https://ota.run/docs/getting-started">Get Started</a> ·
     <a href="https://ota.run/docs">Docs</a> ·
