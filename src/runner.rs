@@ -32,7 +32,6 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Once;
-#[cfg(windows)]
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -1475,6 +1474,11 @@ const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
 static RUN_INTERRUPT_REQUESTED: AtomicBool = AtomicBool::new(false);
 static RUN_INTERRUPT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static RUN_INTERRUPT_HANDLER: Once = Once::new();
+static CLEAN_ENGINE_TIMEOUT_CACHE: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
+
+fn clean_engine_timeout_cache() -> &'static Mutex<BTreeMap<String, String>> {
+    CLEAN_ENGINE_TIMEOUT_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
     if !contract.tasks.contains_key(task_name) {
@@ -19160,13 +19164,29 @@ fn container_command_output(
     working_dir: Option<&Path>,
     task_name: &str,
 ) -> Result<ContainerCommandOutput, RunError> {
+    let is_internal_clean_task =
+        task_name == OTA_ENGINE_CLEAN_QUERY_TASK_NAME || task_name == OTA_CLEAN_INTERNAL_TASK_NAME;
+    if is_internal_clean_task
+        && let Some(details) = clean_engine_timeout_cache()
+            .lock()
+            .expect("clean timeout cache should be lockable")
+            .get(engine)
+            .cloned()
+    {
+        return Ok(ContainerCommandOutput {
+            exit_code: 124,
+            stdout: String::new(),
+            stderr: details,
+        });
+    }
+
     let mut container = container_engine_command(engine);
     container.args(args);
     container.stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(working_dir) = working_dir {
         container.current_dir(working_dir);
     }
-    if task_name == OTA_ENGINE_CLEAN_QUERY_TASK_NAME || task_name == OTA_CLEAN_INTERNAL_TASK_NAME {
+    if is_internal_clean_task {
         const CLEAN_CONTAINER_COMMAND_TIMEOUT_SECS: u64 = 30;
         let mut child = container.spawn().map_err(|source| RunError::SpawnFailed {
             task: task_name.to_string(),
@@ -19205,10 +19225,18 @@ fn container_command_output(
             if !stderr.trim().is_empty() {
                 stderr.push('\n');
             }
-            stderr.push_str("container command timed out while waiting for the engine");
+            let details = format!(
+                "container command timed out after {} seconds while waiting for the engine",
+                CLEAN_CONTAINER_COMMAND_TIMEOUT_SECS
+            );
+            stderr.push_str(details.as_str());
             if exit_code == 0 {
                 exit_code = 124;
             }
+            clean_engine_timeout_cache()
+                .lock()
+                .expect("clean timeout cache should be lockable")
+                .insert(engine.to_string(), details);
         }
         return Ok(ContainerCommandOutput {
             exit_code,
