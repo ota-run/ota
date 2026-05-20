@@ -11922,7 +11922,7 @@ fn preflight_container_host_publications(
     Ok(())
 }
 
-fn preflight_native_runtime_listener_binds(
+pub(crate) fn preflight_native_runtime_listener_binds(
     task_name: &str,
     runtime: Option<&TaskRuntimeSpec>,
 ) -> Result<(), RunError> {
@@ -20458,7 +20458,7 @@ fn visit_task(
 fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("sh");
     shell
-        .arg("-lc")
+        .arg("-c")
         .arg(signal_forwarding_shell_script(command.to_string()));
     shell
 }
@@ -26839,6 +26839,58 @@ tasks:
         }
 
         assert_eq!(version.as_deref(), Some("24.8.0"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn native_task_execution_preserves_probe_path_without_login_shell() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\nprintf 'v22.22.3\\n'\n");
+        write_fake_bin(
+            &bin_dir,
+            "sh",
+            "#!/bin/sh\nif [ \"$1\" = \"-lc\" ]; then\n  PATH='/usr/bin:/bin' exec /bin/sh -c \"$2\"\nfi\nexec /bin/sh \"$@\"\n",
+        );
+
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: shell-path
+tasks:
+  check-node:
+    run: test "$(node --version)" = "v22.22.3"
+    requirements:
+      runtimes:
+        node: ">=22"
+"#,
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+        }
+
+        let result = run_task_captured(&fixture.contract, fixture.file_path(), "check-node");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        let outcome = result.expect("native task execution should preserve resolved PATH");
+        assert_eq!(outcome.exit_code, 0);
     }
 
     #[test]

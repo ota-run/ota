@@ -5571,15 +5571,19 @@ fn trailing_summary_title(stderr: &str) -> Option<&'static str> {
 
 fn tighten_guidance_spacing(text: String) -> String {
     let ends_with_newline = text.ends_with('\n');
-    let mut lines = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
 
     for line in text.lines() {
         if line.contains("Next:") || line.contains("Try:") {
-            while lines
-                .last()
-                .is_some_and(|previous: &String| previous.trim().is_empty())
-            {
-                lines.pop();
+            let trailing_blank = lines
+                .iter()
+                .rev()
+                .take_while(|previous| previous.trim().is_empty())
+                .count();
+            if trailing_blank > 1 {
+                for _ in 0..(trailing_blank - 1) {
+                    lines.pop();
+                }
             }
         }
         lines.push(line.to_string());
