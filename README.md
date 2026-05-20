@@ -25,7 +25,7 @@
   <img src="docs/assets/ota-icon.svg" alt="ota logo" width="110" height="110" />
   <h1>ota</h1>
   <p><strong>Open repo-readiness infrastructure for humans, CI, and AI agents,  containers, and multi-repo workspaces.</strong></p>
-  <p><strong>Doctor first. Contract second.</strong></p>
+  <p><strong>DOCTOR FIRST. CONTRACT SECOND.</strong></p>
   <p>
     Give every repo one explicit contract for diagnosis, setup, execution, and safe automation
     instead of guessing from README drift.
