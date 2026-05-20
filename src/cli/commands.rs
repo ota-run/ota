@@ -130,10 +130,10 @@ use crate::runner::{
     effective_task_env_for_selection, effective_task_execution, env_resolution_source_label,
     ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
     load_policy_env_overlay, named_execution_context, persistent_container_name,
-    reported_task_context_for_backend,
-    resolve_declared_env_source_value, resolve_effective_task_container_backend,
-    resolve_execution_backend, resolve_execution_backend_with_contract_path,
-    resolve_named_readiness_probe, resolve_task_env_details, resolve_task_env_details_for_task,
+    reported_task_context_for_backend, resolve_declared_env_source_value,
+    resolve_effective_task_container_backend, resolve_execution_backend,
+    resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
+    resolve_task_env_details, resolve_task_env_details_for_task,
     resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
@@ -52219,46 +52219,6 @@ workflows:
     }
 
     #[test]
-    fn task_declares_dependencies_returns_true_for_depends_on_tasks() {
-        let contract = parse_contract_str(
-            Path::new("ota.yaml"),
-            r#"
-version: 1
-project:
-  name: up-behavior
-tasks:
-  setup:
-    run: echo setup
-  dev:
-    run: echo dev
-    depends_on:
-      - setup
-"#,
-        )
-        .unwrap();
-
-        assert!(super::task_declares_dependencies(&contract, "dev"));
-    }
-
-    #[test]
-    fn task_declares_dependencies_returns_false_for_tasks_without_depends_on() {
-        let contract = parse_contract_str(
-            Path::new("ota.yaml"),
-            r#"
-version: 1
-project:
-  name: up-behavior
-tasks:
-  quickstart:
-    run: echo quickstart
-"#,
-        )
-        .unwrap();
-
-        assert!(!super::task_declares_dependencies(&contract, "quickstart"));
-    }
-
-    #[test]
     fn up_task_execution_overrides_force_ephemeral_for_default_service_proof() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -71198,13 +71158,6 @@ fn selected_up_run_task_is_service(contract: &Contract, workflow_name: Option<&s
         .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
 }
 
-fn task_declares_dependencies(contract: &Contract, task_name: &str) -> bool {
-    contract
-        .tasks
-        .get(task_name)
-        .is_some_and(|task| !task.depends_on.is_empty())
-}
-
 fn resolve_up_run_behavior(
     contract: &Contract,
     workflow_name: Option<&str>,
@@ -71340,12 +71293,10 @@ fn run_up_task_detached_until_ready(
     })?;
     let run_log_artifact_path = artifact_dir.join("up-detached-run.log");
     let run_log_artifact = compact_path(&run_log_artifact_path, ".");
-    let skip_deps = task_declares_dependencies(contract, task_name);
-
     let mut run_process = spawn_up_detached_run_process(
         resolved_path,
         task_name,
-        skip_deps,
+        false,
         overrides,
         policy_env,
         &run_log_artifact_path,
