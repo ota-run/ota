@@ -130,10 +130,10 @@ use crate::runner::{
     effective_task_env_for_selection, effective_task_execution, env_resolution_source_label,
     ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
     load_policy_env_overlay, named_execution_context, persistent_container_name,
-    reported_task_context_for_backend, resolve_declared_env_source_value,
-    resolve_effective_task_container_backend, resolve_execution_backend,
-    resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
-    resolve_task_env_details, resolve_task_env_details_for_task,
+    preflight_native_runtime_listener_binds, reported_task_context_for_backend,
+    resolve_declared_env_source_value, resolve_effective_task_container_backend,
+    resolve_execution_backend, resolve_execution_backend_with_contract_path,
+    resolve_named_readiness_probe, resolve_task_env_details, resolve_task_env_details_for_task,
     resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
@@ -40304,6 +40304,34 @@ Status:      success
     }
 
     #[test]
+    fn detached_run_failure_hint_prefers_structured_error_title() {
+        let dir = TempDir::new().expect("temp dir should create");
+        let log_path = dir.path().join("up-detached-run.log");
+        fs::write(
+            &log_path,
+            r#"
+🦦 RUN ./ota.yaml
+
+◉ ERROR  Host publication failed
+Where: ./ota.yaml
+Field: tasks.dev:www.runtime.listeners.www.project.host.port
+Why:
+  » host port `3000` on `127.0.0.1` is already allocated
+
+🦦 RUN SUMMARY
+Memory:      4GiB
+"#,
+        )
+        .expect("log should write");
+
+        let hint = super::detached_run_failure_hint_from_log(&log_path);
+        assert_eq!(
+            hint.as_deref(),
+            Some("detached run error: Host publication failed")
+        );
+    }
+
+    #[test]
     fn detached_run_failure_hint_falls_back_to_last_relevant_line() {
         let dir = TempDir::new().expect("temp dir should create");
         let log_path = dir.path().join("up-detached-run.log");
@@ -52032,10 +52060,84 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Capture,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
+    }
+
+    #[test]
+    fn up_detached_native_service_fails_when_listener_port_is_already_owned() {
+        let listener =
+            TcpListener::bind(("127.0.0.1", 0)).expect("test should reserve a local port");
+        let port = listener.local_addr().unwrap().port();
+        let dir = TempDir::new().expect("temp dir should create");
+        let path = dir.path().join("ota.yaml");
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: up-native-bind
+tasks:
+  setup:
+    run: echo setup
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:{port}/
+      timeout: 100
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: dev
+    readiness:
+      probes:
+        - backend-ready
+"#
+        );
+        fs::write(&path, &contents).expect("contract should write");
+        let contract = parse_contract_str(&path, &contents).expect("contract should parse");
+
+        let result = super::execute_repo_up_with_behavior(
+            &contract,
+            &path,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            Some(Duration::from_millis(100)),
+        );
+
+        let rendered = match result {
+            Ok(_) => panic!("up should fail before proof reuse"),
+            Err(error) => strip_ansi_codes(&error),
+        };
+        assert!(rendered.contains("Listener bind conflict"), "{rendered}");
+        assert!(
+            rendered.contains("port `") && rendered.contains("is already in use on the host"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -52071,7 +52173,7 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Stream,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
@@ -52115,10 +52217,72 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Stream,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
+    }
+
+    #[test]
+    fn resolve_up_run_behavior_uses_selected_mode_runtime_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo native
+    execution:
+      modes:
+        native:
+          run: echo native
+        container:
+          run: echo container
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let native_behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+            super::UpRunBehaviorPreference::Auto,
+        );
+        let container_behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            super::UpRunBehaviorPreference::Auto,
+        );
+
+        assert_eq!(native_behavior, super::UpRunBehavior::Attach);
+        assert_eq!(
+            container_behavior,
+            super::UpRunBehavior::DetachedProofTeardown
+        );
     }
 
     #[test]
@@ -52159,7 +52323,7 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Capture,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
@@ -52193,7 +52357,7 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Capture,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::Attach);
@@ -52232,7 +52396,7 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Capture,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Detach,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedLeaveRunning);
@@ -52271,7 +52435,7 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Capture,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Attach,
         );
         assert_eq!(behavior, super::UpRunBehavior::Attach);
@@ -53557,6 +53721,14 @@ tasks:
         );
         assert!(
             !rendered.contains("Container: stale-summary-id"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Note:        placeholder\n\nNext:"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("Note:        placeholder\n\n\nNext:"),
             "{rendered}"
         );
     }
@@ -62438,6 +62610,7 @@ fn render_run_structured_error_text(
             }
             output.push('\n');
             output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         RunError::NativeListenerBindConflict { task, listener, .. } => {
@@ -62457,6 +62630,7 @@ fn render_run_structured_error_text(
             }
             output.push('\n');
             output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         RunError::PersistentContainerListenerBindConflict {
@@ -62487,6 +62661,7 @@ fn render_run_structured_error_text(
             } else {
                 output.push_str(summary_block);
             }
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         RunError::RuntimeListenerResolutionFailed {
@@ -62516,6 +62691,7 @@ fn render_run_structured_error_text(
             }
             output.push('\n');
             output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         RunError::HostPortOverrideRequiresFixedProjectedPort { task, listener } => {
@@ -62535,6 +62711,7 @@ fn render_run_structured_error_text(
             }
             output.push('\n');
             output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         RunError::HostPortOverrideAmbiguousProjectedListener { task, .. } => {
@@ -62554,6 +62731,7 @@ fn render_run_structured_error_text(
             }
             output.push('\n');
             output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         _ => {}
@@ -65421,7 +65599,7 @@ fn wait_for_proof_runtime_readiness(
                         overrides.clone(),
                     );
                     let successful_service_run_exit = process_label.starts_with("ota run ")
-                        && selected_up_run_task_is_service(contract, workflow_name)
+                        && selected_up_run_task_is_service(contract, workflow_name, overrides)
                         && exit_status.success();
                     if successful_service_run_exit {
                         let summary = doctor_summary(&latest_report, agent_verdict);
@@ -71277,24 +71455,33 @@ fn run_phase_failure_exit_code(outcome: &CommandRunResult) -> Option<i32> {
         .map(|termination| termination.exit_code.unwrap_or(1))
 }
 
-fn selected_up_run_task_is_service(contract: &Contract, workflow_name: Option<&str>) -> bool {
-    selected_up_activation_task_name(contract, workflow_name)
-        .and_then(|task_name| contract.tasks.get(task_name))
-        .and_then(|task| task.runtime.as_ref())
+fn selected_up_run_task_is_service(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> bool {
+    let Some(task_name) = selected_up_activation_task_name(contract, workflow_name) else {
+        return false;
+    };
+    let Some(task) = contract.tasks.get(task_name) else {
+        return false;
+    };
+    let backend = effective_task_execution(contract, task_name, overrides).backend;
+    task.service_runtime_for_backend(backend)
         .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
 }
 
 fn resolve_up_run_behavior(
     contract: &Contract,
     workflow_name: Option<&str>,
-    _mode: RepoExecutionMode,
+    overrides: ExecutionOverrides,
     preference: UpRunBehaviorPreference,
 ) -> UpRunBehavior {
     match preference {
         UpRunBehaviorPreference::Attach => UpRunBehavior::Attach,
         UpRunBehaviorPreference::Detach => UpRunBehavior::DetachedLeaveRunning,
         UpRunBehaviorPreference::Auto => {
-            if selected_up_run_task_is_service(contract, workflow_name) {
+            if selected_up_run_task_is_service(contract, workflow_name, overrides) {
                 UpRunBehavior::DetachedProofTeardown
             } else {
                 UpRunBehavior::Attach
@@ -71324,7 +71511,7 @@ fn up_task_execution_overrides(
             .is_some_and(|backend| matches!(backend, ResolvedExecutionBackend::Container { .. }));
 
     if matches!(run_behavior, UpRunBehavior::DetachedProofTeardown)
-        && selected_up_run_task_is_service(contract, workflow_name)
+        && selected_up_run_task_is_service(contract, workflow_name, overrides)
         && should_force_ephemeral
     {
         ExecutionOverrides {
@@ -71348,7 +71535,7 @@ fn up_success_execution_context(
     report: &DoctorReport,
 ) -> PhaseExecutionContext {
     if matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning)
-        && selected_up_run_task_is_service(contract, workflow_name)
+        && selected_up_run_task_is_service(contract, workflow_name, task_execution_overrides)
         && let Some(task_name) = activation_task
     {
         return task_phase_execution_context(
@@ -71564,6 +71751,16 @@ fn detached_run_bind_conflict_port_hint(failure: &str, failure_details: &[String
 
 fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
     let contents = fs::read_to_string(path).ok()?;
+    for raw_line in contents.lines() {
+        let line = strip_ansi_codes(raw_line).trim().to_string();
+        if let Some(title) = line.strip_prefix("◉ ERROR") {
+            let title = title.trim();
+            if !title.is_empty() {
+                return Some(format!("detached run error: {title}"));
+            }
+        }
+    }
+
     let mut fallback = None;
     for raw_line in contents.lines().rev() {
         let line = strip_ansi_codes(raw_line).trim().to_string();
@@ -71577,6 +71774,11 @@ fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
             || line.starts_with("Contract:")
             || line.starts_with("Mode:")
             || line.starts_with("Task:")
+            || line.starts_with("Context:")
+            || line.starts_with("Lifecycle:")
+            || line.starts_with("Image:")
+            || line.starts_with("Memory:")
+            || line.starts_with("Cause:")
             || line.starts_with("External:")
             || line.starts_with("Internal:")
             || line.starts_with("Note:")
@@ -71593,7 +71795,12 @@ fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
         if line.contains("address already in use") || line.starts_with("Error:") {
             return Some(format!("detached run output: {line}"));
         }
-        if fallback.is_none() {
+        if (line.starts_with("warning:")
+            || line.contains("failed")
+            || line.contains("timed out")
+            || line.contains("cannot"))
+            && fallback.is_none()
+        {
             fallback = Some(line);
         }
     }
@@ -72219,7 +72426,7 @@ fn execute_repo_up_with_behavior(
     let prepare_task = selected_up_prepare_task_name(contract, workflow_name);
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
     let run_behavior =
-        resolve_up_run_behavior(contract, workflow_name, mode, run_behavior_preference);
+        resolve_up_run_behavior(contract, workflow_name, overrides, run_behavior_preference);
     let task_execution_overrides = up_task_execution_overrides(
         contract,
         resolved_path,
@@ -73196,41 +73403,57 @@ fn execute_repo_up_with_behavior(
             .tasks
             .get(run_task_name)
             .and_then(task_command_preview);
-        let run_result = if selected_up_run_task_is_service(contract, workflow_name)
-            && matches!(
-                run_behavior,
-                UpRunBehavior::DetachedProofTeardown | UpRunBehavior::DetachedLeaveRunning
-            ) {
-            let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
-            let proof_overrides = if keep_running {
-                overrides
+        let run_result =
+            if selected_up_run_task_is_service(contract, workflow_name, task_execution_overrides)
+                && matches!(
+                    run_behavior,
+                    UpRunBehavior::DetachedProofTeardown | UpRunBehavior::DetachedLeaveRunning
+                )
+            {
+                let effective_execution =
+                    effective_task_execution(contract, run_task_name, task_execution_overrides);
+                let native_preflight = if effective_execution.backend == Backend::Native
+                    && let Some(task) = contract.tasks.get(run_task_name)
+                {
+                    let runtime = task.service_runtime_for_backend(Backend::Native);
+                    preflight_native_runtime_listener_binds(run_task_name, runtime)
+                } else {
+                    Ok(())
+                };
+                if let Err(error) = native_preflight {
+                    Err(error)
+                } else {
+                    let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
+                    let proof_overrides = if keep_running {
+                        overrides
+                    } else {
+                        task_execution_overrides
+                    };
+                    run_up_task_detached_until_ready(
+                        contract,
+                        resolved_path,
+                        workflow_name,
+                        run_task_name,
+                        proof_overrides,
+                        policy_env,
+                        ready_timeout,
+                        keep_running,
+                    )
+                    .map_err(|error| RunError::SpawnFailed {
+                        task: run_task_name.to_string(),
+                        source: io::Error::other(error),
+                    })
+                }
             } else {
-                task_execution_overrides
+                run_up_task(
+                    contract,
+                    resolved_path,
+                    run_task_name,
+                    task_execution_overrides,
+                    policy_env,
+                    mode,
+                )
             };
-            run_up_task_detached_until_ready(
-                contract,
-                resolved_path,
-                workflow_name,
-                run_task_name,
-                proof_overrides,
-                policy_env,
-                ready_timeout,
-                keep_running,
-            )
-            .map_err(|error| RunError::SpawnFailed {
-                task: run_task_name.to_string(),
-                source: io::Error::other(error),
-            })
-        } else {
-            run_up_task(
-                contract,
-                resolved_path,
-                run_task_name,
-                task_execution_overrides,
-                policy_env,
-                mode,
-            )
-        };
         match run_result {
             Ok(outcome) if run_phase_failure_exit_code(&outcome).is_some() => {
                 stdout.push_str(&outcome.stdout);
@@ -76613,7 +76836,7 @@ fn finalize_debug(
 fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("sh");
     shell
-        .arg("-lc")
+        .arg("-c")
         .arg(signal_forwarding_shell_script(command.to_string()));
     shell
 }

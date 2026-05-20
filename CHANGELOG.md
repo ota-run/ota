@@ -47,6 +47,16 @@
 - improved detached `ota up` run-failure diagnostics by surfacing a sanitized tail hint from the
   detached run log (for example explicit `address already in use (EADDRINUSE)`), so operator
   output points to startup bind conflicts without requiring manual artifact triage first
+- fixed native task execution to preserve the same resolved `PATH` used by toolchain probes
+  instead of invoking a login shell that could reorder Node/Corepack/pnpm on macOS and other Unix
+  hosts
+- fixed detached native `ota up` service proof so an already-occupied fixed listener port fails as
+  a bind conflict instead of being mistaken for proof that the newly launched service became ready
+- made automatic `ota up` service proof selection honor the selected execution mode's runtime shape,
+  so tasks that declare service runtimes only under `execution.modes.<mode>` are still handled as
+  services for that mode
+- corrected container-scope info text so plural host-bound surfaces like `checks` render with the
+  right grammar in `doctor`/`up` output
 - added `failure_class` to `ota proof runtime --json` status output so CI and automation can
   distinguish cleanup, readiness, and run/install-or-toolchain failure classes without brittle
   log-parsing

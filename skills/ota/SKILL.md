@@ -1,3 +1,8 @@
+---
+name: ota
+description: Use when working on anything Ota-specific: creating, refining, reviewing, or explaining Ota contracts (`ota.yaml`), repo readiness modeling, `ota doctor` / `ota up` / `ota run` flows, agent safety surfaces, Ota Studio boundaries, or when deciding whether a problem belongs in the repo contract or in Ota itself.
+---
+
 <!--
                 █████
                ░░███
@@ -21,10 +26,6 @@
 
    If you need additional information or have any questions, please email: os@ota.run
 -->
----
-name: ota
-description: Use when working on anything Ota-specific: creating, refining, reviewing, or explaining Ota contracts (`ota.yaml`), repo readiness modeling, `ota doctor` / `ota up` / `ota run` flows, agent safety surfaces, Ota Studio boundaries, or when deciding whether a problem belongs in the repo contract or in Ota itself.
----
 
 # Ota
 

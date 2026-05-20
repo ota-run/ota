@@ -3580,11 +3580,7 @@ fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
         skipped.push("legacy service healthchecks");
     }
 
-    let verb = if skipped.len() == 1 {
-        "remains"
-    } else {
-        "remain"
-    };
+    let verb = "remain";
     let skipped = skipped.join(", ");
     Finding {
         severity: FindingSeverity::Info,
