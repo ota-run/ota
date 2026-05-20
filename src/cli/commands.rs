@@ -754,6 +754,14 @@ fn append_post_summary_next_block(out: &mut String, next_steps: &[String]) {
     for _ in trailing_newlines..2 {
         out.push('\n');
     }
+    if next_steps.len() == 1 {
+        out.push_str(&format!(
+            "{} {}",
+            paint_next_key(),
+            render_backticked_text(&next_steps[0], None)
+        ));
+        return;
+    }
     let mut next_block = String::new();
     append_error_detail_section(&mut next_block, "Next:", next_steps, None);
     out.push_str(next_block.trim_start_matches('\n'));
@@ -35669,6 +35677,9 @@ fn finding_next_steps(next: &str) -> Vec<String> {
     if let Some((first, rerun)) = next.split_once(", then rerun ") {
         return vec![first.trim().to_string(), format!("rerun {}", rerun.trim())];
     }
+    if let Some((first, alternative)) = next.split_once(", or ") {
+        return vec![first.trim().to_string(), alternative.trim().to_string()];
+    }
     vec![next.to_string()]
 }
 
@@ -44748,6 +44759,85 @@ tasks:
 
         assert!(rewritten.contains("`ota doctor --mode native`"));
         assert!(rewritten.contains("`ota run <task> --mode container`"));
+    }
+
+    #[test]
+    fn finding_next_steps_splits_or_alternatives_into_two_steps() {
+        let next_steps = super::finding_next_steps(
+            "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
+        );
+
+        assert_eq!(
+            next_steps,
+            vec![
+                String::from("use `ota doctor --mode native` for host readiness"),
+                String::from(
+                    "run declared tasks with `ota run <task> --mode container` through the validated container path"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn normalized_up_receipt_next_prefers_first_info_step_when_ready() {
+        let receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:22-bookworm")),
+            container_memory_bytes: None,
+            target: None,
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: Vec::new(),
+            blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            summary: ExecutionReceiptSummary::default(),
+            next: Some(String::from(
+                "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
+            )),
+        };
+
+        let findings = vec![Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Container readiness does not include host-only checks"),
+            why: String::from("container mode validated execution"),
+            next: String::from(
+                "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
+            ),
+        }];
+
+        let next = super::normalized_up_receipt_next(
+            None,
+            "READY",
+            "post-up diagnosis",
+            &findings,
+            None,
+            &receipt,
+        )
+        .expect("ready info next");
+
+        assert_eq!(next, "use `ota doctor --mode native` for host readiness");
     }
 
     #[test]
@@ -66636,7 +66726,14 @@ fn normalized_up_receipt_next(
         ));
     }
 
-    receipt.next.clone()
+    if status == "READY" && primary.severity == FindingSeverity::Info {
+        let next_steps = finding_next_steps(&current_next);
+        if let Some(first_step) = next_steps.first() {
+            return Some(first_step.clone());
+        }
+    }
+
+    Some(current_next)
 }
 
 fn doctor_mode_from_backend(backend: Option<&str>) -> Option<DoctorMode> {
