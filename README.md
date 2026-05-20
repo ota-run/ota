@@ -30,6 +30,9 @@
     Give every repo one explicit contract for diagnosis, setup, execution, and safe automation
     instead of guessing from README drift.
   </p>
+    <p>
+      <img src="https://ota.run/brand/ota-social-card.png" alt="ota social card" width="100%" />
+    </p>
   <p>
     <a href="https://github.com/ota-run/ota/releases"><img src="https://img.shields.io/github/v/release/ota-run/ota?style=flat-square" alt="Latest release" /></a>
     <a href="https://github.com/ota-run/ota/actions/workflows/release-gate.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/release-gate.yml?branch=main&style=flat-square&label=release%20gate" alt="Release gate status" /></a>
@@ -55,9 +58,6 @@
   <p>
     <a href="https://discord.gg/45mBMzSkKC">Discord</a> ·
     <a href="https://x.com/otaready">X (Twitter)</a>
-  </p>
-  <p>
-    <img src="https://ota.run/brand/ota-social-card.png" alt="ota social card" width="100%" />
   </p>
 </div>
 
