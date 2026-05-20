@@ -117,23 +117,71 @@ When creating or refining a contract:
 4. Prefer contract fields over repo-local helper scripts when Ota already supports the
    behavior cleanly.
 
+Author from evidence, not vibes. Before writing or broadening a contract, inspect the smallest
+set of repo files that reveal real behavior:
+
+- package/build manifests (`package.json`, workspace files, lockfiles, language manifests)
+- contributor docs (`README`, `CONTRIBUTING`, `DEVELOPERS`, setup docs)
+- CI workflows that show canonical install, build, test, and smoke paths
+- compose/container files only when the workflow actually needs services or containers
+- existing scripts that users already run successfully
+
+Keep scope honest. If the contract only models one slice of a large repo, say that in
+`project.description`, workflow descriptions, and the final response. Do not make a partial
+contract sound like full production readiness.
+
 Default modeling areas:
 
 - `project`
 - `execution.contexts`
+- `toolchains`, `runtimes`, and `tools`
 - `env.sources` and `env.vars`
 - `services` and readiness
 - `tasks`
+- `workflows`
 - `checks`
 - `agent`
 
 When deciding where something belongs, prefer:
 
+- `toolchains` for managed ecosystem ownership such as Node/Corepack/pnpm or Rust/rustup
+- `runtimes` for direct runtime presence/version checks not owned by a toolchain
+- `tools` for standalone command checks not owned by a toolchain
 - `env` for runtime config truth
 - `services` for declared managed services and readiness ownership
 - `checks` for operator-facing blockers and warnings
 - `tasks` for named execution paths
+- `workflows` for canonical user-facing paths through prepare/setup/run/readiness
 - `agent` for safety and automation boundaries
+
+Do not duplicate ownership across `toolchains`, `runtimes`, and `tools`. If a package manager,
+runtime, or command is owned by a declared toolchain, task requirements may select it, but top-level
+runtime/tool ownership should not be duplicated.
+
+## Production-readiness gates
+
+When the user asks whether an Ota contract is solid, production-ready, PR-ready, or suitable for a
+serious OSS repo, evaluate these gates explicitly:
+
+- Scope honesty: the contract description and workflow names match the repo slice actually modeled.
+- Deterministic setup: CI/proof install paths use lockfile-respecting commands where the repo
+  supports them.
+- Bounded agent defaults: `agent.default_task`, `agent.safe_tasks`, and `verify_after_changes`
+  prefer finite verification tasks over long-running dev loops.
+- Readiness truth: surfaces/checks prove the declared workflow is usable, not just that a process
+  started.
+- Workflow fidelity: Ota workflows mirror real contributor/CI paths instead of inventing a parallel
+  path.
+- Agent boundary: writable/protected paths are tight, and generated-file exceptions do not conflict
+  with protected paths.
+- CI proof posture: public PR workflows use released Ota setup/install paths unless the task is
+  explicitly pressure-testing unreleased Ota.
+- Container/native parity: container and native workflows are both modeled only when the repo
+  actually supports them, and lifecycle choices are intentional.
+- Ota gap honesty: missing provider/features are called out as Ota gaps instead of hidden in
+  scripts.
+
+If one of these gates fails, call it out directly before saying the contract is production-ready.
 
 ## Contract review workflow
 
@@ -147,6 +195,14 @@ When reviewing an `ota.yaml`, look for:
 - agent writable/protected paths that are too loose
 - tasks that depend on hidden local state
 - readiness that only proves a process started, not that the repo is truly ready
+- long-running dev tasks marked agent-safe or used as the default agent task
+- install/setup commands that ignore the repo lockfile or canonical package manager
+- weak dependency checks such as checking only that `node_modules` exists
+- public CI workflows pinned to unreleased Ota branches or local source installs
+- protected paths that contradict generated safe setup actions
+- workflow names/descriptions that overclaim the modeled slice
+- missing bounded verification tasks for the repo's known preflight checks
+- duplicated ownership across toolchains, runtimes, and tools
 
 A good review should separate:
 
@@ -159,6 +215,9 @@ A good review response should usually end with:
 - the top contract issues
 - any Ota gaps
 - the next best change
+
+When reviewing, lead with findings in priority order. Include concrete file/line references when
+available, then summarize what is solid, what is missing, what to add, and what to remove.
 
 ## Ota gap detection
 
