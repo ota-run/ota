@@ -14609,8 +14609,19 @@ pub fn skills_install(agent: &str, format: OutputFormat, debug: bool) -> Command
 }
 
 fn render_skills_install_text(agent: &str, target_dir: &Path) -> String {
+    let status = render_status_line("READY");
+    if plain_mode() {
+        return format!(
+            "{status}\nInstalled Ota skill for {agent}.\nInstall targets\n- {skill} skill: {target}\n- agent: {agent}",
+            skill = OTA_SKILL_NAME,
+            target = target_dir.display()
+        );
+    }
     format!(
-        "READY\n- {skill} skill -> {target}\n- agent -> {agent}",
+        "{status}\nInstalled Ota skill for {agent}.\n\n{}\n- {} {skill} skill: {target}\n- {} agent: {agent}",
+        paint_section_title("Install targets"),
+        summary_bullet(),
+        summary_bullet(),
         skill = OTA_SKILL_NAME,
         target = target_dir.display()
     )
