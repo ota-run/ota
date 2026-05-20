@@ -56,6 +56,9 @@
     <a href="https://discord.gg/45mBMzSkKC">Discord</a> ·
     <a href="https://x.com/otaready">X (Twitter)</a>
   </p>
+  <p>
+    <img src="https://ota.run/brand/ota-social-card.png" alt="ota social card" width="100%" />
+  </p>
 </div>
 
 ---
