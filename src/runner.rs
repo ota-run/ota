@@ -681,6 +681,15 @@ pub enum RunError {
         port: u16,
     },
     #[error(
+        "task `{task}` listener `{listener}` cannot bind `{address}:{port}` on the host because that address is already in use"
+    )]
+    NativeListenerBindConflict {
+        task: String,
+        listener: String,
+        address: String,
+        port: u16,
+    },
+    #[error(
         "task `{task}` listener `{listener}` cannot bind `{address}:{port}` because reused persistent container `{container}` already has that port in use"
     )]
     PersistentContainerListenerBindConflict {
@@ -5522,6 +5531,9 @@ fn execute_task_with_hooks(
     combined_env.extend(env_overrides);
     combined_env.extend(input_resolution.env_overrides.clone());
     let runtime = task.service_runtime_for_backend(backend_kind);
+    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        preflight_native_runtime_listener_binds(task_name, runtime)?;
+    }
     let mut shell_command = match execution.launch() {
         Some(crate::schema::TaskLaunchSpec::Command(command))
             if !matches!(backend, ResolvedExecutionBackend::Native { .. })
@@ -11904,6 +11916,39 @@ fn preflight_container_host_publications(
                     ),
                 ));
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn preflight_native_runtime_listener_binds(
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+) -> Result<(), RunError> {
+    let Some(runtime) = runtime else {
+        return Ok(());
+    };
+
+    for (listener_name, listener) in &runtime.listeners {
+        if listener.bind.port.mode != crate::schema::TaskRuntimePortMode::Fixed {
+            continue;
+        }
+        let Some(port) = listener.bind.port.value else {
+            continue;
+        };
+
+        match TcpListener::bind((listener.bind.address.as_str(), port)) {
+            Ok(bound) => drop(bound),
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
+                return Err(RunError::NativeListenerBindConflict {
+                    task: task_name.to_string(),
+                    listener: listener_name.clone(),
+                    address: listener.bind.address.clone(),
+                    port,
+                });
+            }
+            Err(_) => {}
         }
     }
 
@@ -31968,6 +32013,52 @@ exec "$(dirname "$0")/docker-real" "$@"
                 assert_eq!(port, 3002);
             }
             other => panic!("expected host publication conflict, got {other}"),
+        }
+    }
+
+    #[test]
+    fn native_service_run_fails_when_fixed_listener_bind_port_is_already_in_use() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve a local port");
+        let listener_port = listener.local_addr().expect("listener addr").port();
+
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: node -e "setTimeout(() => process.exit(0), 100)"
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {listener_port}
+"#
+        ));
+
+        let error = run_task_captured(&fixture.contract, fixture.file_path(), "dev")
+            .expect_err("native run should fail when fixed listener bind port is occupied");
+
+        match error {
+            RunError::NativeListenerBindConflict {
+                task,
+                listener,
+                address,
+                port,
+            } => {
+                assert_eq!(task, "dev");
+                assert_eq!(listener, "site");
+                assert_eq!(address, "127.0.0.1");
+                assert_eq!(port, listener_port);
+            }
+            other => panic!("expected native listener bind conflict, got {other}"),
         }
     }
 

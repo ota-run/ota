@@ -126,11 +126,11 @@ use crate::runner::{
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
     SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee, TaskExecutionRelation,
     TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence, clean_execution_report,
-    clean_execution_report_for_workflow, clean_stale_execution, effective_execution,
-    effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
-    env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
-    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
-    persistent_container_name, reported_task_context_for_backend,
+    clean_stale_execution, effective_execution, effective_task_env_for_backend,
+    effective_task_env_for_selection, effective_task_execution, env_resolution_source_label,
+    ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
+    load_policy_env_overlay, named_execution_context, persistent_container_name,
+    reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_effective_task_container_backend,
     resolve_execution_backend, resolve_execution_backend_with_contract_path,
     resolve_named_readiness_probe, resolve_task_env_details, resolve_task_env_details_for_task,
@@ -62112,6 +62112,25 @@ fn render_run_structured_error_text(
                 next_steps,
             )
         }
+        RunError::NativeListenerBindConflict {
+            task,
+            listener,
+            address,
+            port,
+        } => (
+            String::from("Listener bind conflict"),
+            vec![
+                format!("task `{task}` listener `{listener}` needs `{address}:{port}`"),
+                format!("port `{port}` is already in use on the host"),
+                String::from("this usually means another local workload is still running"),
+            ],
+            vec![
+                format!("stop the process already using `{address}:{port}`"),
+                format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
+                format!("rerun `{}`", repo_run_stream_command(task.as_str(), member)),
+                task_use_details_step(Some(contract_path), member),
+            ],
+        ),
         RunError::PersistentContainerListenerBindConflict {
             task,
             listener,
@@ -62388,6 +62407,25 @@ fn render_run_structured_error_text(
                 "RUN",
                 &text_path_display,
                 &format!("tasks.{task}.runtime.listeners.{listener}.project.host.port"),
+                &summary,
+                &why_lines,
+                &next_steps,
+            );
+            if let Some(receipt_text) = receipt_text
+                && !receipt_text.trim().is_empty()
+            {
+                output.push('\n');
+                output.push_str(receipt_text);
+            }
+            output.push('\n');
+            output.push_str(summary_block);
+            return output;
+        }
+        RunError::NativeListenerBindConflict { task, listener, .. } => {
+            let mut output = structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
                 &summary,
                 &why_lines,
                 &next_steps,
@@ -77042,6 +77080,32 @@ fn render_up_run_error(
                     ),
                 ],
                 &next_steps,
+                None,
+                None,
+            )
+        }
+        RunError::NativeListenerBindConflict {
+            task,
+            listener,
+            address,
+            port,
+        } => {
+            let where_value = display_contract_target(&compact_contract_path(contract_path), None);
+            render_field_error_with_tail(
+                "UP",
+                &where_value,
+                &format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
+                "Listener bind conflict",
+                &[
+                    format!("task `{task}` listener `{listener}` needs `{address}:{port}`"),
+                    format!("port `{port}` is already in use on the host"),
+                    String::from("this usually means another local workload is still running"),
+                ],
+                &[
+                    format!("stop the process already using `{address}:{port}`"),
+                    format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
+                    String::from("rerun `ota up`"),
+                ],
                 None,
                 None,
             )
