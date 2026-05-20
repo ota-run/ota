@@ -1463,6 +1463,8 @@ const OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY: &str = "dev.ota.persistent.fami
 const OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY: &str = "dev.ota.persistent.shape";
 const OTA_MANAGED_VOLUME_LABEL: &str = "dev.ota.managed=true";
 const OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL: &str = "dev.ota.kind=dependency-isolation";
+const OTA_ENGINE_CLEAN_QUERY_TASK_NAME: &str = "__ota_engine_clean_query__";
+const OTA_CLEAN_INTERNAL_TASK_NAME: &str = "__ota_clean_internal__";
 const OTA_STATE_DIR: &str = "state";
 const OTA_OWNERSHIP_ID_FILE: &str = "ownership-id";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
@@ -3215,6 +3217,7 @@ fn clean_execution_report_inner(
     contract_path: &Path,
     cleanup_scope: Option<&PersistentCleanupScope>,
 ) -> Result<CleanExecutionReport, RunError> {
+    let clean_task_name = OTA_CLEAN_INTERNAL_TASK_NAME;
     let cleanup_targets = persistent_cleanup_targets(contract, cleanup_scope)?;
 
     let working_dir = contract_working_dir(contract_path);
@@ -3276,7 +3279,7 @@ fn clean_execution_report_inner(
             continue;
         }
 
-        if remove_persistent_container_if_present("clean", &engine, &container_name)? {
+        if remove_persistent_container_if_present(clean_task_name, &engine, &container_name)? {
             report.removed_current_persistent_containers += 1;
         }
     }
@@ -3296,14 +3299,18 @@ fn clean_execution_report_inner(
     report.queried_engines = discovery_engines.clone();
     for engine in discovery_engines {
         let mut engine_query_succeeded = false;
-        match persistent_container_names_for_repo("clean", &engine, &repo_ownership_token) {
+        match persistent_container_names_for_repo(clean_task_name, &engine, &repo_ownership_token) {
             Ok(container_names) => {
                 engine_query_succeeded = true;
                 for container_name in container_names {
                     if !visited.insert((engine.clone(), container_name.clone())) {
                         continue;
                     }
-                    if remove_persistent_container_if_present("clean", &engine, &container_name)? {
+                    if remove_persistent_container_if_present(
+                        clean_task_name,
+                        &engine,
+                        &container_name,
+                    )? {
                         report.removed_drift_persistent_containers += 1;
                     }
                 }
@@ -3313,7 +3320,11 @@ fn clean_execution_report_inner(
                 engines_to_track.insert(engine.clone());
             }
         }
-        match dependency_isolation_volume_names_for_repo("clean", &engine, &repo_ownership_token) {
+        match dependency_isolation_volume_names_for_repo(
+            clean_task_name,
+            &engine,
+            &repo_ownership_token,
+        ) {
             Ok(volume_names) => {
                 engine_query_succeeded = true;
                 for volume_name in volume_names {
@@ -3330,7 +3341,11 @@ fn clean_execution_report_inner(
         }
 
         if engine_query_succeeded {
-            match repo_scoped_legacy_persistent_container_names("clean", &engine, working_dir) {
+            match repo_scoped_legacy_persistent_container_names(
+                clean_task_name,
+                &engine,
+                working_dir,
+            ) {
                 Ok(legacy) => {
                     if !legacy.is_empty() {
                         engines_to_track.insert(engine.clone());
@@ -3358,13 +3373,15 @@ fn clean_execution_report_inner(
     }
 
     for (engine, volume_names) in &dependency_isolation_volumes_to_remove {
-        for container_name in
-            containers_attached_to_dependency_isolation_volumes("clean", engine, volume_names)?
-        {
+        for container_name in containers_attached_to_dependency_isolation_volumes(
+            clean_task_name,
+            engine,
+            volume_names,
+        )? {
             if !visited.insert((engine.clone(), container_name.clone())) {
                 continue;
             }
-            if remove_persistent_container_if_present("clean", engine, &container_name)? {
+            if remove_persistent_container_if_present(clean_task_name, engine, &container_name)? {
                 report.removed_drift_attached_containers += 1;
             }
         }
@@ -3378,7 +3395,7 @@ fn clean_execution_report_inner(
 
     for (engine, volume_names) in current_dependency_isolation_volumes_to_remove {
         for volume_name in volume_names {
-            if remove_dependency_isolation_volume("clean", &engine, &volume_name)? {
+            if remove_dependency_isolation_volume(clean_task_name, &engine, &volume_name)? {
                 report.removed_current_dependency_isolation_volumes += 1;
             }
         }
@@ -3386,7 +3403,7 @@ fn clean_execution_report_inner(
 
     for (engine, volume_names) in drift_dependency_isolation_volumes_to_remove {
         for volume_name in volume_names {
-            if remove_dependency_isolation_volume("clean", &engine, &volume_name)? {
+            if remove_dependency_isolation_volume(clean_task_name, &engine, &volume_name)? {
                 report.removed_drift_dependency_isolation_volumes += 1;
             }
         }
@@ -3836,7 +3853,7 @@ fn list_stale_ota_containers(engine: &str) -> Result<Vec<StaleContainerCleanupTa
 }
 
 fn container_ps_names(engine: &str, args: &[&str]) -> Result<Vec<String>, RunError> {
-    let output = container_command_output(engine, args, None, "clean")?;
+    let output = container_command_output(engine, args, None, OTA_ENGINE_CLEAN_QUERY_TASK_NAME)?;
     if output.exit_code != 0 {
         let details = if !output.stderr.trim().is_empty() {
             output.stderr.trim().to_string()
@@ -19149,7 +19166,7 @@ fn container_command_output(
     if let Some(working_dir) = working_dir {
         container.current_dir(working_dir);
     }
-    if task_name == "clean" {
+    if task_name == OTA_ENGINE_CLEAN_QUERY_TASK_NAME || task_name == OTA_CLEAN_INTERNAL_TASK_NAME {
         const CLEAN_CONTAINER_COMMAND_TIMEOUT_SECS: u64 = 30;
         let mut child = container.spawn().map_err(|source| RunError::SpawnFailed {
             task: task_name.to_string(),

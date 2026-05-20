@@ -1925,6 +1925,7 @@ pub fn proof_runtime(
                 let cleanup_error = if proof_runtime_selected_workflow_uses_container_backend(
                     &target.contract,
                     effective_workflow_name,
+                    overrides,
                 ) {
                     clean_execution_report(&target.contract, &target.contract_path)
                         .err()
@@ -1950,6 +1951,10 @@ pub fn proof_runtime(
                 ) {
                     proof_summary_for_output.primary_blocker = Some(overridden_blocker);
                 }
+                let up_process_failure = proof_runtime_effective_up_process_failure(
+                    &proof_summary_for_output,
+                    up_process_failure,
+                );
                 let primary_blocker =
                     proof_runtime_blocking_primary_blocker(&proof_summary_for_output);
                 let primary_blocker_error = primary_blocker
@@ -40587,6 +40592,58 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_effective_up_process_failure_ignores_non_blocking_ready_exit() {
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::Ready,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 1,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Info,
+                summary: String::from("Container readiness does not include host-only checks"),
+                why: String::from("container mode excludes host checks"),
+                next: String::from("run `ota doctor --mode native`"),
+                provenance: Some(String::from("repo contract")),
+                provenance_key: Some(String::from("repo_contract")),
+            }),
+        };
+
+        assert_eq!(
+            super::proof_runtime_effective_up_process_failure(
+                &summary,
+                Some("`ota up --stream` exited while waiting for readiness (exit code 1)")
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn proof_runtime_effective_up_process_failure_preserves_blocking_exit() {
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Surface readiness failed: app"),
+                why: String::from("surface app did not become ready"),
+                next: String::from("rerun `ota doctor`"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let failure = "`ota up --stream` exited while waiting for readiness (exit code 1)";
+        assert_eq!(
+            super::proof_runtime_effective_up_process_failure(&summary, Some(failure)),
+            Some(failure)
+        );
+    }
+
+    #[test]
     fn proof_runtime_selected_workflow_container_cleanup_scope_is_backend_aware() {
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
@@ -40631,11 +40688,26 @@ workflows:
         assert!(
             !super::proof_runtime_selected_workflow_uses_container_backend(
                 &contract,
-                Some("instant")
+                Some("instant"),
+                ExecutionOverrides::default(),
             )
         );
         assert!(
-            super::proof_runtime_selected_workflow_uses_container_backend(&contract, Some("app"))
+            super::proof_runtime_selected_workflow_uses_container_backend(
+                &contract,
+                Some("app"),
+                ExecutionOverrides::default(),
+            )
+        );
+        assert!(
+            super::proof_runtime_selected_workflow_uses_container_backend(
+                &contract,
+                Some("instant"),
+                ExecutionOverrides {
+                    backend: Some(Backend::Container),
+                    ..ExecutionOverrides::default()
+                },
+            )
         );
     }
 
@@ -65491,13 +65563,13 @@ fn proof_runtime_cleanup_failure_message(error: CleanExecutionError) -> Option<S
 fn proof_runtime_selected_workflow_uses_container_backend(
     contract: &Contract,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> bool {
     contract
         .selected_workflow_task_closure_names(workflow_name)
         .into_iter()
         .any(|task_name| {
-            effective_task_execution(contract, task_name.as_str(), ExecutionOverrides::default())
-                .backend
+            effective_task_execution(contract, task_name.as_str(), overrides).backend
                 == Backend::Container
         })
 }
@@ -65509,6 +65581,20 @@ fn proof_runtime_blocking_primary_blocker(
         .primary_blocker
         .as_ref()
         .filter(|blocker| blocker.severity != FindingSeverity::Info)
+}
+
+fn proof_runtime_effective_up_process_failure<'a>(
+    summary: &DoctorSummary,
+    up_process_failure: Option<&'a str>,
+) -> Option<&'a str> {
+    let failure = up_process_failure?;
+    if summary.verdict == DoctorVerdict::Ready
+        && proof_runtime_blocking_primary_blocker(summary).is_none()
+    {
+        None
+    } else {
+        Some(failure)
+    }
 }
 
 fn proof_runtime_ok(summary: &DoctorSummary, proof_error: Option<&str>) -> bool {
