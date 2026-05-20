@@ -140,6 +140,9 @@
 - widened bounded cleanup-command timeout coverage to Ota-owned `ota clean` engine operations so
   Windows PowerShell proof wrappers cannot stall indefinitely in cleanup/finally paths when the
   engine command path hangs
+- added fail-fast timeout caching for Ota-owned internal `ota clean` engine calls: once an engine
+  command times out within a clean invocation, subsequent internal clean calls to that engine
+  fail immediately with bounded timeout context instead of repeating long waits
 - added Windows crash-code decoding guidance for common negative exit codes in both run and doctor
   failure paths, including `0xC0000005` (access violation), `0xC0000409` (fast-fail/stack buffer
   overrun), and `0xC000013A` (interrupt), so remediation output is actionable without manual code
