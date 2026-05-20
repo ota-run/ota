@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- tightened the first-party Ota skill contract-authoring guidance with production-readiness gates
+  for scope honesty, deterministic setup, agent safety, workflow fidelity, CI proof posture, and
+  toolchain/runtime/tool ownership boundaries
 - scoped runtime-proof cleanup to the selected workflow/task closure instead of all declared
   execution contexts, so `ota proof runtime --workflow <host-workflow>` no longer fails cleanup on
   unrelated container contexts that are not part of the selected proof path
@@ -44,6 +47,9 @@
 - improved detached `ota up` run-failure diagnostics by surfacing a sanitized tail hint from the
   detached run log (for example explicit `address already in use (EADDRINUSE)`), so operator
   output points to startup bind conflicts without requiring manual artifact triage first
+- added `failure_class` to `ota proof runtime --json` status output so CI and automation can
+  distinguish cleanup, readiness, and run/install-or-toolchain failure classes without brittle
+  log-parsing
 
 ## 1.6.14
 

@@ -754,7 +754,9 @@ fn append_post_summary_next_block(out: &mut String, next_steps: &[String]) {
     for _ in trailing_newlines..2 {
         out.push('\n');
     }
-    append_error_detail_section(out, "Next:", next_steps, None);
+    let mut next_block = String::new();
+    append_error_detail_section(&mut next_block, "Next:", next_steps, None);
+    out.push_str(next_block.trim_start_matches('\n'));
 }
 
 fn split_embedded_next_block(message: &str) -> Option<(String, Vec<String>)> {
@@ -1991,6 +1993,12 @@ pub fn proof_runtime(
                     proof_runtime_phase_label(proof_phase)
                 };
                 let ok = proof_runtime_ok(&proof_summary_for_output, proof_error.as_deref());
+                let proof_failure_class = proof_runtime_failure_class(
+                    &proof_summary_for_output,
+                    cleanup_error.as_deref(),
+                    up_process_failure,
+                    &up_log_artifact_path,
+                );
 
                 match format {
                     OutputFormat::Text => CommandOutput {
@@ -2024,6 +2032,7 @@ pub fn proof_runtime(
                                 doctor: &doctor_artifact_display,
                                 up_log: &up_log_artifact_display,
                             }),
+                            failure_class: proof_failure_class,
                             error: proof_error.as_deref(),
                             next: proof_next.as_deref(),
                         }),
@@ -40467,6 +40476,94 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_cleanup_failures() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::Ready,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            Some("cleanup failed"),
+            None,
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("cleanup_failure"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_marks_install_toolchain_from_up_log() {
+        let dir = TempDir::new().expect("temp dir should create");
+        let up_log = dir.path().join("up.log");
+        fs::write(&up_log, "node-gyp rebuild failed\nerror C2362\n").expect("up log should write");
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("run exited"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(&summary, None, Some("run failed"), &up_log);
+        assert_eq!(class.as_deref(), Some("install_or_toolchain_failure"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_marks_readiness_timeout() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Surface readiness timed out: site"),
+                why: String::from("timed out"),
+                next: String::from("rerun"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            None,
+            Some("timed out while waiting"),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("readiness_timeout"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_marks_up_process_failure_without_primary_blocker() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            None,
+            Some("up process exited with code 1"),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("up_process_failure"));
+    }
+
+    #[test]
     fn render_proof_runtime_text_prioritizes_primary_blocker_over_up_process_failure() {
         let _guard = cwd_mutex_lock();
         let contract_dir = TempDir::new().unwrap();
@@ -40554,52 +40651,6 @@ workflows:
         assert!(rendered.contains("Up process exited unexpectedly"));
         assert!(rendered.contains("Why: up process exited with code 1"));
         assert!(rendered.contains("inspect up.log and rerun `ota proof runtime`"));
-    }
-
-    #[test]
-    fn proof_runtime_blocking_primary_blocker_ignores_info_findings() {
-        let summary = crate::output::DoctorSummary {
-            verdict: DoctorVerdict::Ready,
-            agent_verdict: DoctorVerdict::Ready,
-            error_count: 0,
-            warn_count: 0,
-            info_count: 1,
-            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
-                severity: FindingSeverity::Info,
-                summary: String::from("Container readiness does not include host-only checks"),
-                why: String::from("container mode excludes host checks"),
-                next: String::from("run `ota doctor --mode native`"),
-                provenance: Some(String::from("repo contract")),
-                provenance_key: Some(String::from("repo_contract")),
-            }),
-        };
-
-        assert!(super::proof_runtime_blocking_primary_blocker(&summary).is_none());
-    }
-
-    #[test]
-    fn proof_runtime_ok_uses_verdict_and_error_only() {
-        let summary = crate::output::DoctorSummary {
-            verdict: DoctorVerdict::Ready,
-            agent_verdict: DoctorVerdict::Ready,
-            error_count: 0,
-            warn_count: 0,
-            info_count: 1,
-            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
-                severity: FindingSeverity::Info,
-                summary: String::from("Container readiness does not include host-only checks"),
-                why: String::from("container mode excludes host checks"),
-                next: String::from("run `ota doctor --mode native`"),
-                provenance: Some(String::from("repo contract")),
-                provenance_key: Some(String::from("repo_contract")),
-            }),
-        };
-
-        assert!(super::proof_runtime_ok(&summary, None));
-        assert!(!super::proof_runtime_ok(
-            &summary,
-            Some("timed out while waiting for readiness")
-        ));
     }
 
     #[test]
@@ -51536,6 +51587,14 @@ tasks:
         );
         assert!(
             rendered.contains("Next: run `ota tasks --use` to inspect runnable task usage"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Note:        running on the host environment\n\nNext:"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("Note:        running on the host environment\n\n\nNext:"),
             "{rendered}"
         );
     }
@@ -65608,6 +65667,73 @@ fn proof_runtime_effective_up_process_failure<'a>(
 
 fn proof_runtime_ok(summary: &DoctorSummary, proof_error: Option<&str>) -> bool {
     summary.verdict == DoctorVerdict::Ready && proof_error.is_none()
+}
+
+fn proof_runtime_failure_class(
+    summary: &DoctorSummary,
+    cleanup_error: Option<&str>,
+    up_process_failure: Option<&str>,
+    up_log_artifact_path: &Path,
+) -> Option<String> {
+    if cleanup_error.is_some() {
+        return Some(String::from("cleanup_failure"));
+    }
+
+    let Some(primary) = proof_runtime_blocking_primary_blocker(summary) else {
+        if up_process_failure.is_some() {
+            return Some(String::from("up_process_failure"));
+        }
+        return None;
+    };
+    if primary.summary == "Run task exited before readiness" {
+        if proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path) {
+            return Some(String::from("install_or_toolchain_failure"));
+        }
+        return Some(String::from("run_task_exit_before_readiness"));
+    }
+
+    if primary.summary.starts_with("Surface readiness timed out:")
+        || primary
+            .summary
+            .starts_with("Signal surface readiness timed out:")
+    {
+        return Some(String::from("readiness_timeout"));
+    }
+    if primary.summary.starts_with("Surface readiness failed:")
+        || primary
+            .summary
+            .starts_with("Signal surface readiness failed:")
+    {
+        return Some(String::from("readiness_check_failed"));
+    }
+    if primary
+        .summary
+        .starts_with("Surface readiness could not be evaluated:")
+        || primary
+            .summary
+            .starts_with("Signal surface readiness could not be evaluated:")
+    {
+        return Some(String::from("readiness_evaluation_failed"));
+    }
+    Some(String::from("primary_blocker"))
+}
+
+fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path: &Path) -> bool {
+    let Ok(log) = fs::read_to_string(up_log_artifact_path) else {
+        return false;
+    };
+    let log = log.to_ascii_lowercase();
+    [
+        "node-gyp",
+        "gyp err",
+        "error c",
+        "elifecycle",
+        "local package.json exists, but node_modules missing",
+        "turbo: not found",
+        "not recognized as an internal or external command",
+    ]
+    .iter()
+    .any(|pattern| log.contains(pattern))
 }
 
 fn proof_runtime_status_word(

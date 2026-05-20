@@ -150,6 +150,7 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     assert!(success.get("phase").is_some());
     assert!(success.get("summary").is_some());
     assert!(success.get("artifacts").is_some());
+    assert!(success.get("failure_class").is_some());
     assert!(success.get("next").is_some());
     assert!(artifacts.get("topology").is_some());
     assert!(artifacts.get("doctor").is_some());

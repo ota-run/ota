@@ -355,6 +355,54 @@ workflows:
 }
 
 #[test]
+fn proof_runtime_failed_json_output_includes_failure_class() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: proof-failure-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+checks:
+  - name: required-tool
+    kind: precondition
+    severity: error
+    run: missing-proof-runtime-check
+    timeout: 50
+tasks:
+  setup:
+    context: host
+    run: echo setup-ready
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+    );
+
+    let json = run_ota_failure_stdout_json(
+        &[
+            "proof",
+            "runtime",
+            "--json",
+            "--workflow",
+            "app",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("proof-runtime.json", &json);
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["failure_class"], "primary_blocker");
+}
+
+#[test]
 fn tasks_json_output_with_copy_if_missing_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(
