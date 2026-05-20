@@ -24,7 +24,7 @@
 <div align="center">
   <img src="docs/assets/ota-icon.svg" alt="ota logo" width="110" height="110" />
   <h1>ota</h1>
-  <p><strong>Open repo-readiness infrastructure for humans, CI, and AI agents.</strong></p>
+  <p><strong>Open repo-readiness infrastructure for humans, CI, and AI agents,  containers, and multi-repo workspaces.</strong></p>
   <p><strong>Doctor first. Contract second.</strong></p>
   <p>
     Give every repo one explicit contract for diagnosis, setup, execution, and safe automation
@@ -36,11 +36,10 @@
     <a href="https://github.com/ota-run/ota/actions/workflows/docs-quality.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/docs-quality.yml?branch=main&style=flat-square&label=docs" alt="Docs quality status" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/ota-run/ota?style=flat-square" alt="License" /></a>
 <!--     <a href="https://github.com/ota-run/ota/stargazers"><img src="https://img.shields.io/github/stars/ota-run/ota?style=flat-square" alt="GitHub stars" /></a> -->
-  </p>
-  <p><strong>Built for</strong> humans, CI, AI agents, containers, and multi-repo workspaces.</p>
       <p>
         <img src="https://ota.run/brand/ota-social-card.png" alt="ota social card" width="100%" />
       </p>
+  </p>
   <p>
     <a href="https://ota.run/docs/getting-started">Get Started</a> ·
     <a href="https://ota.run/docs">Docs</a> ·
