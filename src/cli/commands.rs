@@ -53591,6 +53591,65 @@ tasks:
     }
 
     #[test]
+    fn run_output_excerpt_prioritizes_package_manager_binary_failures() {
+        let stdout = (1..=30)
+            .map(|index| format!("progress line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let stderr = [
+            "Scope: all 25 workspace projects",
+            "Unable to find package manager binary",
+            "cannot find binary path",
+            "ELIFECYCLE Command failed with exit code 1.",
+        ]
+        .join("\n");
+
+        let excerpt = super::run_output_excerpt(stdout.as_str(), stderr.as_str(), 6)
+            .expect("excerpt should be present");
+        let excerpt_text = excerpt.lines.join("\n").to_ascii_lowercase();
+
+        assert!(
+            excerpt_text.contains("package manager binary"),
+            "{excerpt_text}"
+        );
+        assert!(
+            excerpt_text.contains("cannot find binary path"),
+            "{excerpt_text}"
+        );
+    }
+
+    #[test]
+    fn startup_failure_next_preserves_container_mode_in_rerun_command() {
+        let rendered = strip_ansi_codes(&super::render_service_startup_failure_text(
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev:www",
+            "dev:www",
+            None,
+            Backend::Container,
+            &ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ExitedNonZero,
+                after_readiness: false,
+                target: String::from("service workload in persistent container"),
+                container: String::from("ota-deadbeef"),
+                exit_code: Some(1),
+            },
+            None,
+            "",
+            "Unable to find package manager binary",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered
+                .contains("rerun `ota run dev:www --mode container --stream` for live task output"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_failure_text_keeps_clean_service_exit_as_failure_even_with_late_interrupt_signal() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -56655,6 +56714,7 @@ project:
             "dev",
             "dev",
             None,
+            Backend::Native,
             &ServiceTermination {
                 kind: ServiceTerminationKind::ServiceStopped,
                 cause: ServiceTerminationCause::ExitedNonZero,
@@ -60570,12 +60630,15 @@ fn render_run_captured_failure_text(
             );
         }
         if !service_termination.after_readiness {
+            let requested_backend =
+                effective_task_execution(contract, requested_task_name, overrides).backend;
             return render_service_startup_failure_text(
                 contract_path,
                 where_value,
                 task_name,
                 requested_task_name,
                 member,
+                requested_backend,
                 service_termination,
                 runtime,
                 stdout,
@@ -61129,6 +61192,7 @@ fn render_service_startup_failure_text(
     task_name: &str,
     requested_task_name: &str,
     member: Option<&str>,
+    backend: Backend,
     service_termination: &ServiceTermination,
     runtime: Option<&ResolvedTaskRuntime>,
     stdout: &str,
@@ -61206,7 +61270,7 @@ fn render_service_startup_failure_text(
     let next_steps = [
         format!(
             "rerun `{}` for live task output",
-            repo_run_stream_command(requested_task_name, member)
+            repo_run_stream_command_for_backend(requested_task_name, member, backend)
         ),
         task_use_details_step(Some(contract_path), member),
     ];
@@ -61596,6 +61660,14 @@ fn output_excerpt_relevance_score(line: &str) -> usize {
     let lower = line.to_ascii_lowercase();
     if lower.contains("panic") || lower.contains("thread '") {
         5
+    } else if lower.contains("unable to find package manager binary")
+        || lower.contains("cannot find binary path")
+        || lower.contains("err_pnpm_")
+        || lower.contains("unsupported_engine")
+        || lower.contains("elifecycle")
+        || lower.contains("command not found")
+    {
+        4
     } else if lower.contains("error:") || lower.contains("failed") {
         4
     } else if lower.contains("not found") || lower.contains("exit code") {
@@ -61625,6 +61697,24 @@ fn repo_run_stream_command(task_name: &str, member: Option<&str>) -> String {
         Some(member) => format!("ota run --member {member} {task_name} --stream"),
         None => format!("ota run {task_name} --stream"),
     }
+}
+
+fn repo_run_stream_command_for_backend(
+    task_name: &str,
+    member: Option<&str>,
+    backend: Backend,
+) -> String {
+    let mut command = match member {
+        Some(member) => format!("ota run --member {member} {task_name}"),
+        None => format!("ota run {task_name}"),
+    };
+    match backend {
+        Backend::Container => command.push_str(" --mode container"),
+        Backend::Remote => command.push_str(" --mode remote"),
+        Backend::Native => {}
+    }
+    command.push_str(" --stream");
+    command
 }
 
 fn repo_run_command(task_name: &str, member: Option<&str>) -> String {
