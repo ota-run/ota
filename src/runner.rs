@@ -4045,6 +4045,7 @@ struct TaskRunState {
         BTreeMap<(Option<String>, Option<String>, String, String), TaskTargetActivationStatus>,
     activation_started_producers:
         BTreeMap<(Option<String>, Option<String>, String), ActivationStartedProducerCleanup>,
+    requested_task_interrupt_cleanup: Option<RequestedTaskInterruptCleanup>,
     task_steps: Vec<ExecutedTaskStep>,
     stdout: String,
     stderr: String,
@@ -4074,6 +4075,15 @@ struct ActivationStartedProducerCleanup {
     command: Option<String>,
     working_dir: PathBuf,
     remove_backend_on_interrupt: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RequestedTaskInterruptCleanup {
+    task_name: String,
+    backend: ResolvedExecutionBackend,
+    runtime: Option<TaskRuntimeSpec>,
+    command: Option<String>,
+    working_dir: PathBuf,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -4445,6 +4455,10 @@ fn run_task_internal(
         &mut state,
     );
     if state.interrupted {
+        state.execution_note = merge_execution_note(
+            state.execution_note.take(),
+            cleanup_interrupted_requested_task_service_workload_and_note(&mut state),
+        );
         state.execution_note = merge_execution_note(
             state.execution_note.take(),
             cleanup_interrupted_activation_started_producers_and_note(
@@ -5596,6 +5610,20 @@ fn execute_task_with_hooks(
             },
         }
     };
+    if requested_relation {
+        state.requested_task_interrupt_cleanup =
+            if runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service) {
+                Some(RequestedTaskInterruptCleanup {
+                    task_name: task_name.to_string(),
+                    backend: backend.clone(),
+                    runtime: runtime.cloned(),
+                    command: requested_interrupt_cleanup_command(&backend, &prepared_execution),
+                    working_dir: working_dir.to_path_buf(),
+                })
+            } else {
+                None
+            };
+    }
     let command_output = execute_task_command(
         Some(contract),
         task_name,
@@ -6252,6 +6280,18 @@ fn execute_task_command(
             task: task_name.to_string(),
         }),
     }
+}
+
+fn requested_interrupt_cleanup_command(
+    backend: &ResolvedExecutionBackend,
+    execution: &PreparedTaskExecution,
+) -> Option<String> {
+    matches!(backend, ResolvedExecutionBackend::BackendProvider { .. })
+        .then(|| match execution {
+            PreparedTaskExecution::Shell { command } => Some(command.clone()),
+            _ => None,
+        })
+        .flatten()
 }
 
 fn execute_native_file_action_task(
@@ -9094,6 +9134,50 @@ fn cleanup_interrupted_activation_started_producers_and_note(
     } else {
         Some(notes.join("; "))
     }
+}
+
+fn cleanup_interrupted_requested_task_service_workload_and_note(
+    state: &mut TaskRunState,
+) -> Option<String> {
+    let cleanup = state.requested_task_interrupt_cleanup.take()?;
+    let note = match resolved_execution_backend_kind(&cleanup.backend) {
+        Backend::Native => cleanup_interrupted_native_service_workload_and_note(
+            cleanup.task_name.as_str(),
+            cleanup.runtime.as_ref(),
+        ),
+        // Container service interrupt cleanup is already handled in container execution paths.
+        Backend::Container => None,
+        Backend::Remote => {
+            if matches!(
+                cleanup.backend,
+                ResolvedExecutionBackend::BackendProvider { .. }
+            ) {
+                cleanup_interrupted_backend_provider_service_workload_and_note(
+                    cleanup.task_name.as_str(),
+                    &cleanup.backend,
+                    cleanup.command.as_deref(),
+                    cleanup.working_dir.as_path(),
+                )
+            } else {
+                cleanup_interrupted_remote_service_workload_and_note(
+                    cleanup.task_name.as_str(),
+                    &cleanup.backend,
+                    cleanup.runtime.as_ref(),
+                )
+            }
+        }
+    }
+    .map(normalize_requested_service_cleanup_note)?;
+    Some(format!(
+        "requested service task `{}`: {note}",
+        cleanup.task_name
+    ))
+}
+
+fn normalize_requested_service_cleanup_note(note: String) -> String {
+    note.strip_prefix("activation-started ")
+        .map(str::to_string)
+        .unwrap_or(note)
 }
 
 fn wait_for_readiness_target_to_clear(target: &RuntimeReadinessTarget) -> bool {
@@ -34912,6 +34996,70 @@ project:
         assert!(
             !Path::new(&pidfile).exists(),
             "cleanup should remove pidfile"
+        );
+    }
+
+    #[cfg(all(unix, target_os = "linux"))]
+    #[test]
+    fn requested_interrupt_cleanup_reports_requested_service_scope() {
+        use std::process::Command;
+
+        let _guard = env_mutex_lock();
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .spawn()
+            .expect("sleep should start");
+        let stat = fs::read_to_string(format!("/proc/{}/stat", child.id())).unwrap();
+        let start_time = stat
+            .split_whitespace()
+            .nth(21)
+            .expect("proc stat should contain start time");
+        let pidfile = super::persistent_service_workload_pidfile_path("dev");
+        fs::write(&pidfile, format!("{} {start_time}\n", child.id())).unwrap();
+
+        let mut state = TaskRunState::default();
+        state.requested_task_interrupt_cleanup = Some(super::RequestedTaskInterruptCleanup {
+            task_name: String::from("dev"),
+            backend,
+            runtime: None,
+            command: None,
+            working_dir: PathBuf::from("."),
+        });
+
+        let note = super::cleanup_interrupted_requested_task_service_workload_and_note(&mut state);
+
+        let mut exited = false;
+        for _ in 0..20 {
+            if child.try_wait().unwrap().is_some() {
+                exited = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if !exited {
+            let _ = Command::new("kill")
+                .args(["-KILL", &child.id().to_string()])
+                .status();
+        }
+
+        assert_eq!(
+            note.as_deref(),
+            Some(
+                "requested service task `dev`: native service workload cleaned up after interrupt"
+            )
+        );
+        assert!(exited, "cleanup should stop the lingering workload process");
+        assert!(
+            !Path::new(&pidfile).exists(),
+            "cleanup should remove pidfile"
+        );
+        assert!(
+            state.requested_task_interrupt_cleanup.is_none(),
+            "requested cleanup intent should be consumed"
         );
     }
 
