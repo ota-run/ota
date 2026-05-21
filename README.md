@@ -5,12 +5,12 @@ span
   <h1>ota</h1>
   <p><strong>Built for humans, CI, and AI agents, containers, and multi-repo workspaces.</strong></p>
   <p><strong>DOCTOR FIRST. CONTRACT SECOND.</strong></p>
-  <p>
-    Give every repo one explicit contract for diagnosis, setup, execution, and safe automation
-    instead of guessing from README drift.
-  </p>
+<!--   <p> -->
+<!--     Give every repo one explicit contract for diagnosis, setup, execution, and safe automation -->
+<!--     instead of guessing from README drift. -->
+<!--   </p> -->
       <p>
-        <img src="https://ota.run/brand/ota-social-card.png" alt="ota social card" width="100%" />
+        <img src="https://ota.run/brand/ota-github-social-card.png" alt="ota social card" width="100%" />
       </p>
   <p>
     <a href="https://github.com/ota-run/ota/releases"><img src="https://img.shields.io/github/v/release/ota-run/ota?style=flat-square" alt="Latest release" /></a>
