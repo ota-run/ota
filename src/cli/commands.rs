@@ -54982,6 +54982,54 @@ tasks:
     }
 
     #[test]
+    fn run_failure_text_preserves_container_mode_in_excerpt_rerun_hint() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:22-bookworm
+tasks:
+  dev:www:
+    run: pnpm dev:www
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev:www",
+            "dev:www",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "container backend `docker` is unavailable",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nMode:        container",
+        ));
+
+        assert!(
+            rendered.contains(
+                "rerun `ota run dev:www --mode container --stream` for live task output if the excerpt is insufficient"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_failure_text_classifies_managed_isolated_path_runtime_mutation() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -60698,10 +60746,11 @@ fn render_run_captured_failure_text(
     }
     let mut next_steps = Vec::new();
     let excerpt = run_output_excerpt(stdout, stderr, 20);
+    let rerun_backend = effective_task_execution(contract, task_name, overrides).backend;
     if excerpt.is_some() {
         next_steps.push(format!(
             "rerun `{}` for live task output if the excerpt is insufficient",
-            repo_run_stream_command(task_name, member)
+            repo_run_stream_command_for_backend(task_name, member, rerun_backend)
         ));
     }
     next_steps.push(task_use_details_step(Some(contract_path), member));

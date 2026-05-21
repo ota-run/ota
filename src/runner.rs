@@ -69,8 +69,9 @@ use crate::schema::{
     TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimeProtocol,
     TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
-    ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec, format_memory_size_bytes,
-    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
+    ToolRequirement, ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
+    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
+    task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_contract};
@@ -5410,17 +5411,40 @@ fn execute_task_with_hooks(
     )?;
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
 
+    maybe_activate_corepack_shims_on_run_path(
+        contract,
+        contract_path,
+        task_name,
+        &backend,
+        current_os,
+        state,
+    )?;
+
     if !(requested_relation && requested_overrides.skip_deps) {
         for dependency in &task.depends_on {
-            let dependency_declares_default_mode = contract
+            let dependency_spec = contract
                 .tasks
                 .get(dependency)
-                .and_then(TaskSpec::mode_default_backend)
-                .is_some();
-            let dependency_backend_override = if dependency_declares_default_mode {
-                None
-            } else {
-                requested_overrides.backend
+                .expect("validated task execution should only reference known dependencies");
+            let dependency_default_mode = dependency_spec.mode_default_backend();
+            let dependency_backend_override = match requested_overrides.backend {
+                Some(selected_backend) => {
+                    if dependency_default_mode.is_some() {
+                        let dependency_supports_selected_backend = dependency_default_mode
+                            == Some(selected_backend)
+                            || dependency_spec
+                                .mode_execution_branch(selected_backend)
+                                .is_some();
+                        if dependency_supports_selected_backend {
+                            Some(selected_backend)
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some(selected_backend)
+                    }
+                }
+                None => None,
             };
             let dependency_overrides = ExecutionOverrides {
                 backend: dependency_backend_override,
@@ -6769,6 +6793,60 @@ fn maybe_fulfill_toolchains_on_run_path(
             state
                 .fulfilled_toolchains
                 .insert(toolchain_name, executed_commands);
+        }
+    }
+
+    Ok(())
+}
+
+fn maybe_activate_corepack_shims_on_run_path(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    backend: &ResolvedExecutionBackend,
+    current_os: &str,
+    state: &mut TaskRunState,
+) -> Result<(), RunError> {
+    for toolchain_name in contract.task_required_toolchain_names(task_name) {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if toolchain.provider != ToolchainProvider::Corepack {
+            continue;
+        }
+        let target_os = target_os_for_toolchain_backend(backend, current_os);
+        if !toolchain.active_for_os(target_os) {
+            continue;
+        }
+        let cache_key = format!(
+            "corepack-enable:{}",
+            toolchain_fulfillment_cache_key(toolchain_name.as_str(), backend)
+        );
+        if !state.fulfilled_toolchain_keys.insert(cache_key) {
+            continue;
+        }
+
+        let command_spec = ToolchainCommandSpec {
+            program: "corepack",
+            args: vec![String::from("enable")],
+        };
+        let command_display = render_toolchain_command(backend, command_spec.clone());
+        let task_label = format!("toolchain-activate:{toolchain_name}");
+        let output = run_backend_argv_command_captured(
+            &task_label,
+            command_spec.program,
+            &command_spec.args,
+            contract_working_dir(contract_path),
+            backend,
+        )?;
+        state.stdout.push_str(&output.stdout);
+        state.stderr.push_str(&output.stderr);
+        if output.exit_code != 0 {
+            return Err(RunError::ToolchainFulfillmentFailed {
+                task: task_name.to_string(),
+                toolchain: toolchain_name,
+                details: format!("`{command_display}` exited with code {}", output.exit_code),
+            });
         }
     }
 
@@ -33943,6 +34021,95 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn run_task_container_mode_override_flows_to_dependency_mode_branch() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  lifecycle: ephemeral
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  install:
+    run: printf native > install-mode.txt
+    execution:
+      default_mode: native
+      modes:
+        container:
+          context: app
+          run: printf container > install-mode.txt
+  dev:
+    run: printf dev > dev.txt
+    depends_on:
+      - install
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("install-mode.txt")).unwrap(),
+            "container"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("dev.txt")).unwrap(),
+            "dev"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn native_setup_uses_mise_exec_for_source_managed_tool_actions() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -43779,6 +43946,90 @@ tasks:
         assert!(commands[0].contains("1.94.1"));
         assert!(!commands[0].contains("1.94.0"));
         assert!(commands[0].contains("rustfmt"));
+    }
+
+    #[test]
+    fn run_path_corepack_activation_runs_once_per_backend() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+tasks:
+  setup:
+    run: corepack pnpm install
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = fixture.dir.path().join("corepack.log");
+        let corepack_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho %*>>\"{}\"\r\nif /I \"%1\"==\"enable\" exit /b 0\r\nif /I \"%1\"==\"pnpm\" exit /b 0\r\nexit /b 0\r\n",
+                log_path.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+                log_path.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "corepack", &corepack_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let mut state = TaskRunState::default();
+        super::maybe_activate_corepack_shims_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            &backend,
+            current_os(),
+            &mut state,
+        )
+        .unwrap();
+        super::maybe_activate_corepack_shims_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            &backend,
+            current_os(),
+            &mut state,
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let log = fs::read_to_string(&log_path).unwrap();
+        let lines = log.lines().collect::<Vec<_>>();
+        assert_eq!(lines, vec!["enable"], "{log}");
     }
 
     fn write_fake_bin(dir: &Path, name: &str, body: &str) -> PathBuf {
