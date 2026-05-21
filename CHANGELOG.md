@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+
+- fixed `ota run` captured-failure rerun guidance to preserve the effective execution mode, so
+  container failures now suggest `--mode container --stream` instead of defaulting to native-mode
+  rerun hints
+- fixed `ota run --mode container` dependency execution selection so dependencies that declare
+  container mode branches run on the selected container backend instead of silently falling back to
+  native when a task also has a native default mode
+- activated Corepack shims on the run path for Corepack-owned toolchains before task execution,
+  so repo tasks that call package-manager entrypoints (for example `pnpm`) remain runnable without
+  requiring separate manual shell bootstrap
 - tightened the first-party Ota skill contract-authoring guidance with production-readiness gates
   for scope honesty, deterministic setup, agent safety, workflow fidelity, CI proof posture, and
   toolchain/runtime/tool ownership boundaries
