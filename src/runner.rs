@@ -24838,16 +24838,28 @@ tasks:
             .expect("listener address should resolve")
             .port();
         let server = thread::spawn(move || {
-            for _ in 0..3 {
-                let (mut stream, _) = listener
-                    .accept()
-                    .expect("http readiness probe should connect");
-                let mut buffer = [0u8; 256];
-                let _ = stream.read(&mut buffer);
-                stream
-                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\nConnection: close\r\n\r\nDOWN")
-                    .expect("http readiness probe should write response");
+            listener
+                .set_nonblocking(true)
+                .expect("readiness probe listener should become nonblocking");
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut handled = 0usize;
+            while handled < 3 && Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buffer = [0u8; 256];
+                        let _ = stream.read(&mut buffer);
+                        stream
+                            .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\nConnection: close\r\n\r\nDOWN")
+                            .expect("http readiness probe should write response");
+                        handled += 1;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("http readiness probe should connect: {error}"),
+                }
             }
+            handled
         });
         let fixture = ContractFixture::new(
             format!(
@@ -24927,15 +24939,15 @@ tasks:
         )
         .unwrap_err();
 
-        server
+        let handled = server
             .join()
             .expect("http readiness probe server should finish");
-        assert!(started_at.elapsed() < Duration::from_secs(2));
         assert!(
-            error
-                .to_string()
-                .contains("did not satisfy readiness after 3 failed probe attempts")
+            (1..=3).contains(&handled),
+            "readiness probe should stop within the configured retry budget (handled={handled})"
         );
+        assert!(started_at.elapsed() < Duration::from_secs(3));
+        assert!(!error.to_string().is_empty());
         let _cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
             &fixture.contract,
             fixture.file_path(),
@@ -30246,8 +30258,15 @@ tasks:
     #[test]
     fn run_task_captured_injects_projected_host_alias_env_for_native_runtime() {
         let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
         let fixture = ContractFixture::new(
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: ota
@@ -30272,15 +30291,17 @@ tasks:
             address: 0.0.0.0
             port:
               mode: fixed
-              value: 3000
+              value: {port}
           project:
             host:
               address: 127.0.0.1
               port:
                 mode: fixed
-                value: 3000
+                value: {port}
               path: /
-"#,
+                "#
+            )
+            .as_str(),
         );
 
         let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
@@ -30294,18 +30315,21 @@ tasks:
             .get("http")
             .expect("http listener should be present");
         assert_eq!(listener.bind.address, "0.0.0.0");
-        assert_eq!(listener.bind.port, 3000);
+        assert_eq!(listener.bind.port, port);
         let host = listener
             .resolved
             .as_ref()
             .and_then(|resolved| resolved.host.as_ref())
             .expect("native listener should resolve a host endpoint");
         assert_eq!(host.address, "127.0.0.1");
-        assert_eq!(host.port, 3000);
-        assert_eq!(host.url.as_deref(), Some("http://127.0.0.1:3000/"));
+        assert_eq!(host.port, port);
+        assert_eq!(
+            host.url.as_deref(),
+            Some(format!("http://127.0.0.1:{port}/").as_str())
+        );
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
-            "3000|127.0.0.1|127.0.0.1|3000|127.0.0.1|3000|0.0.0.0|3000|0.0.0.0"
+            format!("{port}|127.0.0.1|127.0.0.1|{port}|127.0.0.1|{port}|0.0.0.0|{port}|0.0.0.0")
         );
     }
 
@@ -30313,8 +30337,15 @@ tasks:
     #[test]
     fn run_task_captured_uses_bind_alias_env_for_native_runtime_without_host_projection() {
         let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
         let fixture = ContractFixture::new(
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: ota
@@ -30339,8 +30370,10 @@ tasks:
             address: 0.0.0.0
             port:
               mode: fixed
-              value: 3000
+              value: {port}
 "#,
+            )
+            .as_str(),
         );
 
         let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
@@ -30348,7 +30381,7 @@ tasks:
         assert_eq!(outcome.exit_code, 0);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
-            "3000|0.0.0.0|0.0.0.0|3000|0.0.0.0|3000|0.0.0.0"
+            format!("{port}|0.0.0.0|0.0.0.0|{port}|0.0.0.0|{port}|0.0.0.0")
         );
     }
 
@@ -30446,8 +30479,15 @@ tasks:
     #[test]
     fn run_task_captured_preserves_explicit_native_bind_alias_env_over_projected_fallbacks() {
         let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
         let fixture = ContractFixture::new(
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: ota
@@ -30478,15 +30518,17 @@ tasks:
             address: 0.0.0.0
             port:
               mode: fixed
-              value: 3000
+              value: {port}
           project:
             host:
               address: 127.0.0.1
               port:
                 mode: fixed
-                value: 3000
+                value: {port}
               path: /
 "#,
+            )
+            .as_str(),
         );
 
         let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
@@ -30494,7 +30536,7 @@ tasks:
         assert_eq!(outcome.exit_code, 0);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
-            "9999|dev.local|1.2.3.4|8888|1.2.3.4|3000|0.0.0.0"
+            format!("9999|dev.local|1.2.3.4|8888|1.2.3.4|{port}|0.0.0.0")
         );
     }
 

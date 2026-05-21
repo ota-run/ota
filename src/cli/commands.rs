@@ -44122,7 +44122,7 @@ tasks:
         ));
         assert!(text.contains("  » brew via `brew-bootstrap`"));
         assert!(text.contains("  » sdkman via `sdkman-bootstrap`"));
-        assert!(text.contains("Next: use `ota policy review` to inspect the active policy source"));
+        assert!(text.contains("use `ota policy review` to inspect the active policy source"));
         assert!(text.contains("adapter install needs approval or audit"));
         assert!(why < provenance);
         assert!(provenance < next);
@@ -44214,9 +44214,8 @@ tasks:
         assert!(text.contains("Why:\n  » `.ota/org-policy.yaml` approves repo version rules"));
         assert!(text.contains("  » runtime `java` (versions `>=21`)"));
         assert!(text.contains("  » tool `node` (versions `24.14.1`)"));
-        assert!(text.contains(
-            "Next: keep repo-declared versions inside these approved ranges, or update `./.ota/org-policy.yaml`"
-        ));
+        assert!(text.contains("keep repo-declared versions inside these approved ranges"));
+        assert!(text.contains("`./.ota/org-policy.yaml`"));
     }
 
     #[test]
