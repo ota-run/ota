@@ -3298,10 +3298,6 @@ fn clean_execution_report_inner(
         }
     }
 
-    if relevant_engines.is_empty() && current_target_engines.is_empty() {
-        return Ok(report);
-    }
-
     let mut first_discovery_error = None;
     let has_recorded_relevant_engines = !relevant_engines.is_empty();
     let discovery_engines = if has_recorded_relevant_engines {
@@ -3312,7 +3308,6 @@ fn clean_execution_report_inner(
         available_container_engines()
     };
     let strict_discovery = has_recorded_relevant_engines || !current_target_engines.is_empty();
-    let mut successful_discovery_queries = 0usize;
     let mut engines_to_track = BTreeSet::new();
     report.queried_engines = discovery_engines.clone();
     for engine in discovery_engines {
@@ -3376,9 +3371,6 @@ fn clean_execution_report_inner(
             }
         }
 
-        if engine_query_succeeded {
-            successful_discovery_queries += 1;
-        }
     }
 
     let mut dependency_isolation_volumes_to_remove =
@@ -3405,9 +3397,7 @@ fn clean_execution_report_inner(
         }
     }
 
-    if let Some(error) = first_discovery_error
-        && (strict_discovery || successful_discovery_queries == 0)
-    {
+    if let Some(error) = first_discovery_error && strict_discovery {
         return Err(error);
     }
 
