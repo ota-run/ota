@@ -54144,6 +54144,58 @@ workflows:
     }
 
     #[test]
+    fn up_toolchain_preview_actions_exclude_unrequired_toolchains_for_selected_workflow() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+execution:
+  default_context: docker-host
+  contexts:
+    docker-host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+tasks:
+  setup:docker-env:
+    action:
+      kind: copy_if_missing
+      from: docker/.env.example
+      to: docker/.env
+  dev:studio-docker:
+    context: docker-host
+    run: cd docker && docker compose up
+    depends_on:
+      - setup:docker-env
+workflows:
+  default: studio:docker
+  studio:docker:
+    prepare:
+      task: setup:docker-env
+    run:
+      task: dev:studio-docker
+"#,
+        )
+        .expect("contract should parse");
+
+        let actions = super::selected_up_toolchain_preview_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("studio:docker"),
+            Backend::Native,
+        );
+
+        assert!(actions.is_empty(), "{actions:?}");
+    }
+
+    #[test]
     fn up_run_error_uses_selected_execution_mode_for_toolchain_requirement_text() {
         let temp_dir = TempDir::new().expect("temp dir");
         let contract_path = temp_dir.path().join("ota.yaml");
