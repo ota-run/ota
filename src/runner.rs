@@ -3298,6 +3298,10 @@ fn clean_execution_report_inner(
         }
     }
 
+    if relevant_engines.is_empty() && current_target_engines.is_empty() {
+        return Ok(report);
+    }
+
     let mut first_discovery_error = None;
     let has_recorded_relevant_engines = !relevant_engines.is_empty();
     let discovery_engines = if has_recorded_relevant_engines {
