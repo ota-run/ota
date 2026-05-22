@@ -45,7 +45,7 @@ jobs:
         with:
           command: receipt
           path: .
-          ota-version: 1.6.14
+          ota-version: 1.6.15
           execution-mode: container
           archive: true
           artifact-name: ota-readiness
