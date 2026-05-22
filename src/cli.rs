@@ -11654,6 +11654,73 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn clean_without_container_cleanup_targets_does_not_probe_engines() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "ota.yaml",
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  check:
+    run: echo ok
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "docker",
+            r#"#!/bin/sh
+printf "docker should not be called\n" >&2
+exit 99
+"#,
+        );
+        write_fake_command(
+            &bin_dir,
+            "podman",
+            r#"#!/bin/sh
+printf "podman should not be called\n" >&2
+exit 99
+"#,
+        );
+
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).unwrap();
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+
+        let output = run_with(["ota", "clean", fixture.path()]);
+
+        match original_path {
+            Some(path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            strip_ansi(&output.stdout),
+            format!(
+                "No cleanup needed for {}",
+                compact_contract(fixture.file_path())
+            )
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn clean_stale_dry_run_lists_labelled_and_legacy_ota_containers() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new_dir();
