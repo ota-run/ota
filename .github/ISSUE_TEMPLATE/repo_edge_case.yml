@@ -20,9 +20,9 @@
 #
 #   If you need additional information or have any questions, please email: os@ota.run
 
-name: Bug report
-description: Report a reproducible bug in Ota.
-labels: [bug]
+name: Repo edge case
+description: Report a real repo shape or operator path that exposes an Ota gap.
+labels: [example, triage]
 body:
   - type: input
     id: ota_version
@@ -33,39 +33,31 @@ body:
     validations:
       required: true
   - type: textarea
-    id: summary
+    id: repo_shape
     attributes:
-      label: Summary
-      description: What went wrong?
-      placeholder: A concise description of the bug.
+      label: Repo or workflow shape
+      description: Describe the real repo path, stack, or operator flow that exposes the gap.
+      placeholder: Monorepo, Windows-native toolchain, multi-front-door service repo, etc.
     validations:
       required: true
   - type: textarea
-    id: repro
+    id: problem
     attributes:
-      label: Reproduction steps
-      description: Minimal steps that reproduce the issue.
-      placeholder: 1. ...\n2. ...
+      label: What breaks or becomes unclear?
+      description: Explain the exact trust gap, diagnosis failure, authoring burden, or operator ambiguity.
     validations:
       required: true
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
-      description: What should have happened?
+      label: What should Ota do instead?
+      description: Describe the honest product behavior or contract shape you expected.
     validations:
       required: true
   - type: textarea
-    id: actual
+    id: reproduction
     attributes:
-      label: Actual behavior
-      description: What actually happened, including output if useful.
-    validations:
-      required: true
-  - type: textarea
-    id: environment
-    attributes:
-      label: Environment
-      description: Ota version, OS, shell, repo type, and any relevant context.
+      label: Minimal reproduction
+      description: Link a public repo, attach a small contract fragment, or describe the smallest repro.
     validations:
       required: true

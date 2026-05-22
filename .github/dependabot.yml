@@ -27,6 +27,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - cargo
+    assignees:
+      - bobaikato
     commit-message:
       prefix: deps
 
@@ -35,5 +40,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - github-actions
+    assignees:
+      - bobaikato
     commit-message:
       prefix: ci

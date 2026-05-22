@@ -32,6 +32,13 @@ body:
     validations:
       required: true
   - type: textarea
+    id: real_world_path
+    attributes:
+      label: Real repo or operator path
+      description: Tie the request to a real repo shape, workflow, or operator need.
+    validations:
+      required: true
+  - type: textarea
     id: proposal
     attributes:
       label: Proposed solution

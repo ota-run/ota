@@ -25,3 +25,6 @@ contact_links:
   - name: Ota docs
     url: https://ota.run/docs
     about: Read the public docs before filing an issue.
+  - name: Security policy
+    url: https://github.com/ota-run/ota/security/policy
+    about: Report suspected vulnerabilities privately instead of opening a public issue.
