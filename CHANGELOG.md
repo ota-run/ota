@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- added Slack release announcements to the release gate workflow by publishing the same generated release summary text to `SLACK_RELEASE_WEBHOOK_URL` when configured, while keeping Discord publishing unchanged.
+
 ## 1.6.15
 
 
