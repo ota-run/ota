@@ -20,13 +20,17 @@
 #
 #   If you need additional information or have any questions, please email: os@ota.run
 
-name: Ota Readiness
+name: codeql
 
 on:
-  pull_request:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "23 4 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -36,21 +40,24 @@ concurrency:
 permissions:
   actions: read
   contents: read
-  pull-requests: write
+  security-events: write
 
 jobs:
-  readiness:
+  analyze:
+    name: Analyze (Rust)
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
-      - name: Publish ota readiness
-        uses: ota-run/action@v1
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
         with:
-          command: receipt
-          path: .
-          ota-version: 1.6.15
-          execution-mode: container
-          archive: true
-          artifact-name: ota-readiness
-          github-token: ${{ github.token }}
+          languages: rust
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v4
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v4

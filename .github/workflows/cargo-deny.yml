@@ -20,13 +20,17 @@
 #
 #   If you need additional information or have any questions, please email: os@ota.run
 
-name: Ota Readiness
+name: cargo-deny
 
 on:
-  pull_request:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "31 4 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -34,23 +38,22 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  actions: read
   contents: read
-  pull-requests: write
 
 jobs:
-  readiness:
+  check:
+    name: Check cargo-deny
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
-      - name: Publish ota readiness
-        uses: ota-run/action@v1
-        with:
-          command: receipt
-          path: .
-          ota-version: 1.6.15
-          execution-mode: container
-          archive: true
-          artifact-name: ota-readiness
-          github-token: ${{ github.token }}
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: Run cargo-deny
+        run: cargo deny check advisories bans licenses sources

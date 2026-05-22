@@ -20,37 +20,20 @@
 #
 #   If you need additional information or have any questions, please email: os@ota.run
 
-name: Ota Readiness
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: deps
 
-on:
-  pull_request:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  actions: read
-  contents: read
-  pull-requests: write
-
-jobs:
-  readiness:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v5
-      - name: Publish ota readiness
-        uses: ota-run/action@v1
-        with:
-          command: receipt
-          path: .
-          ota-version: 1.6.15
-          execution-mode: container
-          archive: true
-          artifact-name: ota-readiness
-          github-token: ${{ github.token }}
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: ci

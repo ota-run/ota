@@ -39,6 +39,10 @@ on:
       - "docs/spec/**"
       - ".github/workflows/windows-native-proof.yml"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   visual-studio-dev-shell-proof:
     runs-on: windows-latest
