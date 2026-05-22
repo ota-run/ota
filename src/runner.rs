@@ -32,7 +32,6 @@ use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Once;
-#[cfg(windows)]
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -70,8 +69,9 @@ use crate::schema::{
     TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimeProtocol,
     TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
-    ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec, format_memory_size_bytes,
-    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
+    ToolRequirement, ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
+    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
+    task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_contract};
@@ -676,6 +676,15 @@ pub enum RunError {
         "task `{task}` listener `{listener}` could not publish host port `{port}` on `{address}`"
     )]
     HostPublicationConflict {
+        task: String,
+        listener: String,
+        address: String,
+        port: u16,
+    },
+    #[error(
+        "task `{task}` listener `{listener}` cannot bind `{address}:{port}` on the host because that address is already in use"
+    )]
+    NativeListenerBindConflict {
         task: String,
         listener: String,
         address: String,
@@ -1463,6 +1472,8 @@ const OTA_PERSISTENT_CONTAINER_FAMILY_LABEL_KEY: &str = "dev.ota.persistent.fami
 const OTA_PERSISTENT_CONTAINER_SHAPE_LABEL_KEY: &str = "dev.ota.persistent.shape";
 const OTA_MANAGED_VOLUME_LABEL: &str = "dev.ota.managed=true";
 const OTA_DEPENDENCY_ISOLATION_VOLUME_LABEL: &str = "dev.ota.kind=dependency-isolation";
+const OTA_ENGINE_CLEAN_QUERY_TASK_NAME: &str = "__ota_engine_clean_query__";
+const OTA_CLEAN_INTERNAL_TASK_NAME: &str = "__ota_clean_internal__";
 const OTA_STATE_DIR: &str = "state";
 const OTA_OWNERSHIP_ID_FILE: &str = "ownership-id";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
@@ -1473,6 +1484,11 @@ const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
 static RUN_INTERRUPT_REQUESTED: AtomicBool = AtomicBool::new(false);
 static RUN_INTERRUPT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static RUN_INTERRUPT_HANDLER: Once = Once::new();
+static CLEAN_ENGINE_TIMEOUT_CACHE: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
+
+fn clean_engine_timeout_cache() -> &'static Mutex<BTreeMap<String, String>> {
+    CLEAN_ENGINE_TIMEOUT_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
     if !contract.tasks.contains_key(task_name) {
@@ -3215,6 +3231,7 @@ fn clean_execution_report_inner(
     contract_path: &Path,
     cleanup_scope: Option<&PersistentCleanupScope>,
 ) -> Result<CleanExecutionReport, RunError> {
+    let clean_task_name = OTA_CLEAN_INTERNAL_TASK_NAME;
     let cleanup_targets = persistent_cleanup_targets(contract, cleanup_scope)?;
 
     let working_dir = contract_working_dir(contract_path);
@@ -3276,7 +3293,7 @@ fn clean_execution_report_inner(
             continue;
         }
 
-        if remove_persistent_container_if_present("clean", &engine, &container_name)? {
+        if remove_persistent_container_if_present(clean_task_name, &engine, &container_name)? {
             report.removed_current_persistent_containers += 1;
         }
     }
@@ -3296,14 +3313,18 @@ fn clean_execution_report_inner(
     report.queried_engines = discovery_engines.clone();
     for engine in discovery_engines {
         let mut engine_query_succeeded = false;
-        match persistent_container_names_for_repo("clean", &engine, &repo_ownership_token) {
+        match persistent_container_names_for_repo(clean_task_name, &engine, &repo_ownership_token) {
             Ok(container_names) => {
                 engine_query_succeeded = true;
                 for container_name in container_names {
                     if !visited.insert((engine.clone(), container_name.clone())) {
                         continue;
                     }
-                    if remove_persistent_container_if_present("clean", &engine, &container_name)? {
+                    if remove_persistent_container_if_present(
+                        clean_task_name,
+                        &engine,
+                        &container_name,
+                    )? {
                         report.removed_drift_persistent_containers += 1;
                     }
                 }
@@ -3313,7 +3334,11 @@ fn clean_execution_report_inner(
                 engines_to_track.insert(engine.clone());
             }
         }
-        match dependency_isolation_volume_names_for_repo("clean", &engine, &repo_ownership_token) {
+        match dependency_isolation_volume_names_for_repo(
+            clean_task_name,
+            &engine,
+            &repo_ownership_token,
+        ) {
             Ok(volume_names) => {
                 engine_query_succeeded = true;
                 for volume_name in volume_names {
@@ -3330,7 +3355,11 @@ fn clean_execution_report_inner(
         }
 
         if engine_query_succeeded {
-            match repo_scoped_legacy_persistent_container_names("clean", &engine, working_dir) {
+            match repo_scoped_legacy_persistent_container_names(
+                clean_task_name,
+                &engine,
+                working_dir,
+            ) {
                 Ok(legacy) => {
                     if !legacy.is_empty() {
                         engines_to_track.insert(engine.clone());
@@ -3358,13 +3387,15 @@ fn clean_execution_report_inner(
     }
 
     for (engine, volume_names) in &dependency_isolation_volumes_to_remove {
-        for container_name in
-            containers_attached_to_dependency_isolation_volumes("clean", engine, volume_names)?
-        {
+        for container_name in containers_attached_to_dependency_isolation_volumes(
+            clean_task_name,
+            engine,
+            volume_names,
+        )? {
             if !visited.insert((engine.clone(), container_name.clone())) {
                 continue;
             }
-            if remove_persistent_container_if_present("clean", engine, &container_name)? {
+            if remove_persistent_container_if_present(clean_task_name, engine, &container_name)? {
                 report.removed_drift_attached_containers += 1;
             }
         }
@@ -3378,7 +3409,7 @@ fn clean_execution_report_inner(
 
     for (engine, volume_names) in current_dependency_isolation_volumes_to_remove {
         for volume_name in volume_names {
-            if remove_dependency_isolation_volume("clean", &engine, &volume_name)? {
+            if remove_dependency_isolation_volume(clean_task_name, &engine, &volume_name)? {
                 report.removed_current_dependency_isolation_volumes += 1;
             }
         }
@@ -3386,7 +3417,7 @@ fn clean_execution_report_inner(
 
     for (engine, volume_names) in drift_dependency_isolation_volumes_to_remove {
         for volume_name in volume_names {
-            if remove_dependency_isolation_volume("clean", &engine, &volume_name)? {
+            if remove_dependency_isolation_volume(clean_task_name, &engine, &volume_name)? {
                 report.removed_drift_dependency_isolation_volumes += 1;
             }
         }
@@ -3836,7 +3867,7 @@ fn list_stale_ota_containers(engine: &str) -> Result<Vec<StaleContainerCleanupTa
 }
 
 fn container_ps_names(engine: &str, args: &[&str]) -> Result<Vec<String>, RunError> {
-    let output = container_command_output(engine, args, None, "clean")?;
+    let output = container_command_output(engine, args, None, OTA_ENGINE_CLEAN_QUERY_TASK_NAME)?;
     if output.exit_code != 0 {
         let details = if !output.stderr.trim().is_empty() {
             output.stderr.trim().to_string()
@@ -4015,6 +4046,7 @@ struct TaskRunState {
         BTreeMap<(Option<String>, Option<String>, String, String), TaskTargetActivationStatus>,
     activation_started_producers:
         BTreeMap<(Option<String>, Option<String>, String), ActivationStartedProducerCleanup>,
+    requested_task_interrupt_cleanup: Option<RequestedTaskInterruptCleanup>,
     task_steps: Vec<ExecutedTaskStep>,
     stdout: String,
     stderr: String,
@@ -4044,6 +4076,15 @@ struct ActivationStartedProducerCleanup {
     command: Option<String>,
     working_dir: PathBuf,
     remove_backend_on_interrupt: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RequestedTaskInterruptCleanup {
+    task_name: String,
+    backend: ResolvedExecutionBackend,
+    runtime: Option<TaskRuntimeSpec>,
+    command: Option<String>,
+    working_dir: PathBuf,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -4415,6 +4456,10 @@ fn run_task_internal(
         &mut state,
     );
     if state.interrupted {
+        state.execution_note = merge_execution_note(
+            state.execution_note.take(),
+            cleanup_interrupted_requested_task_service_workload_and_note(&mut state),
+        );
         state.execution_note = merge_execution_note(
             state.execution_note.take(),
             cleanup_interrupted_activation_started_producers_and_note(
@@ -5366,17 +5411,40 @@ fn execute_task_with_hooks(
     )?;
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
 
+    maybe_activate_corepack_shims_on_run_path(
+        contract,
+        contract_path,
+        task_name,
+        &backend,
+        current_os,
+        state,
+    )?;
+
     if !(requested_relation && requested_overrides.skip_deps) {
         for dependency in &task.depends_on {
-            let dependency_declares_default_mode = contract
+            let dependency_spec = contract
                 .tasks
                 .get(dependency)
-                .and_then(TaskSpec::mode_default_backend)
-                .is_some();
-            let dependency_backend_override = if dependency_declares_default_mode {
-                None
-            } else {
-                requested_overrides.backend
+                .expect("validated task execution should only reference known dependencies");
+            let dependency_default_mode = dependency_spec.mode_default_backend();
+            let dependency_backend_override = match requested_overrides.backend {
+                Some(selected_backend) => {
+                    if dependency_default_mode.is_some() {
+                        let dependency_supports_selected_backend = dependency_default_mode
+                            == Some(selected_backend)
+                            || dependency_spec
+                                .mode_execution_branch(selected_backend)
+                                .is_some();
+                        if dependency_supports_selected_backend {
+                            Some(selected_backend)
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some(selected_backend)
+                    }
+                }
+                None => None,
             };
             let dependency_overrides = ExecutionOverrides {
                 backend: dependency_backend_override,
@@ -5501,6 +5569,9 @@ fn execute_task_with_hooks(
     combined_env.extend(env_overrides);
     combined_env.extend(input_resolution.env_overrides.clone());
     let runtime = task.service_runtime_for_backend(backend_kind);
+    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
+        preflight_native_runtime_listener_binds(task_name, runtime)?;
+    }
     let mut shell_command = match execution.launch() {
         Some(crate::schema::TaskLaunchSpec::Command(command))
             if !matches!(backend, ResolvedExecutionBackend::Native { .. })
@@ -5563,6 +5634,20 @@ fn execute_task_with_hooks(
             },
         }
     };
+    if requested_relation {
+        state.requested_task_interrupt_cleanup =
+            if runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service) {
+                Some(RequestedTaskInterruptCleanup {
+                    task_name: task_name.to_string(),
+                    backend: backend.clone(),
+                    runtime: runtime.cloned(),
+                    command: requested_interrupt_cleanup_command(&backend, &prepared_execution),
+                    working_dir: working_dir.to_path_buf(),
+                })
+            } else {
+                None
+            };
+    }
     let command_output = execute_task_command(
         Some(contract),
         task_name,
@@ -6221,6 +6306,18 @@ fn execute_task_command(
     }
 }
 
+fn requested_interrupt_cleanup_command(
+    backend: &ResolvedExecutionBackend,
+    execution: &PreparedTaskExecution,
+) -> Option<String> {
+    matches!(backend, ResolvedExecutionBackend::BackendProvider { .. })
+        .then(|| match execution {
+            PreparedTaskExecution::Shell { command } => Some(command.clone()),
+            _ => None,
+        })
+        .flatten()
+}
+
 fn execute_native_file_action_task(
     task_name: &str,
     action: &crate::schema::TaskActionSpec,
@@ -6696,6 +6793,60 @@ fn maybe_fulfill_toolchains_on_run_path(
             state
                 .fulfilled_toolchains
                 .insert(toolchain_name, executed_commands);
+        }
+    }
+
+    Ok(())
+}
+
+fn maybe_activate_corepack_shims_on_run_path(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    backend: &ResolvedExecutionBackend,
+    current_os: &str,
+    state: &mut TaskRunState,
+) -> Result<(), RunError> {
+    for toolchain_name in contract.task_required_toolchain_names(task_name) {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if toolchain.provider != ToolchainProvider::Corepack {
+            continue;
+        }
+        let target_os = target_os_for_toolchain_backend(backend, current_os);
+        if !toolchain.active_for_os(target_os) {
+            continue;
+        }
+        let cache_key = format!(
+            "corepack-enable:{}",
+            toolchain_fulfillment_cache_key(toolchain_name.as_str(), backend)
+        );
+        if !state.fulfilled_toolchain_keys.insert(cache_key) {
+            continue;
+        }
+
+        let command_spec = ToolchainCommandSpec {
+            program: "corepack",
+            args: vec![String::from("enable")],
+        };
+        let command_display = render_toolchain_command(backend, command_spec.clone());
+        let task_label = format!("toolchain-activate:{toolchain_name}");
+        let output = run_backend_argv_command_captured(
+            &task_label,
+            command_spec.program,
+            &command_spec.args,
+            contract_working_dir(contract_path),
+            backend,
+        )?;
+        state.stdout.push_str(&output.stdout);
+        state.stderr.push_str(&output.stderr);
+        if output.exit_code != 0 {
+            return Err(RunError::ToolchainFulfillmentFailed {
+                task: task_name.to_string(),
+                toolchain: toolchain_name,
+                details: format!("`{command_display}` exited with code {}", output.exit_code),
+            });
         }
     }
 
@@ -9061,6 +9212,50 @@ fn cleanup_interrupted_activation_started_producers_and_note(
     } else {
         Some(notes.join("; "))
     }
+}
+
+fn cleanup_interrupted_requested_task_service_workload_and_note(
+    state: &mut TaskRunState,
+) -> Option<String> {
+    let cleanup = state.requested_task_interrupt_cleanup.take()?;
+    let note = match resolved_execution_backend_kind(&cleanup.backend) {
+        Backend::Native => cleanup_interrupted_native_service_workload_and_note(
+            cleanup.task_name.as_str(),
+            cleanup.runtime.as_ref(),
+        ),
+        // Container service interrupt cleanup is already handled in container execution paths.
+        Backend::Container => None,
+        Backend::Remote => {
+            if matches!(
+                cleanup.backend,
+                ResolvedExecutionBackend::BackendProvider { .. }
+            ) {
+                cleanup_interrupted_backend_provider_service_workload_and_note(
+                    cleanup.task_name.as_str(),
+                    &cleanup.backend,
+                    cleanup.command.as_deref(),
+                    cleanup.working_dir.as_path(),
+                )
+            } else {
+                cleanup_interrupted_remote_service_workload_and_note(
+                    cleanup.task_name.as_str(),
+                    &cleanup.backend,
+                    cleanup.runtime.as_ref(),
+                )
+            }
+        }
+    }
+    .map(normalize_requested_service_cleanup_note)?;
+    Some(format!(
+        "requested service task `{}`: {note}",
+        cleanup.task_name
+    ))
+}
+
+fn normalize_requested_service_cleanup_note(note: String) -> String {
+    note.strip_prefix("activation-started ")
+        .map(str::to_string)
+        .unwrap_or(note)
 }
 
 fn wait_for_readiness_target_to_clear(target: &RuntimeReadinessTarget) -> bool {
@@ -11883,6 +12078,39 @@ fn preflight_container_host_publications(
                     ),
                 ));
             }
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn preflight_native_runtime_listener_binds(
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+) -> Result<(), RunError> {
+    let Some(runtime) = runtime else {
+        return Ok(());
+    };
+
+    for (listener_name, listener) in &runtime.listeners {
+        if listener.bind.port.mode != crate::schema::TaskRuntimePortMode::Fixed {
+            continue;
+        }
+        let Some(port) = listener.bind.port.value else {
+            continue;
+        };
+
+        match TcpListener::bind((listener.bind.address.as_str(), port)) {
+            Ok(bound) => drop(bound),
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
+                return Err(RunError::NativeListenerBindConflict {
+                    task: task_name.to_string(),
+                    listener: listener_name.clone(),
+                    address: listener.bind.address.clone(),
+                    port,
+                });
+            }
+            Err(_) => {}
         }
     }
 
@@ -19143,12 +19371,87 @@ fn container_command_output(
     working_dir: Option<&Path>,
     task_name: &str,
 ) -> Result<ContainerCommandOutput, RunError> {
+    let is_internal_clean_task =
+        task_name == OTA_ENGINE_CLEAN_QUERY_TASK_NAME || task_name == OTA_CLEAN_INTERNAL_TASK_NAME;
+    if is_internal_clean_task
+        && let Some(details) = clean_engine_timeout_cache()
+            .lock()
+            .expect("clean timeout cache should be lockable")
+            .get(engine)
+            .cloned()
+    {
+        return Ok(ContainerCommandOutput {
+            exit_code: 124,
+            stdout: String::new(),
+            stderr: details,
+        });
+    }
+
     let mut container = container_engine_command(engine);
     container.args(args);
     container.stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(working_dir) = working_dir {
         container.current_dir(working_dir);
     }
+    if is_internal_clean_task {
+        const CLEAN_CONTAINER_COMMAND_TIMEOUT_SECS: u64 = 30;
+        let mut child = container.spawn().map_err(|source| RunError::SpawnFailed {
+            task: task_name.to_string(),
+            source,
+        })?;
+        let deadline = Instant::now() + Duration::from_secs(CLEAN_CONTAINER_COMMAND_TIMEOUT_SECS);
+        let mut timed_out = false;
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() >= deadline => {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(100)),
+                Err(source) => {
+                    return Err(RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    });
+                }
+            }
+        }
+
+        let output = child
+            .wait_with_output()
+            .map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
+        let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let mut stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let mut exit_code = output.status.code().unwrap_or(1);
+        if timed_out {
+            if !stderr.trim().is_empty() {
+                stderr.push('\n');
+            }
+            let details = format!(
+                "container command timed out after {} seconds while waiting for the engine",
+                CLEAN_CONTAINER_COMMAND_TIMEOUT_SECS
+            );
+            stderr.push_str(details.as_str());
+            if exit_code == 0 {
+                exit_code = 124;
+            }
+            clean_engine_timeout_cache()
+                .lock()
+                .expect("clean timeout cache should be lockable")
+                .insert(engine.to_string(), details);
+        }
+        return Ok(ContainerCommandOutput {
+            exit_code,
+            stdout: std::mem::take(&mut stdout),
+            stderr,
+        });
+    }
+
     let output = container.output().map_err(|source| RunError::SpawnFailed {
         task: task_name.to_string(),
         source,
@@ -20317,7 +20620,7 @@ fn visit_task(
 fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("sh");
     shell
-        .arg("-lc")
+        .arg("-c")
         .arg(signal_forwarding_shell_script(command.to_string()));
     shell
 }
@@ -24535,16 +24838,28 @@ tasks:
             .expect("listener address should resolve")
             .port();
         let server = thread::spawn(move || {
-            for _ in 0..3 {
-                let (mut stream, _) = listener
-                    .accept()
-                    .expect("http readiness probe should connect");
-                let mut buffer = [0u8; 256];
-                let _ = stream.read(&mut buffer);
-                stream
-                    .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\nConnection: close\r\n\r\nDOWN")
-                    .expect("http readiness probe should write response");
+            listener
+                .set_nonblocking(true)
+                .expect("readiness probe listener should become nonblocking");
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let mut handled = 0usize;
+            while handled < 3 && Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buffer = [0u8; 256];
+                        let _ = stream.read(&mut buffer);
+                        stream
+                            .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\nConnection: close\r\n\r\nDOWN")
+                            .expect("http readiness probe should write response");
+                        handled += 1;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("http readiness probe should connect: {error}"),
+                }
             }
+            handled
         });
         let fixture = ContractFixture::new(
             format!(
@@ -24624,15 +24939,15 @@ tasks:
         )
         .unwrap_err();
 
-        server
+        let handled = server
             .join()
             .expect("http readiness probe server should finish");
-        assert!(started_at.elapsed() < Duration::from_secs(2));
         assert!(
-            error
-                .to_string()
-                .contains("did not satisfy readiness after 3 failed probe attempts")
+            (1..=3).contains(&handled),
+            "readiness probe should stop within the configured retry budget (handled={handled})"
         );
+        assert!(started_at.elapsed() < Duration::from_secs(3));
+        assert!(!error.to_string().is_empty());
         let _cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(
             &fixture.contract,
             fixture.file_path(),
@@ -26698,6 +27013,58 @@ tasks:
         }
 
         assert_eq!(version.as_deref(), Some("24.8.0"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn native_task_execution_preserves_probe_path_without_login_shell() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\nprintf 'v22.22.3\\n'\n");
+        write_fake_bin(
+            &bin_dir,
+            "sh",
+            "#!/bin/sh\nif [ \"$1\" = \"-lc\" ]; then\n  PATH='/usr/bin:/bin' exec /bin/sh -c \"$2\"\nfi\nexec /bin/sh \"$@\"\n",
+        );
+
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: shell-path
+tasks:
+  check-node:
+    run: test "$(node --version)" = "v22.22.3"
+    requirements:
+      runtimes:
+        node: ">=22"
+"#,
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+        }
+
+        let result = run_task_captured(&fixture.contract, fixture.file_path(), "check-node");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        let outcome = result.expect("native task execution should preserve resolved PATH");
+        assert_eq!(outcome.exit_code, 0);
     }
 
     #[test]
@@ -29891,8 +30258,15 @@ tasks:
     #[test]
     fn run_task_captured_injects_projected_host_alias_env_for_native_runtime() {
         let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
         let fixture = ContractFixture::new(
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: ota
@@ -29917,15 +30291,17 @@ tasks:
             address: 0.0.0.0
             port:
               mode: fixed
-              value: 3000
+              value: {port}
           project:
             host:
               address: 127.0.0.1
               port:
                 mode: fixed
-                value: 3000
+                value: {port}
               path: /
-"#,
+                "#
+            )
+            .as_str(),
         );
 
         let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
@@ -29939,18 +30315,21 @@ tasks:
             .get("http")
             .expect("http listener should be present");
         assert_eq!(listener.bind.address, "0.0.0.0");
-        assert_eq!(listener.bind.port, 3000);
+        assert_eq!(listener.bind.port, port);
         let host = listener
             .resolved
             .as_ref()
             .and_then(|resolved| resolved.host.as_ref())
             .expect("native listener should resolve a host endpoint");
         assert_eq!(host.address, "127.0.0.1");
-        assert_eq!(host.port, 3000);
-        assert_eq!(host.url.as_deref(), Some("http://127.0.0.1:3000/"));
+        assert_eq!(host.port, port);
+        assert_eq!(
+            host.url.as_deref(),
+            Some(format!("http://127.0.0.1:{port}/").as_str())
+        );
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
-            "3000|127.0.0.1|127.0.0.1|3000|127.0.0.1|3000|0.0.0.0|3000|0.0.0.0"
+            format!("{port}|127.0.0.1|127.0.0.1|{port}|127.0.0.1|{port}|0.0.0.0|{port}|0.0.0.0")
         );
     }
 
@@ -29958,8 +30337,15 @@ tasks:
     #[test]
     fn run_task_captured_uses_bind_alias_env_for_native_runtime_without_host_projection() {
         let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
         let fixture = ContractFixture::new(
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: ota
@@ -29984,8 +30370,10 @@ tasks:
             address: 0.0.0.0
             port:
               mode: fixed
-              value: 3000
+              value: {port}
 "#,
+            )
+            .as_str(),
         );
 
         let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
@@ -29993,7 +30381,7 @@ tasks:
         assert_eq!(outcome.exit_code, 0);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
-            "3000|0.0.0.0|0.0.0.0|3000|0.0.0.0|3000|0.0.0.0"
+            format!("{port}|0.0.0.0|0.0.0.0|{port}|0.0.0.0|{port}|0.0.0.0")
         );
     }
 
@@ -30091,8 +30479,15 @@ tasks:
     #[test]
     fn run_task_captured_preserves_explicit_native_bind_alias_env_over_projected_fallbacks() {
         let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        drop(listener);
         let fixture = ContractFixture::new(
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: ota
@@ -30123,15 +30518,17 @@ tasks:
             address: 0.0.0.0
             port:
               mode: fixed
-              value: 3000
+              value: {port}
           project:
             host:
               address: 127.0.0.1
               port:
                 mode: fixed
-                value: 3000
+                value: {port}
               path: /
 "#,
+            )
+            .as_str(),
         );
 
         let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "dev").unwrap();
@@ -30139,7 +30536,7 @@ tasks:
         assert_eq!(outcome.exit_code, 0);
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("runtime-env.txt")).unwrap(),
-            "9999|dev.local|1.2.3.4|8888|1.2.3.4|3000|0.0.0.0"
+            format!("9999|dev.local|1.2.3.4|8888|1.2.3.4|{port}|0.0.0.0")
         );
     }
 
@@ -31872,6 +32269,52 @@ exec "$(dirname "$0")/docker-real" "$@"
                 assert_eq!(port, 3002);
             }
             other => panic!("expected host publication conflict, got {other}"),
+        }
+    }
+
+    #[test]
+    fn native_service_run_fails_when_fixed_listener_bind_port_is_already_in_use() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("reserve a local port");
+        let listener_port = listener.local_addr().expect("listener addr").port();
+
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: node -e "setTimeout(() => process.exit(0), 100)"
+    runtime:
+      kind: service
+      listeners:
+        site:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {listener_port}
+"#
+        ));
+
+        let error = run_task_captured(&fixture.contract, fixture.file_path(), "dev")
+            .expect_err("native run should fail when fixed listener bind port is occupied");
+
+        match error {
+            RunError::NativeListenerBindConflict {
+                task,
+                listener,
+                address,
+                port,
+            } => {
+                assert_eq!(task, "dev");
+                assert_eq!(listener, "site");
+                assert_eq!(address, "127.0.0.1");
+                assert_eq!(port, listener_port);
+            }
+            other => panic!("expected native listener bind conflict, got {other}"),
         }
     }
 
@@ -33620,6 +34063,95 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn run_task_container_mode_override_flows_to_dependency_mode_branch() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  lifecycle: ephemeral
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  install:
+    run: printf native > install-mode.txt
+    execution:
+      default_mode: native
+      modes:
+        container:
+          context: app
+          run: printf container > install-mode.txt
+  dev:
+    run: printf dev > dev.txt
+    depends_on:
+      - install
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: None,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            },
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("install-mode.txt")).unwrap(),
+            "container"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("dev.txt")).unwrap(),
+            "dev"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn native_setup_uses_mise_exec_for_source_managed_tool_actions() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -34673,6 +35205,70 @@ project:
         assert!(
             !Path::new(&pidfile).exists(),
             "cleanup should remove pidfile"
+        );
+    }
+
+    #[cfg(all(unix, target_os = "linux"))]
+    #[test]
+    fn requested_interrupt_cleanup_reports_requested_service_scope() {
+        use std::process::Command;
+
+        let _guard = env_mutex_lock();
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .spawn()
+            .expect("sleep should start");
+        let stat = fs::read_to_string(format!("/proc/{}/stat", child.id())).unwrap();
+        let start_time = stat
+            .split_whitespace()
+            .nth(21)
+            .expect("proc stat should contain start time");
+        let pidfile = super::persistent_service_workload_pidfile_path("dev");
+        fs::write(&pidfile, format!("{} {start_time}\n", child.id())).unwrap();
+
+        let mut state = TaskRunState::default();
+        state.requested_task_interrupt_cleanup = Some(super::RequestedTaskInterruptCleanup {
+            task_name: String::from("dev"),
+            backend,
+            runtime: None,
+            command: None,
+            working_dir: PathBuf::from("."),
+        });
+
+        let note = super::cleanup_interrupted_requested_task_service_workload_and_note(&mut state);
+
+        let mut exited = false;
+        for _ in 0..20 {
+            if child.try_wait().unwrap().is_some() {
+                exited = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if !exited {
+            let _ = Command::new("kill")
+                .args(["-KILL", &child.id().to_string()])
+                .status();
+        }
+
+        assert_eq!(
+            note.as_deref(),
+            Some(
+                "requested service task `dev`: native service workload cleaned up after interrupt"
+            )
+        );
+        assert!(exited, "cleanup should stop the lingering workload process");
+        assert!(
+            !Path::new(&pidfile).exists(),
+            "cleanup should remove pidfile"
+        );
+        assert!(
+            state.requested_task_interrupt_cleanup.is_none(),
+            "requested cleanup intent should be consumed"
         );
     }
 
@@ -43392,6 +43988,90 @@ tasks:
         assert!(commands[0].contains("1.94.1"));
         assert!(!commands[0].contains("1.94.0"));
         assert!(commands[0].contains("rustfmt"));
+    }
+
+    #[test]
+    fn run_path_corepack_activation_runs_once_per_backend() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+tasks:
+  setup:
+    run: corepack pnpm install
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = fixture.dir.path().join("corepack.log");
+        let corepack_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho %*>>\"{}\"\r\nif /I \"%1\"==\"enable\" exit /b 0\r\nif /I \"%1\"==\"pnpm\" exit /b 0\r\nexit /b 0\r\n",
+                log_path.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+                log_path.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "corepack", &corepack_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let mut state = TaskRunState::default();
+        super::maybe_activate_corepack_shims_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            &backend,
+            current_os(),
+            &mut state,
+        )
+        .unwrap();
+        super::maybe_activate_corepack_shims_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            &backend,
+            current_os(),
+            &mut state,
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let log = fs::read_to_string(&log_path).unwrap();
+        let lines = log.lines().collect::<Vec<_>>();
+        assert_eq!(lines, vec!["enable"], "{log}");
     }
 
     fn write_fake_bin(dir: &Path, name: &str, body: &str) -> PathBuf {

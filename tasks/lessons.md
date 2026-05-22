@@ -1,5 +1,20 @@
 # Lessons
 
+## 2026-05-20
+
+- Pattern: Port conflicts can distract from the deeper execution-path bug when probes and tasks
+  use different shell semantics.
+- Correction: Verify that Ota's selected backend, task mode, and resolved `PATH` are preserved from
+  diagnosis through execution before treating cleanup as the root cause.
+- Rule: When readiness or bind failures differ between `doctor`, `run`, and `up`, check mode
+  routing and shell/toolchain resolution first; do not reduce the issue to manual process cleanup.
+- Pattern: Detached `up` proof can race against a pre-existing listener and accidentally treat an
+  unrelated service on the declared port as proof for the service being launched.
+- Correction: Preflight native fixed listener binds before detached service proof so occupied ports
+  fail deterministically instead of relying on endpoint reachability alone.
+- Rule: `up` proof must prove the selected execution path, not just that something is reachable at
+  the declared URL.
+
 ## 2026-03-21
 
 - Pattern: Source files need valid repository license notes, but non-language comment formats or decorative Unicode headers can break compilation.

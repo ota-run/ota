@@ -24,6 +24,7 @@
             "up_log": { "type": "string" }
           }
         },
+        "failure_class": { "type": "string" },
         "error": { "type": "string" },
         "next": { "type": "string" }
       }

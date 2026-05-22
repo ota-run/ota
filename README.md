@@ -1,35 +1,17 @@
-<!--
-                █████
-               ░░███
-       ██████  ███████    ██████
-      ███░░███░░░███░    ░░░░░███
-     ░███ ░███  ░███      ███████
-     ░███ ░███  ░███ ███ ███░░███
-     ░░██████   ░░█████ ░░████████
-      ░░░░░░     ░░░░░   ░░░░░░░░
+span
 
-   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
-
-   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
-
-   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
-   You may not use this file except in compliance with that License.
-   Unless required by applicable law or agreed to in writing, software distributed under the
-   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
-   either express or implied. See the License for the specific language governing permissions
-   and limitations under the License.
-
-   If you need additional information or have any questions, please email: os@ota.run
--->
 <div align="center">
   <img src="docs/assets/ota-icon.svg" alt="ota logo" width="110" height="110" />
   <h1>ota</h1>
-  <p><strong>Open repo-readiness infrastructure for humans, CI, and AI agents.</strong></p>
-  <p><strong>Doctor first. Contract second.</strong></p>
-  <p>
-    Give every repo one explicit contract for diagnosis, setup, execution, and safe automation
-    instead of guessing from README drift.
-  </p>
+  <p><strong>Built for humans, CI, and AI agents, containers, and multi-repo workspaces.</strong></p>
+  <p><strong>DOCTOR FIRST. CONTRACT SECOND.</strong></p>
+<!--   <p> -->
+<!--     Give every repo one explicit contract for diagnosis, setup, execution, and safe automation -->
+<!--     instead of guessing from README drift. -->
+<!--   </p> -->
+      <p>
+        <img src="https://ota.run/brand/ota-github-social-card.png" alt="ota social card" width="100%" />
+      </p>
   <p>
     <a href="https://github.com/ota-run/ota/releases"><img src="https://img.shields.io/github/v/release/ota-run/ota?style=flat-square" alt="Latest release" /></a>
     <a href="https://github.com/ota-run/ota/actions/workflows/release-gate.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/release-gate.yml?branch=main&style=flat-square&label=release%20gate" alt="Release gate status" /></a>
@@ -37,7 +19,6 @@
     <a href="LICENSE"><img src="https://img.shields.io/github/license/ota-run/ota?style=flat-square" alt="License" /></a>
 <!--     <a href="https://github.com/ota-run/ota/stargazers"><img src="https://img.shields.io/github/stars/ota-run/ota?style=flat-square" alt="GitHub stars" /></a> -->
   </p>
-  <p><strong>Built for</strong> humans, CI, AI agents, containers, and multi-repo workspaces.</p>
   <p>
     <a href="https://ota.run/docs/getting-started">Get Started</a> ·
     <a href="https://ota.run/docs">Docs</a> ·

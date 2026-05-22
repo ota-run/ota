@@ -126,11 +126,11 @@ use crate::runner::{
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
     SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee, TaskExecutionRelation,
     TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence, clean_execution_report,
-    clean_execution_report_for_workflow, clean_stale_execution, effective_execution,
-    effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
-    env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
-    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
-    persistent_container_name, reported_task_context_for_backend,
+    clean_stale_execution, effective_execution, effective_task_env_for_backend,
+    effective_task_env_for_selection, effective_task_execution, env_resolution_source_label,
+    ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
+    load_policy_env_overlay, named_execution_context, persistent_container_name,
+    preflight_native_runtime_listener_binds, reported_task_context_for_backend,
     resolve_declared_env_source_value, resolve_effective_task_container_backend,
     resolve_execution_backend, resolve_execution_backend_with_contract_path,
     resolve_named_readiness_probe, resolve_task_env_details, resolve_task_env_details_for_task,
@@ -754,7 +754,17 @@ fn append_post_summary_next_block(out: &mut String, next_steps: &[String]) {
     for _ in trailing_newlines..2 {
         out.push('\n');
     }
-    append_error_detail_section(out, "Next:", next_steps, None);
+    if next_steps.len() == 1 {
+        out.push_str(&format!(
+            "{} {}",
+            paint_next_key(),
+            render_backticked_text(&next_steps[0], None)
+        ));
+        return;
+    }
+    let mut next_block = String::new();
+    append_error_detail_section(&mut next_block, "Next:", next_steps, None);
+    out.push_str(next_block.trim_start_matches('\n'));
 }
 
 fn split_embedded_next_block(message: &str) -> Option<(String, Vec<String>)> {
@@ -1922,13 +1932,17 @@ pub fn proof_runtime(
                     return CommandOutput::failure(error);
                 }
 
-                let cleanup_error = clean_execution_report_for_workflow(
+                let cleanup_error = if proof_runtime_selected_workflow_uses_container_backend(
                     &target.contract,
-                    &target.contract_path,
                     effective_workflow_name,
-                )
-                .err()
-                .and_then(proof_runtime_cleanup_failure_message);
+                    overrides,
+                ) {
+                    clean_execution_report(&target.contract, &target.contract_path)
+                        .err()
+                        .and_then(proof_runtime_cleanup_failure_message)
+                } else {
+                    None
+                };
                 let process_cleanup_error = stop_proof_runtime_up_process(&mut up_process)
                     .err()
                     .map(|error| error.to_string());
@@ -1947,6 +1961,10 @@ pub fn proof_runtime(
                 ) {
                     proof_summary_for_output.primary_blocker = Some(overridden_blocker);
                 }
+                let up_process_failure = proof_runtime_effective_up_process_failure(
+                    &proof_summary_for_output,
+                    up_process_failure,
+                );
                 let primary_blocker =
                     proof_runtime_blocking_primary_blocker(&proof_summary_for_output);
                 let primary_blocker_error = primary_blocker
@@ -1983,6 +2001,12 @@ pub fn proof_runtime(
                     proof_runtime_phase_label(proof_phase)
                 };
                 let ok = proof_runtime_ok(&proof_summary_for_output, proof_error.as_deref());
+                let proof_failure_class = proof_runtime_failure_class(
+                    &proof_summary_for_output,
+                    cleanup_error.as_deref(),
+                    up_process_failure,
+                    &up_log_artifact_path,
+                );
 
                 match format {
                     OutputFormat::Text => CommandOutput {
@@ -2016,6 +2040,7 @@ pub fn proof_runtime(
                                 doctor: &doctor_artifact_display,
                                 up_log: &up_log_artifact_display,
                             }),
+                            failure_class: proof_failure_class,
                             error: proof_error.as_deref(),
                             next: proof_next.as_deref(),
                         }),
@@ -14601,8 +14626,19 @@ pub fn skills_install(agent: &str, format: OutputFormat, debug: bool) -> Command
 }
 
 fn render_skills_install_text(agent: &str, target_dir: &Path) -> String {
+    let status = render_status_line("READY");
+    if plain_mode() {
+        return format!(
+            "{status}\nInstalled Ota skill for {agent}.\nInstall targets\n- {skill} skill: {target}\n- agent: {agent}",
+            skill = OTA_SKILL_NAME,
+            target = target_dir.display()
+        );
+    }
     format!(
-        "READY\n- {skill} skill -> {target}\n- agent -> {agent}",
+        "{status}\nInstalled Ota skill for {agent}.\n\n{}\n- {} {skill} skill: {target}\n- {} agent: {agent}",
+        paint_section_title("Install targets"),
+        summary_bullet(),
+        summary_bullet(),
         skill = OTA_SKILL_NAME,
         target = target_dir.display()
     )
@@ -35641,6 +35677,9 @@ fn finding_next_steps(next: &str) -> Vec<String> {
     if let Some((first, rerun)) = next.split_once(", then rerun ") {
         return vec![first.trim().to_string(), format!("rerun {}", rerun.trim())];
     }
+    if let Some((first, alternative)) = next.split_once(", or ") {
+        return vec![first.trim().to_string(), alternative.trim().to_string()];
+    }
     vec![next.to_string()]
 }
 
@@ -40276,6 +40315,34 @@ Status:      success
     }
 
     #[test]
+    fn detached_run_failure_hint_prefers_structured_error_title() {
+        let dir = TempDir::new().expect("temp dir should create");
+        let log_path = dir.path().join("up-detached-run.log");
+        fs::write(
+            &log_path,
+            r#"
+🦦 RUN ./ota.yaml
+
+◉ ERROR  Host publication failed
+Where: ./ota.yaml
+Field: tasks.dev:www.runtime.listeners.www.project.host.port
+Why:
+  » host port `3000` on `127.0.0.1` is already allocated
+
+🦦 RUN SUMMARY
+Memory:      4GiB
+"#,
+        )
+        .expect("log should write");
+
+        let hint = super::detached_run_failure_hint_from_log(&log_path);
+        assert_eq!(
+            hint.as_deref(),
+            Some("detached run error: Host publication failed")
+        );
+    }
+
+    #[test]
     fn detached_run_failure_hint_falls_back_to_last_relevant_line() {
         let dir = TempDir::new().expect("temp dir should create");
         let log_path = dir.path().join("up-detached-run.log");
@@ -40448,6 +40515,94 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_cleanup_failures() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::Ready,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            Some("cleanup failed"),
+            None,
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("cleanup_failure"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_marks_install_toolchain_from_up_log() {
+        let dir = TempDir::new().expect("temp dir should create");
+        let up_log = dir.path().join("up.log");
+        fs::write(&up_log, "node-gyp rebuild failed\nerror C2362\n").expect("up log should write");
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("run exited"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(&summary, None, Some("run failed"), &up_log);
+        assert_eq!(class.as_deref(), Some("install_or_toolchain_failure"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_marks_readiness_timeout() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Surface readiness timed out: site"),
+                why: String::from("timed out"),
+                next: String::from("rerun"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            None,
+            Some("timed out while waiting"),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("readiness_timeout"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_marks_up_process_failure_without_primary_blocker() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            None,
+            Some("up process exited with code 1"),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("up_process_failure"));
+    }
+
+    #[test]
     fn render_proof_runtime_text_prioritizes_primary_blocker_over_up_process_failure() {
         let _guard = cwd_mutex_lock();
         let contract_dir = TempDir::new().unwrap();
@@ -40535,6 +40690,126 @@ workflows:
         assert!(rendered.contains("Up process exited unexpectedly"));
         assert!(rendered.contains("Why: up process exited with code 1"));
         assert!(rendered.contains("inspect up.log and rerun `ota proof runtime`"));
+    }
+
+    #[test]
+    fn proof_runtime_effective_up_process_failure_ignores_non_blocking_ready_exit() {
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::Ready,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 0,
+            info_count: 1,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Info,
+                summary: String::from("Container readiness does not include host-only checks"),
+                why: String::from("container mode excludes host checks"),
+                next: String::from("run `ota doctor --mode native`"),
+                provenance: Some(String::from("repo contract")),
+                provenance_key: Some(String::from("repo_contract")),
+            }),
+        };
+
+        assert_eq!(
+            super::proof_runtime_effective_up_process_failure(
+                &summary,
+                Some("`ota up --stream` exited while waiting for readiness (exit code 1)")
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn proof_runtime_effective_up_process_failure_preserves_blocking_exit() {
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Surface readiness failed: app"),
+                why: String::from("surface app did not become ready"),
+                next: String::from("rerun `ota doctor`"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let failure = "`ota up --stream` exited while waiting for readiness (exit code 1)";
+        assert_eq!(
+            super::proof_runtime_effective_up_process_failure(&summary, Some(failure)),
+            Some(failure)
+        );
+    }
+
+    #[test]
+    fn proof_runtime_selected_workflow_container_cleanup_scope_is_backend_aware() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: cleanup-scope
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:22-bookworm
+tasks:
+  dev:
+    context: host
+    run: echo host
+  dev:app:
+    context: app
+    run: echo app
+workflows:
+  default: instant
+  instant:
+    run:
+      task: dev
+  app:
+    run:
+      task: dev:app
+"#,
+        )
+        .unwrap();
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        assert!(
+            !super::proof_runtime_selected_workflow_uses_container_backend(
+                &contract,
+                Some("instant"),
+                ExecutionOverrides::default(),
+            )
+        );
+        assert!(
+            super::proof_runtime_selected_workflow_uses_container_backend(
+                &contract,
+                Some("app"),
+                ExecutionOverrides::default(),
+            )
+        );
+        assert!(
+            super::proof_runtime_selected_workflow_uses_container_backend(
+                &contract,
+                Some("instant"),
+                ExecutionOverrides {
+                    backend: Some(Backend::Container),
+                    ..ExecutionOverrides::default()
+                },
+            )
+        );
     }
 
     #[test]
@@ -43847,7 +44122,7 @@ tasks:
         ));
         assert!(text.contains("  » brew via `brew-bootstrap`"));
         assert!(text.contains("  » sdkman via `sdkman-bootstrap`"));
-        assert!(text.contains("Next: use `ota policy review` to inspect the active policy source"));
+        assert!(text.contains("use `ota policy review` to inspect the active policy source"));
         assert!(text.contains("adapter install needs approval or audit"));
         assert!(why < provenance);
         assert!(provenance < next);
@@ -43939,9 +44214,8 @@ tasks:
         assert!(text.contains("Why:\n  » `.ota/org-policy.yaml` approves repo version rules"));
         assert!(text.contains("  » runtime `java` (versions `>=21`)"));
         assert!(text.contains("  » tool `node` (versions `24.14.1`)"));
-        assert!(text.contains(
-            "Next: keep repo-declared versions inside these approved ranges, or update `./.ota/org-policy.yaml`"
-        ));
+        assert!(text.contains("keep repo-declared versions inside these approved ranges"));
+        assert!(text.contains("`./.ota/org-policy.yaml`"));
     }
 
     #[test]
@@ -44484,6 +44758,85 @@ tasks:
 
         assert!(rewritten.contains("`ota doctor --mode native`"));
         assert!(rewritten.contains("`ota run <task> --mode container`"));
+    }
+
+    #[test]
+    fn finding_next_steps_splits_or_alternatives_into_two_steps() {
+        let next_steps = super::finding_next_steps(
+            "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
+        );
+
+        assert_eq!(
+            next_steps,
+            vec![
+                String::from("use `ota doctor --mode native` for host readiness"),
+                String::from(
+                    "run declared tasks with `ota run <task> --mode container` through the validated container path"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn normalized_up_receipt_next_prefers_first_info_step_when_ready() {
+        let receipt = ExecutionReceipt {
+            ok: true,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("container")),
+            context: Some(String::from("app")),
+            lifecycle: Some(String::from("ephemeral")),
+            image: Some(String::from("node:22-bookworm")),
+            container_memory_bytes: None,
+            target: None,
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: Vec::new(),
+            blocked: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            summary: ExecutionReceiptSummary::default(),
+            next: Some(String::from(
+                "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
+            )),
+        };
+
+        let findings = vec![Finding {
+            severity: FindingSeverity::Info,
+            summary: String::from("Container readiness does not include host-only checks"),
+            why: String::from("container mode validated execution"),
+            next: String::from(
+                "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
+            ),
+        }];
+
+        let next = super::normalized_up_receipt_next(
+            None,
+            "READY",
+            "post-up diagnosis",
+            &findings,
+            None,
+            &receipt,
+        )
+        .expect("ready info next");
+
+        assert_eq!(next, "use `ota doctor --mode native` for host readiness");
     }
 
     #[test]
@@ -51353,6 +51706,14 @@ tasks:
             rendered.contains("Next: run `ota tasks --use` to inspect runnable task usage"),
             "{rendered}"
         );
+        assert!(
+            rendered.contains("Note:        running on the host environment\n\nNext:"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("Note:        running on the host environment\n\n\nNext:"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -51788,10 +52149,84 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Capture,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
+    }
+
+    #[test]
+    fn up_detached_native_service_fails_when_listener_port_is_already_owned() {
+        let listener =
+            TcpListener::bind(("127.0.0.1", 0)).expect("test should reserve a local port");
+        let port = listener.local_addr().unwrap().port();
+        let dir = TempDir::new().expect("temp dir should create");
+        let path = dir.path().join("ota.yaml");
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: up-native-bind
+tasks:
+  setup:
+    run: echo setup
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:{port}/
+      timeout: 100
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: dev
+    readiness:
+      probes:
+        - backend-ready
+"#
+        );
+        fs::write(&path, &contents).expect("contract should write");
+        let contract = parse_contract_str(&path, &contents).expect("contract should parse");
+
+        let result = super::execute_repo_up_with_behavior(
+            &contract,
+            &path,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            Some(Duration::from_millis(100)),
+        );
+
+        let rendered = match result {
+            Ok(_) => panic!("up should fail before proof reuse"),
+            Err(error) => strip_ansi_codes(&error),
+        };
+        assert!(rendered.contains("Listener bind conflict"), "{rendered}");
+        assert!(
+            rendered.contains("port `") && rendered.contains("is already in use on the host"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -51827,7 +52262,7 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Stream,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
@@ -51871,10 +52306,72 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Stream,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
+    }
+
+    #[test]
+    fn resolve_up_run_behavior_uses_selected_mode_runtime_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo native
+    execution:
+      modes:
+        native:
+          run: echo native
+        container:
+          run: echo container
+          runtime:
+            kind: service
+            listeners:
+              http:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let native_behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+            super::UpRunBehaviorPreference::Auto,
+        );
+        let container_behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            super::UpRunBehaviorPreference::Auto,
+        );
+
+        assert_eq!(native_behavior, super::UpRunBehavior::Attach);
+        assert_eq!(
+            container_behavior,
+            super::UpRunBehavior::DetachedProofTeardown
+        );
     }
 
     #[test]
@@ -51915,7 +52412,7 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Capture,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedProofTeardown);
@@ -51949,7 +52446,7 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Capture,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Auto,
         );
         assert_eq!(behavior, super::UpRunBehavior::Attach);
@@ -51988,7 +52485,7 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Capture,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Detach,
         );
         assert_eq!(behavior, super::UpRunBehavior::DetachedLeaveRunning);
@@ -52027,50 +52524,10 @@ workflows:
         let behavior = super::resolve_up_run_behavior(
             &contract,
             None,
-            super::RepoExecutionMode::Capture,
+            ExecutionOverrides::default(),
             super::UpRunBehaviorPreference::Attach,
         );
         assert_eq!(behavior, super::UpRunBehavior::Attach);
-    }
-
-    #[test]
-    fn task_declares_dependencies_returns_true_for_depends_on_tasks() {
-        let contract = parse_contract_str(
-            Path::new("ota.yaml"),
-            r#"
-version: 1
-project:
-  name: up-behavior
-tasks:
-  setup:
-    run: echo setup
-  dev:
-    run: echo dev
-    depends_on:
-      - setup
-"#,
-        )
-        .unwrap();
-
-        assert!(super::task_declares_dependencies(&contract, "dev"));
-    }
-
-    #[test]
-    fn task_declares_dependencies_returns_false_for_tasks_without_depends_on() {
-        let contract = parse_contract_str(
-            Path::new("ota.yaml"),
-            r#"
-version: 1
-project:
-  name: up-behavior
-tasks:
-  quickstart:
-    run: echo quickstart
-"#,
-        )
-        .unwrap();
-
-        assert!(!super::task_declares_dependencies(&contract, "quickstart"));
     }
 
     #[test]
@@ -53133,6 +53590,65 @@ tasks:
     }
 
     #[test]
+    fn run_output_excerpt_prioritizes_package_manager_binary_failures() {
+        let stdout = (1..=30)
+            .map(|index| format!("progress line {index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let stderr = [
+            "Scope: all 25 workspace projects",
+            "Unable to find package manager binary",
+            "cannot find binary path",
+            "ELIFECYCLE Command failed with exit code 1.",
+        ]
+        .join("\n");
+
+        let excerpt = super::run_output_excerpt(stdout.as_str(), stderr.as_str(), 6)
+            .expect("excerpt should be present");
+        let excerpt_text = excerpt.lines.join("\n").to_ascii_lowercase();
+
+        assert!(
+            excerpt_text.contains("package manager binary"),
+            "{excerpt_text}"
+        );
+        assert!(
+            excerpt_text.contains("cannot find binary path"),
+            "{excerpt_text}"
+        );
+    }
+
+    #[test]
+    fn startup_failure_next_preserves_container_mode_in_rerun_command() {
+        let rendered = strip_ansi_codes(&super::render_service_startup_failure_text(
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev:www",
+            "dev:www",
+            None,
+            Backend::Container,
+            &ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ExitedNonZero,
+                after_readiness: false,
+                target: String::from("service workload in persistent container"),
+                container: String::from("ota-deadbeef"),
+                exit_code: Some(1),
+            },
+            None,
+            "",
+            "Unable to find package manager binary",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered
+                .contains("rerun `ota run dev:www --mode container --stream` for live task output"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_failure_text_keeps_clean_service_exit_as_failure_even_with_late_interrupt_signal() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -53353,6 +53869,14 @@ tasks:
         );
         assert!(
             !rendered.contains("Container: stale-summary-id"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Note:        placeholder\n\nNext:"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("Note:        placeholder\n\n\nNext:"),
             "{rendered}"
         );
     }
@@ -54454,6 +54978,54 @@ tasks:
             "{rendered}"
         );
         assert!(rendered.contains("Connection refused"), "{rendered}");
+    }
+
+    #[test]
+    fn run_failure_text_preserves_container_mode_in_excerpt_rerun_hint() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:22-bookworm
+tasks:
+  dev:www:
+    run: pnpm dev:www
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev:www",
+            "dev:www",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "container backend `docker` is unavailable",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nMode:        container",
+        ));
+
+        assert!(
+            rendered.contains(
+                "rerun `ota run dev:www --mode container --stream` for live task output if the excerpt is insufficient"
+            ),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -56189,6 +56761,7 @@ project:
             "dev",
             "dev",
             None,
+            Backend::Native,
             &ServiceTermination {
                 kind: ServiceTerminationKind::ServiceStopped,
                 cause: ServiceTerminationCause::ExitedNonZero,
@@ -60104,12 +60677,15 @@ fn render_run_captured_failure_text(
             );
         }
         if !service_termination.after_readiness {
+            let requested_backend =
+                effective_task_execution(contract, requested_task_name, overrides).backend;
             return render_service_startup_failure_text(
                 contract_path,
                 where_value,
                 task_name,
                 requested_task_name,
                 member,
+                requested_backend,
                 service_termination,
                 runtime,
                 stdout,
@@ -60169,10 +60745,11 @@ fn render_run_captured_failure_text(
     }
     let mut next_steps = Vec::new();
     let excerpt = run_output_excerpt(stdout, stderr, 20);
+    let rerun_backend = effective_task_execution(contract, task_name, overrides).backend;
     if excerpt.is_some() {
         next_steps.push(format!(
             "rerun `{}` for live task output if the excerpt is insufficient",
-            repo_run_stream_command(task_name, member)
+            repo_run_stream_command_for_backend(task_name, member, rerun_backend)
         ));
     }
     next_steps.push(task_use_details_step(Some(contract_path), member));
@@ -60663,6 +61240,7 @@ fn render_service_startup_failure_text(
     task_name: &str,
     requested_task_name: &str,
     member: Option<&str>,
+    backend: Backend,
     service_termination: &ServiceTermination,
     runtime: Option<&ResolvedTaskRuntime>,
     stdout: &str,
@@ -60740,7 +61318,7 @@ fn render_service_startup_failure_text(
     let next_steps = [
         format!(
             "rerun `{}` for live task output",
-            repo_run_stream_command(requested_task_name, member)
+            repo_run_stream_command_for_backend(requested_task_name, member, backend)
         ),
         task_use_details_step(Some(contract_path), member),
     ];
@@ -61130,6 +61708,14 @@ fn output_excerpt_relevance_score(line: &str) -> usize {
     let lower = line.to_ascii_lowercase();
     if lower.contains("panic") || lower.contains("thread '") {
         5
+    } else if lower.contains("unable to find package manager binary")
+        || lower.contains("cannot find binary path")
+        || lower.contains("err_pnpm_")
+        || lower.contains("unsupported_engine")
+        || lower.contains("elifecycle")
+        || lower.contains("command not found")
+    {
+        4
     } else if lower.contains("error:") || lower.contains("failed") {
         4
     } else if lower.contains("not found") || lower.contains("exit code") {
@@ -61159,6 +61745,24 @@ fn repo_run_stream_command(task_name: &str, member: Option<&str>) -> String {
         Some(member) => format!("ota run --member {member} {task_name} --stream"),
         None => format!("ota run {task_name} --stream"),
     }
+}
+
+fn repo_run_stream_command_for_backend(
+    task_name: &str,
+    member: Option<&str>,
+    backend: Backend,
+) -> String {
+    let mut command = match member {
+        Some(member) => format!("ota run --member {member} {task_name}"),
+        None => format!("ota run {task_name}"),
+    };
+    match backend {
+        Backend::Container => command.push_str(" --mode container"),
+        Backend::Remote => command.push_str(" --mode remote"),
+        Backend::Native => {}
+    }
+    command.push_str(" --stream");
+    command
 }
 
 fn repo_run_command(task_name: &str, member: Option<&str>) -> String {
@@ -61927,6 +62531,25 @@ fn render_run_structured_error_text(
                 next_steps,
             )
         }
+        RunError::NativeListenerBindConflict {
+            task,
+            listener,
+            address,
+            port,
+        } => (
+            String::from("Listener bind conflict"),
+            vec![
+                format!("task `{task}` listener `{listener}` needs `{address}:{port}`"),
+                format!("port `{port}` is already in use on the host"),
+                String::from("this usually means another local workload is still running"),
+            ],
+            vec![
+                format!("stop the process already using `{address}:{port}`"),
+                format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
+                format!("rerun `{}`", repo_run_stream_command(task.as_str(), member)),
+                task_use_details_step(Some(contract_path), member),
+            ],
+        ),
         RunError::PersistentContainerListenerBindConflict {
             task,
             listener,
@@ -62215,6 +62838,27 @@ fn render_run_structured_error_text(
             }
             output.push('\n');
             output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
+            return output;
+        }
+        RunError::NativeListenerBindConflict { task, listener, .. } => {
+            let mut output = structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
+                &summary,
+                &why_lines,
+                &next_steps,
+            );
+            if let Some(receipt_text) = receipt_text
+                && !receipt_text.trim().is_empty()
+            {
+                output.push('\n');
+                output.push_str(receipt_text);
+            }
+            output.push('\n');
+            output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         RunError::PersistentContainerListenerBindConflict {
@@ -62245,6 +62889,7 @@ fn render_run_structured_error_text(
             } else {
                 output.push_str(summary_block);
             }
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         RunError::RuntimeListenerResolutionFailed {
@@ -62274,6 +62919,7 @@ fn render_run_structured_error_text(
             }
             output.push('\n');
             output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         RunError::HostPortOverrideRequiresFixedProjectedPort { task, listener } => {
@@ -62293,6 +62939,7 @@ fn render_run_structured_error_text(
             }
             output.push('\n');
             output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         RunError::HostPortOverrideAmbiguousProjectedListener { task, .. } => {
@@ -62312,6 +62959,7 @@ fn render_run_structured_error_text(
             }
             output.push('\n');
             output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
         _ => {}
@@ -65179,7 +65827,7 @@ fn wait_for_proof_runtime_readiness(
                         overrides.clone(),
                     );
                     let successful_service_run_exit = process_label.starts_with("ota run ")
-                        && selected_up_run_task_is_service(contract, workflow_name)
+                        && selected_up_run_task_is_service(contract, workflow_name, overrides)
                         && exit_status.success();
                     if successful_service_run_exit {
                         let summary = doctor_summary(&latest_report, agent_verdict);
@@ -65386,6 +66034,20 @@ fn proof_runtime_cleanup_failure_message(error: CleanExecutionError) -> Option<S
     }
 }
 
+fn proof_runtime_selected_workflow_uses_container_backend(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> bool {
+    contract
+        .selected_workflow_task_closure_names(workflow_name)
+        .into_iter()
+        .any(|task_name| {
+            effective_task_execution(contract, task_name.as_str(), overrides).backend
+                == Backend::Container
+        })
+}
+
 fn proof_runtime_blocking_primary_blocker(
     summary: &DoctorSummary,
 ) -> Option<&DoctorPrimaryBlocker> {
@@ -65395,8 +66057,89 @@ fn proof_runtime_blocking_primary_blocker(
         .filter(|blocker| blocker.severity != FindingSeverity::Info)
 }
 
+fn proof_runtime_effective_up_process_failure<'a>(
+    summary: &DoctorSummary,
+    up_process_failure: Option<&'a str>,
+) -> Option<&'a str> {
+    let failure = up_process_failure?;
+    if summary.verdict == DoctorVerdict::Ready
+        && proof_runtime_blocking_primary_blocker(summary).is_none()
+    {
+        None
+    } else {
+        Some(failure)
+    }
+}
+
 fn proof_runtime_ok(summary: &DoctorSummary, proof_error: Option<&str>) -> bool {
     summary.verdict == DoctorVerdict::Ready && proof_error.is_none()
+}
+
+fn proof_runtime_failure_class(
+    summary: &DoctorSummary,
+    cleanup_error: Option<&str>,
+    up_process_failure: Option<&str>,
+    up_log_artifact_path: &Path,
+) -> Option<String> {
+    if cleanup_error.is_some() {
+        return Some(String::from("cleanup_failure"));
+    }
+
+    let Some(primary) = proof_runtime_blocking_primary_blocker(summary) else {
+        if up_process_failure.is_some() {
+            return Some(String::from("up_process_failure"));
+        }
+        return None;
+    };
+    if primary.summary == "Run task exited before readiness" {
+        if proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path) {
+            return Some(String::from("install_or_toolchain_failure"));
+        }
+        return Some(String::from("run_task_exit_before_readiness"));
+    }
+
+    if primary.summary.starts_with("Surface readiness timed out:")
+        || primary
+            .summary
+            .starts_with("Signal surface readiness timed out:")
+    {
+        return Some(String::from("readiness_timeout"));
+    }
+    if primary.summary.starts_with("Surface readiness failed:")
+        || primary
+            .summary
+            .starts_with("Signal surface readiness failed:")
+    {
+        return Some(String::from("readiness_check_failed"));
+    }
+    if primary
+        .summary
+        .starts_with("Surface readiness could not be evaluated:")
+        || primary
+            .summary
+            .starts_with("Signal surface readiness could not be evaluated:")
+    {
+        return Some(String::from("readiness_evaluation_failed"));
+    }
+    Some(String::from("primary_blocker"))
+}
+
+fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path: &Path) -> bool {
+    let Ok(log) = fs::read_to_string(up_log_artifact_path) else {
+        return false;
+    };
+    let log = log.to_ascii_lowercase();
+    [
+        "node-gyp",
+        "gyp err",
+        "error c",
+        "elifecycle",
+        "local package.json exists, but node_modules missing",
+        "turbo: not found",
+        "not recognized as an internal or external command",
+    ]
+    .iter()
+    .any(|pattern| log.contains(pattern))
 }
 
 fn proof_runtime_status_word(
@@ -66121,7 +66864,14 @@ fn normalized_up_receipt_next(
         ));
     }
 
-    receipt.next.clone()
+    if status == "READY" && primary.severity == FindingSeverity::Info {
+        let next_steps = finding_next_steps(&current_next);
+        if let Some(first_step) = next_steps.first() {
+            return Some(first_step.clone());
+        }
+    }
+
+    Some(current_next)
 }
 
 fn doctor_mode_from_backend(backend: Option<&str>) -> Option<DoctorMode> {
@@ -70940,31 +71690,33 @@ fn run_phase_failure_exit_code(outcome: &CommandRunResult) -> Option<i32> {
         .map(|termination| termination.exit_code.unwrap_or(1))
 }
 
-fn selected_up_run_task_is_service(contract: &Contract, workflow_name: Option<&str>) -> bool {
-    selected_up_activation_task_name(contract, workflow_name)
-        .and_then(|task_name| contract.tasks.get(task_name))
-        .and_then(|task| task.runtime.as_ref())
+fn selected_up_run_task_is_service(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> bool {
+    let Some(task_name) = selected_up_activation_task_name(contract, workflow_name) else {
+        return false;
+    };
+    let Some(task) = contract.tasks.get(task_name) else {
+        return false;
+    };
+    let backend = effective_task_execution(contract, task_name, overrides).backend;
+    task.service_runtime_for_backend(backend)
         .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
-}
-
-fn task_declares_dependencies(contract: &Contract, task_name: &str) -> bool {
-    contract
-        .tasks
-        .get(task_name)
-        .is_some_and(|task| !task.depends_on.is_empty())
 }
 
 fn resolve_up_run_behavior(
     contract: &Contract,
     workflow_name: Option<&str>,
-    _mode: RepoExecutionMode,
+    overrides: ExecutionOverrides,
     preference: UpRunBehaviorPreference,
 ) -> UpRunBehavior {
     match preference {
         UpRunBehaviorPreference::Attach => UpRunBehavior::Attach,
         UpRunBehaviorPreference::Detach => UpRunBehavior::DetachedLeaveRunning,
         UpRunBehaviorPreference::Auto => {
-            if selected_up_run_task_is_service(contract, workflow_name) {
+            if selected_up_run_task_is_service(contract, workflow_name, overrides) {
                 UpRunBehavior::DetachedProofTeardown
             } else {
                 UpRunBehavior::Attach
@@ -70994,7 +71746,7 @@ fn up_task_execution_overrides(
             .is_some_and(|backend| matches!(backend, ResolvedExecutionBackend::Container { .. }));
 
     if matches!(run_behavior, UpRunBehavior::DetachedProofTeardown)
-        && selected_up_run_task_is_service(contract, workflow_name)
+        && selected_up_run_task_is_service(contract, workflow_name, overrides)
         && should_force_ephemeral
     {
         ExecutionOverrides {
@@ -71018,7 +71770,7 @@ fn up_success_execution_context(
     report: &DoctorReport,
 ) -> PhaseExecutionContext {
     if matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning)
-        && selected_up_run_task_is_service(contract, workflow_name)
+        && selected_up_run_task_is_service(contract, workflow_name, task_execution_overrides)
         && let Some(task_name) = activation_task
     {
         return task_phase_execution_context(
@@ -71089,12 +71841,10 @@ fn run_up_task_detached_until_ready(
     })?;
     let run_log_artifact_path = artifact_dir.join("up-detached-run.log");
     let run_log_artifact = compact_path(&run_log_artifact_path, ".");
-    let skip_deps = task_declares_dependencies(contract, task_name);
-
     let mut run_process = spawn_up_detached_run_process(
         resolved_path,
         task_name,
-        skip_deps,
+        false,
         overrides,
         policy_env,
         &run_log_artifact_path,
@@ -71236,6 +71986,16 @@ fn detached_run_bind_conflict_port_hint(failure: &str, failure_details: &[String
 
 fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
     let contents = fs::read_to_string(path).ok()?;
+    for raw_line in contents.lines() {
+        let line = strip_ansi_codes(raw_line).trim().to_string();
+        if let Some(title) = line.strip_prefix("◉ ERROR") {
+            let title = title.trim();
+            if !title.is_empty() {
+                return Some(format!("detached run error: {title}"));
+            }
+        }
+    }
+
     let mut fallback = None;
     for raw_line in contents.lines().rev() {
         let line = strip_ansi_codes(raw_line).trim().to_string();
@@ -71249,6 +72009,11 @@ fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
             || line.starts_with("Contract:")
             || line.starts_with("Mode:")
             || line.starts_with("Task:")
+            || line.starts_with("Context:")
+            || line.starts_with("Lifecycle:")
+            || line.starts_with("Image:")
+            || line.starts_with("Memory:")
+            || line.starts_with("Cause:")
             || line.starts_with("External:")
             || line.starts_with("Internal:")
             || line.starts_with("Note:")
@@ -71265,7 +72030,12 @@ fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
         if line.contains("address already in use") || line.starts_with("Error:") {
             return Some(format!("detached run output: {line}"));
         }
-        if fallback.is_none() {
+        if (line.starts_with("warning:")
+            || line.contains("failed")
+            || line.contains("timed out")
+            || line.contains("cannot"))
+            && fallback.is_none()
+        {
             fallback = Some(line);
         }
     }
@@ -71891,7 +72661,7 @@ fn execute_repo_up_with_behavior(
     let prepare_task = selected_up_prepare_task_name(contract, workflow_name);
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
     let run_behavior =
-        resolve_up_run_behavior(contract, workflow_name, mode, run_behavior_preference);
+        resolve_up_run_behavior(contract, workflow_name, overrides, run_behavior_preference);
     let task_execution_overrides = up_task_execution_overrides(
         contract,
         resolved_path,
@@ -72868,41 +73638,57 @@ fn execute_repo_up_with_behavior(
             .tasks
             .get(run_task_name)
             .and_then(task_command_preview);
-        let run_result = if selected_up_run_task_is_service(contract, workflow_name)
-            && matches!(
-                run_behavior,
-                UpRunBehavior::DetachedProofTeardown | UpRunBehavior::DetachedLeaveRunning
-            ) {
-            let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
-            let proof_overrides = if keep_running {
-                overrides
+        let run_result =
+            if selected_up_run_task_is_service(contract, workflow_name, task_execution_overrides)
+                && matches!(
+                    run_behavior,
+                    UpRunBehavior::DetachedProofTeardown | UpRunBehavior::DetachedLeaveRunning
+                )
+            {
+                let effective_execution =
+                    effective_task_execution(contract, run_task_name, task_execution_overrides);
+                let native_preflight = if effective_execution.backend == Backend::Native
+                    && let Some(task) = contract.tasks.get(run_task_name)
+                {
+                    let runtime = task.service_runtime_for_backend(Backend::Native);
+                    preflight_native_runtime_listener_binds(run_task_name, runtime)
+                } else {
+                    Ok(())
+                };
+                if let Err(error) = native_preflight {
+                    Err(error)
+                } else {
+                    let keep_running = matches!(run_behavior, UpRunBehavior::DetachedLeaveRunning);
+                    let proof_overrides = if keep_running {
+                        overrides
+                    } else {
+                        task_execution_overrides
+                    };
+                    run_up_task_detached_until_ready(
+                        contract,
+                        resolved_path,
+                        workflow_name,
+                        run_task_name,
+                        proof_overrides,
+                        policy_env,
+                        ready_timeout,
+                        keep_running,
+                    )
+                    .map_err(|error| RunError::SpawnFailed {
+                        task: run_task_name.to_string(),
+                        source: io::Error::other(error),
+                    })
+                }
             } else {
-                task_execution_overrides
+                run_up_task(
+                    contract,
+                    resolved_path,
+                    run_task_name,
+                    task_execution_overrides,
+                    policy_env,
+                    mode,
+                )
             };
-            run_up_task_detached_until_ready(
-                contract,
-                resolved_path,
-                workflow_name,
-                run_task_name,
-                proof_overrides,
-                policy_env,
-                ready_timeout,
-                keep_running,
-            )
-            .map_err(|error| RunError::SpawnFailed {
-                task: run_task_name.to_string(),
-                source: io::Error::other(error),
-            })
-        } else {
-            run_up_task(
-                contract,
-                resolved_path,
-                run_task_name,
-                task_execution_overrides,
-                policy_env,
-                mode,
-            )
-        };
         match run_result {
             Ok(outcome) if run_phase_failure_exit_code(&outcome).is_some() => {
                 stdout.push_str(&outcome.stdout);
@@ -76285,7 +77071,7 @@ fn finalize_debug(
 fn shell_command(command: &str) -> Command {
     let mut shell = Command::new("sh");
     shell
-        .arg("-lc")
+        .arg("-c")
         .arg(signal_forwarding_shell_script(command.to_string()));
     shell
 }
@@ -76829,6 +77615,32 @@ fn render_up_run_error(
                     ),
                 ],
                 &next_steps,
+                None,
+                None,
+            )
+        }
+        RunError::NativeListenerBindConflict {
+            task,
+            listener,
+            address,
+            port,
+        } => {
+            let where_value = display_contract_target(&compact_contract_path(contract_path), None);
+            render_field_error_with_tail(
+                "UP",
+                &where_value,
+                &format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
+                "Listener bind conflict",
+                &[
+                    format!("task `{task}` listener `{listener}` needs `{address}:{port}`"),
+                    format!("port `{port}` is already in use on the host"),
+                    String::from("this usually means another local workload is still running"),
+                ],
+                &[
+                    format!("stop the process already using `{address}:{port}`"),
+                    format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
+                    String::from("rerun `ota up`"),
+                ],
                 None,
                 None,
             )

@@ -26,6 +26,21 @@
 
 ## Unreleased
 
+## 1.6.15
+
+
+- fixed `ota run` captured-failure rerun guidance to preserve the effective execution mode, so
+  container failures now suggest `--mode container --stream` instead of defaulting to native-mode
+  rerun hints
+- fixed `ota run --mode container` dependency execution selection so dependencies that declare
+  container mode branches run on the selected container backend instead of silently falling back to
+  native when a task also has a native default mode
+- activated Corepack shims on the run path for Corepack-owned toolchains before task execution,
+  so repo tasks that call package-manager entrypoints (for example `pnpm`) remain runnable without
+  requiring separate manual shell bootstrap
+- tightened the first-party Ota skill contract-authoring guidance with production-readiness gates
+  for scope honesty, deterministic setup, agent safety, workflow fidelity, CI proof posture, and
+  toolchain/runtime/tool ownership boundaries
 - scoped runtime-proof cleanup to the selected workflow/task closure instead of all declared
   execution contexts, so `ota proof runtime --workflow <host-workflow>` no longer fails cleanup on
   unrelated container contexts that are not part of the selected proof path
@@ -44,6 +59,19 @@
 - improved detached `ota up` run-failure diagnostics by surfacing a sanitized tail hint from the
   detached run log (for example explicit `address already in use (EADDRINUSE)`), so operator
   output points to startup bind conflicts without requiring manual artifact triage first
+- fixed native task execution to preserve the same resolved `PATH` used by toolchain probes
+  instead of invoking a login shell that could reorder Node/Corepack/pnpm on macOS and other Unix
+  hosts
+- fixed detached native `ota up` service proof so an already-occupied fixed listener port fails as
+  a bind conflict instead of being mistaken for proof that the newly launched service became ready
+- made automatic `ota up` service proof selection honor the selected execution mode's runtime shape,
+  so tasks that declare service runtimes only under `execution.modes.<mode>` are still handled as
+  services for that mode
+- corrected container-scope info text so plural host-bound surfaces like `checks` render with the
+  right grammar in `doctor`/`up` output
+- added `failure_class` to `ota proof runtime --json` status output so CI and automation can
+  distinguish cleanup, readiness, and run/install-or-toolchain failure classes without brittle
+  log-parsing
 
 ## 1.6.14
 
@@ -128,6 +156,21 @@
 - improved runtime-proof failure classification when startup exits before readiness: proof output now
   prioritizes `Run task exited before readiness` over generic workflow-surface readiness blockers
   when both are present, so deterministic startup-exit root causes surface first
+- fixed runtime-proof cleanup/backend scoping and severity handling: `ota proof runtime` now runs
+  owned cleanup only when the selected workflow/task closure actually uses a container backend,
+  and info-only doctor blockers no longer force `ok: false` proof wrappers
+- fixed runtime-proof exit/error reconciliation: if the selected proof path reaches a final ready
+  doctor verdict with no blocking finding, an `ota up --stream` process exit observed during
+  readiness waiting no longer forces a proof failure wrapper by itself
+- bounded container-backed cleanup command execution during `ota clean`/proof cleanup paths so a
+  stalled engine call cannot hang the CLI indefinitely; timeout exits now return explicit timeout
+  stderr context instead
+- widened bounded cleanup-command timeout coverage to Ota-owned `ota clean` engine operations so
+  Windows PowerShell proof wrappers cannot stall indefinitely in cleanup/finally paths when the
+  engine command path hangs
+- added fail-fast timeout caching for Ota-owned internal `ota clean` engine calls: once an engine
+  command times out within a clean invocation, subsequent internal clean calls to that engine
+  fail immediately with bounded timeout context instead of repeating long waits
 - added Windows crash-code decoding guidance for common negative exit codes in both run and doctor
   failure paths, including `0xC0000005` (access violation), `0xC0000409` (fast-fail/stack buffer
   overrun), and `0xC000013A` (interrupt), so remediation output is actionable without manual code
