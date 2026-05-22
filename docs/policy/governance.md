@@ -70,9 +70,27 @@ Ota is trying to become trusted infrastructure, not just a useful script. That m
 Maintainer-led governance is the current mechanism for keeping those boundaries clean while the
 public contract hardens.
 
+## Maintainer repo controls
+
+The repository should enforce a small branch-protection baseline on `main` even though Ota does
+not currently accept external code pull requests.
+
+Recommended required checks:
+
+- `Release Gate`
+- `Smoke`
+- `docs-quality`
+- `cargo-deny`
+- `codeql`
+
+This keeps maintainer pushes and release work aligned with the same public trust surfaces that Ota
+expects users to rely on, without turning every specialist proof workflow into a permanent merge
+gate.
+
 ## Related policy pages
 
 - [CONTRIBUTING.md](../../CONTRIBUTING.md)
+- [../../SECURITY.md](../../SECURITY.md)
 - [commercial-policy.md](commercial-policy.md)
 - [support-and-enterprise.md](support-and-enterprise.md)
 - [org-policy.md](org-policy.md)

@@ -37,6 +37,8 @@ trust-sensitive command surfaces.
 - docs feedback where wording, examples, or guidance are unclear
 - fixture ideas or example repos that expose important edge cases
 
+For suspected vulnerabilities, do not open a public issue. Use [SECURITY.md](SECURITY.md).
+
 Use the GitHub issue templates when possible so the report is actionable.
 
 ## What not to send
@@ -61,5 +63,6 @@ surfaces can evolve coherently while the public contract hardens.
 ## Related pages
 
 - [docs/policy/governance.md](docs/policy/governance.md)
+- [SECURITY.md](SECURITY.md)
 - [docs/policy/commercial-policy.md](docs/policy/commercial-policy.md)
 - [docs/policy/support-and-enterprise.md](docs/policy/support-and-enterprise.md)
