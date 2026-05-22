@@ -648,7 +648,7 @@ jobs:
           PY
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.release-tag.outputs.tag }}
           name: ${{ needs.release-tag.outputs.tag }}
