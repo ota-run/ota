@@ -26,7 +26,11 @@
 
 ## Unreleased
 
+- updated detector-led `ota init` starter agent bootstrap commands to pin the installer target to
+  the running Ota version via `OTA_VERSION=v<current>`, so generated contracts avoid floating
+  `latest` install targets for both shell and PowerShell bootstrap paths
 - added Slack release announcements to the release gate workflow by publishing the same generated release summary text to `SLACK_RELEASE_WEBHOOK_URL` when configured, while keeping Discord publishing unchanged.
+- run branch-protection-required maintainer checks on branch pushes as well as `main`, and remove docs-only trigger filtering from `docs-quality`, so protected branch-first merges work without requiring a public PR flow
 
 ## 1.6.15
 
