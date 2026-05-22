@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.15
+
 
 - fixed `ota run` captured-failure rerun guidance to preserve the effective execution mode, so
   container failures now suggest `--mode container --stream` instead of defaulting to native-mode
