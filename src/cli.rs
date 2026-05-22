@@ -24459,7 +24459,7 @@ requires-python = ">=3.12"
         let ota_version = format!("v{}", env!("CARGO_PKG_VERSION"));
         assert_eq!(
             json["config"]["agent"]["bootstrap"]["ota"]["sh"],
-            format!("OTA_VERSION={ota_version} curl -fsSL https://dist.ota.run/install.sh | sh")
+            format!("curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION={ota_version} sh")
         );
         assert_eq!(
             json["config"]["agent"]["bootstrap"]["ota"]["powershell"],

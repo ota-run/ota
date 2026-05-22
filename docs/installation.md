@@ -52,7 +52,7 @@ curl -fsSL https://dist.ota.run/install.sh | sh -s -- --setup-path
 Pin a release:
 
 ```bash
-OTA_VERSION=vX.Y.Z curl -fsSL https://dist.ota.run/install.sh | sh
+curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=vX.Y.Z sh
 ```
 
 From a cloned ota repository:
