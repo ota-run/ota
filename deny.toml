@@ -20,37 +20,30 @@
 #
 #   If you need additional information or have any questions, please email: os@ota.run
 
-name: Ota Readiness
+[advisories]
+yanked = "warn"
+ignore = []
 
-on:
-  pull_request:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+[licenses]
+confidence-threshold = 0.8
+allow = [
+  "Apache-2.0",
+  "MIT",
+  "Unicode-3.0",
+  "Zlib",
+]
+exceptions = []
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+deny = []
+skip = []
+skip-tree = []
 
-permissions:
-  actions: read
-  contents: read
-  pull-requests: write
-
-jobs:
-  readiness:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v5
-      - name: Publish ota readiness
-        uses: ota-run/action@v1
-        with:
-          command: receipt
-          path: .
-          ota-version: 1.6.15
-          execution-mode: container
-          archive: true
-          artifact-name: ota-readiness
-          github-token: ${{ github.token }}
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

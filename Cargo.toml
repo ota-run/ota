@@ -2,6 +2,7 @@
 name = "ota"
 version = "1.6.15"
 edition = "2024"
+license = "Apache-2.0"
 
 [dependencies]
 clap = { version = "4.5.39", features = ["derive"] }
