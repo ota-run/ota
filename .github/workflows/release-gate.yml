@@ -418,7 +418,7 @@ jobs:
           tar -czf "dist/${asset}" -C "target/${target}/release" ota
 
       - name: Upload release asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: dist/*.tar.gz
@@ -464,7 +464,7 @@ jobs:
           tar -czf "dist/${asset}" -C "target/${target}/release" ota
 
       - name: Upload release asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: dist/*.tar.gz
@@ -516,7 +516,7 @@ jobs:
           Compress-Archive -Path "target/$target/release/ota.exe" -DestinationPath $zipAsset -Force
 
       - name: Upload release asset
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: |
