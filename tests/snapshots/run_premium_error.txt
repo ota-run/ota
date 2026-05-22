@@ -16,6 +16,7 @@ Contract:    <TMP>/ota.yaml
 Mode:        native
 Task:        install:from:source
 Note:        running on the host environment
+
 Next:
   » rerun `ota run install:from:source --stream` for live task output if the excerpt is insufficient
   » run `ota tasks --use <TMP>` to inspect runnable task usage

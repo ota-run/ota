@@ -2145,6 +2145,8 @@ pub struct ProofRuntimeStatus<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifacts: Option<ProofRuntimeArtifacts<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_class: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<&'a str>,

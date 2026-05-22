@@ -5571,15 +5571,19 @@ fn trailing_summary_title(stderr: &str) -> Option<&'static str> {
 
 fn tighten_guidance_spacing(text: String) -> String {
     let ends_with_newline = text.ends_with('\n');
-    let mut lines = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
 
     for line in text.lines() {
         if line.contains("Next:") || line.contains("Try:") {
-            while lines
-                .last()
-                .is_some_and(|previous: &String| previous.trim().is_empty())
-            {
-                lines.pop();
+            let trailing_blank = lines
+                .iter()
+                .rev()
+                .take_while(|previous| previous.trim().is_empty())
+                .count();
+            if trailing_blank > 1 {
+                for _ in 0..(trailing_blank - 1) {
+                    lines.pop();
+                }
             }
         }
         lines.push(line.to_string());
@@ -5887,7 +5891,7 @@ mod tests {
 
         assert_eq!(output.exit_code, 0, "{output:?}");
         assert!(output.stdout.contains("READY"));
-        assert!(output.stdout.contains("agent -> codex"));
+        assert!(output.stdout.contains("agent: codex"));
 
         let skill_dir = temp.path().join("codex-home").join("skills").join("ota");
         let skill = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
@@ -5907,7 +5911,7 @@ mod tests {
         let output = run_with(["ota", "skills", "install", "--agent", "codex"]);
 
         assert_eq!(output.exit_code, 0, "{output:?}");
-        assert!(output.stdout.contains("agent -> codex"));
+        assert!(output.stdout.contains("agent: codex"));
 
         let skill_dir = temp
             .path()
@@ -5933,7 +5937,7 @@ mod tests {
         let output = run_with(["ota", "skills", "install", "--agent", "claude"]);
 
         assert_eq!(output.exit_code, 0, "{output:?}");
-        assert!(output.stdout.contains("agent -> claude"));
+        assert!(output.stdout.contains("agent: claude"));
 
         let skill_dir = temp
             .path()
