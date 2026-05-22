@@ -749,15 +749,20 @@ fn env_copy_candidate(root: &Path) -> Option<(&'static str, &'static str, &'stat
 }
 
 fn starter_agent_bootstrap() -> AgentBootstrapConfig {
+    let ota_version = format!("v{}", env!("CARGO_PKG_VERSION"));
     AgentBootstrapConfig {
         ota: Some(AgentBootstrapTargetConfig {
             note: Some(String::from(
                 "Only install ota if it is missing and installation is approved.",
             )),
-            sh: Some(String::from(
-                "curl -fsSL https://dist.ota.run/install.sh | sh",
+            sh: Some(format!(
+                "OTA_VERSION={} curl -fsSL https://dist.ota.run/install.sh | sh",
+                ota_version
             )),
-            powershell: Some(String::from("irm https://dist.ota.run/install.ps1 | iex")),
+            powershell: Some(format!(
+                "$env:OTA_VERSION='{}'; irm https://dist.ota.run/install.ps1 | iex",
+                ota_version
+            )),
         }),
     }
 }

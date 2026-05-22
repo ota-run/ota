@@ -83,6 +83,10 @@ Recommended required checks:
 - `cargo-deny`
 - `codeql`
 
+Required checks should run on maintainer branch pushes as well as `main`. If a required workflow is
+path-filtered or only runs on `main`/pull requests, branch-first maintainer merges can become
+impossible because GitHub cannot verify the exact branch commit before it lands on `main`.
+
 This keeps maintainer pushes and release work aligned with the same public trust surfaces that Ota
 expects users to rely on, without turning every specialist proof workflow into a permanent merge
 gate.

@@ -24,17 +24,9 @@ name: docs-quality
 
 on:
   pull_request:
-    paths:
-      - "README.md"
-      - "docs/**"
-      - ".github/workflows/docs-quality.yml"
   push:
     branches:
-      - main
-    paths:
-      - "README.md"
-      - "docs/**"
-      - ".github/workflows/docs-quality.yml"
+      - '**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
