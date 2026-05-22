@@ -284,12 +284,6 @@ fn selected_backend_precondition_selections(
             .get(task_name.as_str())
             .is_some_and(|task| !task.scoped_requirement_surface().tools.is_empty())
     });
-    let scoped_toolchains = task_names.iter().any(|task_name| {
-        contract
-            .tasks
-            .get(task_name.as_str())
-            .is_some_and(|task| !task.requirements.toolchains.is_empty())
-    });
     let scoped_env = task_names.iter().any(|task_name| {
         contract
             .tasks
@@ -372,9 +366,6 @@ fn selected_backend_precondition_selections(
             let mut tools = contract.tools.clone();
             tools.extend(selection.requirement_surface.tools.clone());
             selection.requirement_surface.tools = tools;
-        }
-        if !scoped_toolchains {
-            selection.toolchain_names = contract.toolchains.keys().cloned().collect();
         }
     }
 
@@ -526,14 +517,9 @@ fn selected_remote_task_requirement_selection(
         if !entry.scoped_tools {
             surface.tools = contract.tools.clone();
         }
-        let toolchain_names = if entry.scoped_toolchains {
-            entry.toolchain_names
-        } else {
-            contract.toolchains.keys().cloned().collect()
-        };
         ScopedPreconditionSelection {
             requirement_surface: surface,
-            toolchain_names,
+            toolchain_names: entry.toolchain_names,
             native_names: BTreeSet::new(),
             env_names: BTreeSet::new(),
             env_scoped: false,
@@ -10755,6 +10741,67 @@ tasks:
                 .get("pnpm")
                 .map(|requirement| requirement.version().to_string()),
             Some(String::from("10"))
+        );
+    }
+
+    #[test]
+    fn selected_workflow_preconditions_do_not_fall_back_to_all_toolchains() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+execution:
+  default_context: docker-host
+  contexts:
+    docker-host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+tasks:
+  setup:docker-env:
+    context: docker-host
+    action:
+      kind: copy_if_missing
+      from: docker/.env.example
+      to: docker/.env
+  dev:studio-docker:
+    context: docker-host
+    run: cd docker && docker compose up
+    depends_on:
+      - setup:docker-env
+workflows:
+  default: studio:docker
+  studio:docker:
+    prepare:
+      task: setup:docker-env
+    run:
+      task: dev:studio-docker
+"#,
+        )
+        .unwrap();
+
+        let selection = super::scoped_precondition_selection(
+            &contract,
+            DoctorMode::Native,
+            Some("studio:docker"),
+        );
+
+        assert!(selection.toolchain_names.is_empty());
+        assert!(!selection.requirement_surface.runtimes.contains_key("node"));
+        assert_eq!(
+            selection
+                .requirement_surface
+                .tools
+                .get("docker")
+                .map(|requirement| requirement.version().to_string()),
+            Some(String::from("*"))
         );
     }
 

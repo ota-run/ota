@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- fixed selected workflow/task toolchain scoping so preview/doctor/up no longer fall back to every
+  declared toolchain when the selected closure does not require one, preventing false runtime/tool
+  blockers on unrelated workflows such as host-Docker setup paths
 - updated detector-led `ota init` starter agent bootstrap commands to pin the installer target to
   the running Ota version via `OTA_VERSION=v<current>`, so generated contracts avoid floating
   `latest` install targets for both shell and PowerShell bootstrap paths

@@ -301,19 +301,13 @@ impl Contract {
         roots: impl IntoIterator<Item = String>,
     ) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
-        let mut scoped = false;
         for task_name in self.task_dependency_closure_names(roots) {
             let Some(task) = self.tasks.get(task_name.as_str()) else {
                 continue;
             };
             if !task.requirements.toolchains.is_empty() {
-                scoped = true;
                 names.extend(task.requirements.toolchains.iter().cloned());
             }
-        }
-
-        if !scoped {
-            names.extend(self.toolchains.keys().cloned());
         }
 
         names
@@ -4021,6 +4015,60 @@ agent:
         .unwrap();
 
         assert_eq!(contract.selected_run_task_name_for(None), Some("agent-dev"));
+    }
+
+    #[test]
+    fn selected_workflow_required_toolchain_names_do_not_fall_back_to_all_toolchains() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+execution:
+  default_context: docker-host
+  contexts:
+    docker-host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+tasks:
+  setup:docker-env:
+    action:
+      kind: copy_if_missing
+      from: docker/.env.example
+      to: docker/.env
+  dev:studio-docker:
+    context: docker-host
+    run: cd docker && docker compose up
+    depends_on:
+      - setup:docker-env
+workflows:
+  default: studio:docker
+  studio:docker:
+    prepare:
+      task: setup:docker-env
+    run:
+      task: dev:studio-docker
+"#,
+        )
+        .unwrap();
+
+        assert!(
+            contract
+                .task_required_toolchain_names("dev:studio-docker")
+                .is_empty()
+        );
+        assert!(
+            contract
+                .selected_workflow_required_toolchain_names(Some("studio:docker"))
+                .is_empty()
+        );
     }
 
     #[test]
