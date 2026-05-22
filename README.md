@@ -117,7 +117,7 @@ Prebuilt release binaries are published for:
 Pin a release:
 
 ```bash
-OTA_VERSION=vX.Y.Z curl -fsSL https://dist.ota.run/install.sh | sh
+curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=vX.Y.Z sh
 ```
 
 Windows PowerShell:

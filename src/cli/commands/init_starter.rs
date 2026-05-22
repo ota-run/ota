@@ -756,7 +756,7 @@ fn starter_agent_bootstrap() -> AgentBootstrapConfig {
                 "Only install ota if it is missing and installation is approved.",
             )),
             sh: Some(format!(
-                "OTA_VERSION={} curl -fsSL https://dist.ota.run/install.sh | sh",
+                "curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION={} sh",
                 ota_version
             )),
             powershell: Some(format!(
