@@ -16,7 +16,7 @@ toml = "1.1.2"
 time = { version = "0.3.44", features = ["formatting", "macros"] }
 dotenvy = "0.15.7"
 ctrlc = "3.5.0"
-signal-hook = "0.3.18"
+signal-hook = "0.4.4"
 
 [dev-dependencies]
 fs2 = "0.4.3"
