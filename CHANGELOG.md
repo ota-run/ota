@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added `execution.contexts.<name>.only_on` so contracts can declare supported host OSes per
+  execution context; `ota doctor`, `ota up`, and task execution now fail early and explicitly
+  when a selected context is not supported on the current host platform
 - fixed contract identity counts in preview and related output so scoped execution-context and
   task requirements are counted honestly instead of reporting misleading zero-runtime/zero-tool
   summaries when the selected workflow is actually blocked on scoped requirements

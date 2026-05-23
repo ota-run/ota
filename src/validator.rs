@@ -410,6 +410,7 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 "`execution.contexts` must not declare an empty context name",
             ));
         }
+        validate_only_on("execution context", name, context.only_on.as_ref(), errors);
 
         match context.backend {
             crate::schema::Backend::Native => {
@@ -15791,6 +15792,35 @@ tools:
             errors.errors()[0].to_string(),
             "tool `pwsh` must not declare an empty `only_on` list"
         );
+    }
+
+    #[test]
+    fn rejects_execution_context_only_on_with_unsupported_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      only_on:
+        - bsd
+tasks:
+  dev:
+    run: echo hi
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string()
+                == "execution context `host` has unsupported `only_on` platform `bsd`; expected one of: linux, macos, windows"
+        }));
     }
 
     #[test]

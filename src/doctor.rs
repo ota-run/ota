@@ -157,6 +157,19 @@ fn rerun_doctor_command(mode: DoctorMode, lifecycle_override: Option<Lifecycle>)
     doctor_command_string(mode, doctor_selected_lifecycle(mode, lifecycle_override))
 }
 
+fn rerun_doctor_command_for_workflow(
+    mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
+    workflow_name: Option<&str>,
+) -> String {
+    let mut command = doctor_command_string(mode, lifecycle);
+    if let Some(workflow_name) = workflow_name {
+        command.push_str(" --workflow ");
+        command.push_str(workflow_name);
+    }
+    command
+}
+
 fn doctor_mode_for_service(contract: &Contract, service: &ServiceSpec) -> DoctorMode {
     let Some(readiness) = service.readiness.as_ref() else {
         return DoctorMode::Native;
@@ -177,6 +190,110 @@ fn doctor_mode_for_service(contract: &Contract, service: &ServiceSpec) -> Doctor
         Backend::Container => DoctorMode::Container,
         Backend::Remote => DoctorMode::Remote,
     }
+}
+
+fn current_host_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        other => other,
+    }
+}
+
+fn selected_context_names_for_mode(
+    contract: &Contract,
+    mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> BTreeSet<String> {
+    let backend = backend_for_mode(mode);
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let mut context_names = BTreeSet::new();
+
+    if task_names.is_empty() {
+        if let Some(context_name) = matching_declared_execution_context_name(
+            contract.execution.as_ref(),
+            backend,
+            lifecycle,
+        ) {
+            context_names.insert(context_name.to_string());
+        }
+        return context_names;
+    }
+
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        if effective_task_execution(contract, task_name.as_str(), overrides).backend != backend {
+            continue;
+        }
+        if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend) {
+            context_names.insert(context_name.to_string());
+        }
+    }
+
+    context_names
+}
+
+fn unsupported_host_context_findings(
+    contract: &Contract,
+    mode: DoctorMode,
+    lifecycle: Option<Lifecycle>,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Vec<Finding> {
+    let current_os = current_host_platform();
+    let mut findings = Vec::new();
+
+    for context_name in
+        selected_context_names_for_mode(contract, mode, lifecycle, workflow_name, overrides)
+    {
+        let Some((_, context)) = contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.contexts.get_key_value(context_name.as_str()))
+        else {
+            continue;
+        };
+        if context.active_for_os(current_os) {
+            continue;
+        }
+
+        let supported = context
+            .only_on
+            .as_ref()
+            .map(|platforms| platforms.join(", "))
+            .unwrap_or_else(|| String::from("all hosts"));
+        let next = if current_os == "windows"
+            && context
+                .only_on
+                .as_ref()
+                .is_some_and(|platforms| platforms.iter().any(|platform| platform == "linux"))
+        {
+            format!(
+                "run this path on a supported host ({supported}) or use WSL and rerun `{}`",
+                rerun_doctor_command_for_workflow(mode, lifecycle, workflow_name)
+            )
+        } else {
+            format!(
+                "run this path on a supported host ({supported}) and rerun `{}`",
+                rerun_doctor_command_for_workflow(mode, lifecycle, workflow_name)
+            )
+        };
+        findings.push(Finding {
+            severity: FindingSeverity::Error,
+            summary: format!("Unsupported host platform for context: {context_name}"),
+            why: format!(
+                "the selected workflow/task path resolves `execution.contexts.{context_name}`, but that context declares `only_on: [{}]` and the current host is `{current_os}`",
+                supported
+            ),
+            next,
+        });
+    }
+
+    findings
 }
 
 fn contract_has_remote_execution_context(contract: &Contract) -> bool {
@@ -2697,6 +2814,23 @@ fn diagnose_contract_with_scope(
     }
 
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
+        let unsupported_host_findings = unsupported_host_context_findings(
+            contract,
+            mode,
+            selected_lifecycle,
+            workflow_name,
+            overrides,
+        );
+        if !unsupported_host_findings.is_empty() {
+            findings.extend(unsupported_host_findings);
+            return DoctorReport {
+                ok: false,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings,
+            };
+        }
         diagnose_lifecycle(contract, mode, selected_lifecycle, &mut findings);
         let container_probe = diagnose_execution_backend(
             contract,
@@ -8826,10 +8960,7 @@ where
         .or(first_missing)
         .unwrap_or_else(|| CommandVersionProbe {
             command: version_command_string(
-                candidates
-                    .first()
-                    .map(String::as_str)
-                    .unwrap_or_default(),
+                candidates.first().map(String::as_str).unwrap_or_default(),
             ),
             resolved_path: None,
             probe_started: false,
@@ -10998,6 +11129,58 @@ workflows:
                 .map(|requirement| requirement.version().to_string()),
             Some(String::from("*"))
         );
+    }
+
+    #[test]
+    fn doctor_blocks_selected_workflow_on_unsupported_host_context() {
+        let unsupported = if super::current_host_platform() == "windows" {
+            "linux"
+        } else {
+            "windows"
+        };
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      only_on:
+        - {unsupported}
+tasks:
+  dev:
+    run: echo hi
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#
+            ),
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("app"),
+        );
+
+        assert!(!report.ok);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Unsupported host platform for context: host")
+            .expect("expected unsupported host finding");
+        assert!(finding.why.contains("execution.contexts.host"));
+        assert!(finding.why.contains("only_on"));
+        assert!(finding.next.contains("ota doctor --workflow app"));
     }
 
     #[test]
