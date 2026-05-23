@@ -3224,6 +3224,28 @@ fn render_execution_plan_structured_error(
                 "update the backend provider declaration to `api_version: 1`, then rerun `ota execution plan`",
             )],
         ),
+        RunError::UnsupportedHostPlatform {
+            context,
+            os,
+            supported,
+            ..
+        } => (
+            "Unsupported host platform",
+            vec![format!(
+                "the selected execution context `{context}` supports `{supported}`, but the current host is `{os}`"
+            )],
+            vec![
+                if os == "windows" && supported.split(", ").any(|platform| platform == "linux") {
+                    String::from(
+                        "run this path on a supported host or use WSL, then rerun `ota execution plan`",
+                    )
+                } else {
+                    String::from(
+                        "run this path on a supported host, then rerun `ota execution plan`",
+                    )
+                },
+            ],
+        ),
         _ => (
             "Execution plan could not be resolved",
             vec![execution_plan_error(error)],
@@ -14055,14 +14077,34 @@ fn run_preview_execution_primary_blocker(
     error: &RunError,
 ) -> DoctorPrimaryBlocker {
     let backend = effective_task_execution(contract, task_name, overrides).backend;
+    let (summary, next) = match error {
+        RunError::UnsupportedHostPlatform { os, supported, .. } => (
+            String::from("Unsupported host platform"),
+            if os == "windows" && supported.split(", ").any(|platform| platform == "linux") {
+                format!(
+                    "use a supported host or WSL, then run `{}` to inspect the selected execution path before retrying task `{task_name}`",
+                    repo_execution_plan_command(contract_path, member, backend)
+                )
+            } else {
+                format!(
+                    "use a supported host, then run `{}` to inspect the selected execution path before retrying task `{task_name}`",
+                    repo_execution_plan_command(contract_path, member, backend)
+                )
+            },
+        ),
+        _ => (
+            String::from("Execution plan could not be resolved"),
+            format!(
+                "run `{}` to inspect the selected execution path before retrying task `{task_name}`",
+                repo_execution_plan_command(contract_path, member, backend)
+            ),
+        ),
+    };
     DoctorPrimaryBlocker {
         severity: FindingSeverity::Error,
-        summary: String::from("Execution plan could not be resolved"),
+        summary,
         why: execution_plan_error(error),
-        next: format!(
-            "run `{}` to inspect the selected execution path before retrying task `{task_name}`",
-            repo_execution_plan_command(contract_path, member, backend)
-        ),
+        next,
         provenance: Some(String::from("execution")),
         provenance_key: None,
     }
@@ -42734,6 +42776,58 @@ tasks:
         assert!(stdout.contains("Mode: dry-run (no write)"), "{stdout}");
         assert!(stdout.contains("would execute"), "{stdout}");
         assert!(stdout.contains("no task processes started"), "{stdout}");
+    }
+
+    #[test]
+    fn run_dry_run_preview_surfaces_unsupported_host_as_primary_blocker() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let unsupported = if super::current_os() == "windows" {
+            "linux"
+        } else {
+            "windows"
+        };
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      only_on:
+        - {unsupported}
+tasks:
+  ci:
+    run: echo hi
+"#
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "ci",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_ne!(output.exit_code, 0);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Unsupported host platform"), "{stderr}");
+        assert!(stderr.contains("supported hosts"), "{stderr}");
     }
 
     #[test]

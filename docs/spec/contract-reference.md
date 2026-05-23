@@ -424,6 +424,7 @@ Current validation rule:
 - root shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) must not be combined with `execution.default_context` or `execution.contexts`; pick either shorthand-only or named-context mode
 - each `execution.contexts.<name>` requires:
   - `backend` and matching backend settings (`container.image` + `lifecycle`, or `remote.provider` + `remote.target`)
+  - optional `only_on` to scope the context to supported host OS values (`linux`, `macos`, `windows`)
   - optional `container.resources.memory.minimum` and `container.resources.memory.default` for container contexts
   - optional `env` for context-wide environment defaults that apply before task-level and mode-level env overrides
   - optional `requirements.<runtimes|tools>` to scope readiness checks to that context
@@ -443,6 +444,7 @@ Current implementation:
 
 - `ota run` resolves a task context from `tasks.<name>.context` and `execution.default_context`, then executes that context's backend
 - runtime selection consumes resolved named contexts after `extends` merge, so `ota run`, `ota up`, `ota doctor`, and `ota execution plan` execute the merged concrete context shape instead of partial parent/child declarations
+- when a selected context declares `only_on`, `ota doctor`, `ota up`, and task execution fail early and explicitly on unsupported host OSes instead of falling through to later command noise
 - `execution.contexts` are used for context-scoped requirement checks and receipts
 - `tasks.<name>.context` lets a task declare a non-default execution context
 - named contexts can now share a base execution shape through `extends`, while shorthand remains the lean authoring path for shorthand-only repos

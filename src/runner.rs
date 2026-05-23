@@ -656,6 +656,15 @@ pub enum RunError {
         "task `{task}` does not define a default execution and no variant matches the current os `{os}`"
     )]
     NoMatchingTaskVariant { task: String, os: String },
+    #[error(
+        "task `{task}` resolves context `{context}` on unsupported host `{os}`; supported hosts: {supported}"
+    )]
+    UnsupportedHostPlatform {
+        task: String,
+        context: String,
+        os: String,
+        supported: String,
+    },
     #[error("failed to start task `{task}`: {source}")]
     SpawnFailed {
         task: String,
@@ -3370,7 +3379,6 @@ fn clean_execution_report_inner(
                 }
             }
         }
-
     }
 
     let mut dependency_isolation_volumes_to_remove =
@@ -3397,7 +3405,9 @@ fn clean_execution_report_inner(
         }
     }
 
-    if let Some(error) = first_discovery_error && strict_discovery {
+    if let Some(error) = first_discovery_error
+        && strict_discovery
+    {
         return Err(error);
     }
 
@@ -12856,6 +12866,21 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
     contract_path: Option<&Path>,
 ) -> Result<ResolvedExecutionBackend, RunError> {
     let effective = effective_task_execution(contract, task_name, overrides);
+    if let Some(context_name) = effective.context_name
+        && let Some((_, context)) = named_execution_context(contract, context_name)
+        && !context.active_for_os(current_os())
+    {
+        return Err(RunError::UnsupportedHostPlatform {
+            task: task_name.to_string(),
+            context: context_name.to_string(),
+            os: current_os().to_string(),
+            supported: context
+                .only_on
+                .as_ref()
+                .map(|platforms| platforms.join(", "))
+                .unwrap_or_else(|| String::from("all hosts")),
+        });
+    }
     let preferred = effective.backend;
     let lifecycle = effective.lifecycle;
 
@@ -38130,6 +38155,51 @@ tasks:
             effective_task_execution(&fixture.contract, "start", ExecutionOverrides::default());
         assert_eq!(effective.backend, Backend::Container);
         assert_eq!(effective.context_name, Some("app"));
+    }
+
+    #[test]
+    fn resolve_execution_backend_rejects_unsupported_host_context() {
+        let unsupported = if current_os() == "windows" {
+            "linux"
+        } else {
+            "windows"
+        };
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      only_on:
+        - {unsupported}
+tasks:
+  dev:
+    run: echo dev
+"#
+        ));
+
+        let error =
+            resolve_execution_backend(&fixture.contract, "dev", ExecutionOverrides::default())
+                .expect_err("unsupported host should block execution backend resolution");
+
+        match error {
+            RunError::UnsupportedHostPlatform {
+                task,
+                context,
+                os,
+                supported,
+            } => {
+                assert_eq!(task, "dev");
+                assert_eq!(context, "host");
+                assert_eq!(os, current_os());
+                assert_eq!(supported, unsupported);
+            }
+            other => panic!("expected unsupported host error, got {other:?}"),
+        }
     }
 
     #[test]

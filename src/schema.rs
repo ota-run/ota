@@ -523,6 +523,8 @@ struct ExecutionContextWire {
     #[serde(default)]
     backend: Option<Backend>,
     #[serde(default)]
+    only_on: Option<Vec<String>>,
+    #[serde(default)]
     lifecycle: Option<Lifecycle>,
     #[serde(default)]
     fulfillment: Option<ExecutionSharedBackendFulfillment>,
@@ -608,6 +610,7 @@ struct RemoteSshOptionsWire {
 #[derive(Debug, Default, Clone)]
 struct ExecutionContextMerged {
     backend: Option<Backend>,
+    only_on: Option<Vec<String>>,
     lifecycle: Option<Lifecycle>,
     fulfillment: Option<ExecutionSharedBackendFulfillment>,
     env: BTreeMap<String, String>,
@@ -796,6 +799,9 @@ fn merge_execution_context(target: &mut ExecutionContextMerged, source: &Executi
     if let Some(backend) = source.backend {
         target.backend = Some(backend);
     }
+    if let Some(only_on) = source.only_on.as_ref() {
+        target.only_on = Some(only_on.clone());
+    }
     if let Some(lifecycle) = source.lifecycle {
         target.lifecycle = Some(lifecycle);
     }
@@ -921,6 +927,7 @@ fn finalize_execution_context(
 
     Ok(ExecutionContext {
         backend,
+        only_on: merged.only_on,
         lifecycle: merged.lifecycle,
         fulfillment: merged.fulfillment,
         env: merged.env,
@@ -929,6 +936,14 @@ fn finalize_execution_context(
         requirements: merged.requirements,
         attachments: merged.attachments,
     })
+}
+
+impl ExecutionContext {
+    pub fn active_for_os(&self, os: &str) -> bool {
+        self.only_on
+            .as_ref()
+            .is_none_or(|platforms| platforms.iter().any(|platform| platform == os))
+    }
 }
 
 fn backend_label(backend: Backend) -> &'static str {
@@ -1128,6 +1143,8 @@ impl Contract {
 #[serde(deny_unknown_fields)]
 pub struct ExecutionContext {
     pub backend: Backend,
+    #[serde(default)]
+    pub only_on: Option<Vec<String>>,
     #[serde(default)]
     pub lifecycle: Option<Lifecycle>,
     #[serde(default)]
@@ -4308,6 +4325,42 @@ tasks:
         assert_eq!(
             contract.selected_workflow_task_closure_names(None),
             vec![String::from("setup")]
+        );
+    }
+
+    #[test]
+    fn execution_context_extends_inherits_only_on_scope() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: dev
+  contexts:
+    host:
+      backend: native
+      only_on:
+        - linux
+        - macos
+    dev:
+      extends: host
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        let context = contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.contexts.get("dev"))
+            .expect("extended context should exist");
+        assert_eq!(
+            context.only_on,
+            Some(vec![String::from("linux"), String::from("macos")])
         );
     }
 
