@@ -3888,6 +3888,8 @@ pub struct AgentInferredBoundaryConfig {
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
+    #[serde(default)]
+    pub posture: AgentPosture,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entrypoint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3908,6 +3910,29 @@ pub struct AgentConfig {
     pub bootstrap: Option<AgentBootstrapConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPosture {
+    #[default]
+    ReadinessStrict,
+    ContractAuthoring,
+    InfraAuthoring,
+}
+
+impl AgentPosture {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ReadinessStrict => "readiness_strict",
+            Self::ContractAuthoring => "contract_authoring",
+            Self::InfraAuthoring => "infra_authoring",
+        }
+    }
+
+    pub fn is_default(&self) -> bool {
+        *self == Self::ReadinessStrict
+    }
 }
 
 #[cfg(test)]

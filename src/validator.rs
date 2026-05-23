@@ -28,7 +28,7 @@ use crate::execution::{
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::schema::{
-    Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
+    AgentPosture, Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
     ExtensionKind, Lifecycle, RuntimeRequirement, ServiceProducerSpec, ServiceSpec,
     TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
@@ -4645,11 +4645,27 @@ impl ContractAdvisory {
                 "remove manual cleanup of `{}` from task `{}` and let the tool manage that isolated attachment inside context `{}`",
                 advisory.isolated_path, advisory.task_name, advisory.context_name
             ),
-            ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
-                "move `{}` from `agent.writable_paths` to `agent.protected_paths` unless this readiness slice explicitly authorizes {} edits",
-                advisory.path, advisory.category
-            ),
+            ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
+                format!("{}", sensitive_agent_writable_path_next(advisory))
+            }
         }
+    }
+}
+
+fn sensitive_agent_writable_path_next(advisory: &SensitiveAgentWritablePathAdvisory) -> String {
+    match advisory.category.as_str() {
+        "repo-contract" => format!(
+            "move `{}` from `agent.writable_paths` to `agent.protected_paths`, or set `agent.posture: contract_authoring` if this slice intentionally authors repo contracts",
+            advisory.path
+        ),
+        "ci-topology" | "runtime-topology" => format!(
+            "move `{}` from `agent.writable_paths` to `agent.protected_paths`, or set `agent.posture: infra_authoring` if this slice intentionally authors CI or runtime topology",
+            advisory.path
+        ),
+        _ => format!(
+            "move `{}` from `agent.writable_paths` to `agent.protected_paths` unless this slice intentionally needs this narrow exception; use `agent.acknowledged_sensitive_writable_paths` only when the broader posture is still correct",
+            advisory.path
+        ),
     }
 }
 
@@ -4946,6 +4962,7 @@ fn collect_sensitive_agent_writable_path_advisories(contract: &Contract) -> Vec<
         return Vec::new();
     };
 
+    let posture = agent.posture;
     let acknowledged =
         normalized_agent_boundary_paths(&agent.acknowledged_sensitive_writable_paths);
     let mut advisories = Vec::new();
@@ -4955,6 +4972,9 @@ fn collect_sensitive_agent_writable_path_advisories(contract: &Contract) -> Vec<
             continue;
         };
         for match_ in classify_sensitive_agent_writable_path(boundary.as_str()) {
+            if posture_allows_sensitive_agent_writable_category(posture, match_.category) {
+                continue;
+            }
             if acknowledged.iter().any(|acknowledged_path| {
                 normalized_path_is_within(boundary.as_str(), acknowledged_path)
                     || normalized_path_is_within(acknowledged_path, boundary.as_str())
@@ -4975,6 +4995,14 @@ fn collect_sensitive_agent_writable_path_advisories(contract: &Contract) -> Vec<
     }
 
     advisories
+}
+
+fn posture_allows_sensitive_agent_writable_category(posture: AgentPosture, category: &str) -> bool {
+    match posture {
+        AgentPosture::ReadinessStrict => false,
+        AgentPosture::ContractAuthoring => category == "repo-contract",
+        AgentPosture::InfraAuthoring => matches!(category, "ci-topology" | "runtime-topology"),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -17869,6 +17897,80 @@ agent:
             advisory,
             ContractAdvisory::SensitiveAgentWritablePath(value)
                 if value.path == "infra"
+        )));
+    }
+
+    #[test]
+    fn contract_authoring_posture_suppresses_repo_contract_advisories() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  posture: contract_authoring
+  writable_paths:
+    - ota.yaml
+    - docker-compose.yml
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == "ota.yaml"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == "docker-compose.yml" && value.category == "runtime-topology"
+        )));
+    }
+
+    #[test]
+    fn infra_authoring_posture_suppresses_infra_advisories_only() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  posture: infra_authoring
+  writable_paths:
+    - .github
+    - docker-compose.yml
+    - ota.yaml
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == ".github"
+        )));
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == "docker-compose.yml"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == "ota.yaml" && value.category == "repo-contract"
         )));
     }
 

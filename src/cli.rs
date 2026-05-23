@@ -17765,6 +17765,7 @@ agent:
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["agent"]["posture"], "readiness_strict");
         assert_eq!(json["agent"]["entrypoint"], "setup");
         assert_eq!(json["agent"]["default_task"], "test");
         assert_eq!(json["agent"]["safe_tasks"][0], "test");
@@ -20083,6 +20084,7 @@ agent:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("AGENT"));
         assert!(stdout.contains("Overview"));
+        assert!(stdout.contains("Posture: `readiness_strict`"));
         assert!(stdout.contains("Entrypoint: `setup`"));
         assert!(stdout.contains("Default task: `setup`"));
         assert!(stdout.contains("Execution"));
@@ -23245,6 +23247,7 @@ policies:
         assert_eq!(output.exit_code, 0);
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("agent:"));
+        assert!(written.contains("posture: readiness_strict"));
         assert!(written.contains("entrypoint: setup"));
         assert!(written.contains("default_task: test"));
         assert!(written.contains("safe_tasks:"));
@@ -23289,6 +23292,7 @@ policies:
         assert_eq!(preview.exit_code, 0);
         let preview_stdout = strip_ansi(&preview.stdout);
         assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("posture: readiness_strict"));
         assert!(preview_stdout.contains("safe_tasks:"));
         assert!(preview_stdout.contains("protected_paths:"));
         assert!(preview_stdout.contains("inferred_boundary:"));
@@ -23306,6 +23310,7 @@ policies:
         assert_eq!(write.exit_code, 0);
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("\nagent:\n"));
+        assert!(written.contains("posture: readiness_strict"));
         assert!(written.contains("safe_tasks:"));
         assert!(written.contains("protected_paths:"));
         assert!(written.contains("inferred_boundary:"));
@@ -23475,6 +23480,7 @@ name = "fastapi"
         assert_eq!(preview.exit_code, 0);
         let preview_stdout = strip_ansi(&preview.stdout);
         assert!(preview_stdout.contains("\nagent:\n"));
+        assert!(preview_stdout.contains("posture: readiness_strict"));
         assert!(preview_stdout.contains("default_task: typecheck"));
         assert!(preview_stdout.contains("verify_after_changes:"));
         assert!(preview_stdout.contains("- typecheck"));
@@ -23506,6 +23512,7 @@ name = "fastapi"
         assert_eq!(exact.exit_code, 0);
         let exact_stdout = strip_ansi(&exact.stdout);
         assert!(exact_stdout.contains("\nagent:\n"));
+        assert!(exact_stdout.contains("posture: readiness_strict"));
         assert!(exact_stdout.contains("default_task: typecheck"));
         assert!(exact_stdout.contains("- package.json"));
         assert!(exact_stdout.contains("- package-lock.json"));
@@ -23517,6 +23524,7 @@ name = "fastapi"
         assert_eq!(write.exit_code, 0);
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("\nagent:\n"));
+        assert!(written.contains("posture: readiness_strict"));
         assert!(written.contains("default_task: typecheck"));
         assert!(written.contains("verify_after_changes:"));
         assert!(written.contains("- typecheck"));

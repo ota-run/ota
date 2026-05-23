@@ -2416,15 +2416,19 @@ commands.
 
 Agent semantics:
 
+- `posture` declares the default authority boundary for agent edits
+  - `readiness_strict` is the default and treats repo-contract, CI, runtime-topology,
+    env/config, and lockfile writable paths as sensitive
+  - `contract_authoring` explicitly authorizes repo-contract editing
+  - `infra_authoring` explicitly authorizes CI and runtime-topology editing
 - `entrypoint` is the first task an AI agent should use to get oriented in the repo
 - `default_task` is the normal verification task to run when no more specific task is needed
 - `safe_tasks` are the tasks an AI agent can run without broad risk
 - task `effects.writes` makes the expected durable writes explicit so agent-safe task claims can be checked structurally
 - `verify_after_changes` are the tasks an AI agent should rerun after modifying files
 - `writable_paths` are the paths an AI agent may edit
-- `acknowledged_sensitive_writable_paths` records intentional writable exceptions for sensitive paths
-  or broader writable boundaries so `ota doctor` can distinguish explicit authoring scope from
-  accidental over-broad readiness slices
+- `acknowledged_sensitive_writable_paths` records narrow intentional exceptions for sensitive paths
+  or broader writable boundaries when the declared `posture` is still otherwise correct
 - `protected_paths` are the paths an AI agent should avoid editing casually
 - lockfiles, env/config files, runtime-topology files, CI workflow files, and repo contracts
   should usually stay under `protected_paths` for readiness slices unless the contract explicitly
