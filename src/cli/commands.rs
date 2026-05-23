@@ -40307,11 +40307,35 @@ readiness:
                 body_contains: None,
             }),
             default_timeout: Some(Duration::from_secs(10)),
+            budget_hint: None,
         };
         let budget = super::proof_runtime_wait_budget(
             &super::ProofRuntimeReadinessStrategy::LightweightTargets(vec![target]),
         );
         assert_eq!(budget, Duration::from_secs(420));
+    }
+
+    #[test]
+    fn proof_runtime_wait_budget_honors_declared_readiness_timing() {
+        let target = crate::runner::HostRuntimeReadinessProbe {
+            listener: String::from("app"),
+            protocol: crate::schema::TaskRuntimeProtocol::Http,
+            address: String::from("127.0.0.1"),
+            port: 3000,
+            request: Some(crate::runner::HttpReadinessRequest {
+                method: crate::schema::TaskRuntimeReadinessHttpMethod::Get,
+                path: String::from("/"),
+                headers: BTreeMap::new(),
+                success_statuses: vec![200],
+                body_contains: Some(String::from("<!DOCTYPE html>")),
+            }),
+            default_timeout: Some(Duration::from_secs(3)),
+            budget_hint: Some(Duration::from_secs(540)),
+        };
+        let budget = super::proof_runtime_wait_budget(
+            &super::ProofRuntimeReadinessStrategy::LightweightTargets(vec![target]),
+        );
+        assert_eq!(budget, Duration::from_secs(600));
     }
 
     #[test]
@@ -65870,6 +65894,7 @@ fn proof_runtime_readiness_targets(
                 port,
                 request: Some(request),
                 default_timeout: timeout,
+                budget_hint: None,
             },
             ResolvedNamedReadinessProbe::Tcp {
                 address,
@@ -65883,6 +65908,7 @@ fn proof_runtime_readiness_targets(
                 port,
                 request: None,
                 default_timeout: timeout,
+                budget_hint: None,
             },
         };
         targets.push(target);
@@ -65909,21 +65935,28 @@ fn proof_runtime_wait_budget(readiness_strategy: &ProofRuntimeReadinessStrategy)
     let ceiling = Duration::from_secs(PROOF_RUNTIME_READINESS_WAIT_CEILING_SECS);
     let computed = match readiness_strategy {
         ProofRuntimeReadinessStrategy::LightweightTargets(targets) if !targets.is_empty() => {
-            let max_timeout = targets
+            let max_target_budget = targets
                 .iter()
-                .filter_map(|target| target.default_timeout)
+                .filter_map(|target| {
+                    target.budget_hint.or_else(|| {
+                        target.default_timeout.map(|timeout| {
+                            let timeout_secs = timeout.as_secs().max(1);
+                            Duration::from_secs(
+                                timeout_secs
+                                    .saturating_mul(PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET)
+                                    .saturating_add(
+                                        PROOF_RUNTIME_READINESS_LOOP_INTERVAL_SECS
+                                            * PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET,
+                                    ),
+                            )
+                        })
+                    })
+                })
                 .max()
                 .unwrap_or(Duration::from_millis(200));
-            let timeout_secs = max_timeout.as_secs().max(1);
-            Duration::from_secs(
-                timeout_secs
-                    .saturating_mul(PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET)
-                    .saturating_add(
-                        PROOF_RUNTIME_READINESS_LOOP_INTERVAL_SECS
-                            * PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET,
-                    )
-                    .saturating_add(PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS),
-            )
+            max_target_budget.saturating_add(Duration::from_secs(
+                PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS,
+            ))
         }
         _ => floor,
     };

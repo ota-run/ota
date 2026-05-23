@@ -553,6 +553,8 @@ Current behavior:
   implementation: the topology artifact is the same `ota execution topology --json` surface, the
   doctor artifact is the same `ota doctor --json` surface, and the up log is the repo-level
   preparation report for the selected path
+- honors the selected path's declared readiness timing policy when a workflow/task surface
+  defines startup timing such as `start_period`, `interval`, `timeout`, and `retries`
 - uses the same backend/lifecycle override rules as `ota doctor` and `ota up`
 - attempts repo-scoped runtime cleanup after capturing artifacts so proof does not leave
   persistent Ota-managed runtime state behind
