@@ -31,8 +31,8 @@
   devcontainer shells do not silently lag repo readiness truth
 - `ota doctor` now also warns when a repo-owned devcontainer bootstrap command uses a different
   Node package manager than the repo contract declares, and when `agent.writable_paths` includes
-  sensitive lockfile, env/config, runtime-topology, CI, or repo-contract paths; intentional
-  broad authoring scope can now be acknowledged through
+  sensitive lockfile, env/config, runtime-topology, CI, or repo-contract paths beyond the
+  declared `agent.posture`; narrow intentional exceptions can be acknowledged through
   `agent.acknowledged_sensitive_writable_paths`
 - agent boundary validation now rejects overlapping `agent.writable_paths` and
   `agent.protected_paths` entries when they duplicate the same normalized path, while still

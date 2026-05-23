@@ -38725,6 +38725,10 @@ fn render_agent_summary_text(agent: &AgentSummary<'_>, include_notes: bool) -> O
     lines.push(paint_section_title("AGENT"));
 
     let mut overview = Vec::new();
+    overview.push((
+        String::from("Posture:"),
+        paint_backticked_code(agent.posture),
+    ));
     if let Some(entrypoint) = agent.entrypoint {
         overview.push((
             String::from("Entrypoint:"),
@@ -49852,6 +49856,7 @@ execution:
         let verify_after_changes = Vec::new();
         let protected_paths = Vec::new();
         let agent = crate::output::AgentSummary {
+            posture: "readiness_strict",
             entrypoint: Some("setup"),
             default_task: Some("ci"),
             safe_tasks,
@@ -49992,6 +49997,7 @@ execution:
         let verify_after_changes = Vec::new();
         let protected_paths = Vec::new();
         let agent = crate::output::AgentSummary {
+            posture: "readiness_strict",
             entrypoint: Some("setup"),
             default_task: Some("ci"),
             safe_tasks,

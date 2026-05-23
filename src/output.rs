@@ -2490,6 +2490,7 @@ pub struct ServicesFailure<'a> {
 
 #[derive(Debug, Serialize)]
 pub struct AgentSummary<'a> {
+    pub posture: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entrypoint: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2770,6 +2771,7 @@ fn workflow_surface_backend(
 impl<'a> AgentSummary<'a> {
     pub fn from_config(agent: &'a AgentConfig) -> Option<Self> {
         let summary = Self {
+            posture: agent.posture.as_str(),
             entrypoint: agent.entrypoint.as_deref(),
             default_task: agent.default_task.as_deref(),
             safe_tasks: agent.safe_tasks.clone(),
@@ -2810,7 +2812,8 @@ impl<'a> AgentSummary<'a> {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entrypoint.is_none()
+        self.posture == "readiness_strict"
+            && self.entrypoint.is_none()
             && self.default_task.is_none()
             && self.safe_tasks.is_empty()
             && self.verify_after_changes.is_empty()

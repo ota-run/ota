@@ -32,8 +32,8 @@ use crate::detector::{
 };
 use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentBoundaryProvenanceConfig, AgentConfig,
-    AgentInferredBoundaryConfig, EnvSource, EnvSourceKind, FileCheckExpectation, TaskActionSpec,
-    TaskCopyIfMissingActionSpec,
+    AgentInferredBoundaryConfig, AgentPosture, EnvSource, EnvSourceKind, FileCheckExpectation,
+    TaskActionSpec, TaskCopyIfMissingActionSpec,
 };
 
 const INIT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
@@ -884,6 +884,7 @@ fn starter_agent_config_from_parts(
     }
 
     Some(AgentConfig {
+        posture: AgentPosture::ReadinessStrict,
         entrypoint,
         default_task,
         safe_tasks,
