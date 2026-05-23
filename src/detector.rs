@@ -34,7 +34,7 @@ use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, TaskActionSpec,
     ToolchainFulfillmentMode, ToolchainProvider,
 };
-use crate::toolchains::{JAVA_TOOLCHAIN_NAME, toolchain_repo_signals};
+use crate::toolchains::{JAVA_TOOLCHAIN_NAME, PYTHON_TOOLCHAIN_NAME, toolchain_repo_signals};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -404,6 +404,7 @@ impl DetectReport {
                             "rustup" => ToolchainProvider::Rustup,
                             "corepack" => ToolchainProvider::Corepack,
                             "sdkman" => ToolchainProvider::Sdkman,
+                            "uv" => ToolchainProvider::Uv,
                             _ => toolchain.provider,
                         };
                     }
@@ -4189,6 +4190,15 @@ fn synthesize_detected_toolchain_inferences(
     contract: &mut DetectContract,
     inferences: &mut BTreeMap<String, Inference>,
 ) {
+    synthesize_sdkman_java_toolchain(root, contract, inferences);
+    synthesize_uv_python_toolchain(root, contract, inferences);
+}
+
+fn synthesize_sdkman_java_toolchain(
+    root: &Path,
+    contract: &mut DetectContract,
+    inferences: &mut BTreeMap<String, Inference>,
+) {
     let Some(java_version) = contract.runtimes.get(JAVA_TOOLCHAIN_NAME).cloned() else {
         return;
     };
@@ -4235,9 +4245,66 @@ fn synthesize_detected_toolchain_inferences(
     );
 }
 
+fn synthesize_uv_python_toolchain(
+    root: &Path,
+    contract: &mut DetectContract,
+    inferences: &mut BTreeMap<String, Inference>,
+) {
+    let Some(python_version) = contract.runtimes.get(PYTHON_TOOLCHAIN_NAME).cloned() else {
+        return;
+    };
+    if !root.join("uv.lock").is_file() {
+        return;
+    }
+
+    let confidence = inferences
+        .get("runtimes.python")
+        .map(|inference| inference.confidence)
+        .unwrap_or(Confidence::High);
+    let version_source = inferences
+        .get("runtimes.python")
+        .map(|inference| inference.source.clone())
+        .unwrap_or_else(|| String::from("ota.detect#toolchains.python.version"));
+
+    contract.runtimes.remove(PYTHON_TOOLCHAIN_NAME);
+    contract.tools.remove("uv");
+    inferences.remove("runtimes.python");
+    inferences.remove("tools.uv");
+    contract.toolchains.insert(
+        String::from(PYTHON_TOOLCHAIN_NAME),
+        DetectToolchainSpec {
+            provider: ToolchainProvider::Uv,
+            version: python_version.clone(),
+            fulfillment: None,
+        },
+    );
+    inferences.insert(
+        String::from("toolchains.python.provider"),
+        Inference::new(
+            String::from("toolchains.python.provider"),
+            String::from("uv"),
+            String::from("ota.detect#toolchains.python.provider"),
+            confidence,
+        ),
+    );
+    inferences.insert(
+        String::from("toolchains.python.version"),
+        Inference::new(
+            String::from("toolchains.python.version"),
+            python_version,
+            version_source,
+            confidence,
+        ),
+    );
+}
+
 fn normalize_detected_toolchains(_root: &Path, contract: &mut DetectContract) {
     if contract.toolchains.contains_key(JAVA_TOOLCHAIN_NAME) {
         contract.runtimes.remove(JAVA_TOOLCHAIN_NAME);
+    }
+    if contract.toolchains.contains_key(PYTHON_TOOLCHAIN_NAME) {
+        contract.runtimes.remove(PYTHON_TOOLCHAIN_NAME);
+        contract.tools.remove("uv");
     }
 }
 
@@ -6308,6 +6375,61 @@ channel = "1.85.0"
                 .inferences
                 .iter()
                 .all(|inference| inference.field != "runtimes.java")
+        );
+    }
+
+    #[test]
+    fn detects_uv_managed_python_toolchain_when_uv_lock_is_present() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "pyproject.toml",
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12,<3.14'\n",
+        );
+        fixture.write("uv.lock", "version = 1\n");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .toolchains
+                .get("python")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Uv, ">=3.12,<3.14"))
+        );
+        assert!(report.contract.runtimes.get("python").is_none());
+        assert!(report.contract.tools.get("uv").is_none());
+        assert!(
+            report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "toolchains.python.provider"
+                    && inference.value == "uv"
+                    && inference.confidence == Confidence::Medium)
+        );
+        assert!(
+            report
+                .inferences
+                .iter()
+                .all(|inference| inference.field != "runtimes.python"
+                    && inference.field != "tools.uv")
+        );
+    }
+
+    #[test]
+    fn keeps_python_as_runtime_when_uv_lock_is_absent() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "pyproject.toml",
+            "[project]\nname = 'demo'\nrequires-python = '>=3.12,<3.14'\n",
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.contract.toolchains.get("python").is_none());
+        assert_eq!(
+            report.contract.runtimes.get("python"),
+            Some(&String::from(">=3.12,<3.14"))
         );
     }
 

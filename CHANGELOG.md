@@ -36,9 +36,11 @@
   `python3.12` and `python3.13` when they satisfy `runtimes.python`, preventing false
   `Missing runtime: python` or mismatch findings on repos that already expose a compatible Python
   interpreter through standard aliases
-- downgraded unsupported managed toolchain opportunity findings (for example Python ecosystem
-  opportunity notices) from warning to informational severity so correctly modeled repos remain
-  `READY` while still surfacing future provider-backed modeling opportunities
+- shipped `toolchains.python` with `provider: uv` as a first-class managed Python runtime owner:
+  validator, doctor, dry-run, and run-path fulfillment now understand uv-backed Python toolchains,
+  `fulfillment: run` can invoke `uv python install <version>` for installable version references,
+  and detector/init now prefer the shipped Python toolchain contract over fallback Python
+  opportunity guidance when `uv.lock` and Python version signals are present
 - fixed selected workflow/task toolchain scoping so preview/doctor/up no longer fall back to every
   declared toolchain when the selected closure does not require one, preventing false runtime/tool
   blockers on unrelated workflows such as host-Docker setup paths
@@ -47,6 +49,12 @@
   `latest` install targets for both shell and PowerShell bootstrap paths
 - added Slack release announcements to the release gate workflow by publishing the same generated release summary text to `SLACK_RELEASE_WEBHOOK_URL` when configured, while keeping Discord publishing unchanged.
 - run branch-protection-required maintainer checks on branch pushes as well as `main`, and remove docs-only trigger filtering from `docs-quality`, so protected branch-first merges work without requiring a public PR flow
+- taught `ota doctor` to short-circuit later service/check readiness probing when selected-path
+  preconditions already contain blocking errors, so broken setups stay bounded and diagnosis
+  output keeps the real blocker in front instead of spending time on unreachable surfaces
+- added `tasks.<name>.effects.writes` as first-class task side-effect metadata, and now validate
+  agent-safe task writes against declared `agent.protected_paths` plus `agent.writable_paths`
+  when that writable boundary is present
 
 ## 1.6.15
 

@@ -68,6 +68,23 @@ For workspace inventory and readiness summaries, `ota workspace list --json` can
 lightweight preflight signal. For ticketing or automated follow-up, `ota workspace explain --json`
 gives an ordered plan without mutating state.
 
+## Testing unreleased ota builds
+
+When a case-study matrix or maintainer branch needs to test an unreleased ota change, prefer the
+shipped source-install action instead of hand-rolling checkout/build/install steps in each repo
+workflow.
+
+```yaml
+- name: Install ota from source
+  uses: ota-run/ota/.github/actions/install-ota-from-source@<sha>
+  with:
+    repository: ota-run/ota
+    ref: <branch-or-sha-under-test>
+```
+
+That keeps the workflow thin and makes the one branch/sha under test explicit at the callsite,
+instead of scattering Cargo install details across multiple case-study repos.
+
 ## Infrastructure boundary
 
 ota does not replace the CI runner or its service provisioning layer.

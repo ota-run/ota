@@ -483,6 +483,7 @@ Current command behavior:
 - `ota doctor` checks the required backend CLI for the selected execution context or preferred backend and reports unsupported shipped remote providers early
 - `ota doctor` warns on suspicious remote target shape (`ssh`/`tsh` without `user@host`, `kubectl` not starting `pod/`)
 - `ota doctor` evaluates context-specific requirements for declared contexts
+- when preconditions already contain blocking errors, `ota doctor` stops before later service/check readiness probing so blocked setups stay bounded and the primary blocker remains obvious
 - `ota up` still runs service start commands, service healthchecks, and diagnosis on the host unless the resolved execution path is containerized
 
 ## `services`
@@ -616,6 +617,7 @@ Current shipped scope is intentionally narrow:
 - task-scoped `requirements.toolchains`
 - Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
 - Corepack-backed diagnosis for Node toolchains
+- uv-backed diagnosis and run-path fulfillment for Python toolchains
 - duplicate ownership is invalid when the same prerequisite is declared under both `toolchains`
   and `runtimes` or `tools`
 
@@ -647,13 +649,15 @@ Rules:
 - `version` must not be empty
 - shared provider-agnostic toolchain fields are currently `provider`, `version`,
   `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
-- shipped providers are currently `rustup` for `toolchains.rust` and `corepack` for
-  `toolchains.node`
+- shipped providers are currently `rustup` for `toolchains.rust`, `corepack` for
+  `toolchains.node`, `sdkman` for `toolchains.java`, and `uv` for `toolchains.python`
 - `required` defaults to `true` and controls whether missing or mismatched toolchains are blocking
-- the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup` and
-  `toolchains.node` with `provider: corepack`
+- the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup`,
+  `toolchains.node` with `provider: corepack`, `toolchains.java` with `provider: sdkman`, and
+  `toolchains.python` with `provider: uv`
 - those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use
-  `provider: rustup`, and `toolchains.node` must use `provider: corepack`
+  `provider: rustup`, `toolchains.node` must use `provider: corepack`, `toolchains.java` must
+  use `provider: sdkman`, and `toolchains.python` must use `provider: uv`
 - ota validates and interprets toolchains through an explicit provider contract; Rustup currently
   owns which extra toolchain fields are legal, which capabilities belong to `toolchains.rust`, and
   how `doctor`, `up`, and `run` interpret fulfillment and managed surfaces, while Corepack-backed
@@ -678,9 +682,12 @@ Rules:
 - `provider: corepack` currently supports only `fulfillment: none`; ota diagnoses Node through
   `toolchains.node`, and declared `package_managers` surface Corepack activation through that same
   toolchain owner
+- for `provider: uv` with `fulfillment: run`, `version` must be one installable uv Python
+  reference such as `3.12`, `3.12.10`, or `3.13`
 - duplicate ownership is invalid; if the same Rust capability is also declared under `runtimes`
   or `tools`, validation fails and the duplicate must be removed; the same applies to
-  `toolchains.node` versus `runtimes.node` or `tools.node`
+  `toolchains.node` versus `runtimes.node` or `tools.node`, and `toolchains.python` versus
+  `runtimes.python`
 
 Ownership boundary:
 
@@ -690,7 +697,9 @@ Ownership boundary:
 - use `native_prerequisites` for host-native build bundles and shell activation
 - current shipped ownership is provider-defined, not free-form: today Ota derives Rust capability
   ownership from `toolchains.rust` with `provider: rustup` and Node runtime/executable plus
-  declared Corepack package-manager ownership from `toolchains.node` with `provider: corepack`
+  declared Corepack package-manager ownership from `toolchains.node` with `provider: corepack`,
+  Java plus `javac` ownership from `toolchains.java` with `provider: sdkman`, and Python runtime
+  ownership from `toolchains.python` with `provider: uv`
 
 If a declared toolchain owns the capability, require the toolchain. Do not also require the same
 runtime or tool unless it is deliberately standalone outside that toolchain.
@@ -1235,6 +1244,9 @@ tasks:
     category: setup
     run: pnpm install
     safe_for_agent: true
+    effects:
+      writes:
+        - node_modules
   build:
     context: app
     requires_services:
@@ -1322,6 +1334,7 @@ Fields:
 - `script`: optional string for an inline multiline shell script
 - `launch`: optional structured launch source for inspectable command or packaged container starts
 - `action`: optional first-class native setup action for small cross-platform repo-file mutations
+- `effects`: optional structured side-effect metadata for the task body
 - `requirements`: optional task-scoped prerequisite surface for this executable path
 - `execution`: optional mode-aware execution branches for one task intent
 - `runtime`: optional long-running workload shape for endpoint-bearing tasks
@@ -1330,6 +1343,18 @@ Fields:
 - `depends_on`: optional list of task names
 - `safe_for_agent`: optional boolean
 - `internal`: optional boolean; marks orchestration plumbing tasks that stay in the graph but are hidden from default `ota tasks` discovery surfaces
+
+`effects` fields:
+
+- `writes`: optional list of normalized relative paths the task body is expected to mutate
+
+Task-effect rules:
+
+- use `effects.writes` for durable repo paths the task mutates directly
+- keep entries relative, normalized, and free of `..` segments
+- `effects.writes` is contract truth for agent-safety review, not a log of every transient scratch file
+- when a task is agent-safe, declared writes should stay inside `agent.writable_paths` when that boundary is declared
+- agent-safe task writes must not overlap `agent.protected_paths`
 
 `execution` fields:
 
@@ -2366,8 +2391,11 @@ Current validation rules:
 - `default_task` must reference a known task when set
 - `safe_tasks` entries must reference known tasks
 - `verify_after_changes` entries must reference known tasks
-- `writable_paths` entries must not be empty
-- `protected_paths` entries must not be empty
+- `writable_paths` entries must not be empty and must be normalized relative paths
+- `protected_paths` entries must not be empty and must be normalized relative paths
+- task `effects.writes` entries must be normalized relative paths when present
+- agent-safe task writes must not overlap declared `protected_paths`
+- when `writable_paths` is declared, agent-safe task writes must stay inside that writable boundary
 - `inferred_boundary.provenance.writable_paths` entries must not be empty when present
 - `inferred_boundary.provenance.protected_paths` entries must not be empty when present
 - `inferred_boundary` must include at least one provenance entry when present
@@ -2389,6 +2417,7 @@ Agent semantics:
 - `entrypoint` is the first task an AI agent should use to get oriented in the repo
 - `default_task` is the normal verification task to run when no more specific task is needed
 - `safe_tasks` are the tasks an AI agent can run without broad risk
+- task `effects.writes` makes the expected durable writes explicit so agent-safe task claims can be checked structurally
 - `verify_after_changes` are the tasks an AI agent should rerun after modifying files
 - `writable_paths` are the paths an AI agent may edit
 - `protected_paths` are the paths an AI agent should avoid editing casually

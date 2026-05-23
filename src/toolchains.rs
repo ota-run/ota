@@ -47,15 +47,7 @@ const RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`profile`, `components`, `targets`, and their `platforms.<os>.*` overrides";
 const COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`package_managers` and `platforms.<os>.package_managers`";
-pub(crate) const PYTHON_TOOLCHAIN_OPPORTUNITY_CONTEXT: ToolchainOpportunityContext<'static> =
-    ToolchainOpportunityContext {
-        ecosystem: "python",
-        fallback_runtime: "python",
-        fallback_tools: &["uv"],
-        candidate_providers: &["uv", "mise"],
-        agent_note: "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary.",
-    };
-const UNSUPPORTED_TOOLCHAIN_OPPORTUNITY_ECOSYSTEMS: &[&str] = &[PYTHON_TOOLCHAIN_NAME];
+const UNSUPPORTED_TOOLCHAIN_OPPORTUNITY_ECOSYSTEMS: &[&str] = &[];
 pub(crate) const RUSTUP_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
     toolchain_name: RUSTUP_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Rustup,
@@ -110,6 +102,24 @@ pub(crate) const SDKMAN_TOOLCHAIN_CONTRACT: ToolchainProviderContract = Toolchai
     managed_surface_probes_fn: sdkman_managed_surface_probes,
     managed_surface_entries_fn: sdkman_managed_surface_entries,
     managed_surface_remediation_command_fn: sdkman_managed_surface_remediation_command,
+};
+pub(crate) const UV_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
+    toolchain_name: PYTHON_TOOLCHAIN_NAME,
+    provider: ToolchainProvider::Uv,
+    label: "uv",
+    primary_executable: "uv",
+    owned_runtime: PYTHON_TOOLCHAIN_NAME,
+    provider_specific_fields: &[],
+    provider_specific_field_summary: "",
+    requirement_detail_parts_fn: base_requirement_detail_parts,
+    owned_capabilities_fn: uv_owned_capabilities,
+    owned_tool_requirements_fn: uv_owned_tool_requirements,
+    fulfillment_commands_fn: uv_fulfillment_commands,
+    owned_runtime_remediation_command_fn: uv_owned_runtime_remediation_command,
+    run_fulfillment_validation_error_fn: uv_run_fulfillment_validation_error,
+    managed_surface_probes_fn: uv_managed_surface_probes,
+    managed_surface_entries_fn: uv_managed_surface_entries,
+    managed_surface_remediation_command_fn: uv_managed_surface_remediation_command,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -629,6 +639,7 @@ pub(crate) fn shipped_toolchain_contracts() -> &'static [ToolchainProviderContra
         RUSTUP_TOOLCHAIN_CONTRACT,
         COREPACK_TOOLCHAIN_CONTRACT,
         SDKMAN_TOOLCHAIN_CONTRACT,
+        UV_TOOLCHAIN_CONTRACT,
     ]
 }
 
@@ -1077,6 +1088,16 @@ fn sdkman_owned_capabilities(
     ]
 }
 
+fn uv_owned_capabilities(
+    provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+) -> Vec<ToolchainOwnedCapability> {
+    vec![ToolchainOwnedCapability {
+        kind: ToolchainOwnedCapabilityKind::Runtime,
+        name: provider.owned_runtime().to_string(),
+    }]
+}
+
 fn rustup_owned_tool_requirements(
     _provider: ToolchainProviderContract,
     _toolchain: &ToolchainSpec,
@@ -1115,6 +1136,14 @@ fn corepack_owned_tool_requirements(
 }
 
 fn sdkman_owned_tool_requirements(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> BTreeMap<String, ToolRequirement> {
+    BTreeMap::new()
+}
+
+fn uv_owned_tool_requirements(
     _provider: ToolchainProviderContract,
     _toolchain: &ToolchainSpec,
     _target_os: &str,
@@ -1166,6 +1195,21 @@ fn sdkman_fulfillment_commands(
     Vec::new()
 }
 
+fn uv_fulfillment_commands(
+    _provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<ToolchainCommandSpec> {
+    vec![ToolchainCommandSpec {
+        program: "uv",
+        args: vec![
+            String::from("python"),
+            String::from("install"),
+            toolchain.version_for_os(target_os).to_string(),
+        ],
+    }]
+}
+
 fn rustup_owned_runtime_remediation_command(
     _provider: ToolchainProviderContract,
     requirement: &str,
@@ -1185,6 +1229,13 @@ fn sdkman_owned_runtime_remediation_command(
     requirement: &str,
 ) -> Option<String> {
     Some(format!("sdk install java {requirement}"))
+}
+
+fn uv_owned_runtime_remediation_command(
+    _provider: ToolchainProviderContract,
+    requirement: &str,
+) -> Option<String> {
+    Some(format!("uv python install {requirement}"))
 }
 
 fn rustup_run_fulfillment_validation_error(
@@ -1226,6 +1277,28 @@ fn sdkman_run_fulfillment_validation_error(
     Some(format!(
         "toolchain `{name}` uses `provider: sdkman` with `fulfillment: run`, but SDKMAN-backed Java toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and declare build tools such as Maven or Gradle separately under `tools`"
     ))
+}
+
+fn uv_run_fulfillment_validation_error(
+    _provider: ToolchainProviderContract,
+    name: &str,
+    toolchain: &ToolchainSpec,
+) -> Option<String> {
+    let trimmed = toolchain.version.trim();
+    let installable = !trimmed.is_empty()
+        && !trimmed.contains(char::is_whitespace)
+        && !trimmed.contains('>')
+        && !trimmed.contains('<')
+        && !trimmed.contains('=')
+        && !trimmed.contains('^')
+        && !trimmed.contains('~')
+        && !trimmed.contains('*')
+        && !trimmed.contains(',');
+    (!installable).then(|| {
+        format!(
+            "toolchain `{name}` uses `provider: uv` with `fulfillment: run`, so `toolchains.{name}.version` must be an installable uv Python reference like `3.12`, `3.12.10`, or `3.13`"
+        )
+    })
 }
 
 fn rustup_managed_surface_probes(
@@ -1281,6 +1354,14 @@ fn sdkman_managed_surface_probes(
     Vec::new()
 }
 
+fn uv_managed_surface_probes(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainManagedSurfaceProbe> {
+    Vec::new()
+}
+
 fn corepack_managed_surface_entries(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
@@ -1291,6 +1372,15 @@ fn corepack_managed_surface_entries(
 }
 
 fn sdkman_managed_surface_entries(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<String> {
+    Vec::new()
+}
+
+fn uv_managed_surface_entries(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
     _toolchain: &ToolchainSpec,
@@ -1335,6 +1425,14 @@ fn sdkman_managed_surface_remediation_command(
     None
 }
 
+fn uv_managed_surface_remediation_command(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _entry: &str,
+) -> Option<String> {
+    None
+}
+
 fn rustup_component_tool_name(component: &str) -> Option<&'static str> {
     match component {
         "rustfmt" => Some("rustfmt"),
@@ -1358,10 +1456,8 @@ fn known_provider_specific_fields() -> Vec<ToolchainProviderSpecificField> {
 pub(crate) fn unsupported_toolchain_opportunity_context(
     ecosystem: &str,
 ) -> Option<ToolchainOpportunityContext<'static>> {
-    match ecosystem {
-        PYTHON_TOOLCHAIN_NAME => Some(PYTHON_TOOLCHAIN_OPPORTUNITY_CONTEXT),
-        _ => None,
-    }
+    let _ = ecosystem;
+    None
 }
 
 pub(crate) fn unsupported_toolchain_opportunity_ecosystems() -> &'static [&'static str] {
@@ -1452,12 +1548,7 @@ mod tests {
     #[test]
     fn unsupported_toolchain_opportunity_ecosystems_match_declared_contexts() {
         let ecosystems = unsupported_toolchain_opportunity_ecosystems();
-        assert!(ecosystems.contains(&PYTHON_TOOLCHAIN_NAME));
-        for ecosystem in ecosystems {
-            let context = unsupported_toolchain_opportunity_context(ecosystem)
-                .expect("unsupported ecosystem should resolve a context");
-            assert_eq!(context.ecosystem, *ecosystem);
-        }
+        assert!(ecosystems.is_empty());
     }
 
     #[test]
@@ -1630,6 +1721,12 @@ toolchains:
                 .unwrap()
                 .label(),
             "sdkman"
+        );
+        assert_eq!(
+            toolchain_provider_contract("python", ToolchainProvider::Uv)
+                .unwrap()
+                .label(),
+            "uv"
         );
         assert_eq!(
             shipped_toolchain_contract_by_label("rustup")

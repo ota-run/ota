@@ -33,11 +33,14 @@ Current shipped scope:
 - task-scoped `requirements.toolchains`
 - Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
 - Corepack-backed diagnosis for Node toolchains
+- uv-backed diagnosis and run-path fulfillment for Python toolchains
 - hard validation errors when the same prerequisite is declared under both `toolchains` and
   `runtimes` or `tools`
-- two supported contract shapes today:
+- four supported contract shapes today:
   - `toolchains.rust` with `provider: rustup`
   - `toolchains.node` with `provider: corepack`
+  - `toolchains.java` with `provider: sdkman`
+  - `toolchains.python` with `provider: uv`
 
 ## Ownership rule
 
@@ -63,18 +66,22 @@ Examples:
 - Rust via Rustup, including components such as `rustfmt`
 - Node via Corepack, when the repo wants one owner for the Node runtime, `node` executable, and
   declared Corepack package-manager activation
+- Python via uv, when the repo wants one owner for the Python runtime while tools such as Poetry
+  remain standalone under `tools`
 
 Current parser boundary:
 
-- the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup` and
-  `toolchains.node` with `provider: corepack`
+- the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup`,
+  `toolchains.node` with `provider: corepack`, `toolchains.java` with `provider: sdkman`, and
+  `toolchains.python` with `provider: uv`
 - those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use `provider: rustup`,
-  and `toolchains.node` must use `provider: corepack`
+  `toolchains.node` must use `provider: corepack`, `toolchains.java` must use `provider: sdkman`,
+  and `toolchains.python` must use `provider: uv`
 - the shared provider-agnostic toolchain fields are currently `provider`, `version`,
   `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
 - validation and command behavior read from a provider contract, not from free-form capability
   text; today those contracts are the shipped Rustup and Corepack slices behind `toolchains.rust`
-  and `toolchains.node`
+  `toolchains.node`, `toolchains.java`, and `toolchains.python`
 - that provider contract also owns Rustup field-shape validation, so empty `profile`,
   `components`, or `targets` entries fail as provider-contract violations rather than generic
   schema drift
@@ -82,8 +89,8 @@ Current parser boundary:
   `package_managers` (plus `platforms.<os>.package_managers`) and stay check-only
 - `profile`, `components`, and `targets` are Rustup-specific compatibility fields, not a generic
   ecosystem-wide toolchain schema
-- future-fit examples for Python, .NET, or Java are ownership-model examples only; they are not
-  valid contract entries until ota ships those provider adapters and schema fields
+- future-fit examples for .NET remain ownership-model examples only; they are not valid contract
+  entries until ota ships those provider adapters and schema fields
 
 Use `runtimes` when the requirement is simply "this runtime must exist at this version."
 
@@ -185,6 +192,7 @@ Current Rustup-first invalid combinations include:
 - `toolchains.rust` plus `runtimes.rust`
 - `toolchains.rust` plus `tools.cargo`
 - `toolchains.rust.components: [rustfmt]` plus `tools.rustfmt`
+- `toolchains.python` plus `runtimes.python`
 
 Treat those validation errors as contract cleanup signals, not as extra truth to maintain.
 
@@ -194,7 +202,7 @@ Toolchain fulfillment is strict:
 
 - `ota doctor` never mutates
 - run-path fulfillment only happens when the toolchain declares `fulfillment: run`
-- the current shipped provider-backed fulfillment path is `provider: rustup`
+- the current shipped provider-backed fulfillment paths are `provider: rustup` and `provider: uv`
 
 For Rustup-backed fulfillment:
 
@@ -204,6 +212,15 @@ For Rustup-backed fulfillment:
 - comparator-style ranges such as `>=1.94` are valid for plain diagnosis elsewhere in Ota, but not
   for Rustup fulfillment because Rustup needs one concrete toolchain reference to install
 
+For uv-backed Python fulfillment:
+
+- `toolchains.python.version` must be one installable uv Python reference when
+  `fulfillment: run` is enabled
+- examples: `3.12`, `3.12.10`, `3.13`
+- comparator-style ranges such as `>=3.12,<3.14` are valid for plain diagnosis elsewhere in Ota,
+  but not for uv fulfillment because `uv python install` needs one concrete Python reference to
+  install
+
 ## Current shipped limits
 
 This slice is intentionally narrow:
@@ -211,13 +228,17 @@ This slice is intentionally narrow:
 - shipped toolchain contracts today are:
   - `toolchains.rust` with `provider: rustup`
   - `toolchains.node` with `provider: corepack`
+  - `toolchains.java` with `provider: sdkman`
+  - `toolchains.python` with `provider: uv`
 - toolchains are selected at the task path, not through execution-context requirements
 - duplicate ownership is invalid and fails validation
 - Rustup currently owns diagnosis plus run-path fulfillment for the declared toolchain and its
   components/targets
+- uv currently owns diagnosis plus run-path fulfillment for the declared Python runtime version
 - org-policy version/provisioning reasoning now sees the selected toolchain-owned runtime lane too,
-  so approved runtime versions and approved install sources can govern `toolchains.rust` or
-  `toolchains.node` without re-declaring duplicate runtime ownership
+  so approved runtime versions and approved install sources can govern `toolchains.rust`,
+  `toolchains.node`, `toolchains.java`, or `toolchains.python` without re-declaring duplicate
+  runtime ownership
 - Corepack-backed Node toolchains are currently diagnosis-only; `tools.node` is invalid duplicate
   ownership, and package managers declared under `toolchains.node.package_managers` must not be
   redeclared under `tools`
