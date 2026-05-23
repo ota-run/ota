@@ -10551,6 +10551,52 @@ tasks:
     }
 
     #[test]
+    fn receipt_contract_identity_counts_include_scoped_context_and_task_requirements() {
+        let _guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: scoped-identity
+  type: application
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        runtimes:
+          node: "^22.12.0"
+tools:
+  npm:
+    version: ">=10.5.0"
+tasks:
+  setup:
+    run: echo ready
+    requirements:
+      tools:
+        npm: ">=10.5.0"
+"#,
+        );
+
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        write_fake_command(&bin_dir, "node", "#!/bin/sh\necho v22.12.0\n");
+        write_fake_command(&bin_dir, "npm", "#!/bin/sh\necho 10.5.0\n");
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+
+        let output = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["contract_identity"]["counts"]["runtimes"], 1);
+        assert_eq!(json["contract_identity"]["counts"]["tools"], 1);
+        assert_eq!(json["contract_identity"]["counts"]["tasks"], 1);
+    }
+
+    #[test]
     fn execution_plan_json_reports_resolved_container_execution_and_overrides() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
