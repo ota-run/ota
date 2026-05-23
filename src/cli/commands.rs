@@ -1253,6 +1253,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::SensitiveAgentWritablePath(value) => format!(
+            "{} path `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.path,
+            paint_key("Category:"),
+            render_validate_warning_detail(&value.category),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
     }
 }
 

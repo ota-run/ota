@@ -2393,6 +2393,8 @@ Current validation rules:
 - `verify_after_changes` entries must reference known tasks
 - `writable_paths` entries must not be empty and must be normalized relative paths
 - `protected_paths` entries must not be empty and must be normalized relative paths
+- `writable_paths` entries must not duplicate `protected_paths`; protected descendants may still
+  carve out narrower exceptions inside a broader writable root
 - task `effects.writes` entries must be normalized relative paths when present
 - agent-safe task writes must not overlap declared `protected_paths`
 - when `writable_paths` is declared, agent-safe task writes must stay inside that writable boundary
@@ -2420,7 +2422,13 @@ Agent semantics:
 - task `effects.writes` makes the expected durable writes explicit so agent-safe task claims can be checked structurally
 - `verify_after_changes` are the tasks an AI agent should rerun after modifying files
 - `writable_paths` are the paths an AI agent may edit
+- `acknowledged_sensitive_writable_paths` records intentional writable exceptions for sensitive paths
+  or broader writable boundaries so `ota doctor` can distinguish explicit authoring scope from
+  accidental over-broad readiness slices
 - `protected_paths` are the paths an AI agent should avoid editing casually
+- lockfiles, env/config files, runtime-topology files, CI workflow files, and repo contracts
+  should usually stay under `protected_paths` for readiness slices unless the contract explicitly
+  authorizes that authoring scope
 - `inferred_boundary.reviewed: false` means ota inferred the current agent boundary but the repo author has not confirmed it yet
 - `inferred_boundary.provenance` explains which starter or detector heuristics produced the current writable and protected boundary
 - `bootstrap.ota` provides an approved `ota` install path for agents when the binary is missing

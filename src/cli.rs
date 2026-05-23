@@ -19346,6 +19346,320 @@ tasks:
     }
 
     #[test]
+    fn doctor_reports_devcontainer_node_image_drift_for_selected_runtime() {
+        let _guard = env_mutex_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        write_fake_command(
+            &bin_dir,
+            "node",
+            if cfg!(windows) {
+                "@echo off\r\necho v22.12.0\r\n"
+            } else {
+                "#!/bin/sh\necho v22.12.0\n"
+            },
+        );
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).expect("join PATH");
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+        fs::create_dir_all(dir.path().join(".devcontainer")).expect("create .devcontainer");
+        fs::write(
+            dir.path().join(".devcontainer").join("devcontainer.json"),
+            r#"{
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:18",
+  "postCreateCommand": "pnpm i"
+}"#,
+        )
+        .expect("write devcontainer");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: hoppscotch
+runtimes:
+  node: "^22.12.0"
+tasks:
+  dev:
+    run: printf ready
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        match original_path {
+            Some(ref path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        == "Devcontainer drift: Node image differs from repo runtime"
+                        && finding["why"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .contains("typescript-node:18")
+                }),
+            "expected a devcontainer node drift warning"
+        );
+    }
+
+    #[test]
+    fn doctor_ignores_matching_devcontainer_node_image() {
+        let _guard = env_mutex_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        write_fake_command(
+            &bin_dir,
+            "node",
+            if cfg!(windows) {
+                "@echo off\r\necho v22.12.1\r\n"
+            } else {
+                "#!/bin/sh\necho v22.12.1\n"
+            },
+        );
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).expect("join PATH");
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+        fs::create_dir_all(dir.path().join(".devcontainer")).expect("create .devcontainer");
+        fs::write(
+            dir.path().join(".devcontainer").join("devcontainer.json"),
+            r#"{
+  "image": "node:22.12.0-bookworm"
+}"#,
+        )
+        .expect("write devcontainer");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: hoppscotch
+runtimes:
+  node: "^22.12.0"
+tasks:
+  dev:
+    run: printf ready
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        match original_path {
+            Some(ref path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .all(|finding| {
+                    finding["summary"].as_str().unwrap_or_default()
+                        != "Devcontainer drift: Node image differs from repo runtime"
+                }),
+            "matching devcontainer images should not produce drift warnings"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_devcontainer_package_manager_drift() {
+        let _guard = env_mutex_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        write_fake_command(
+            &bin_dir,
+            "node",
+            if cfg!(windows) {
+                "@echo off\r\necho v22.12.0\r\n"
+            } else {
+                "#!/bin/sh\necho v22.12.0\n"
+            },
+        );
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).expect("join PATH");
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+        fs::create_dir_all(dir.path().join(".devcontainer")).expect("create .devcontainer");
+        fs::write(
+            dir.path().join(".devcontainer").join("devcontainer.json"),
+            r#"{
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+  "postCreateCommand": "npm install"
+}"#,
+        )
+        .expect("write devcontainer");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: hoppscotch
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.0.0"
+    package_managers:
+      pnpm: "10.33.2"
+tasks:
+  dev:
+    run: printf ready
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        match original_path {
+            Some(ref path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .any(|finding| {
+                    finding["summary"].as_str().unwrap_or_default().contains(
+                        "bootstrap command uses `npm` instead of repo package manager `pnpm`",
+                    )
+                }),
+            "expected a devcontainer package manager drift warning"
+        );
+    }
+
+    #[test]
+    fn doctor_ignores_ambiguous_devcontainer_package_manager_bootstrap() {
+        let _guard = env_mutex_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        write_fake_command(
+            &bin_dir,
+            "node",
+            if cfg!(windows) {
+                "@echo off\r\necho v22.12.0\r\n"
+            } else {
+                "#!/bin/sh\necho v22.12.0\n"
+            },
+        );
+        let original_path = std::env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(std::env::split_paths(existing));
+        }
+        let joined_path = std::env::join_paths(path_entries).expect("join PATH");
+        unsafe {
+            std::env::set_var("PATH", &joined_path);
+        }
+        fs::create_dir_all(dir.path().join(".devcontainer")).expect("create .devcontainer");
+        fs::write(
+            dir.path().join(".devcontainer").join("devcontainer.json"),
+            r#"{
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22",
+  "postCreateCommand": "npm install -g pnpm && pnpm install"
+}"#,
+        )
+        .expect("write devcontainer");
+        fs::write(
+            dir.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: hoppscotch
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.0.0"
+    package_managers:
+      pnpm: "10.33.2"
+tasks:
+  dev:
+    run: printf ready
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let _guard = CurrentDirGuard::enter(dir.path());
+        let output = run_with(["ota", "doctor", "--json"]);
+
+        match original_path {
+            Some(ref path) => unsafe {
+                std::env::set_var("PATH", path);
+            },
+            None => unsafe {
+                std::env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .all(|finding| {
+                    !finding["summary"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains("bootstrap command uses")
+                }),
+            "ambiguous bootstrap commands should not produce package manager drift warnings"
+        );
+    }
+
+    #[test]
     fn services_text_lists_service_details() {
         let fixture = ContractFixture::new(
             r#"

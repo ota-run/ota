@@ -2812,6 +2812,17 @@ fn diagnose_contract_with_scope(
     if let Some(finding) = detect_missing_ota_state_gitignore(contract_path) {
         findings.push(finding);
     }
+    if mode == DoctorMode::Native
+        && let Some(finding) =
+            detect_devcontainer_runtime_drift(contract, contract_path, &requirement_surface)
+    {
+        findings.push(finding);
+    }
+    if mode == DoctorMode::Native
+        && let Some(finding) = detect_devcontainer_package_manager_drift(contract, contract_path)
+    {
+        findings.push(finding);
+    }
 
     if matches!(scope, DoctorScope::All | DoctorScope::Preconditions) {
         let unsupported_host_findings = unsupported_host_context_findings(
@@ -3250,6 +3261,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => {
                 ContractAdvisory::MutatesManagedIsolatedPath(advisory)
             }
+            ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
+                ContractAdvisory::SensitiveAgentWritablePath(advisory)
+            }
         };
 
         findings.push(match advisory {
@@ -3279,6 +3293,15 @@ fn diagnose_contract_advisories(
                 ),
                 why: ContractAdvisory::MutatesManagedIsolatedPath(advisory.clone()).why(),
                 next: ContractAdvisory::MutatesManagedIsolatedPath(advisory).next(),
+            },
+            ContractAdvisory::SensitiveAgentWritablePath(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "`agent.writable_paths` includes sensitive {} `{}`",
+                    advisory.category, advisory.path
+                ),
+                why: ContractAdvisory::SensitiveAgentWritablePath(advisory.clone()).why(),
+                next: ContractAdvisory::SensitiveAgentWritablePath(advisory).next(),
             },
         });
     }
@@ -9263,6 +9286,167 @@ pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option
             next: String::from("repair `.gitignore` readability and rerun `ota doctor`"),
         }),
     }
+}
+
+fn detect_devcontainer_runtime_drift(
+    contract: &Contract,
+    contract_path: &Path,
+    requirement_surface: &RequirementSurface,
+) -> Option<Finding> {
+    let current_os = current_host_platform();
+    let required = requirement_surface
+        .runtimes
+        .get("node")
+        .filter(|requirement| requirement.required_for_os(current_os))
+        .map(|requirement| requirement.version_for_os(current_os).to_string())
+        .or_else(|| {
+            contract
+                .runtimes
+                .get("node")
+                .filter(|requirement| requirement.required_for_os(current_os))
+                .map(|requirement| requirement.version_for_os(current_os).to_string())
+        })
+        .or_else(|| {
+            contract
+                .toolchains
+                .get("node")
+                .filter(|toolchain| toolchain.required_for_os(current_os))
+                .map(|toolchain| toolchain.version_for_os(current_os).to_string())
+        })?;
+
+    let root = contract_working_dir(contract_path);
+    let devcontainer_path = root.join(".devcontainer").join("devcontainer.json");
+    if !devcontainer_path.exists() {
+        return None;
+    }
+
+    let contents = fs::read_to_string(&devcontainer_path).ok()?;
+    let devcontainer: JsonValue = serde_json::from_str(&contents).ok()?;
+    let image = devcontainer.get("image").and_then(JsonValue::as_str)?;
+    let hinted_node = devcontainer_node_image_version(image)?;
+    if version_matches(&required, &hinted_node) {
+        return None;
+    }
+
+    Some(Finding {
+        severity: FindingSeverity::Warn,
+        summary: String::from("Devcontainer drift: Node image differs from repo runtime"),
+        why: format!(
+            "`{}` declares image `{image}`, which hints Node `{hinted_node}`, but the repo contract requires Node version `{required}`",
+            compact_display_path(&devcontainer_path)
+        ),
+        next: format!(
+            "update `{}` to a Node image satisfying `{required}`, or narrow the repo contract if the devcontainer is intentionally legacy",
+            compact_display_path(&devcontainer_path)
+        ),
+    })
+}
+
+fn detect_devcontainer_package_manager_drift(
+    contract: &Contract,
+    contract_path: &Path,
+) -> Option<Finding> {
+    let expected_manager = repo_node_package_manager_truth(contract)?;
+    let root = contract_working_dir(contract_path);
+    let devcontainer_path = root.join(".devcontainer").join("devcontainer.json");
+    if !devcontainer_path.exists() {
+        return None;
+    }
+
+    let contents = fs::read_to_string(&devcontainer_path).ok()?;
+    let devcontainer: JsonValue = serde_json::from_str(&contents).ok()?;
+    let post_create = devcontainer
+        .get("postCreateCommand")
+        .and_then(JsonValue::as_str)?;
+    let actual_manager = command_package_manager_token(post_create)?;
+    if actual_manager == expected_manager {
+        return None;
+    }
+
+    Some(Finding {
+        severity: FindingSeverity::Warn,
+        summary: format!(
+            "Devcontainer drift: bootstrap command uses `{actual_manager}` instead of repo package manager `{expected_manager}`"
+        ),
+        why: format!(
+            "`{}` declares `postCreateCommand: {post_create}`, but the repo contract's Node package manager truth is `{expected_manager}`",
+            compact_display_path(&devcontainer_path)
+        ),
+        next: format!(
+            "update `{}` so `postCreateCommand` uses `{expected_manager}`, or narrow the repo contract if a different package manager is intentionally canonical",
+            compact_display_path(&devcontainer_path)
+        ),
+    })
+}
+
+fn repo_node_package_manager_truth(contract: &Contract) -> Option<&str> {
+    const NODE_PACKAGE_MANAGERS: [&str; 4] = ["pnpm", "npm", "yarn", "bun"];
+
+    if let Some(toolchain) = contract.toolchains.get("node") {
+        let mut matches = toolchain
+            .package_managers
+            .keys()
+            .filter_map(|name| {
+                NODE_PACKAGE_MANAGERS
+                    .contains(&name.as_str())
+                    .then_some(name.as_str())
+            })
+            .collect::<Vec<_>>();
+        matches.sort_unstable();
+        matches.dedup();
+        if matches.len() == 1 {
+            return matches.into_iter().next();
+        }
+    }
+
+    let mut matches = contract
+        .tools
+        .keys()
+        .filter_map(|name| {
+            NODE_PACKAGE_MANAGERS
+                .contains(&name.as_str())
+                .then_some(name.as_str())
+        })
+        .collect::<Vec<_>>();
+    matches.sort_unstable();
+    matches.dedup();
+    (matches.len() == 1).then(|| matches[0])
+}
+
+fn devcontainer_node_image_version(image: &str) -> Option<String> {
+    let image_without_digest = image.split('@').next()?.trim();
+    let (repository, tag) = image_without_digest.rsplit_once(':')?;
+    let image_name = repository.rsplit('/').next().unwrap_or(repository);
+    if !image_name.contains("node") {
+        return None;
+    }
+
+    let version = tag
+        .chars()
+        .skip_while(|ch| !ch.is_ascii_digit())
+        .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
+        .collect::<String>();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version)
+    }
+}
+
+fn command_package_manager_token(command: &str) -> Option<&'static str> {
+    let mut matches = command
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
+        .filter_map(|token| match token {
+            "pnpm" => Some("pnpm"),
+            "npm" => Some("npm"),
+            "yarn" => Some("yarn"),
+            "bun" => Some("bun"),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    matches.sort_unstable();
+    matches.dedup();
+    (matches.len() == 1).then(|| matches[0])
 }
 
 fn extract_version_token(output: &str) -> Option<String> {

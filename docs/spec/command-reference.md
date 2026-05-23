@@ -1275,6 +1275,13 @@ ota doctor --member api --member web --json [PATH]
   contract, and still preserves the most important blocker first
 - tags contract-drift findings with repo-contract ownership and provenance so consumers can
   distinguish stale contract truth from host or service failures
+- warns when `.devcontainer/devcontainer.json` advertises a Node image that does not satisfy the
+  repo contract's declared `runtimes.node` requirement
+- warns when `.devcontainer/devcontainer.json` bootstraps with a different Node package manager
+  than the repo contract declares
+- warns when `agent.writable_paths` includes sensitive lockfile, env/config, runtime-topology,
+  CI, or repo-contract paths, because readiness slices should usually keep those protected;
+  intentional exceptions can be acknowledged with `agent.acknowledged_sensitive_writable_paths`
 - reports an error when no `tasks` are declared, because the contract is not operational for `ota run`
 - runs configured checks
 - orders findings by severity
