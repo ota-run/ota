@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed `ota proof runtime` wait-budget derivation for selected service surfaces so proof now
+  honors declared readiness timing policy (`start_period`, `interval`, `timeout`, `retries`)
+  instead of collapsing heavy startup paths down to a small timeout-only window; fresh CI Docker
+  builds such as Hoppscotch self-host proof now respect the contract's actual startup budget
 - added `execution.contexts.<name>.only_on` so contracts can declare supported host OSes per
   execution context; `ota doctor`, `ota up`, and task execution now fail early and explicitly
   when a selected context is not supported on the current host platform

@@ -14932,6 +14932,7 @@ pub(crate) struct HostRuntimeReadinessProbe {
     pub port: u16,
     pub request: Option<HttpReadinessRequest>,
     pub default_timeout: Option<Duration>,
+    pub budget_hint: Option<Duration>,
 }
 
 pub(crate) fn task_runtime_host_readiness_probe_for_backend(
@@ -14987,6 +14988,7 @@ pub(crate) fn task_runtime_host_readiness_probe_for_backend(
             port,
             request,
             default_timeout,
+            budget_hint: readiness_timing_budget_hint(Some(contract), runtime.readiness.as_ref()),
         });
     }
     let probe_listener_name = runtime
@@ -15023,6 +15025,7 @@ pub(crate) fn task_runtime_host_readiness_probe_for_backend(
             .as_ref()
             .and_then(|readiness| readiness.timeout.as_deref())
             .and_then(parse_readiness_duration_spec),
+        budget_hint: readiness_timing_budget_hint(Some(contract), runtime.readiness.as_ref()),
     })
 }
 
@@ -15105,6 +15108,7 @@ pub(crate) fn task_surface_host_readiness_probe_for_backend(
         port,
         request,
         default_timeout,
+        budget_hint: surface_readiness_timing_budget_hint(surface.readiness.as_ref()),
     })
 }
 
@@ -15646,6 +15650,51 @@ fn readiness_timing_policy(
         }),
         retries: readiness.and_then(|probe| probe.retries),
     }
+}
+
+fn readiness_timing_budget_hint(
+    contract: Option<&Contract>,
+    readiness: Option<&TaskRuntimeReadinessSpec>,
+) -> Option<Duration> {
+    let timing = readiness_timing_policy(contract, readiness);
+    let retries = u64::from(timing.retries?);
+    let timeout = timing.timeout.unwrap_or(Duration::from_millis(200));
+    Some(
+        timing.start_period.saturating_add(
+            timeout
+                .saturating_add(timing.interval)
+                .saturating_mul(retries as u32),
+        ),
+    )
+}
+
+fn surface_readiness_timing_budget_hint(
+    readiness: Option<&crate::schema::SurfaceReadinessSpec>,
+) -> Option<Duration> {
+    let readiness = readiness?;
+    let retries = u64::from(readiness.retries?);
+    let timeout = readiness
+        .timeout
+        .as_deref()
+        .and_then(parse_readiness_duration_spec)
+        .unwrap_or(Duration::from_millis(200));
+    let interval = readiness
+        .interval
+        .as_deref()
+        .and_then(parse_readiness_duration_spec)
+        .unwrap_or(Duration::from_millis(200));
+    let start_period = readiness
+        .start_period
+        .as_deref()
+        .and_then(parse_readiness_duration_spec)
+        .unwrap_or(Duration::ZERO);
+    Some(
+        start_period.saturating_add(
+            timeout
+                .saturating_add(interval)
+                .saturating_mul(retries as u32),
+        ),
+    )
 }
 
 pub(crate) fn http_readiness_endpoint_reachable(
@@ -32853,6 +32902,7 @@ tasks:
         assert_eq!(probe.address, "127.0.0.1");
         assert_eq!(probe.port, 3000);
         assert_eq!(probe.default_timeout, Some(Duration::from_millis(1500)));
+        assert_eq!(probe.budget_hint, None);
         assert_eq!(
             probe.request.as_ref().map(|request| request.path.as_str()),
             Some("/ready")
