@@ -35,6 +35,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
+use semver::{Op, VersionReq};
 use serde::ser::{SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -4759,11 +4760,13 @@ fn diagnose_runtimes(
             continue;
         }
         let required = requirement.required_for_os(target_os);
+        let executable_candidates =
+            runtime_executable_candidates(name, requirement.version_for_os(target_os));
 
         container_probe_started |= diagnose_command_version(
             "runtime",
             name,
-            name,
+            &executable_candidates,
             requirement.version_for_os(target_os),
             required,
             runtime_provider_hint(requirement, target_os),
@@ -4806,11 +4809,12 @@ fn diagnose_tools(
             continue;
         }
         let required = requirement.required_for_os(target_os);
+        let executable_candidates = vec![tool_executable_name(name).to_string()];
 
         container_probe_started |= diagnose_command_version(
             "tool",
             name,
-            tool_executable_name(name),
+            &executable_candidates,
             requirement.version_for_os(target_os),
             required,
             None,
@@ -4852,11 +4856,12 @@ fn diagnose_toolchains(
         if !toolchain.active_for_os(target_os) {
             continue;
         }
+        let executable_candidates = vec![provider.primary_executable().to_string()];
 
         probe_started |= diagnose_command_version(
             "runtime",
             toolchain_name,
-            provider.primary_executable(),
+            &executable_candidates,
             toolchain.version_for_os(target_os),
             toolchain.required_for_os(target_os),
             Some(provider.provider_hint()),
@@ -6076,7 +6081,7 @@ fn unsupported_toolchain_opportunity_finding(
     };
 
     Some(Finding {
-        severity: FindingSeverity::Warn,
+        severity: FindingSeverity::Info,
         summary: format!("Managed toolchain opportunity: {ecosystem}"),
         why: format!(
             "this repo uses {ecosystem_label} and currently models it through {fallback_model}; repo signals: {signal_summary}; ota does not ship a {ecosystem} toolchain provider yet"
@@ -6210,7 +6215,7 @@ fn dotnet_install_command(version: &str) -> String {
 fn diagnose_command_version(
     kind: &str,
     display_name: &str,
-    executable_name: &str,
+    executable_candidates: &[String],
     requirement: &str,
     required: bool,
     provider_hint: Option<&str>,
@@ -6227,6 +6232,10 @@ fn diagnose_command_version(
     findings: &mut Vec<Finding>,
 ) -> bool {
     let rerun_doctor = rerun_doctor_command(mode, selected_lifecycle);
+    let unresolved_executable = executable_candidates
+        .first()
+        .cloned()
+        .unwrap_or_else(|| display_name.to_string());
     let target_kind = match kind {
         "runtime" => ProvisioningTargetKind::Runtime,
         _ => ProvisioningTargetKind::Tool,
@@ -6246,25 +6255,41 @@ fn diagnose_command_version(
     };
 
     let version_probe = if mode == DoctorMode::Native {
-        Some(command_version_probe(executable_name))
+        Some(command_version_probe_candidates(
+            executable_candidates,
+            requirement,
+            command_version_probe,
+        ))
     } else if mode == DoctorMode::Container {
         let Some(container_probe) = container_probe else {
             return false;
         };
-        Some(command_version_probe_in_container(
-            &container_probe.engine,
-            &container_probe.image,
-            executable_name,
-            contract_working_dir(contract_path),
+        Some(command_version_probe_candidates(
+            executable_candidates,
+            requirement,
+            |candidate| {
+                command_version_probe_in_container(
+                    &container_probe.engine,
+                    &container_probe.image,
+                    candidate,
+                    contract_working_dir(contract_path),
+                )
+            },
         ))
     } else if mode == DoctorMode::Remote {
         let Some(remote_probe) = remote_probe else {
             return false;
         };
-        Some(command_version_probe_in_remote(
-            remote_probe,
-            executable_name,
-            contract_working_dir(contract_path),
+        Some(command_version_probe_candidates(
+            executable_candidates,
+            requirement,
+            |candidate| {
+                command_version_probe_in_remote(
+                    remote_probe,
+                    candidate,
+                    contract_working_dir(contract_path),
+                )
+            },
         ))
     } else {
         None
@@ -6353,7 +6378,7 @@ fn diagnose_command_version(
                         .resolved_path
                         .as_ref()
                         .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| executable_name.to_string());
+                        .unwrap_or_else(|| unresolved_executable.clone());
                     let (why, next) = match mode {
                         DoctorMode::Container => {
                             let image = container_probe
@@ -6444,7 +6469,7 @@ fn diagnose_command_version(
                         .resolved_path
                         .as_ref()
                         .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| executable_name.to_string());
+                        .unwrap_or_else(|| unresolved_executable.clone());
                     let (why, next) = match mode {
                         DoctorMode::Container => {
                             let image = container_probe
@@ -8759,6 +8784,156 @@ fn command_version_probe(name: &str) -> CommandVersionProbe {
     }
 }
 
+fn command_version_probe_candidates<F>(
+    candidates: &[String],
+    requirement: &str,
+    mut probe: F,
+) -> CommandVersionProbe
+where
+    F: FnMut(&str) -> CommandVersionProbe,
+{
+    let mut first_missing = None;
+    let mut first_probe_issue = None;
+    let mut first_version = None;
+
+    for candidate in candidates {
+        let result = probe(candidate.as_str());
+        match &result.outcome {
+            CommandVersionProbeOutcome::Version(actual) if version_matches(requirement, actual) => {
+                return result;
+            }
+            CommandVersionProbeOutcome::Version(_) => {
+                if first_version.is_none() {
+                    first_version = Some(result);
+                }
+            }
+            CommandVersionProbeOutcome::ProbeFailed { .. }
+            | CommandVersionProbeOutcome::Unparseable => {
+                if first_probe_issue.is_none() {
+                    first_probe_issue = Some(result);
+                }
+            }
+            CommandVersionProbeOutcome::Missing => {
+                if first_missing.is_none() {
+                    first_missing = Some(result);
+                }
+            }
+        }
+    }
+
+    first_version
+        .or(first_probe_issue)
+        .or(first_missing)
+        .unwrap_or_else(|| CommandVersionProbe {
+            command: version_command_string(
+                candidates
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or_default(),
+            ),
+            resolved_path: None,
+            probe_started: false,
+            outcome: CommandVersionProbeOutcome::Missing,
+        })
+}
+
+fn runtime_executable_candidates(name: &str, requirement: &str) -> Vec<String> {
+    match name {
+        "python" => python_runtime_executable_candidates(requirement),
+        _ => vec![name.to_string()],
+    }
+}
+
+fn python_runtime_executable_candidates(requirement: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+
+    if let Some(req) = parse_semver_requirement(requirement) {
+        extend_python_minor_range_candidates(&mut candidates, &req);
+        for comparator in &req.comparators {
+            push_python_version_candidate(&mut candidates, comparator.major, comparator.minor);
+        }
+    }
+
+    candidates.push(String::from("python3"));
+    candidates.push(String::from("python"));
+    dedupe_preserve_order(candidates)
+}
+
+fn extend_python_minor_range_candidates(candidates: &mut Vec<String>, requirement: &VersionReq) {
+    let lower = requirement
+        .comparators
+        .iter()
+        .filter(|comparator| matches!(comparator.op, Op::Greater | Op::GreaterEq | Op::Exact))
+        .max_by_key(|comparator| {
+            (
+                comparator.major,
+                comparator.minor.unwrap_or(0),
+                comparator.patch.unwrap_or(0),
+            )
+        });
+    let upper = requirement
+        .comparators
+        .iter()
+        .filter(|comparator| matches!(comparator.op, Op::Less | Op::LessEq))
+        .min_by_key(|comparator| {
+            (
+                comparator.major,
+                comparator.minor.unwrap_or(u64::MAX),
+                comparator.patch.unwrap_or(u64::MAX),
+            )
+        });
+
+    let (Some(lower), Some(upper)) = (lower, upper) else {
+        return;
+    };
+    let (Some(lower_minor), Some(upper_minor)) = (lower.minor, upper.minor) else {
+        return;
+    };
+    if lower.major != upper.major || upper_minor <= lower_minor {
+        return;
+    }
+
+    let upper_exclusive = match upper.op {
+        Op::LessEq => upper_minor.saturating_add(1),
+        _ => upper_minor,
+    };
+    if upper_exclusive <= lower_minor || upper_exclusive - lower_minor > 8 {
+        return;
+    }
+
+    for minor in (lower_minor..upper_exclusive).rev() {
+        push_python_version_candidate(candidates, lower.major, Some(minor));
+    }
+}
+
+fn push_python_version_candidate(candidates: &mut Vec<String>, major: u64, minor: Option<u64>) {
+    let Some(minor) = minor else {
+        return;
+    };
+    candidates.push(format!("python{major}.{minor}"));
+}
+
+fn parse_semver_requirement(value: &str) -> Option<VersionReq> {
+    let trimmed = value.trim();
+    VersionReq::parse(trimmed).ok().or_else(|| {
+        let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(", ");
+        (normalized != trimmed)
+            .then(|| VersionReq::parse(&normalized).ok())
+            .flatten()
+    })
+}
+
+fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut deduped = Vec::new();
+    for value in values {
+        if seen.insert(value.clone()) {
+            deduped.push(value);
+        }
+    }
+    deduped
+}
+
 fn version_command_at_path(path: &Path, name: &str) -> Command {
     let mut command = Command::new(path);
     if name == "go" {
@@ -8989,6 +9164,15 @@ pub(crate) fn version_matches(requirement: &str, actual: &str) -> bool {
         return true;
     }
 
+    if requirement.starts_with(['<', '>', '^', '~', '=']) || requirement.contains(',') {
+        if let (Some(req), Some(actual_version)) = (
+            parse_semver_requirement(requirement),
+            parse_semver_candidate(actual),
+        ) {
+            return req.matches(&actual_version);
+        }
+    }
+
     if let Some(maximum) = requirement.strip_prefix("<=") {
         return compare_version_tokens(actual, maximum.trim())
             .is_some_and(|ordering| ordering <= 0);
@@ -9069,6 +9253,17 @@ fn compare_parts(left: &[u64], right: &[u64]) -> i8 {
     }
 
     0
+}
+
+fn parse_semver_candidate(value: &str) -> Option<semver::Version> {
+    let mut parts = parse_version_parts(value)?;
+    if parts.len() > 3 {
+        parts.truncate(3);
+    }
+    while parts.len() < 3 {
+        parts.push(0);
+    }
+    Some(semver::Version::new(parts[0], parts[1], parts[2]))
 }
 
 fn parse_version_parts(input: &str) -> Option<Vec<u64>> {
@@ -15441,7 +15636,7 @@ tasks:
             .iter()
             .find(|finding| finding.summary == "Managed toolchain opportunity: python")
             .expect("toolchain opportunity finding should be present");
-        assert_eq!(finding.severity, FindingSeverity::Warn);
+        assert_eq!(finding.severity, FindingSeverity::Info);
         assert!(finding.why.contains("`runtimes.python` and `tools.uv`"));
         assert!(
             finding
@@ -15456,7 +15651,7 @@ tasks:
     #[test]
     fn doctor_json_includes_toolchain_opportunity_agent_metadata() {
         let finding = Finding {
-            severity: FindingSeverity::Warn,
+            severity: FindingSeverity::Info,
             summary: String::from("Managed toolchain opportunity: python"),
             why: String::from("fallback model"),
             next: String::from("keep runtimes.python and tools.uv for now"),
@@ -15793,6 +15988,144 @@ tasks:
                 .findings
                 .iter()
                 .all(|finding| finding.summary != "Missing runtime: definitely-not-installed")
+        );
+    }
+
+    #[test]
+    fn python_runtime_probe_accepts_versioned_python_aliases() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "python3.13", "#!/bin/sh\necho Python 3.13.2\n");
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", bin_dir.as_os_str().to_os_string());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: openhands
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        runtimes:
+          python: ">=3.12,<3.14"
+tasks:
+  build:
+    context: host
+    run: echo ready
+workflows:
+  default: app
+  app:
+    setup:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("app"),
+        );
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing runtime: python"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Version mismatch for runtime: python"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn python_runtime_probe_uses_requirement_range_candidates() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "python3.11", "#!/bin/sh\necho Python 3.11.9\n");
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", bin_dir.as_os_str().to_os_string());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: openhands
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        runtimes:
+          python: ">=3.11,<3.13"
+tasks:
+  build:
+    context: host
+    run: echo ready
+workflows:
+  default: app
+  app:
+    setup:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("app"),
+        );
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing runtime: python"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Version mismatch for runtime: python"),
+            "{report:?}"
         );
     }
 

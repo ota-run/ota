@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- fixed contract identity counts in preview and related output so scoped execution-context and
+  task requirements are counted honestly instead of reporting misleading zero-runtime/zero-tool
+  summaries when the selected workflow is actually blocked on scoped requirements
+- improved native/container/remote Python runtime probing to accept versioned aliases such as
+  `python3.12` and `python3.13` when they satisfy `runtimes.python`, preventing false
+  `Missing runtime: python` or mismatch findings on repos that already expose a compatible Python
+  interpreter through standard aliases
+- downgraded unsupported managed toolchain opportunity findings (for example Python ecosystem
+  opportunity notices) from warning to informational severity so correctly modeled repos remain
+  `READY` while still surfacing future provider-backed modeling opportunities
 - fixed selected workflow/task toolchain scoping so preview/doctor/up no longer fall back to every
   declared toolchain when the selected closure does not require one, preventing false runtime/tool
   blockers on unrelated workflows such as host-Docker setup paths

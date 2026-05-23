@@ -28612,6 +28612,20 @@ fn metadata_scalar_string(value: Option<&serde_yaml::Value>) -> Option<String> {
 }
 
 fn repo_contract_identity(contract: &Contract) -> ContractIdentity {
+    let mut runtime_names: BTreeSet<String> = contract.runtimes.keys().cloned().collect();
+    let mut tool_names: BTreeSet<String> = contract.tools.keys().cloned().collect();
+    if let Some(execution) = contract.execution.as_ref() {
+        for context in execution.contexts.values() {
+            runtime_names.extend(context.requirements.runtimes.keys().cloned());
+            tool_names.extend(context.requirements.tools.keys().cloned());
+        }
+    }
+    for task in contract.tasks.values() {
+        let scoped = task.scoped_requirement_surface();
+        runtime_names.extend(scoped.runtimes.keys().cloned());
+        tool_names.extend(scoped.tools.keys().cloned());
+    }
+
     let metadata = ContractIdentityMetadata {
         owner: metadata_scalar_string(contract.metadata.get("owner")),
         team: metadata_scalar_string(contract.metadata.get("team")),
@@ -28650,8 +28664,8 @@ fn repo_contract_identity(contract: &Contract) -> ContractIdentity {
         metadata,
         execution,
         counts: ContractIdentityCounts {
-            runtimes: contract.runtimes.len(),
-            tools: contract.tools.len(),
+            runtimes: runtime_names.len(),
+            tools: tool_names.len(),
             env: contract.env.len(),
             services: contract.services.len(),
             checks: contract.checks.len(),
