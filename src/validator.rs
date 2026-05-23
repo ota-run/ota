@@ -1633,6 +1633,7 @@ fn validate_tasks(
         if name.trim().is_empty() {
             errors.push(ValidationError::new("task name must not be empty"));
         }
+        validate_task_effects(name, task, errors);
 
         if let Some(context_name) = task.context.as_deref() {
             if context_name.trim().is_empty() {
@@ -7022,6 +7023,10 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
             errors.push(ValidationError::new(
                 "`agent.writable_paths` entries must not be empty",
             ));
+        } else if normalize_dependency_isolated_path(path).is_none() {
+            errors.push(ValidationError::new(
+                "`agent.writable_paths` entries must be normalized relative paths without `..` or an absolute prefix",
+            ));
         }
     }
 
@@ -7030,8 +7035,14 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
             errors.push(ValidationError::new(
                 "`agent.protected_paths` entries must not be empty",
             ));
+        } else if normalize_dependency_isolated_path(path).is_none() {
+            errors.push(ValidationError::new(
+                "`agent.protected_paths` entries must be normalized relative paths without `..` or an absolute prefix",
+            ));
         }
     }
+
+    validate_agent_safe_task_effects(contract, errors);
 
     if let Some(inferred_boundary) = agent.inferred_boundary.as_ref() {
         for value in &inferred_boundary.provenance.writable_paths {
@@ -7095,6 +7106,97 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
             }
         }
     }
+}
+
+fn validate_task_effects(task_name: &str, task: &TaskSpec, errors: &mut Vec<ValidationError>) {
+    let mut normalized_writes = BTreeSet::new();
+    for write_path in &task.effects.writes {
+        let trimmed = write_path.trim();
+        if trimmed.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `writes` entries must not be empty"
+            )));
+            continue;
+        }
+        let Some(normalized_path) = normalize_dependency_isolated_path(trimmed) else {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `writes` entry `{trimmed}` must be a normalized relative path without `..` or an absolute prefix"
+            )));
+            continue;
+        };
+        if !normalized_writes.insert(normalized_path.clone()) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `writes` must not contain duplicate normalized path `{normalized_path}`"
+            )));
+        }
+    }
+}
+
+fn validate_agent_safe_task_effects(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let Some(agent) = contract.agent.as_ref() else {
+        return;
+    };
+
+    let safe_task_names = contract
+        .tasks
+        .iter()
+        .filter_map(|(task_name, task)| task.safe_for_agent.then_some(task_name.clone()))
+        .chain(agent.safe_tasks.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    if safe_task_names.is_empty() {
+        return;
+    }
+
+    let writable_paths = normalized_agent_boundary_paths(&agent.writable_paths);
+    let protected_paths = normalized_agent_boundary_paths(&agent.protected_paths);
+
+    for task_name in safe_task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        let normalized_writes = task
+            .effects
+            .writes
+            .iter()
+            .filter_map(|path| normalize_dependency_isolated_path(path))
+            .collect::<Vec<_>>();
+        for write_path in normalized_writes {
+            for protected_path in &protected_paths {
+                if normalized_paths_overlap(write_path.as_str(), protected_path.as_str()) {
+                    errors.push(ValidationError::new(format!(
+                        "agent-safe task `{task_name}` declares effect `writes: [{write_path}]`, which overlaps protected path `{protected_path}`"
+                    )));
+                }
+            }
+            if !writable_paths.is_empty()
+                && !writable_paths.iter().any(|writable_path| {
+                    normalized_path_is_within(write_path.as_str(), writable_path.as_str())
+                })
+            {
+                errors.push(ValidationError::new(format!(
+                    "agent-safe task `{task_name}` declares effect `writes: [{write_path}]`, but it is outside the declared `agent.writable_paths` boundary"
+                )));
+            }
+        }
+    }
+}
+
+fn normalized_agent_boundary_paths(paths: &[String]) -> BTreeSet<String> {
+    paths
+        .iter()
+        .filter_map(|path| normalize_dependency_isolated_path(path))
+        .collect()
+}
+
+fn normalized_paths_overlap(left: &str, right: &str) -> bool {
+    normalized_path_is_within(left, right) || normalized_path_is_within(right, left)
+}
+
+fn normalized_path_is_within(candidate: &str, boundary: &str) -> bool {
+    candidate == boundary
+        || candidate
+            .strip_prefix(boundary)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn validate_task_reference(
@@ -17147,6 +17249,38 @@ toolchains:
     }
 
     #[test]
+    fn rejects_uv_toolchain_run_fulfillment_with_non_installable_version_range() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: ">=3.12,<3.14"
+    fulfillment: run
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("uv python run fulfillment must require an installable version ref")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `python` uses `provider: uv` with `fulfillment: run`, so `toolchains.python.version` must be an installable uv Python reference like `3.12`, `3.12.10`, or `3.13`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
     fn rejects_corepack_toolchain_rustup_specific_fields() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -17329,5 +17463,120 @@ toolchains:
         assert!(rendered.iter().any(|error| error.contains(
             "toolchain `rust` platform `linux` must not declare an empty `targets` entry"
         )));
+    }
+
+    #[test]
+    fn rejects_agent_safe_task_effect_writes_overlapping_protected_paths() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: ./scripts/setup.sh
+    safe_for_agent: true
+    effects:
+      writes:
+        - config.toml
+agent:
+  protected_paths:
+    - config.toml
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("safe task should not write protected path")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "agent-safe task `setup` declares effect `writes: [config.toml]`, which overlaps protected path `config.toml`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_agent_safe_task_effect_writes_outside_writable_boundary() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: npm run build
+    safe_for_agent: true
+    effects:
+      writes:
+        - dist/output
+agent:
+  writable_paths:
+    - src
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("safe task writes should stay inside writable paths")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "agent-safe task `build` declares effect `writes: [dist/output]`, but it is outside the declared `agent.writable_paths` boundary",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_non_normalized_agent_boundary_paths() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  writable_paths:
+    - ../tmp
+  protected_paths:
+    - /etc/passwd
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("agent boundary paths should be normalized")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "`agent.writable_paths` entries must be normalized relative paths without `..` or an absolute prefix",
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "`agent.protected_paths` entries must be normalized relative paths without `..` or an absolute prefix",
+            )),
+            "{rendered:?}"
+        );
     }
 }

@@ -1329,6 +1329,7 @@ pub enum ToolchainProvider {
     Rustup,
     Corepack,
     Sdkman,
+    Uv,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -2612,6 +2613,19 @@ fn shell_single_quote(input: &str) -> String {
     format!("'{escaped}'")
 }
 
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEffectsSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub writes: Vec<String>,
+}
+
+impl TaskEffectsSpec {
+    pub fn is_empty(&self) -> bool {
+        self.writes.is_empty()
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskSpec {
@@ -2637,6 +2651,8 @@ pub struct TaskSpec {
     pub launch: Option<TaskLaunchSpec>,
     #[serde(default)]
     pub action: Option<TaskActionSpec>,
+    #[serde(default, skip_serializing_if = "TaskEffectsSpec::is_empty")]
+    pub effects: TaskEffectsSpec,
     #[serde(default)]
     pub requirements: TaskRequirementsSpec,
     #[serde(default)]

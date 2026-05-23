@@ -1637,6 +1637,8 @@ provider, the finding may also include an additive `toolchain_opportunity` objec
 `ecosystem`, `fallback_runtime`, `fallback_tools`, `candidate_providers`, `shipped`, and
 `agent_note`. This object is meant for editors and agents; the human-facing terminal finding keeps
 the fallback guidance user-safe and does not have to expose provider-candidate wording directly.
+Current shipped providers cover Rust, Node, Java, and uv-backed Python, so this additive object is
+only expected when a future unsupported managed ecosystem is diagnosed.
 
 When the repo declares runtimes or tools and policy provides approved sources for them,
 `ota doctor --json` may also include a top-level `provisioning` object. That object is a read-only
@@ -2687,22 +2689,9 @@ When the repo clearly looks like a managed ecosystem that ota does not ship as a
 `ota init --json` also adds `toolchain_opportunities` as additive agent-facing guidance. Terminal
 text stays user-safe and only says to keep the current `runtimes` / `tools` fallback model for
 now; provider-candidate detail stays in JSON. When ota already ships the ecosystem owner, the
-starter `config` uses `toolchains.<name>` directly instead of adding a fallback opportunity.
-
-```json
-{
-  "toolchain_opportunities": [
-    {
-      "ecosystem": "python",
-      "fallback_runtime": "python",
-      "fallback_tools": ["uv"],
-      "candidate_providers": ["uv", "mise"],
-      "shipped": false,
-      "agent_note": "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary."
-    }
-  ]
-}
-```
+starter `config` uses `toolchains.<name>` directly instead of adding a fallback opportunity. For
+example, Python repos with `uv.lock` now converge directly on `toolchains.python` with
+`provider: uv`, so they no longer emit fallback Python opportunity guidance.
 
 `provenance` is the per-field source map for the starter contract:
 
@@ -3537,8 +3526,9 @@ shape used by `ota clean --json` instead of this success shape.
 - `comparison.*.provenance_key` is the stable machine label `repo_signals`
 - `comparison.changes[*].source` and `comparison.changes[*].confidence` copy the detector evidence for that proposed add or update so consumers do not need to join back to `inferred[*]`
 - `comparison` may include lower-confidence add candidates that remain preview-only
-- `toolchain_opportunities` appears when repo signals strongly suggest a managed ecosystem that ota
-  still models through lower-level `runtimes` / `tools` declarations
+- `toolchain_opportunities` appears only when repo signals strongly suggest a managed ecosystem
+  that ota still models through lower-level `runtimes` / `tools` declarations because no shipped
+  provider contract owns it yet
 
 ```json
 {
@@ -3581,16 +3571,6 @@ shape used by `ota clean --json` instead of this success shape.
       "value": "22",
       "source": ".nvmrc",
       "confidence": "high"
-    }
-  ],
-  "toolchain_opportunities": [
-    {
-      "ecosystem": "python",
-      "fallback_runtime": "python",
-      "fallback_tools": ["uv"],
-      "candidate_providers": ["uv", "mise"],
-      "shipped": false,
-      "agent_note": "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary."
     }
   ]
 }

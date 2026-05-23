@@ -9153,6 +9153,7 @@ fn build_assist_add_task_proposal(
         script: None,
         launch: None,
         action: None,
+        effects: crate::schema::TaskEffectsSpec::default(),
         requirements: crate::schema::TaskRequirementsSpec::default(),
         depends_on: Vec::new(),
         requires_services: Vec::new(),
@@ -42300,7 +42301,7 @@ env:
     }
 
     #[test]
-    fn detect_dry_run_json_includes_toolchain_opportunity_metadata() {
+    fn detect_dry_run_json_prefers_python_toolchain_contract_when_provider_is_shipped() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
             repo.path().join("pyproject.toml"),
@@ -42328,22 +42329,18 @@ env:
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("parse detect json");
         assert_eq!(
-            json["toolchain_opportunities"][0]["ecosystem"],
-            serde_json::Value::String(String::from("python"))
-        );
-        assert_eq!(
-            json["toolchain_opportunities"][0]["candidate_providers"][0],
+            json["config"]["toolchains"]["python"]["provider"],
             serde_json::Value::String(String::from("uv"))
         );
         assert_eq!(
-            json["toolchain_opportunities"][0]["candidate_providers"][1],
-            serde_json::Value::String(String::from("mise"))
+            json["config"]["toolchains"]["python"]["version"],
+            serde_json::Value::String(String::from("3.12"))
         );
+        assert!(json["config"]["runtimes"]["python"].is_null(), "{json}");
+        assert!(json["config"]["tools"]["uv"].is_null(), "{json}");
         assert!(
-            json["toolchain_opportunities"][0]["agent_note"]
-                .as_str()
-                .expect("agent note")
-                .contains("toolchains.python")
+            json["toolchain_opportunities"].as_array().is_none(),
+            "{json}"
         );
     }
 
@@ -42392,7 +42389,7 @@ env:
     }
 
     #[test]
-    fn init_preview_text_surfaces_user_safe_toolchain_opportunity_guidance() {
+    fn init_preview_text_prefers_python_toolchain_contract_when_provider_is_shipped() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
             repo.path().join("pyproject.toml"),
@@ -42414,17 +42411,13 @@ env:
 
         assert_eq!(output.exit_code, 0, "{}", output.stdout);
         let stdout = super::strip_ansi_codes(&output.stdout);
-        assert!(stdout.contains("Toolchain Opportunities"), "{stdout}");
-        assert!(stdout.contains("Ecosystem: python"), "{stdout}");
-        assert!(
-            stdout.contains("keep `runtimes.python` and `tools.uv` for now"),
-            "{stdout}"
-        );
-        assert!(!stdout.contains("mise"), "{stdout}");
+        assert!(stdout.contains("provider: uv"), "{stdout}");
+        assert!(stdout.contains("toolchains:"), "{stdout}");
+        assert!(!stdout.contains("Toolchain Opportunities"), "{stdout}");
     }
 
     #[test]
-    fn init_preview_json_includes_toolchain_opportunity_agent_note() {
+    fn init_preview_json_prefers_python_toolchain_contract_when_provider_is_shipped() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
             repo.path().join("pyproject.toml"),
@@ -42447,13 +42440,9 @@ env:
         assert_eq!(output.exit_code, 0, "{}", output.stdout);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("parse init json");
-        assert_eq!(json["toolchain_opportunities"][0]["ecosystem"], "python");
-        assert!(
-            json["toolchain_opportunities"][0]["agent_note"]
-                .as_str()
-                .expect("agent note")
-                .contains("toolchains.python")
-        );
+        assert_eq!(json["config"]["toolchains"]["python"]["provider"], "uv");
+        assert_eq!(json["config"]["toolchains"]["python"]["version"], "3.12");
+        assert!(json["toolchain_opportunities"].is_null(), "{json}");
     }
 
     #[test]

@@ -3155,6 +3155,20 @@ fn diagnose_contract_with_scope(
         diagnose_agent_boundary_review(contract, &mut findings);
         diagnose_contract_advisories(contract, &mut findings, overrides);
     }
+    if scope == DoctorScope::All
+        && findings
+            .iter()
+            .any(|finding| finding.severity == FindingSeverity::Error)
+    {
+        findings.sort_by_key(|finding| finding.severity);
+        return DoctorReport {
+            ok: false,
+            provisioning,
+            adapter_bootstrap,
+            execution_target,
+            findings,
+        };
+    }
     if matches!(scope, DoctorScope::All | DoctorScope::ServicesOnly) {
         diagnose_services(
             contract,
@@ -15781,7 +15795,7 @@ policies:
     }
 
     #[test]
-    fn reports_python_managed_toolchain_opportunity_without_provider_advice_in_text() {
+    fn does_not_report_python_managed_toolchain_opportunity_when_uv_provider_is_shipped() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         fs::write(
@@ -15790,10 +15804,10 @@ policies:
 version: 1
 project:
   name: ota
-runtimes:
-  python: "3.12"
-tools:
-  uv: "*"
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
 tasks:
   test:
     run: uv run pytest
@@ -15814,55 +15828,25 @@ tasks:
         .unwrap();
 
         let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
-        let finding = report
-            .findings
-            .iter()
-            .find(|finding| finding.summary == "Managed toolchain opportunity: python")
-            .expect("toolchain opportunity finding should be present");
-        assert_eq!(finding.severity, FindingSeverity::Info);
-        assert!(finding.why.contains("`runtimes.python` and `tools.uv`"));
         assert!(
-            finding
-                .why
-                .contains("repo signals: `uv.lock`, `pyproject.toml`")
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Managed toolchain opportunity: python")
         );
-        assert!(!finding.next.contains("mise"));
-        assert_eq!(finding.provenance().as_deref(), Some("repo signals"));
-        assert_eq!(finding.provenance_key().as_deref(), Some("repo_signals"));
     }
 
     #[test]
-    fn doctor_json_includes_toolchain_opportunity_agent_metadata() {
+    fn doctor_json_omits_toolchain_opportunity_agent_metadata_when_none_are_shipped() {
         let finding = Finding {
             severity: FindingSeverity::Info,
-            summary: String::from("Managed toolchain opportunity: python"),
-            why: String::from("fallback model"),
-            next: String::from("keep runtimes.python and tools.uv for now"),
+            summary: String::from("Repository Ready"),
+            why: String::from("all selected-path preconditions are satisfied"),
+            next: String::from("run ota up when you want ota to prepare the repo path"),
         };
 
         let json = serde_json::to_value(&finding).expect("finding should serialize");
-        assert_eq!(
-            json["code"],
-            serde_json::Value::String(String::from("OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"))
-        );
-        assert_eq!(json["provenance_key"], "repo_signals");
-        assert_eq!(json["toolchain_opportunity"]["ecosystem"], "python");
-        assert_eq!(json["toolchain_opportunity"]["fallback_runtime"], "python");
-        assert_eq!(
-            json["toolchain_opportunity"]["candidate_providers"][0],
-            "uv"
-        );
-        assert_eq!(
-            json["toolchain_opportunity"]["candidate_providers"][1],
-            "mise"
-        );
-        assert_eq!(json["toolchain_opportunity"]["shipped"], false);
-        assert!(
-            json["toolchain_opportunity"]["agent_note"]
-                .as_str()
-                .expect("agent note")
-                .contains("toolchains.python")
-        );
+        assert!(json.get("toolchain_opportunity").is_none(), "{json}");
     }
 
     #[test]
@@ -16532,5 +16516,63 @@ tasks:
         assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
         assert_eq!(report.findings[0].summary, "Check timed out: slow-check");
         assert!(report.findings[0].why.contains("50ms"));
+    }
+
+    #[test]
+    fn doctor_short_circuits_surface_diagnosis_when_preconditions_are_blocked() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  definitely-not-installed:
+    version: "*"
+surfaces:
+  backend:
+    kind: http
+    port: 6551
+    readiness:
+      kind: http
+      path: /healthz
+tasks:
+  dev:
+    run: npm run dev
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_contract_with_mode_and_lifecycle_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            None,
+            Some("app"),
+        );
+
+        assert!(!report.ok, "{report:?}");
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing runtime: definitely-not-installed")
+        );
+        assert!(report.findings.iter().all(|finding| {
+            finding.summary != "Surface readiness failed: backend"
+                && finding.summary != "Surface readiness timed out: backend"
+        }));
     }
 }

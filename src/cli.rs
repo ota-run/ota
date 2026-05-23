@@ -20930,16 +20930,16 @@ tasks:
     }
 
     #[test]
-    fn doctor_json_reports_stable_toolchain_opportunity_object_shape() {
+    fn doctor_json_reports_python_uv_toolchain_without_opportunity_metadata() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
 project:
-  name: python-managed-fallback
-runtimes:
-  python: "3.12"
-tools:
-  uv: "*"
+  name: python-managed
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
 tasks:
   test:
     run: uv run pytest
@@ -20953,24 +20953,12 @@ tasks:
 
         let output = run_with(["ota", "doctor", "--json", fixture.path()]);
         let json: Value = serde_json::from_str(&output.stdout).expect("valid doctor json");
-        let finding = json["findings"]
-            .as_array()
-            .expect("findings array")
-            .iter()
-            .find(|finding| finding["code"] == "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED")
-            .expect("toolchain opportunity finding should be present");
-
-        assert_eq!(finding["provenance_key"], "repo_signals");
-        assert_eq!(
-            finding["toolchain_opportunity"],
-            json!({
-                "ecosystem": "python",
-                "fallback_runtime": "python",
-                "fallback_tools": ["uv"],
-                "candidate_providers": ["uv", "mise"],
-                "shipped": false,
-                "agent_note": "This repo is a strong candidate for future `toolchains.python` support once Ota ships a Python provider boundary."
-            })
+        assert!(
+            json["findings"]
+                .as_array()
+                .expect("findings array")
+                .iter()
+                .all(|finding| finding.get("toolchain_opportunity").is_none())
         );
     }
 
