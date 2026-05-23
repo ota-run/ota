@@ -889,6 +889,7 @@ fn starter_agent_config_from_parts(
         safe_tasks,
         verify_after_changes,
         writable_paths: boundary.writable_paths,
+        acknowledged_sensitive_writable_paths: Vec::new(),
         protected_paths: boundary.protected_paths,
         inferred_boundary: Some(AgentInferredBoundaryConfig {
             reviewed: false,

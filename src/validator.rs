@@ -4506,6 +4506,7 @@ pub enum ContractAdvisory {
     DependsOnBoundary(DependsOnBoundaryAdvisory),
     LikelyUnusedAttachment(AttachmentUseAdvisory),
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
+    SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4530,6 +4531,13 @@ pub struct ManagedIsolatedPathMutationAdvisory {
     pub task_name: String,
     pub context_name: String,
     pub isolated_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SensitiveAgentWritablePathAdvisory {
+    pub path: String,
+    pub category: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4558,6 +4566,10 @@ impl ContractAdvisory {
                 "task `{}` mutates managed isolated path `{}`",
                 advisory.task_name, advisory.isolated_path
             ),
+            ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
+                "`agent.writable_paths` includes sensitive {} `{}`",
+                advisory.category, advisory.path
+            ),
         }
     }
 
@@ -4578,6 +4590,7 @@ impl ContractAdvisory {
                 "task `{}` appears to mutate `{}`, which is declared under `execution.contexts.{}.attachments.isolated_paths`",
                 advisory.task_name, advisory.isolated_path, advisory.context_name
             ),
+            ContractAdvisory::SensitiveAgentWritablePath(advisory) => advisory.reason.clone(),
         }
     }
 
@@ -4587,7 +4600,8 @@ impl ContractAdvisory {
                 "only durable external side effects carry across",
             )),
             ContractAdvisory::LikelyUnusedAttachment(_)
-            | ContractAdvisory::MutatesManagedIsolatedPath(_) => None,
+            | ContractAdvisory::MutatesManagedIsolatedPath(_)
+            | ContractAdvisory::SensitiveAgentWritablePath(_) => None,
         }
     }
 
@@ -4597,7 +4611,8 @@ impl ContractAdvisory {
                 describe_boundary_differences(&advisory.parent, &advisory.dependency).join(", "),
             ),
             ContractAdvisory::LikelyUnusedAttachment(_)
-            | ContractAdvisory::MutatesManagedIsolatedPath(_) => None,
+            | ContractAdvisory::MutatesManagedIsolatedPath(_)
+            | ContractAdvisory::SensitiveAgentWritablePath(_) => None,
         }
     }
 
@@ -4608,7 +4623,8 @@ impl ContractAdvisory {
                 "point {} at `{}`",
                 advisory.tool, advisory.effective_path
             )),
-            ContractAdvisory::MutatesManagedIsolatedPath(_) => None,
+            ContractAdvisory::MutatesManagedIsolatedPath(_)
+            | ContractAdvisory::SensitiveAgentWritablePath(_) => None,
         }
     }
 
@@ -4629,6 +4645,10 @@ impl ContractAdvisory {
                 "remove manual cleanup of `{}` from task `{}` and let the tool manage that isolated attachment inside context `{}`",
                 advisory.isolated_path, advisory.task_name, advisory.context_name
             ),
+            ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
+                "move `{}` from `agent.writable_paths` to `agent.protected_paths` unless this readiness slice explicitly authorizes {} edits",
+                advisory.path, advisory.category
+            ),
         }
     }
 }
@@ -4638,6 +4658,7 @@ pub fn collect_contract_advisories(contract: &Contract) -> Vec<ContractAdvisory>
     advisories.extend(collect_depends_on_boundary_advisories(contract));
     advisories.extend(collect_attachment_use_advisories(contract));
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
+    advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
     advisories
 }
 
@@ -4918,6 +4939,128 @@ fn collect_managed_isolated_path_mutation_advisories(contract: &Contract) -> Vec
     }
 
     advisories
+}
+
+fn collect_sensitive_agent_writable_path_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let Some(agent) = contract.agent.as_ref() else {
+        return Vec::new();
+    };
+
+    let acknowledged =
+        normalized_agent_boundary_paths(&agent.acknowledged_sensitive_writable_paths);
+    let mut advisories = Vec::new();
+    let mut seen = BTreeSet::new();
+    for path in &agent.writable_paths {
+        let Some(boundary) = normalize_dependency_isolated_path(path) else {
+            continue;
+        };
+        for match_ in classify_sensitive_agent_writable_path(boundary.as_str()) {
+            if acknowledged.iter().any(|acknowledged_path| {
+                normalized_path_is_within(boundary.as_str(), acknowledged_path)
+                    || normalized_path_is_within(acknowledged_path, boundary.as_str())
+            }) {
+                continue;
+            }
+            if !seen.insert((boundary.clone(), match_.category)) {
+                continue;
+            }
+            advisories.push(ContractAdvisory::SensitiveAgentWritablePath(
+                SensitiveAgentWritablePathAdvisory {
+                    path: boundary.clone(),
+                    category: match_.category.to_string(),
+                    reason: match_.reason.to_string(),
+                },
+            ));
+        }
+    }
+
+    advisories
+}
+
+#[derive(Clone, Copy)]
+struct SensitiveWritablePathMatch {
+    category: &'static str,
+    reason: &'static str,
+}
+
+fn classify_sensitive_agent_writable_path(path: &str) -> Vec<SensitiveWritablePathMatch> {
+    let mut matches = Vec::new();
+    let mut seen_categories = BTreeSet::new();
+
+    let lower = path.to_ascii_lowercase();
+    let basename = lower.rsplit('/').next().unwrap_or(lower.as_str());
+
+    let repo_contract_reason = "repo readiness contracts define the execution boundary itself; letting ordinary agent edits mutate them broadens the slice from code changes into contract-authoring changes";
+    if matches!(path, "ota.yaml" | "ota.workspace.yaml") && seen_categories.insert("repo-contract")
+    {
+        matches.push(SensitiveWritablePathMatch {
+            category: "repo-contract",
+            reason: repo_contract_reason,
+        });
+    }
+
+    let ci_reason = "CI workflow files change verification and release behavior; they should stay protected unless the contract explicitly authorizes CI authoring";
+    if (lower.starts_with(".github/workflows")
+        || normalized_path_is_within(".github/workflows/ci.yml", path))
+        && seen_categories.insert("ci-topology")
+    {
+        matches.push(SensitiveWritablePathMatch {
+            category: "ci-topology",
+            reason: ci_reason,
+        });
+    }
+
+    let env_reason = "environment and runtime config files often carry local secrets or operational state; readiness slices should usually treat them as protected";
+    if (basename.starts_with(".env")
+        || matches!(basename, "config.toml" | "config.yaml" | "config.yml"))
+        && seen_categories.insert("env-config")
+    {
+        matches.push(SensitiveWritablePathMatch {
+            category: "env-config",
+            reason: env_reason,
+        });
+    }
+
+    let lockfile_reason = "lockfiles pin dependency resolution and should usually stay protected in readiness slices unless dependency update work is explicitly in scope";
+    if (matches!(
+        basename,
+        "pnpm-lock.yaml"
+            | "package-lock.json"
+            | "bun.lock"
+            | "bun.lockb"
+            | "poetry.lock"
+            | "uv.lock"
+            | "cargo.lock"
+            | "gemfile.lock"
+            | "composer.lock"
+    ) || basename.ends_with(".lock"))
+        && seen_categories.insert("lockfile")
+    {
+        matches.push(SensitiveWritablePathMatch {
+            category: "lockfile",
+            reason: lockfile_reason,
+        });
+    }
+
+    let runtime_reason = "runtime topology files change container, workspace, or build shape; readiness slices should keep them protected unless topology authoring is explicitly intended";
+    if (matches!(
+        basename,
+        "docker-compose.yml"
+            | "docker-compose.yaml"
+            | "compose.yml"
+            | "compose.yaml"
+            | "pnpm-workspace.yaml"
+    ) || basename.ends_with("dockerfile")
+        || basename.ends_with(".dockerfile"))
+        && seen_categories.insert("runtime-topology")
+    {
+        matches.push(SensitiveWritablePathMatch {
+            category: "runtime-topology",
+            reason: runtime_reason,
+        });
+    }
+
+    matches
 }
 
 fn collect_task_body_managed_path_advisories(
@@ -7030,6 +7173,18 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
         }
     }
 
+    for path in &agent.acknowledged_sensitive_writable_paths {
+        if path.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`agent.acknowledged_sensitive_writable_paths` entries must not be empty",
+            ));
+        } else if normalize_dependency_isolated_path(path).is_none() {
+            errors.push(ValidationError::new(
+                "`agent.acknowledged_sensitive_writable_paths` entries must be normalized relative paths without `..` or an absolute prefix",
+            ));
+        }
+    }
+
     for path in &agent.protected_paths {
         if path.trim().is_empty() {
             errors.push(ValidationError::new(
@@ -7039,6 +7194,30 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
             errors.push(ValidationError::new(
                 "`agent.protected_paths` entries must be normalized relative paths without `..` or an absolute prefix",
             ));
+        }
+    }
+
+    let writable_paths = normalized_agent_boundary_paths(&agent.writable_paths);
+    let acknowledged_sensitive_writable_paths =
+        normalized_agent_boundary_paths(&agent.acknowledged_sensitive_writable_paths);
+    let protected_paths = normalized_agent_boundary_paths(&agent.protected_paths);
+    for path in &acknowledged_sensitive_writable_paths {
+        if !writable_paths.iter().any(|writable_path| {
+            normalized_path_is_within(path, writable_path)
+                || normalized_path_is_within(writable_path, path)
+        }) {
+            errors.push(ValidationError::new(format!(
+                "`agent.acknowledged_sensitive_writable_paths` entry `{path}` must overlap a declared `agent.writable_paths` boundary"
+            )));
+        }
+    }
+    for writable_path in &writable_paths {
+        for protected_path in &protected_paths {
+            if writable_path == protected_path {
+                errors.push(ValidationError::new(format!(
+                    "`agent.writable_paths` entry `{writable_path}` duplicates protected path `{protected_path}`"
+                )));
+            }
         }
     }
 
@@ -17575,6 +17754,212 @@ agent:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "`agent.protected_paths` entries must be normalized relative paths without `..` or an absolute prefix",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_agent_writable_and_protected_paths() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  writable_paths:
+    - config/runtime.toml
+  protected_paths:
+    - config/runtime.toml
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate boundaries should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "`agent.writable_paths` entry `config/runtime.toml` duplicates protected path `config/runtime.toml`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn collects_sensitive_agent_writable_path_advisories() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  writable_paths:
+    - docker-compose.yml
+    - ota.yaml
+    - pnpm-lock.yaml
+    - frontend/package-lock.json
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == "docker-compose.yml" && value.category == "runtime-topology"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == "ota.yaml" && value.category == "repo-contract"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == "pnpm-lock.yaml" && value.category == "lockfile"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == "frontend/package-lock.json" && value.category == "lockfile"
+        )));
+    }
+
+    #[test]
+    fn collects_sensitive_agent_writable_path_advisories_for_broad_boundaries() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  writable_paths:
+    - .github
+    - infra
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == ".github" && value.category == "ci-topology"
+        )));
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == "infra"
+        )));
+    }
+
+    #[test]
+    fn skips_sensitive_writable_path_advisory_when_path_is_acknowledged() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  writable_paths:
+    - ota.yaml
+  acknowledged_sensitive_writable_paths:
+    - ota.yaml
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == "ota.yaml"
+        )));
+    }
+
+    #[test]
+    fn skips_sensitive_writable_path_advisory_when_broad_boundary_is_acknowledged() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  writable_paths:
+    - .github
+  acknowledged_sensitive_writable_paths:
+    - .github/workflows
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::SensitiveAgentWritablePath(value)
+                if value.path == ".github"
+        )));
+    }
+
+    #[test]
+    fn rejects_acknowledged_sensitive_writable_path_outside_writable_paths() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  writable_paths:
+    - src
+  acknowledged_sensitive_writable_paths:
+    - ota.yaml
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("acknowledgment should reference a writable path")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "`agent.acknowledged_sensitive_writable_paths` entry `ota.yaml` must overlap a declared `agent.writable_paths` boundary",
             )),
             "{rendered:?}"
         );
