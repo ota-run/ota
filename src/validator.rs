@@ -172,7 +172,7 @@ fn validate_ota_minimum_version(contract: &Contract, errors: &mut Vec<Validation
     if current < minimum {
         errors.push(ValidationError::new(format_minimum_version_error(
             &minimum.to_string(),
-            &current.to_string(),
+            &current,
             &unsupported_declared_contract_capabilities_in_contract(contract, &current),
         )));
     }

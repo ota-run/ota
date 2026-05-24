@@ -270,7 +270,7 @@ fn enforce_contract_minimum_ota_version(
         path: compact_display_path(path),
         message: format_minimum_version_error(
             &minimum.to_string(),
-            &current.to_string(),
+            &current,
             &unsupported_declared_contract_capabilities(document, &current),
         ),
     })
@@ -449,7 +449,7 @@ fn parse_contract_hint(
         if current < minimum {
             return Some(format_minimum_version_upgrade_hint(
                 minimum_ota_version,
-                &current.to_string(),
+                &current,
                 &unsupported_declared_contract_capabilities(document, &current),
             ));
         }
@@ -459,7 +459,7 @@ fn parse_contract_hint(
     Some(if current < minimum {
         format_minimum_version_upgrade_hint(
             minimum_ota_version,
-            &current.to_string(),
+            &current,
             &unsupported_declared_contract_capabilities(document, &current),
         )
     } else {
@@ -870,8 +870,15 @@ agent:
 
         let error = load_contract_for_member(&fixture.path().join("ota.yaml"), "api").unwrap_err();
         let message = error.to_string();
-        assert!(message.contains("minimum_version: 99.0.0"), "{message}");
-        assert!(message.contains("use Ota >= `99.0.0`"), "{message}");
+        assert!(
+            message.contains("`metadata.ota.minimum_version`"),
+            "{message}"
+        );
+        assert!(
+            message.contains("contract minimum is Ota >= `99.0.0`"),
+            "{message}"
+        );
+        assert!(message.contains("ota --version --json"), "{message}");
     }
 
     #[test]
@@ -879,16 +886,20 @@ agent:
         let error = LoadContractError::MinimumOtaVersionUnsupported {
             path: String::from("./ota.yaml"),
             message: String::from(
-                "requires Ota >= `1.6.15` via `metadata.ota.minimum_version`, but this binary is `1.6.14`\nHint: detected unsupported contract capability: `agent.exceptions.sensitive_writes` (introduced in Ota 1.6.15)",
+                "Unsupported contract feature: `agent.exceptions.sensitive_writes` (introduced in Ota 1.6.15)\nContract minimum: Ota >= `1.6.15` via `metadata.ota.minimum_version`\nCurrent binary: `Ota 1.6.14 (release build)`\nNext: install Ota >= `1.6.15` and rerun `ota --version --json` to confirm capability support",
             ),
         };
 
         let message = error.to_string();
-        assert!(message.contains("requires Ota >= `1.6.15`"), "{message}");
+        assert!(
+            message.contains("Contract minimum: Ota >= `1.6.15`"),
+            "{message}"
+        );
         assert!(
             message.contains("agent.exceptions.sensitive_writes"),
             "{message}"
         );
+        assert!(message.contains("ota --version --json"), "{message}");
     }
 
     #[test]

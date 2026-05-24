@@ -17531,7 +17531,9 @@ metadata:
             combined.contains("metadata.ota.minimum_version"),
             "{combined}"
         );
-        assert!(combined.contains("requires Ota >="), "{combined}");
+        assert!(combined.contains("Contract minimum: Ota >="), "{combined}");
+        assert!(combined.contains("Current binary: `Ota "), "{combined}");
+        assert!(combined.contains("ota --version --json"), "{combined}");
     }
 
     #[test]
@@ -17561,10 +17563,10 @@ metadata:
             strip_ansi(&output.stdout),
             strip_ansi(output.stderr.as_deref().unwrap_or_default())
         );
-        assert!(combined.contains("requires Ota >="), "{combined}");
+        assert!(combined.contains("Contract minimum: Ota >="), "{combined}");
         assert!(combined.contains("`99.0.0`"), "{combined}");
         assert!(
-            !combined.contains("unsupported contract capability"),
+            !combined.contains("Unsupported contract feature"),
             "{combined}"
         );
     }
@@ -17589,7 +17591,11 @@ metadata:
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("minimum_version: 99.0.0"), "{stderr}");
-        assert!(stderr.contains("use Ota >= `99.0.0`"), "{stderr}");
+        assert!(
+            stderr.contains("contract minimum is Ota >= `99.0.0`"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("current binary is `Ota "), "{stderr}");
     }
 
     #[test]
@@ -17608,7 +17614,11 @@ metadata:
         let output = run_with(["ota", "doctor", fixture.path()]);
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("requires Ota >= `99.0.0`"), "{stderr}");
+        assert!(
+            stderr.contains("Contract minimum: Ota >= `99.0.0`"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("ota --version --json"), "{stderr}");
     }
 
     #[test]

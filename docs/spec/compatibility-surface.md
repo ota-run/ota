@@ -129,3 +129,6 @@ If a change modifies any compatibility-locked dimension:
   contract generation stays compatible.
 - capability entries should exist for features that materially affect whether one ota binary can
   parse, validate, or honestly interpret a contract written for another binary.
+- minimum-version compatibility errors should stay feature-first when ota can identify the newer
+  contract surface, and should always report the contract minimum, current binary identity, and a
+  concrete install/rebuild next step.

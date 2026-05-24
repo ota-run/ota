@@ -1222,6 +1222,9 @@ ota doctor --member api --member web --json [PATH]
   `source_build`, `commit`, `dirty`) plus `schema_version` and additive
   `contract_capabilities[]` entries (`id`, `introduced_in`) for CI and contract-compatibility
   provenance checks
+- when `metadata.ota.minimum_version` rejects a contract, ota now reports the contract minimum,
+  current binary identity, detected unsupported contract feature when one is known, and the next
+  install/rebuild step instead of only saying the binary is too old
 - validates the contract first when one is present
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
 - when `--member` is set, diagnoses the merged member contract
