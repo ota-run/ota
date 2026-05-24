@@ -3164,7 +3164,8 @@ fn diagnose_contract_with_scope(
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
         diagnose_agent_boundary_review(contract, &mut findings);
-        diagnose_contract_advisories(contract, &mut findings, overrides);
+        diagnose_contract_advisories(contract, &mut findings, overrides, workflow_name);
+        diagnose_selected_task_effects(contract, workflow_name, &mut findings);
     }
     if scope == DoctorScope::All
         && findings
@@ -3243,7 +3244,12 @@ fn diagnose_contract_advisories(
     contract: &Contract,
     findings: &mut Vec<Finding>,
     overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
 ) {
+    let selected_task_names = contract
+        .selected_workflow_task_closure_names(workflow_name)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     for advisory in collect_contract_advisories(contract) {
         let advisory = match advisory {
             ContractAdvisory::DependsOnBoundary(advisory) => {
@@ -3263,6 +3269,22 @@ fn diagnose_contract_advisories(
             }
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 ContractAdvisory::SensitiveAgentWritablePath(advisory)
+            }
+            ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
+                if !selected_task_names.is_empty()
+                    && !selected_task_names.contains(advisory.task_name.as_str())
+                {
+                    continue;
+                }
+                ContractAdvisory::AgentSafeTaskNetwork(advisory)
+            }
+            ContractAdvisory::AgentSafeTaskExternalState(advisory) => {
+                if !selected_task_names.is_empty()
+                    && !selected_task_names.contains(advisory.task_name.as_str())
+                {
+                    continue;
+                }
+                ContractAdvisory::AgentSafeTaskExternalState(advisory)
             }
         };
 
@@ -3303,6 +3325,88 @@ fn diagnose_contract_advisories(
                 why: ContractAdvisory::SensitiveAgentWritablePath(advisory.clone()).why(),
                 next: ContractAdvisory::SensitiveAgentWritablePath(advisory).next(),
             },
+            ContractAdvisory::AgentSafeTaskNetwork(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "Agent-safe task `{}` requires network access",
+                    advisory.task_name
+                ),
+                why: ContractAdvisory::AgentSafeTaskNetwork(advisory.clone()).why(),
+                next: ContractAdvisory::AgentSafeTaskNetwork(advisory).next(),
+            },
+            ContractAdvisory::AgentSafeTaskExternalState(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "Agent-safe task `{}` mutates external state: {}",
+                    advisory.task_name,
+                    advisory.systems.join(", ")
+                ),
+                why: ContractAdvisory::AgentSafeTaskExternalState(advisory.clone()).why(),
+                next: ContractAdvisory::AgentSafeTaskExternalState(advisory).next(),
+            },
+        });
+    }
+}
+
+fn diagnose_selected_task_effects(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    findings: &mut Vec<Finding>,
+) {
+    let selected_task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if selected_task_names.is_empty() {
+        return;
+    }
+
+    let mut network_tasks = Vec::new();
+    let mut external_state_tasks = Vec::new();
+    let mut external_state_systems = BTreeSet::new();
+
+    for task_name in selected_task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        if task.effects.network {
+            network_tasks.push(task_name.clone());
+        }
+        if !task.effects.external_state.is_empty() {
+            external_state_tasks.push(task_name.clone());
+            for system in &task.effects.external_state {
+                external_state_systems.insert(system.clone());
+            }
+        }
+    }
+
+    if !network_tasks.is_empty() {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: format!(
+                "Selected task path requires network access: {}",
+                network_tasks.join(", ")
+            ),
+            why: String::from(
+                "the selected task path includes tasks with `effects.network: true`, so readiness may still depend on registry, API, or remote service reachability even when repo write boundaries are otherwise narrow",
+            ),
+            next: String::from(
+                "treat the selected path as network-dependent in CI and agent execution, and keep `effects.network: true` explicit on those tasks",
+            ),
+        });
+    }
+
+    if !external_state_tasks.is_empty() {
+        findings.push(Finding {
+            severity: FindingSeverity::Warn,
+            summary: format!(
+                "Selected task path mutates external state: {}",
+                external_state_systems.into_iter().collect::<Vec<_>>().join(", ")
+            ),
+            why: format!(
+                "the selected task path includes `{}`, which declares `effects.external_state`; repo write boundaries do not cover that out-of-repo mutation",
+                external_state_tasks.join(", ")
+            ),
+            next: String::from(
+                "run the selected path only when those external systems are meant to change, and keep `effects.external_state` explicit on the mutating tasks",
+            ),
         });
     }
 }
@@ -9985,6 +10089,7 @@ tasks:
             &contract,
             &mut findings,
             crate::runner::ExecutionOverrides::default(),
+            None,
         );
 
         assert!(findings.iter().any(|finding| {
@@ -10089,6 +10194,7 @@ tasks:
             &contract,
             &mut findings,
             crate::runner::ExecutionOverrides::default(),
+            None,
         );
 
         assert!(findings.iter().any(|finding| {
@@ -10129,6 +10235,7 @@ tasks:
             &contract,
             &mut findings,
             crate::runner::ExecutionOverrides::default(),
+            None,
         );
 
         assert!(findings.iter().any(|finding| {
@@ -10138,6 +10245,130 @@ tasks:
                     .why
                     .contains("execution.contexts.verify:ctx.attachments.isolated_paths")
                 && finding.provenance().as_deref() == Some("repo contract")
+        }));
+    }
+
+    #[test]
+    fn doctor_warns_when_agent_safe_task_declares_network_and_external_state() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    safe_for_agent: true
+    effects:
+      network: true
+      external_state:
+        - docker
+"#,
+        )
+        .unwrap();
+
+        let mut findings = Vec::new();
+        super::diagnose_contract_advisories(
+            &contract,
+            &mut findings,
+            crate::runner::ExecutionOverrides::default(),
+            None,
+        );
+
+        assert!(findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Warn
+                && finding.summary == "Agent-safe task `setup` requires network access"
+        }));
+        assert!(findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Warn
+                && finding.summary == "Agent-safe task `setup` mutates external state: docker"
+        }));
+    }
+
+    #[test]
+    fn doctor_scopes_agent_safe_task_effect_advisories_to_selected_workflow() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    safe_for_agent: true
+    effects:
+      network: true
+  publish:
+    run: docker compose up -d
+    safe_for_agent: true
+    effects:
+      external_state:
+        - docker
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            None,
+            Some("app"),
+            crate::runner::ExecutionOverrides::default(),
+        );
+
+        assert!(report.findings.iter().any(|finding| {
+            finding.summary == "Agent-safe task `setup` requires network access"
+        }));
+        assert!(!report.findings.iter().any(|finding| {
+            finding.summary == "Agent-safe task `publish` mutates external state: docker"
+        }));
+    }
+
+    #[test]
+    fn doctor_surfaces_selected_task_path_effects() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    effects:
+      network: true
+  services:up:
+    run: docker compose up -d postgres
+    effects:
+      external_state:
+        - docker
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    run:
+      task: services:up
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(report.findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Info
+                && finding.summary == "Selected task path requires network access: setup"
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Warn
+                && finding.summary == "Selected task path mutates external state: docker"
         }));
     }
 

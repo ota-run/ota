@@ -2443,6 +2443,8 @@ Agent semantics:
 - task `effects.writes` makes the expected durable writes explicit so agent-safe task claims can be checked structurally
 - task `effects.network` makes connectivity dependence explicit for agent-safe and CI-visible task review
 - task `effects.external_state` marks out-of-repo mutation such as Docker, database, or hosted-service state
+- agent-safe tasks with `effects.network` or `effects.external_state` surface contract advisories so
+  unattended execution risk stays explicit during validate and doctor flows
 - `verify_after_changes` are the tasks an AI agent should rerun after modifying files
 - `writable_paths` are the paths an AI agent may edit
 - `exceptions.sensitive_writes` records narrow intentional exceptions for sensitive writable paths
