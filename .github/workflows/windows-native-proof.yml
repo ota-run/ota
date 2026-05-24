@@ -78,7 +78,9 @@ jobs:
               platforms:
                 windows:
                   check: msvc-shell-check
-                  visual_studio_build_tools: true
+                  visual_studio:
+                    components:
+                      - Microsoft.VisualStudio.Component.VC.Tools.x86.x64
                   activation:
                     kind: visual_studio_dev_shell
                     arch: x64

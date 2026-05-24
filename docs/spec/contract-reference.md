@@ -926,16 +926,13 @@ Rules:
   selected platform entry declares a structured Ota-owned probe such as `windows.visual_studio`
 - `platforms` may use `linux`, `macos`, and `windows`
 - platform entries may declare `apt`, `brew`, `winget`, `choco`, `scoop`, generic `packages`,
-  `xcode_clt`, `visual_studio`, `visual_studio_build_tools`, `activation`, `install`, or `note`
-  guidance
+  `xcode_clt`, `visual_studio`, `activation`, `install`, or `note` guidance
 - `platforms.windows.visual_studio.components` lists Visual Studio Installer component IDs that
   Ota checks with `vswhere`; this is preferred over embedding a raw PowerShell `vswhere` command
   in `checks.run`
 - `platforms.<os>.requires` may declare `runtimes`, `tools`, `toolchains`, `env`, and `checks`
   that belong to that native prerequisite on that host OS; tasks should reference the native
   bundle through `requirements.native` instead of duplicating those checks at the task level
-- `visual_studio_build_tools: true` remains a compatibility shorthand, but new contracts should
-  prefer the structured `visual_studio` block when exact components matter
 - `activation.kind: visual_studio_dev_shell` is the Windows MSVC activation hint for checks
   and native task execution that require `cl`/MSVC tools from a Visual Studio Developer shell;
   `arch` defaults to `x64`
