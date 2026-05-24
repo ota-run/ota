@@ -2449,6 +2449,9 @@ Agent semantics:
 - `writable_paths` are the paths an AI agent may edit
 - `exceptions.sensitive_writes` records narrow intentional exceptions for sensitive writable paths
   or broader writable boundaries when the declared `posture` is still otherwise correct
+- when `ota.yaml` is intentionally writable, keep it explicit: starter contracts from `ota init`
+  protect `ota.yaml` by default, and any broader contract-authoring slice should pair writable
+  `ota.yaml` authority with `exceptions.sensitive_writes: [ota.yaml]`
 - legacy contracts may still use `acknowledged_sensitive_writable_paths` as a compatibility alias,
   but new contracts should use `exceptions.sensitive_writes`
 - `protected_paths` are the paths an AI agent should avoid editing casually
