@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added structured `native_prerequisites.<name>.platforms.windows.visual_studio.components`
+  support plus platform-scoped `native_prerequisites.<name>.platforms.<os>.requires`
+  runtime/tool/toolchain/env/check requirements, so contracts can model Windows native build
+  bundles through an Ota-owned `vswhere` probe, attach dependencies such as Python, and preserve
+  receipt provenance without embedding long raw PowerShell checks in `checks.run`
 - made `ota --version` build identity explicit for source builds by including commit and dirty
   markers, and added `ota --version --json` with stable provenance fields (`semver`,
   `source_build`, `commit`, `dirty`), `schema_version`, and additive

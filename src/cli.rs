@@ -17492,6 +17492,20 @@ tasks:
             }),
             "{json}"
         );
+        assert!(
+            capabilities.iter().any(|capability| {
+                capability["id"] == "native_prerequisites.visual_studio"
+                    && capability["introduced_in"].as_str().is_some()
+            }),
+            "{json}"
+        );
+        assert!(
+            capabilities.iter().any(|capability| {
+                capability["id"] == "native_prerequisites.requires"
+                    && capability["introduced_in"].as_str().is_some()
+            }),
+            "{json}"
+        );
     }
 
     #[test]

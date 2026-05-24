@@ -304,10 +304,27 @@ pub struct ExecutionReceiptNativePrerequisite {
     pub check: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub activation: Option<ExecutionReceiptNativeActivation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requires: Option<ExecutionReceiptNativeRequires>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provisioning: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutionReceiptNativeRequires {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub runtimes: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tools: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub toolchains: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<String>,
+    pub source: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

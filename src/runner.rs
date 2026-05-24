@@ -7453,6 +7453,22 @@ fn direct_task_requirement_versions(
         target_os,
         tool_source.as_str(),
     )?;
+    let native_surface = contract.native_prerequisite_requirement_surface_for_os(
+        task.requirements.native.clone(),
+        target_os,
+    );
+    merge_requirement_versions(
+        &mut runtimes,
+        &native_surface.runtimes,
+        target_os,
+        "task native prerequisite runtimes",
+    )?;
+    merge_requirement_versions(
+        &mut tools,
+        &native_surface.tools,
+        target_os,
+        "task native prerequisite tools",
+    )?;
 
     Ok((
         runtimes

@@ -191,6 +191,14 @@ Current shape:
     {
       "id": "agent.exceptions.sensitive_writes",
       "introduced_in": "1.6.15"
+    },
+    {
+      "id": "native_prerequisites.visual_studio",
+      "introduced_in": "1.6.15"
+    },
+    {
+      "id": "native_prerequisites.requires",
+      "introduced_in": "1.6.15"
     }
   ]
 }
@@ -3199,7 +3207,11 @@ The nested `receipt` object can also include:
 - `lifecycle`
 - `image` when container execution is selected
 - `target` when the recorded execution phase had a real named target, such as a persistent container, a named ephemeral task or diagnosis container, or a remote target
-- `native_prerequisites` when the selected execution path uses native task prerequisites; each entry can include additive `check`, `activation`, `provisioning`, and `note` fields
+- `native_prerequisites` when the selected execution path uses native task prerequisites; each
+  entry can include additive `check`, `activation`, `requires`, `provisioning`, and `note` fields
+- `native_prerequisites[*].requires` records runtime, tool, toolchain, env, and check dependencies
+  that came from `native_prerequisites.<name>.platforms.<os>.requires`, with a `source` marker so
+  automation does not confuse native-bundle dependencies with direct task requirements
 - `native_prerequisites[*].activation.applied` tells you whether this command actually ran inside
   the declared native activation; preview and read-only receipt paths can still report the
   declared activation with `applied: false`

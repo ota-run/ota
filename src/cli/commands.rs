@@ -14618,6 +14618,14 @@ fn selected_task_requirement_surface(
             tools: context.requirements.tools.clone(),
         });
     }
+    if matches!(effective.backend, Backend::Native)
+        && let Some(task) = contract.tasks.get(task_name)
+    {
+        surface.merge(&contract.native_prerequisite_requirement_surface_for_os(
+            task.requirements.native.clone(),
+            requirement_target_os_for_backend(effective.backend),
+        ));
+    }
     Some(surface)
 }
 
@@ -43257,6 +43265,82 @@ tasks:
     }
 
     #[test]
+    fn run_dry_run_blocks_when_selected_native_prerequisite_requires_do_not_match_host() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      linux:
+        check: node-native-build-tools-linux
+        apt:
+          - build-essential
+        requires:
+          runtimes:
+            node: "999.0.0"
+      macos:
+        check: node-native-build-tools-macos
+        xcode_clt: true
+        requires:
+          runtimes:
+            node: "999.0.0"
+checks:
+  - name: node-native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: echo native-ready
+  - name: node-native-build-tools-macos
+    kind: precondition
+    severity: error
+    run: echo native-ready
+tasks:
+  install:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "install",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(json["summary"]["verdict"], "not_ready");
+        let blocker = json["summary"]["primary_blocker"]["summary"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            blocker.starts_with("Version mismatch for runtime: node")
+                || blocker.starts_with("Missing runtime: node"),
+            "{json}"
+        );
+    }
+
+    #[test]
     fn clean_text_uses_reviewed_header_when_only_ambiguous_state_is_reported() {
         let report = CleanExecutionReport {
             skipped_ambiguous_persistent_containers: 2,
@@ -56968,24 +57052,27 @@ policies:
 
     #[test]
     fn up_success_receipt_includes_selected_native_prerequisites() {
-        let (platform_name, activation_block, setup_run) = match super::current_requirement_platform(
-        ) {
-            "windows" => (
-                "windows",
-                "activation:\n          kind: command\n          shell: cmd\n          run: set OTA_NATIVE_ACTIVATED=1",
-                "if not defined OTA_NATIVE_ACTIVATED exit /b 1",
-            ),
-            "macos" => (
-                "macos",
-                "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
-                "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
-            ),
-            _ => (
-                "linux",
-                "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
-                "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
-            ),
-        };
+        let (platform_name, activation_block, setup_run, required_tool) =
+            match super::current_requirement_platform() {
+                "windows" => (
+                    "windows",
+                    "activation:\n          kind: command\n          shell: cmd\n          run: set OTA_NATIVE_ACTIVATED=1",
+                    "if not defined OTA_NATIVE_ACTIVATED exit /b 1",
+                    "cmd",
+                ),
+                "macos" => (
+                    "macos",
+                    "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
+                    "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
+                    "sh",
+                ),
+                _ => (
+                    "linux",
+                    "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
+                    "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
+                    "sh",
+                ),
+            };
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
             &format!(
@@ -56993,11 +57080,16 @@ policies:
 version: 1
 project:
   name: target-test
+tools:
+  {required_tool}: "*"
 native_prerequisites:
   shell-env:
     platforms:
       {platform_name}:
         check: shell-env-check
+        requires:
+          tools:
+            {required_tool}: "*"
         {activation_block}
 checks:
   - name: shell-env-check
@@ -57028,11 +57120,16 @@ workflows:
 version: 1
 project:
   name: target-test
+tools:
+  {required_tool}: "*"
 native_prerequisites:
   shell-env:
     platforms:
       {platform_name}:
         check: shell-env-check
+        requires:
+          tools:
+            {required_tool}: "*"
         {activation_block}
 checks:
   - name: shell-env-check
@@ -57071,6 +57168,15 @@ workflows:
             .as_ref()
             .expect("activation");
         assert!(activation.applied);
+        let requires = result.receipt.native_prerequisites[0]
+            .requires
+            .as_ref()
+            .expect("native prerequisite requires provenance");
+        assert_eq!(
+            requires.tools.get(required_tool).map(String::as_str),
+            Some("*")
+        );
+        assert_eq!(requires.source, "native_prerequisite.platform.requires");
     }
 
     #[test]
@@ -69555,7 +69661,16 @@ fn native_prerequisite_provisioning_lines(
     if platform.xcode_clt {
         lines.push(String::from("install Xcode Command Line Tools"));
     }
-    if platform.visual_studio_build_tools {
+    if let Some(visual_studio) = platform.visual_studio.as_ref() {
+        if visual_studio.components.is_empty() {
+            lines.push(String::from("install Visual Studio Build Tools"));
+        } else {
+            lines.push(format!(
+                "install Visual Studio Build Tools with components: `{}`",
+                visual_studio.components.join(" ")
+            ));
+        }
+    } else if platform.visual_studio_build_tools {
         lines.push(String::from("install Visual Studio Build Tools"));
     }
     if !platform.apt.is_empty() {
@@ -69648,6 +69763,7 @@ fn receipt_native_prerequisites(
         let Some(platform) = prerequisite.platform_for_os(current_os) else {
             continue;
         };
+        let requires = native_prerequisite_receipt_requires(platform, current_os);
         prerequisites.push(crate::output::ExecutionReceiptNativePrerequisite {
             name: name.clone(),
             required: prerequisite.required,
@@ -69665,6 +69781,7 @@ fn receipt_native_prerequisites(
                     run: activation.run.clone(),
                 }
             }),
+            requires,
             provisioning: native_prerequisite_provisioning_lines(platform),
             note: platform
                 .note
@@ -69675,6 +69792,47 @@ fn receipt_native_prerequisites(
         });
     }
     prerequisites
+}
+
+fn native_prerequisite_receipt_requires(
+    platform: &crate::schema::NativePrerequisitePlatformSpec,
+    current_os: &str,
+) -> Option<crate::output::ExecutionReceiptNativeRequires> {
+    let requires = &platform.requires;
+    if requires.runtimes.is_empty()
+        && requires.tools.is_empty()
+        && requires.toolchains.is_empty()
+        && requires.env.is_empty()
+        && requires.checks.is_empty()
+    {
+        return None;
+    }
+    Some(crate::output::ExecutionReceiptNativeRequires {
+        runtimes: requires
+            .runtimes
+            .iter()
+            .map(|(name, requirement)| {
+                (
+                    name.clone(),
+                    requirement.version_for_os(current_os).to_string(),
+                )
+            })
+            .collect(),
+        tools: requires
+            .tools
+            .iter()
+            .map(|(name, requirement)| {
+                (
+                    name.clone(),
+                    requirement.version_for_os(current_os).to_string(),
+                )
+            })
+            .collect(),
+        toolchains: requires.toolchains.clone(),
+        env: requires.env.clone(),
+        checks: requires.checks.clone(),
+        source: String::from("native_prerequisite.platform.requires"),
+    })
 }
 
 fn execution_receipt_step(
@@ -71413,6 +71571,12 @@ fn selected_workflow_task_requirement_surface(
                 runtimes: context.requirements.runtimes.clone(),
                 tools: context.requirements.tools.clone(),
             });
+        }
+        if matches!(effective.backend, Backend::Native) {
+            surface.merge(&contract.native_prerequisite_requirement_surface_for_os(
+                task.requirements.native.clone(),
+                requirement_target_os_for_backend(effective.backend),
+            ));
         }
     }
 

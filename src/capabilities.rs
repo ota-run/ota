@@ -74,6 +74,14 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         id: "agent.exceptions.sensitive_writes",
         introduced_in: "1.6.15",
     },
+    ContractCapabilitySpec {
+        id: "native_prerequisites.visual_studio",
+        introduced_in: "1.6.15",
+    },
+    ContractCapabilitySpec {
+        id: "native_prerequisites.requires",
+        introduced_in: "1.6.15",
+    },
 ];
 
 pub(crate) fn contract_capabilities_json() -> JsonValue {
@@ -281,6 +289,10 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         "agent.exceptions.sensitive_writes" => {
             document_has_path(document, &["agent", "exceptions", "sensitive_writes"])
         }
+        "native_prerequisites.visual_studio" => {
+            native_prerequisites_visual_studio_present(document)
+        }
+        "native_prerequisites.requires" => native_prerequisites_requires_present(document),
         _ => false,
     }
 }
@@ -323,6 +335,21 @@ fn capability_present_in_contract(
             .as_ref()
             .map(|agent| !agent.sensitive_writable_paths().is_empty())
             .unwrap_or(false),
+        "native_prerequisites.visual_studio" => {
+            contract.native_prerequisites.values().any(|prerequisite| {
+                prerequisite
+                    .platforms
+                    .values()
+                    .any(|platform| platform.visual_studio.is_some())
+            })
+        }
+        "native_prerequisites.requires" => {
+            contract.native_prerequisites.values().any(|prerequisite| {
+                prerequisite.platforms.values().any(|platform| {
+                    !platform.requires.runtimes.is_empty() || !platform.requires.tools.is_empty()
+                })
+            })
+        }
         _ => false,
     }
 }
@@ -386,6 +413,42 @@ fn task_effects_external_state_present(task: &Value) -> bool {
     document_has_path(task, &["effects", "external_state"])
 }
 
+fn native_prerequisites_visual_studio_present(document: &Value) -> bool {
+    let Some(native_prerequisites) =
+        mapping_child(document, "native_prerequisites").and_then(Value::as_mapping)
+    else {
+        return false;
+    };
+    native_prerequisites.values().any(|prerequisite| {
+        mapping_child(prerequisite, "platforms")
+            .and_then(Value::as_mapping)
+            .map(|platforms| {
+                platforms
+                    .values()
+                    .any(|platform| document_has_path(platform, &["visual_studio"]))
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn native_prerequisites_requires_present(document: &Value) -> bool {
+    let Some(native_prerequisites) =
+        mapping_child(document, "native_prerequisites").and_then(Value::as_mapping)
+    else {
+        return false;
+    };
+    native_prerequisites.values().any(|prerequisite| {
+        mapping_child(prerequisite, "platforms")
+            .and_then(Value::as_mapping)
+            .map(|platforms| {
+                platforms
+                    .values()
+                    .any(|platform| document_has_path(platform, &["requires"]))
+            })
+            .unwrap_or(false)
+    })
+}
+
 fn mapping_child<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     value.as_mapping()?.get(Value::String(key.to_owned()))
 }
@@ -430,6 +493,16 @@ tasks:
       network: true
       external_state:
         - docker
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      windows:
+        visual_studio:
+          components:
+            - Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+        requires:
+          runtimes:
+            python: ">=3.10"
 "#,
         )
         .unwrap();
@@ -449,6 +522,8 @@ tasks:
                 "tasks.effects.external_state",
                 "agent.posture",
                 "agent.exceptions.sensitive_writes",
+                "native_prerequisites.visual_studio",
+                "native_prerequisites.requires",
             ]
         );
     }
