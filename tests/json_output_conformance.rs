@@ -239,6 +239,15 @@ workflows:
 }
 
 #[test]
+fn version_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    let json = run_ota(&["--version", "--json"], fixture.path());
+
+    assert_matches_schema("version.json", &json);
+    assert_eq!(json["ok"], true);
+}
+
+#[test]
 fn execution_plan_json_output_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(

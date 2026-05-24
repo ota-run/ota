@@ -30,6 +30,10 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use semver::Version;
 use serde_yaml::{Mapping, Value};
 
+use crate::capabilities::{
+    format_minimum_version_error, format_minimum_version_upgrade_hint,
+    unsupported_declared_contract_capabilities,
+};
 use crate::schema::{Contract, SurfaceSpec, TaskRuntimeSpec};
 
 static CONTRACT_CACHE: OnceLock<Mutex<HashMap<ContractCacheKey, Contract>>> = OnceLock::new();
@@ -64,8 +68,7 @@ pub enum LoadContractError {
     },
     MinimumOtaVersionUnsupported {
         path: String,
-        minimum_version: String,
-        current_version: String,
+        message: String,
     },
 }
 
@@ -96,14 +99,9 @@ impl fmt::Display for LoadContractError {
                 f,
                 "member contract `{path}` must not declare a top-level `workspace` block"
             ),
-            Self::MinimumOtaVersionUnsupported {
-                path,
-                minimum_version,
-                current_version,
-            } => write!(
-                f,
-                "contract `{path}` requires Ota >= `{minimum_version}` via `metadata.ota.minimum_version`, but this binary is `{current_version}`"
-            ),
+            Self::MinimumOtaVersionUnsupported { path, message } => {
+                write!(f, "contract `{path}` {message}")
+            }
         }
     }
 }
@@ -200,8 +198,8 @@ pub fn load_contract_for_member_with_contents(
     merge_yaml_value(&mut root_value, member_value);
     let minimum_ota_version = document_minimum_ota_version(&root_value).map(ToOwned::to_owned);
 
-    let mut contract = serde_yaml::from_value(root_value).map_err(|source| {
-        let hint = parse_contract_hint(minimum_ota_version.as_deref(), &source);
+    let mut contract = serde_yaml::from_value(root_value.clone()).map_err(|source| {
+        let hint = parse_contract_hint(&root_value, minimum_ota_version.as_deref(), &source);
         LoadContractError::Parse {
             path: compact_display_path(&member_path),
             source,
@@ -209,7 +207,7 @@ pub fn load_contract_for_member_with_contents(
         }
     })?;
     normalize_contract_surfaces(&mut contract);
-    enforce_contract_minimum_ota_version(&contract, &member_path)?;
+    enforce_contract_minimum_ota_version(&contract, &root_value, &member_path)?;
 
     Ok((contract, member_path))
 }
@@ -238,16 +236,17 @@ pub fn parse_contract_str(path: &Path, contents: &str) -> Result<Contract, LoadC
     let mut contract =
         serde_yaml::from_str(contents).map_err(|source| LoadContractError::Parse {
             path: compact_display_path(path),
-            hint: parse_contract_hint(minimum_ota_version.as_deref(), &source),
+            hint: parse_contract_hint(&document, minimum_ota_version.as_deref(), &source),
             source,
         })?;
     normalize_contract_surfaces(&mut contract);
-    enforce_contract_minimum_ota_version(&contract, path)?;
+    enforce_contract_minimum_ota_version(&contract, &document, path)?;
     Ok(contract)
 }
 
 fn enforce_contract_minimum_ota_version(
     contract: &Contract,
+    document: &Value,
     path: &Path,
 ) -> Result<(), LoadContractError> {
     let Some(minimum_version) = contract.minimum_ota_version().map(str::trim) else {
@@ -269,8 +268,11 @@ fn enforce_contract_minimum_ota_version(
 
     Err(LoadContractError::MinimumOtaVersionUnsupported {
         path: compact_display_path(path),
-        minimum_version: minimum.to_string(),
-        current_version: current.to_string(),
+        message: format_minimum_version_error(
+            &minimum.to_string(),
+            &current.to_string(),
+            &unsupported_declared_contract_capabilities(document, &current),
+        ),
     })
 }
 
@@ -431,6 +433,7 @@ fn document_minimum_ota_version(document: &Value) -> Option<&str> {
 }
 
 fn parse_contract_hint(
+    document: &Value,
     minimum_ota_version: Option<&str>,
     source: &serde_yaml::Error,
 ) -> Option<String> {
@@ -444,16 +447,20 @@ fn parse_contract_hint(
     let error_text = source.to_string();
     if !error_text.contains("unknown field `") && !error_text.contains("unknown variant `") {
         if current < minimum {
-            return Some(format!(
-                "this contract declares `metadata.ota.minimum_version: {minimum_ota_version}`; use Ota >= `{minimum_ota_version}` (current binary `{current}`)"
+            return Some(format_minimum_version_upgrade_hint(
+                minimum_ota_version,
+                &current.to_string(),
+                &unsupported_declared_contract_capabilities(document, &current),
             ));
         }
         return None;
     }
 
     Some(if current < minimum {
-        format!(
-            "this contract declares `metadata.ota.minimum_version: {minimum_ota_version}`; use Ota >= `{minimum_ota_version}` (current binary `{current}`)"
+        format_minimum_version_upgrade_hint(
+            minimum_ota_version,
+            &current.to_string(),
+            &unsupported_declared_contract_capabilities(document, &current),
         )
     } else {
         format!(
@@ -583,7 +590,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::parse_contract_str;
-    use super::{load_contract_auto, load_contract_for_member};
+    use super::{LoadContractError, load_contract_auto, load_contract_for_member};
 
     #[test]
     fn rejects_unknown_top_level_keys() {
@@ -865,6 +872,23 @@ agent:
         let message = error.to_string();
         assert!(message.contains("minimum_version: 99.0.0"), "{message}");
         assert!(message.contains("use Ota >= `99.0.0`"), "{message}");
+    }
+
+    #[test]
+    fn minimum_version_error_display_includes_capability_hint_when_present() {
+        let error = LoadContractError::MinimumOtaVersionUnsupported {
+            path: String::from("./ota.yaml"),
+            message: String::from(
+                "requires Ota >= `1.6.15` via `metadata.ota.minimum_version`, but this binary is `1.6.14`\nHint: detected unsupported contract capability: `agent.exceptions.sensitive_writes` (introduced in Ota 1.6.15)",
+            ),
+        };
+
+        let message = error.to_string();
+        assert!(message.contains("requires Ota >= `1.6.15`"), "{message}");
+        assert!(
+            message.contains("agent.exceptions.sensitive_writes"),
+            "{message}"
+        );
     }
 
     #[test]

@@ -50,6 +50,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - [json-schemas/workspace-up.json](json-schemas/workspace-up.json)
 - [json-schemas/diff.json](json-schemas/diff.json)
 - [json-schemas/explain.json](json-schemas/explain.json)
+- [json-schemas/version.json](json-schemas/version.json)
 
 ## General notes
 
@@ -65,6 +66,7 @@ Canonical JSON Schema files for the current shipped shapes live in:
 ## Which JSON surface to use
 
 - use `ota validate --json` or `ota workspace validate --json` for contract gating
+- use `ota --version --json` when you need machine-readable build identity and contract capability support
 - use `ota env --json` for read-only environment inspection and validation
 - use `ota execution plan --json` when you want the resolved backend, lifecycle, image, and target selection without running anything
 - use `ota execution topology --json` when you want the declared execution graph for contract or topology inspection without running anything, including reusable readiness probes, reusable runtime surfaces, structured task launch sources, normalized listeners, and attached surface names
@@ -102,6 +104,8 @@ Editor and IDE consumers should prefer the smallest stable fields for the job in
 human text output:
 
 - `ota validate --json` and `ota workspace validate --json`: use `ok`, `summary.error_count`, `errors` or `error`, and `next`
+- `ota --version --json`: use `semver`, `version`, `source_build`, `commit`, `dirty`,
+  `schema_version`, and `contract_capabilities[]`
 - `ota agents --json`: use `ok`, `path`, `output`, `written`, `mode`, and `content`
 - `ota skills install --json`: use `ok`, `skill`, `agent`, and `path`
 - `ota execution plan --json`: use `contract_identity`, `declared_execution`, `resolved`, and `overrides`
@@ -138,7 +142,62 @@ Hosted CI can use the same fields as annotations or check-run summaries:
 - `finding_groups[]` when present, for grouped human-facing remediation summaries only
 - `severity` to decide blocking versus warning annotations
 - `why` for the annotation body
-- `next` for the suggested fix or link target
+
+## `ota --version --json`
+
+Purpose: expose machine-readable build identity and the contract capability surface this binary
+supports without scraping human version text.
+
+Current shape:
+
+```json
+{
+  "ok": true,
+  "semver": "1.6.15",
+  "version": "v1.6.15",
+  "source_build": false,
+  "commit": null,
+  "dirty": false,
+  "schema_version": 1,
+  "contract_capabilities": [
+    {
+      "id": "toolchains",
+      "introduced_in": "1.6.15"
+    },
+    {
+      "id": "execution.contexts.only_on",
+      "introduced_in": "1.6.15"
+    },
+    {
+      "id": "metadata.ota.minimum_version",
+      "introduced_in": "1.6.15"
+    },
+    {
+      "id": "tasks.effects.writes",
+      "introduced_in": "1.6.15"
+    },
+    {
+      "id": "agent.posture",
+      "introduced_in": "1.6.15"
+    },
+    {
+      "id": "agent.exceptions.sensitive_writes",
+      "introduced_in": "1.6.15"
+    }
+  ]
+}
+```
+
+Notes:
+
+- `semver`, `commit`, `dirty`, and `source_build` identify the exact binary
+- `schema_version` is the current contract schema generation this binary speaks
+- `schema_version` moves only when ota changes the machine-readable contract generation or
+  compatibility interpretation in a way that is not just additive
+- `contract_capabilities[]` is additive and lists high-signal contract features this binary
+  understands, including the Ota version where each feature first shipped
+- additive contract feature support should extend `contract_capabilities[]` without changing
+  `schema_version`
 
 ## `ota validate --json`
 

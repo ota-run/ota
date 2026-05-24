@@ -38,6 +38,7 @@ use clap_complete::engine::{ArgValueCompleter, CompletionCandidate};
 use clap_complete::env::CompleteEnv;
 use clap_complete::env::{Bash, Elvish, EnvCompleter, Fish, Powershell, Zsh};
 
+use crate::capabilities::{CONTRACT_SCHEMA_VERSION, contract_capabilities_json};
 use crate::output::{CommandOutput, OutputFormat};
 use crate::runner::ExecutionOverrides;
 use crate::schema::parse_memory_size_bytes;
@@ -3609,6 +3610,8 @@ fn render_version_json_output() -> String {
         "source_build": source_build,
         "commit": commit,
         "dirty": dirty,
+        "schema_version": CONTRACT_SCHEMA_VERSION,
+        "contract_capabilities": contract_capabilities_json(),
     }))
     .expect("version json should serialize")
 }
@@ -17464,6 +17467,17 @@ tasks:
         assert_eq!(json["version"], format!("v{}", env!("CARGO_PKG_VERSION")));
         assert!(json.get("source_build").is_some(), "{json}");
         assert!(json.get("dirty").is_some(), "{json}");
+        assert_eq!(json["schema_version"], 1);
+        let capabilities = json["contract_capabilities"]
+            .as_array()
+            .expect("contract capabilities array");
+        assert!(
+            capabilities.iter().any(|capability| {
+                capability["id"] == "agent.exceptions.sensitive_writes"
+                    && capability["introduced_in"].as_str().is_some()
+            }),
+            "{json}"
+        );
     }
 
     #[test]
@@ -17518,6 +17532,41 @@ metadata:
             "{combined}"
         );
         assert!(combined.contains("requires Ota >="), "{combined}");
+    }
+
+    #[test]
+    fn validate_does_not_hallucinate_unsupported_capabilities_for_supported_features() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10"
+metadata:
+  ota:
+    minimum_version: "99.0.0"
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let combined = format!(
+            "{}\n{}",
+            strip_ansi(&output.stdout),
+            strip_ansi(output.stderr.as_deref().unwrap_or_default())
+        );
+        assert!(combined.contains("requires Ota >="), "{combined}");
+        assert!(combined.contains("`99.0.0`"), "{combined}");
+        assert!(
+            !combined.contains("unsupported contract capability"),
+            "{combined}"
+        );
     }
 
     #[test]
@@ -22998,6 +23047,7 @@ tasks:
         assert!(agents_md.contains("# AGENTS.md"));
         assert!(agents_md.contains("Generated from `./ota.yaml` by `ota agents`."));
         assert!(!agents_md.contains("DO NOT ALTER OR REMOVE COPYRIGHT NOTICES"));
+        assert!(agents_md.contains("Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands"));
         assert!(agents_md.contains("`entrypoint`: `setup` (`ota run setup`)"));
         assert!(agents_md.contains("- `safe_tasks`:"));
         assert!(agents_md.contains("  - `setup` (`ota run setup`)"));
@@ -23070,6 +23120,7 @@ tasks:
         assert!(agents_md.contains("# AGENTS.md"));
         assert!(agents_md.contains("Generated from `./ota.yaml` by `ota agents`."));
         assert!(!agents_md.contains("DO NOT ALTER OR REMOVE COPYRIGHT NOTICES"));
+        assert!(agents_md.contains("Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands"));
         assert!(agents_md.contains("`entrypoint`: `setup` (`ota run setup`)"));
     }
 

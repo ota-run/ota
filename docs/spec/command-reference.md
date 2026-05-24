@@ -1219,7 +1219,9 @@ ota doctor --member api --member web --json [PATH]
   marker for source builds, so released and unreleased binaries do not masquerade as the same
   version string
 - `ota --version --json` exposes the same identity in machine-readable form (`semver`,
-  `source_build`, `commit`, `dirty`) for CI and toolchain provenance checks
+  `source_build`, `commit`, `dirty`) plus `schema_version` and additive
+  `contract_capabilities[]` entries (`id`, `introduced_in`) for CI and contract-compatibility
+  provenance checks
 - validates the contract first when one is present
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
 - when `--member` is set, diagnoses the merged member contract

@@ -478,6 +478,24 @@ fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
 }
 
 #[test]
+fn version_schema_covers_build_identity_and_capability_fields() {
+    let schema = load_schema("docs/spec/json-schemas/version.json");
+    let properties = &schema["properties"];
+    let capability_properties = &properties["contract_capabilities"]["items"]["properties"];
+
+    assert_eq!(properties["ok"]["const"], json!(true));
+    assert!(properties.get("semver").is_some());
+    assert!(properties.get("version").is_some());
+    assert!(properties.get("source_build").is_some());
+    assert!(properties.get("commit").is_some());
+    assert!(properties.get("dirty").is_some());
+    assert!(properties.get("schema_version").is_some());
+    assert!(properties.get("contract_capabilities").is_some());
+    assert!(capability_properties.get("id").is_some());
+    assert!(capability_properties.get("introduced_in").is_some());
+}
+
+#[test]
 fn run_preview_schema_keeps_member_aggregate_separate_from_single_target_preview() {
     let schema = load_schema("docs/spec/json-schemas/run-preview.json");
     let aggregate = &schema["$defs"]["aggregate"]["properties"];

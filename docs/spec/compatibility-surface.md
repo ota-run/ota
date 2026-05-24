@@ -30,6 +30,7 @@ Purpose: define the V4 compatibility baseline that must remain stable unless an 
 
 Repo commands:
 
+- `ota version`
 - `ota validate`
 - `ota tasks`
 - `ota run`
@@ -59,6 +60,7 @@ For each command above, V4 must preserve:
 - JSON top-level shape and key semantics
 - deterministic ordering for list outputs
 - human output status semantics (`READY`, `NOT READY`, `VALID`) and failure clarity
+- for `ota --version --json`, build identity fields and the contract capability catalog semantics
 
 ## Existing authoritative docs
 
@@ -106,6 +108,7 @@ Equivalent expanded command set:
 ```bash
 cargo test contract_is_stable
 cargo test --test json_schema_contracts
+cargo test --test json_output_conformance
 cargo test --test detect_fixtures
 ```
 
@@ -116,3 +119,13 @@ If a change modifies any compatibility-locked dimension:
 - update the relevant normative doc in the same change
 - add/adjust regression tests that lock the new behavior
 - call out the change explicitly in planning notes
+
+## Version provenance policy
+
+- `schema_version` is the coarse contract-generation marker. Change it only when ota changes the
+  machine-readable contract generation or compatibility interpretation in a non-additive way.
+- `contract_capabilities[]` is the additive feature catalog for cross-version contract support.
+  Extend it when ota learns a new compatibility-relevant contract feature but the surrounding
+  contract generation stays compatible.
+- capability entries should exist for features that materially affect whether one ota binary can
+  parse, validate, or honestly interpret a contract written for another binary.

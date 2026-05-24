@@ -37961,6 +37961,7 @@ fn render_agents_markdown(
     output.push_str("## Agent Contract\n\n");
 
     if let Some(agent) = agent {
+        output.push_str("Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands when this contract already defines the task you need. Drop to raw commands only for narrow debugging or one-off checks that the contract does not model yet.\n\n");
         if let Some(entrypoint) = agent.entrypoint {
             output.push_str("- `entrypoint`: `");
             output.push_str(entrypoint);
