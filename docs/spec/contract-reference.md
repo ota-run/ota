@@ -2452,6 +2452,12 @@ Agent semantics:
 - when `ota.yaml` is intentionally writable, keep it explicit: starter contracts from `ota init`
   protect `ota.yaml` by default, and any broader contract-authoring slice should pair writable
   `ota.yaml` authority with `exceptions.sensitive_writes: [ota.yaml]`
+- use `exceptions.sensitive_writes` only when the path is already writable through
+  `agent.writable_paths`, the path is sensitive, and the contract intentionally grants that
+  authority; do not use it merely to say a protected path is important
+- do not use `exceptions.sensitive_writes` for normal readiness slices where the agent should not
+  edit the contract, CI, topology, env/config, or lockfiles; put those files under
+  `protected_paths` instead
 - legacy contracts may still use `acknowledged_sensitive_writable_paths` as a compatibility alias,
   but new contracts should use `exceptions.sensitive_writes`
 - `protected_paths` are the paths an AI agent should avoid editing casually
