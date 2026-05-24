@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/version.json",
+  "title": "ota --version --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "semver",
+    "version",
+    "source_build",
+    "commit",
+    "dirty",
+    "schema_version",
+    "contract_capabilities"
+  ],
+  "properties": {
+    "ok": { "const": true },
+    "semver": { "type": "string" },
+    "version": { "type": "string" },
+    "source_build": { "type": "boolean" },
+    "commit": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "dirty": { "type": "boolean" },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "contract_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "introduced_in"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "introduced_in": { "type": "string" }
+        }
+      }
+    }
+  }
+}

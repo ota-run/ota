@@ -25,6 +25,9 @@ use std::path::{Component, Path};
 
 use semver::Version;
 
+use crate::capabilities::{
+    format_minimum_version_error, unsupported_declared_contract_capabilities_in_contract,
+};
 use crate::execution::{
     format_lifecycle, matching_declared_execution_context_name, normalize_dependency_isolated_path,
 };
@@ -167,8 +170,10 @@ fn validate_ota_minimum_version(contract: &Contract, errors: &mut Vec<Validation
     };
 
     if current < minimum {
-        errors.push(ValidationError::new(format!(
-            "contract requires Ota >= `{minimum}` via `metadata.ota.minimum_version`, but this binary is `{current}`"
+        errors.push(ValidationError::new(format_minimum_version_error(
+            &minimum.to_string(),
+            &current.to_string(),
+            &unsupported_declared_contract_capabilities_in_contract(contract, &current),
         )));
     }
 }

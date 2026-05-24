@@ -28,10 +28,18 @@
 
 - made `ota --version` build identity explicit for source builds by including commit and dirty
   markers, and added `ota --version --json` with stable provenance fields (`semver`,
-  `source_build`, `commit`, `dirty`) for machine checks
+  `source_build`, `commit`, `dirty`), `schema_version`, and additive
+  `contract_capabilities[]` entries so machines can distinguish build identity from contract
+  capability support
+- formalized `ota --version --json` as a compatibility-locked JSON surface with a published
+  `version.json` schema and conformance coverage
 - enforce `metadata.ota.minimum_version` at contract load time across command surfaces (not only
   `validate`), so `doctor`, `up`, and related commands fail early with a clear minimum-version
   message when the running binary is too old
+- minimum-version compatibility diagnostics now call out detected unsupported contract
+  capabilities when the contract uses a known feature newer than the running binary
+- documented the product rule that `schema_version` moves only for non-additive contract-generation
+  changes while additive compatibility growth extends `contract_capabilities[]`
 - added an `ota-readiness` CI guard lane (`json-schema-guard`) that runs
   `json_schema_contracts` and `json_output_conformance` before readiness execution, preventing
   schema/output contract drift from reaching the main readiness lane
