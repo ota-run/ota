@@ -137,6 +137,9 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "posture": {
+          "enum": ["readiness_strict", "contract_authoring", "infra_authoring"]
+        },
         "entrypoint": { "type": "string" },
         "default_task": { "type": "string" },
         "safe_tasks": {

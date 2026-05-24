@@ -23,6 +23,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
 
+use semver::Version;
+
 use crate::execution::{
     format_lifecycle, matching_declared_execution_context_name, normalize_dependency_isolated_path,
 };
@@ -97,6 +99,7 @@ pub fn validate_contract_with_path(
 
     validate_version(contract, &mut errors);
     validate_project(contract, &mut errors);
+    validate_ota_minimum_version(contract, &mut errors);
     validate_repo_workspace(contract, &mut errors);
     validate_execution(contract, &mut errors);
     validate_extensions(contract, &mut errors);
@@ -140,6 +143,33 @@ fn validate_version(contract: &Contract, errors: &mut Vec<ValidationError>) {
 fn validate_project(contract: &Contract, errors: &mut Vec<ValidationError>) {
     if contract.project.name.trim().is_empty() {
         errors.push(ValidationError::new("`project.name` must not be empty"));
+    }
+}
+
+fn validate_ota_minimum_version(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    let Some(minimum_version) = contract.minimum_ota_version() else {
+        return;
+    };
+
+    let minimum = match Version::parse(minimum_version.trim()) {
+        Ok(version) => version,
+        Err(_) => {
+            errors.push(ValidationError::new(
+                "`metadata.ota.minimum_version` must be a valid semver string like `1.6.16`",
+            ));
+            return;
+        }
+    };
+
+    let current = match Version::parse(env!("CARGO_PKG_VERSION")) {
+        Ok(version) => version,
+        Err(_) => return,
+    };
+
+    if current < minimum {
+        errors.push(ValidationError::new(format!(
+            "contract requires Ota >= `{minimum}` via `metadata.ota.minimum_version`, but this binary is `{current}`"
+        )));
     }
 }
 
@@ -17048,8 +17078,8 @@ project:
   name: ota
 toolchains:
   python:
-    provider: rustup
-    version: "1.94.0"
+    provider: uv
+    version: "3.12"
     components:
       - rustfmt
 "#,
@@ -17064,9 +17094,8 @@ toolchains:
             .collect::<Vec<_>>();
 
         assert!(
-            rendered.iter().any(|error| error.contains(
-                "provider-specific fields `components` are only valid for `toolchains.rust` with `provider: rustup`",
-            )),
+            rendered.iter().any(|error| error
+                .contains("toolchain `python` with `provider: uv` must not declare `components`",)),
             "{rendered:?}"
         );
     }

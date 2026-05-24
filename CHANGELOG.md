@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- made `ota --version` build identity explicit for source builds by including commit and dirty
+  markers, and added `ota --version --json` with stable provenance fields (`semver`,
+  `source_build`, `commit`, `dirty`) for machine checks
+- enforce `metadata.ota.minimum_version` at contract load time across command surfaces (not only
+  `validate`), so `doctor`, `up`, and related commands fail early with a clear minimum-version
+  message when the running binary is too old
+- added an `ota-readiness` CI guard lane (`json-schema-guard`) that runs
+  `json_schema_contracts` and `json_output_conformance` before readiness execution, preventing
+  schema/output contract drift from reaching the main readiness lane
+- aligned `ota up --dry-run` and `ota run --dry-run` preview messaging with explicit
+  `preview_status` (`RUNNABLE`, `RUNNABLE WITH WARNINGS`, `BLOCKED`) while keeping canonical
+  shared readiness verdicts in `summary.verdict`
 - `ota doctor` now warns when `.devcontainer/devcontainer.json` advertises a Node image that
   drifts from the repo contract's declared `runtimes.node` requirement, so repo-owned
   devcontainer shells do not silently lag repo readiness truth

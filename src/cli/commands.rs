@@ -150,8 +150,8 @@ use crate::schema::{
     TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
-    parse_readiness_duration_spec,
+    ToolAcquisitionSpec, WorkflowCatalog, WorkflowSpec, WorkflowTaskRefSpec,
+    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
 };
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
@@ -13698,6 +13698,48 @@ fn render_run_preview_contract_problem(
     }
 }
 
+fn run_preview_preconditions_report(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> DoctorReport {
+    let mut preview_contract = contract.clone();
+    let workflow_name = "__ota_run_preview__";
+    let workflow = WorkflowSpec {
+        run: Some(WorkflowTaskRefSpec {
+            task: task_name.to_string(),
+        }),
+        ..WorkflowSpec::default()
+    };
+    match preview_contract.workflows.as_mut() {
+        Some(workflows) => {
+            workflows.default = workflow_name.to_string();
+            workflows.items.insert(workflow_name.to_string(), workflow);
+        }
+        None => {
+            let mut items = BTreeMap::new();
+            items.insert(workflow_name.to_string(), workflow);
+            preview_contract.workflows = Some(WorkflowCatalog {
+                default: workflow_name.to_string(),
+                items,
+            });
+        }
+    }
+
+    let mode = doctor_mode_from_backend(Some(format_backend(
+        effective_task_execution(contract, task_name, overrides).backend,
+    )))
+    .unwrap_or(DoctorMode::Native);
+    diagnose_preconditions_with_mode_for_workflow_with_overrides(
+        &preview_contract,
+        contract_path,
+        mode,
+        Some(workflow_name),
+        overrides,
+    )
+}
+
 fn render_run_preview_target(
     requested_task_name: &str,
     overrides: ExecutionOverrides,
@@ -13826,6 +13868,7 @@ fn render_run_preview_target(
                         member,
                         task: task_name.as_str(),
                         dry_run: true,
+                        preview_status: doctor_preview_status_label(summary.verdict),
                         summary,
                         contract_identity,
                         declared_execution,
@@ -13890,11 +13933,23 @@ fn render_run_preview_target(
         &execution_plan,
         persist_logs,
     );
-    let summary = run_preview_summary(&target.contract, task_name.as_str(), member, &env_report);
-    let exit_code = if summary.verdict == DoctorVerdict::Ready {
-        0
-    } else {
+    let preconditions_report = run_preview_preconditions_report(
+        &target.contract,
+        &target.contract_path,
+        task_name.as_str(),
+        overrides,
+    );
+    let summary = run_preview_summary(
+        &target.contract,
+        task_name.as_str(),
+        member,
+        &env_report,
+        &preconditions_report,
+    );
+    let exit_code = if doctor_verdict_blocks_preview(summary.verdict) {
         1
+    } else {
+        0
     };
     let text = render_run_preview_text(
         task_name.as_str(),
@@ -13920,12 +13975,13 @@ fn render_run_preview_target(
         },
         OutputFormat::Json => CommandOutput {
             stdout: to_json(&RunPreviewSuccess {
-                ok: summary.verdict == DoctorVerdict::Ready,
+                ok: !doctor_verdict_blocks_preview(summary.verdict),
                 path: &text_path_display,
                 contract: &path_display,
                 member,
                 task: task_name.as_str(),
                 dry_run: true,
+                preview_status: doctor_preview_status_label(summary.verdict),
                 summary,
                 contract_identity,
                 declared_execution,
@@ -13974,32 +14030,37 @@ fn run_preview_summary(
     task_name: &str,
     member: Option<&str>,
     env_report: &EnvReport,
+    preconditions_report: &DoctorReport,
 ) -> DoctorSummary {
-    let primary_blocker = run_preview_env_primary_blocker(task_name, member, env_report);
-    DoctorSummary {
-        verdict: if primary_blocker.is_some() {
-            DoctorVerdict::NotReady
-        } else {
-            DoctorVerdict::Ready
-        },
-        agent_verdict: DoctorVerdict::Ready,
-        error_count: usize::from(primary_blocker.is_some()),
-        warn_count: 0,
-        info_count: 0,
-        primary_blocker: primary_blocker.or_else(|| {
-            (!contract.tasks.contains_key(task_name)).then(|| DoctorPrimaryBlocker {
-                severity: FindingSeverity::Error,
-                summary: String::from("Task is not declared"),
-                why: format!("`{task_name}` is not declared in this contract"),
-                next: format!(
-                    "run `{}` to inspect runnable task usage",
-                    repo_tasks_use_command(member)
-                ),
-                provenance: Some(String::from("contract")),
-                provenance_key: None,
-            })
-        }),
+    let mut summary = doctor_summary(preconditions_report, DoctorVerdict::Ready);
+    let has_doctor_env_finding = preconditions_report
+        .findings
+        .iter()
+        .any(|finding| matches!(finding.code(), "OTA_ENV_MISSING" | "OTA_ENV_INVALID"));
+    if !has_doctor_env_finding
+        && let Some(primary_blocker) =
+            run_preview_env_primary_blocker(task_name, member, env_report)
+    {
+        summary.verdict = DoctorVerdict::NotReady;
+        summary.error_count += 1;
+        summary.primary_blocker = Some(primary_blocker);
     }
+    if summary.primary_blocker.is_none() && !contract.tasks.contains_key(task_name) {
+        summary.verdict = DoctorVerdict::NotReady;
+        summary.error_count += 1;
+        summary.primary_blocker = Some(DoctorPrimaryBlocker {
+            severity: FindingSeverity::Error,
+            summary: String::from("Task is not declared"),
+            why: format!("`{task_name}` is not declared in this contract"),
+            next: format!(
+                "run `{}` to inspect runnable task usage",
+                repo_tasks_use_command(member)
+            ),
+            provenance: Some(String::from("contract")),
+            provenance_key: None,
+        });
+    }
+    summary
 }
 
 fn run_preview_env_primary_blocker(
@@ -14314,7 +14375,7 @@ fn render_run_preview_text(
     let mut stdout = format!(
         "{}\n\n{}\n\n{}",
         format_command_header("RUN PREVIEW", task_name),
-        render_doctor_readiness_status(summary.verdict),
+        render_preview_readiness_status(summary.verdict),
         format_mode_line("dry-run (no write)")
     );
 
@@ -19209,10 +19270,13 @@ fn contractless_repo_first_tool<'a>(
     report: &'a DetectReport,
     tools: &[&'a str],
 ) -> Option<&'a str> {
-    tools
-        .iter()
-        .copied()
-        .find(|tool| report.contract.tools.contains_key(*tool))
+    tools.iter().copied().find(|tool| {
+        report.contract.tools.contains_key(*tool)
+            || report
+                .inferences
+                .iter()
+                .any(|inference| inference.value == *tool && inference.field.ends_with(".provider"))
+    })
 }
 
 fn contractless_repo_tool_source<'a>(report: &'a DetectReport, tool: &str) -> Option<&'a str> {
@@ -19220,7 +19284,10 @@ fn contractless_repo_tool_source<'a>(report: &'a DetectReport, tool: &str) -> Op
     report
         .inferences
         .iter()
-        .find(|inference| inference.field == field)
+        .find(|inference| {
+            inference.field == field
+                || (inference.value == tool && inference.field.ends_with(".provider"))
+        })
         .map(|inference| inference.source.as_str())
 }
 
@@ -36745,6 +36812,22 @@ fn render_doctor_readiness_status(verdict: DoctorVerdict) -> String {
     }
 }
 
+fn render_preview_readiness_status(verdict: DoctorVerdict) -> String {
+    match verdict {
+        DoctorVerdict::Ready => {
+            render_named_status("RUNNABLE", primary_success_marker(), "1;38;2;0;255;120")
+        }
+        DoctorVerdict::Risky => render_named_status(
+            "RUNNABLE WITH WARNINGS",
+            primary_warn_marker(),
+            "1;38;2;255;214;95",
+        ),
+        DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked => {
+            render_named_status("BLOCKED", primary_error_marker(), "1;38;2;255;122;122")
+        }
+    }
+}
+
 fn doctor_readiness_status_label(verdict: DoctorVerdict) -> &'static str {
     match verdict {
         DoctorVerdict::Ready => "READY",
@@ -36753,6 +36836,23 @@ fn doctor_readiness_status_label(verdict: DoctorVerdict) -> &'static str {
             "BLOCKED"
         }
     }
+}
+
+fn doctor_preview_status_label(verdict: DoctorVerdict) -> &'static str {
+    match verdict {
+        DoctorVerdict::Ready => "RUNNABLE",
+        DoctorVerdict::Risky => "RUNNABLE WITH WARNINGS",
+        DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked => {
+            "BLOCKED"
+        }
+    }
+}
+
+fn doctor_verdict_blocks_preview(verdict: DoctorVerdict) -> bool {
+    matches!(
+        verdict,
+        DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked
+    )
 }
 
 fn render_explain_section(
@@ -39080,6 +39180,7 @@ fn render_up_preview_result(
                 path,
                 dry_run: true,
                 status,
+                preview_status: doctor_preview_status_label(summary.verdict),
                 phase,
                 summary: summary.clone(),
                 contract_identity: contract_identity.clone(),
@@ -42895,9 +42996,60 @@ tasks:
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
         assert_eq!(json["ok"], true);
         assert_eq!(json["dry_run"], true);
+        assert_eq!(json["preview_status"], "RUNNABLE");
         assert_eq!(json["task"], "ci");
         assert_eq!(json["resolved"]["backend"], "native");
         assert!(json["plan"]["actions"].is_array());
+    }
+
+    #[test]
+    fn run_dry_run_blocks_when_selected_task_requirements_do_not_match_host() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+runtimes:
+  node: "999.0.0"
+tasks:
+  test:
+    run: node --version
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "test",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(json["summary"]["verdict"], "not_ready");
+        let blocker = json["summary"]["primary_blocker"]["summary"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            blocker.starts_with("Version mismatch for runtime: node")
+                || blocker.starts_with("Missing runtime: node"),
+            "{json}"
+        );
     }
 
     #[test]
@@ -45053,7 +45205,8 @@ tasks:
 
         assert!(text.contains("BLOCKED"));
         assert!(text.contains("Invalid contract"));
-        assert!(text.contains("Where: ./ota.yaml") || text.contains("Where: ota.yaml"));
+        assert!(text.contains("Where:"), "{text}");
+        assert!(text.contains("ota.yaml"), "{text}");
         assert!(text.contains("Field: execution.backends.container.image"));
         assert!(text.contains(
             "container-backed provisioning requires `execution.backends.container.image`"
@@ -65946,6 +66099,7 @@ const PROOF_RUNTIME_READINESS_LOOP_INTERVAL_SECS: u64 = 2;
 const PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET: u64 = 30;
 const PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS: u64 = 60;
 const PROOF_RUNTIME_SUCCESSFUL_SERVICE_EXIT_GRACE_SECS: u64 = 20;
+const PROOF_RUNTIME_EXIT_OBSERVATION_GRACE_MILLIS: u64 = 250;
 
 fn proof_runtime_wait_budget(readiness_strategy: &ProofRuntimeReadinessStrategy) -> Duration {
     let floor = Duration::from_secs(PROOF_RUNTIME_READINESS_WAIT_FLOOR_SECS);
@@ -66104,6 +66258,38 @@ fn wait_for_proof_runtime_readiness(
                         return Err(format!(
                             "could not observe the runtime-proof `ota up --stream` process: {error}"
                         ));
+                    }
+                }
+                let grace_deadline = Instant::now()
+                    + Duration::from_millis(PROOF_RUNTIME_EXIT_OBSERVATION_GRACE_MILLIS);
+                loop {
+                    if Instant::now() >= grace_deadline {
+                        break;
+                    }
+                    match up_process.try_wait() {
+                        Ok(Some(exit_status)) => {
+                            if exit_status.success() {
+                                return Ok((latest_report, "post-up diagnosis", true, None));
+                            }
+                            let up_process_failure = Some(proof_runtime_process_exit_failure(
+                                process_label,
+                                exit_status,
+                            ));
+                            return Ok((
+                                latest_report,
+                                "service readiness",
+                                false,
+                                up_process_failure,
+                            ));
+                        }
+                        Ok(None) => {
+                            thread::sleep(Duration::from_millis(25));
+                        }
+                        Err(error) => {
+                            return Err(format!(
+                                "could not observe the runtime-proof `ota up --stream` process: {error}"
+                            ));
+                        }
                     }
                 }
                 return Ok((latest_report, "post-up diagnosis", true, None));
@@ -66577,7 +66763,7 @@ fn render_up_preview_text(
     let mut stdout = format!(
         "{}\n\n{}\n\n{}",
         format_command_header("UP PREVIEW", path),
-        render_doctor_readiness_status(summary.verdict),
+        render_preview_readiness_status(summary.verdict),
         format_mode_line("dry-run (no write)")
     );
 

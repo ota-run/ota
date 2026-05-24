@@ -109,6 +109,7 @@
         "contract",
         "task",
         "dry_run",
+        "preview_status",
         "summary",
         "contract_identity",
         "resolved",
@@ -123,6 +124,9 @@
         "member": { "type": "string" },
         "task": { "type": "string" },
         "dry_run": { "const": true },
+        "preview_status": {
+          "enum": ["RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"]
+        },
         "summary": { "$ref": "./doctor.json#/properties/summary" },
         "contract_identity": {
           "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/contract_identity"

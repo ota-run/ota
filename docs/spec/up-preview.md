@@ -113,7 +113,8 @@ Dry run only
 Required text fields:
 
 - preview mode line: `Mode: dry-run (no write)`
-- top-level readiness status using the shared repo vocabulary: `READY`, `READY WITH WARNINGS`, or `BLOCKED`
+- top-level preview status using the execution preview vocabulary: `RUNNABLE`,
+  `RUNNABLE WITH WARNINGS`, or `BLOCKED`
 - selected `Backend`
 - selected `Lifecycle` when one exists
 - selected container `Image` when container execution is active

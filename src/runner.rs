@@ -43956,6 +43956,9 @@ toolchains:
     fulfillment: run
 tasks:
   setup:
+    requirements:
+      toolchains:
+        - rust
     run: cargo fetch
 "#,
         );

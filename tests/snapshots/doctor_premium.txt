@@ -19,6 +19,7 @@ Execution
 AGENT
 
 Overview
+ »  Posture: `readiness_strict`
  »  Entrypoint: `ci`
  »  Default task: `ci`
 

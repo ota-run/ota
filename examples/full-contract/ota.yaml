@@ -129,6 +129,9 @@ tasks:
     script: |
       pnpm install
       pnpm exec prisma generate
+    effects:
+      writes:
+        - node_modules
   dev:
     context: host
     description: Start the local development server on the host
@@ -292,6 +295,7 @@ checks:
     severity: warn
     run: pnpm test -- --runInBand
 agent:
+  posture: readiness_strict
   entrypoint: setup
   default_task: test
   safe_tasks:
@@ -302,6 +306,9 @@ agent:
   writable_paths:
     - src
     - docs
+    - .github/workflows
+  acknowledged_sensitive_writable_paths:
+    - .github/workflows
   protected_paths:
     - ota.yaml
     - Cargo.lock
@@ -313,3 +320,5 @@ agent:
 metadata:
   owner: ota
   team: platform
+  ota:
+    minimum_version: "1.6.15"

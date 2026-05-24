@@ -655,6 +655,7 @@ pub struct RunPreviewSuccess<'a> {
     pub member: Option<&'a str>,
     pub task: &'a str,
     pub dry_run: bool,
+    pub preview_status: &'a str,
     pub summary: DoctorSummary,
     pub contract_identity: ContractIdentity,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2181,6 +2182,7 @@ pub struct UpPreviewStatus<'a> {
     pub path: &'a str,
     pub dry_run: bool,
     pub status: &'a str,
+    pub preview_status: &'a str,
     pub phase: &'a str,
     pub summary: DoctorSummary,
     pub contract_identity: ContractIdentity,
