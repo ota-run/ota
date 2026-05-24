@@ -100,8 +100,10 @@
   when that writable boundary is present
 - expanded task side-effect metadata with `tasks.<name>.effects.network` and
   `tasks.<name>.effects.external_state`, surfaced those effects through `ota tasks --json`,
-  `ota workspace tasks --json`, text task inventory, and generated `AGENTS.md`, and added
-  validation for machine-readable external-state tokens
+  `ota workspace tasks --json`, text task inventory, and generated `AGENTS.md`, added
+  validation for machine-readable external-state tokens, and now surface agent-safe risk warnings
+  plus selected-path doctor signals when those tasks depend on network access or mutate external
+  systems
 
 ## 1.6.15
 

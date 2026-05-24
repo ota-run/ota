@@ -4542,6 +4542,8 @@ pub enum ContractAdvisory {
     LikelyUnusedAttachment(AttachmentUseAdvisory),
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
+    AgentSafeTaskNetwork(AgentSafeTaskNetworkAdvisory),
+    AgentSafeTaskExternalState(AgentSafeTaskExternalStateAdvisory),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4576,6 +4578,17 @@ pub struct SensitiveAgentWritablePathAdvisory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSafeTaskNetworkAdvisory {
+    pub task_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSafeTaskExternalStateAdvisory {
+    pub task_name: String,
+    pub systems: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskExecutionBoundary {
     pub context_name: Option<String>,
     pub backend: Backend,
@@ -4605,6 +4618,15 @@ impl ContractAdvisory {
                 "`agent.writable_paths` includes sensitive {} `{}`",
                 advisory.category, advisory.path
             ),
+            ContractAdvisory::AgentSafeTaskNetwork(advisory) => format!(
+                "agent-safe task `{}` requires network access",
+                advisory.task_name
+            ),
+            ContractAdvisory::AgentSafeTaskExternalState(advisory) => format!(
+                "agent-safe task `{}` mutates external state: {}",
+                advisory.task_name,
+                advisory.systems.join(", ")
+            ),
         }
     }
 
@@ -4626,6 +4648,15 @@ impl ContractAdvisory {
                 advisory.task_name, advisory.isolated_path, advisory.context_name
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => advisory.reason.clone(),
+            ContractAdvisory::AgentSafeTaskNetwork(advisory) => format!(
+                "task `{}` is declared agent-safe but also declares `effects.network: true`, so unattended execution still depends on registry, API, or remote service reachability",
+                advisory.task_name
+            ),
+            ContractAdvisory::AgentSafeTaskExternalState(advisory) => format!(
+                "task `{}` is declared agent-safe but mutates out-of-repo state (`{}`), so repo write boundaries alone do not bound its blast radius",
+                advisory.task_name,
+                advisory.systems.join(", ")
+            ),
         }
     }
 
@@ -4636,7 +4667,9 @@ impl ContractAdvisory {
             )),
             ContractAdvisory::LikelyUnusedAttachment(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
-            | ContractAdvisory::SensitiveAgentWritablePath(_) => None,
+            | ContractAdvisory::SensitiveAgentWritablePath(_)
+            | ContractAdvisory::AgentSafeTaskNetwork(_)
+            | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
     }
 
@@ -4647,7 +4680,9 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::LikelyUnusedAttachment(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
-            | ContractAdvisory::SensitiveAgentWritablePath(_) => None,
+            | ContractAdvisory::SensitiveAgentWritablePath(_)
+            | ContractAdvisory::AgentSafeTaskNetwork(_)
+            | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
     }
 
@@ -4659,7 +4694,9 @@ impl ContractAdvisory {
                 advisory.tool, advisory.effective_path
             )),
             ContractAdvisory::MutatesManagedIsolatedPath(_)
-            | ContractAdvisory::SensitiveAgentWritablePath(_) => None,
+            | ContractAdvisory::SensitiveAgentWritablePath(_)
+            | ContractAdvisory::AgentSafeTaskNetwork(_)
+            | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
     }
 
@@ -4683,6 +4720,15 @@ impl ContractAdvisory {
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 format!("{}", sensitive_agent_writable_path_next(advisory))
             }
+            ContractAdvisory::AgentSafeTaskNetwork(advisory) => format!(
+                "keep `effects.network: true` explicit for `{}`, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended networked execution is not acceptable",
+                advisory.task_name
+            ),
+            ContractAdvisory::AgentSafeTaskExternalState(advisory) => format!(
+                "keep `effects.external_state` explicit for `{}`, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended mutation of `{}` is not acceptable",
+                advisory.task_name,
+                advisory.systems.join(", ")
+            ),
         }
     }
 }
@@ -4710,6 +4756,7 @@ pub fn collect_contract_advisories(contract: &Contract) -> Vec<ContractAdvisory>
     advisories.extend(collect_attachment_use_advisories(contract));
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
+    advisories.extend(collect_agent_safe_task_effect_advisories(contract));
     advisories
 }
 
@@ -5028,6 +5075,59 @@ fn collect_sensitive_agent_writable_path_advisories(contract: &Contract) -> Vec<
         }
     }
 
+    advisories
+}
+
+fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let Some(agent) = contract.agent.as_ref() else {
+        return contract
+            .tasks
+            .iter()
+            .filter(|(_, task)| task.safe_for_agent)
+            .flat_map(|(task_name, task)| {
+                task_effect_advisories_for_safe_task(task_name.as_str(), task).into_iter()
+            })
+            .collect();
+    };
+
+    let safe_task_names = contract
+        .tasks
+        .iter()
+        .filter_map(|(task_name, task)| task.safe_for_agent.then_some(task_name.clone()))
+        .chain(agent.safe_tasks.iter().cloned())
+        .collect::<BTreeSet<_>>();
+
+    safe_task_names
+        .into_iter()
+        .filter_map(|task_name| {
+            contract
+                .tasks
+                .get(task_name.as_str())
+                .map(|task| (task_name, task))
+        })
+        .flat_map(|(task_name, task)| {
+            task_effect_advisories_for_safe_task(task_name.as_str(), task).into_iter()
+        })
+        .collect()
+}
+
+fn task_effect_advisories_for_safe_task(task_name: &str, task: &TaskSpec) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    if task.effects.network {
+        advisories.push(ContractAdvisory::AgentSafeTaskNetwork(
+            AgentSafeTaskNetworkAdvisory {
+                task_name: task_name.to_string(),
+            },
+        ));
+    }
+    if !task.effects.external_state.is_empty() {
+        advisories.push(ContractAdvisory::AgentSafeTaskExternalState(
+            AgentSafeTaskExternalStateAdvisory {
+                task_name: task_name.to_string(),
+                systems: task.effects.external_state.clone(),
+            },
+        ));
+    }
     advisories
 }
 
@@ -17874,6 +17974,38 @@ tasks:
             )),
             "{rendered:?}"
         );
+    }
+
+    #[test]
+    fn collects_agent_safe_task_effect_advisories_for_network_and_external_state() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    safe_for_agent: true
+    effects:
+      network: true
+      external_state:
+        - docker
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskNetwork(value) if value.task_name == "setup"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskExternalState(value)
+                if value.task_name == "setup" && value.systems == vec![String::from("docker")]
+        )));
     }
 
     #[test]

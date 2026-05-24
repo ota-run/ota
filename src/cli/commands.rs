@@ -1264,6 +1264,28 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::AgentSafeTaskNetwork(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("network access"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
+        ContractAdvisory::AgentSafeTaskExternalState(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail(&value.systems.join(", ")),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
     }
 }
 
@@ -38030,8 +38052,13 @@ fn render_agents_markdown(
         if !agent.safe_tasks.is_empty() {
             render_agents_task_list(&mut output, "safe_tasks", &agent.safe_tasks);
         }
-        let safe_task_effects = agent
-            .safe_tasks
+        let safe_task_effect_names = contract
+            .tasks
+            .iter()
+            .filter_map(|(task_name, task)| task.safe_for_agent.then_some(task_name.clone()))
+            .chain(agent.safe_tasks.iter().cloned())
+            .collect::<BTreeSet<_>>();
+        let safe_task_effects = safe_task_effect_names
             .iter()
             .filter_map(|task_name| {
                 contract.tasks.get(task_name).map(|task| {
@@ -38044,7 +38071,7 @@ fn render_agents_markdown(
             .filter(|(_, effects)| !effects.is_empty())
             .collect::<Vec<_>>();
         if !safe_task_effects.is_empty() {
-            output.push_str("- `safe_task_effects`:\n");
+            output.push_str("- `safe_task_risk_signals`:\n");
             for (task_name, effects) in safe_task_effects {
                 output.push_str("  - `");
                 output.push_str(task_name);
@@ -50497,11 +50524,47 @@ agent:
             "./ota.yaml",
         );
 
-        assert!(rendered.contains("- `safe_task_effects`:"));
+        assert!(rendered.contains("- `safe_task_risk_signals`:"));
         assert!(
             rendered.contains("`setup`: writes=node_modules; network=true; external_state=docker"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn render_agents_markdown_includes_safe_for_agent_task_risk_signals() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    safe_for_agent: true
+    effects:
+      network: true
+agent:
+  entrypoint: setup
+"#,
+        )
+        .unwrap();
+
+        let agent = crate::output::AgentSummary::from_config(
+            contract.agent.as_ref().expect("agent config should exist"),
+        )
+        .expect("agent summary should exist");
+
+        let rendered = super::render_agents_markdown(
+            &contract,
+            Path::new("./ota.yaml"),
+            Some(&agent),
+            "./ota.yaml",
+        );
+
+        assert!(rendered.contains("- `safe_task_risk_signals`:"));
+        assert!(rendered.contains("`setup`: network=true"), "{rendered}");
     }
 
     #[test]

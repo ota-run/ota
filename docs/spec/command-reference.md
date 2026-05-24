@@ -1235,6 +1235,8 @@ ota doctor --member api --member web --json [PATH]
 - repeated `--member` values diagnose those members in the provided order
 - prints the highest-priority blocker first in the human-readable output so the fastest next action is visible immediately
 - when findings are warning-only, still surfaces one highest-priority primary finding before grouped detail so the next safe action is visible without scanning the whole report
+- doctor now surfaces selected task-path side-effect signals: network-dependent paths stay explicit,
+  and selected tasks that mutate external systems surface warnings before execution
 - environment blockers now point through `ota env` first so operators can inspect precedence before changing shell values, policy env, or declared sources
 - unverifiable required services now route into `ota assist declare-readiness` when only the probe is missing, or `ota assist declare-service` when the managed service shape itself still lacks a start path
 - missing-file precondition failures now point to `ota up` / `ota run setup` when `tasks.setup` already exists, or to `ota assist wire-setup` when the repo still needs a contract-first setup path
@@ -1255,6 +1257,8 @@ ota doctor --member api --member web --json [PATH]
   so `toolchains.rust` can participate in approved-version and approved-source findings without
   re-declaring `runtimes.rust`
 - `ota doctor --json` now exposes additive `toolchains[]` entries for the selected workflow/task path, including the provider, effective backend, target OS, version, fulfillment mode, and the owned runtime/tool capabilities ota checked on that path
+- agent-safe tasks that declare `effects.network` or `effects.external_state` now produce warnings
+  in doctor output instead of leaving those execution risks implicit behind a safe-task label
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, doctor names that
   activation lane directly instead of reducing the fix to a generic install hint; Corepack-managed
   `pnpm` is the first shipped provider path
