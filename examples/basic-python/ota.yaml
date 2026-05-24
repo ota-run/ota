@@ -69,7 +69,6 @@ agent:
   verify_after_changes:
     - test
   writable_paths:
-    - .
     - docs
     - tests
   protected_paths:

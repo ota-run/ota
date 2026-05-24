@@ -2468,6 +2468,12 @@ The `metadata.ota.detect` subtree is ota-reserved and must remain mapping-shaped
 or `metadata.ota.detect` is repurposed as a scalar or list, detect merge cannot persist ownership
 metadata and will fail until that path is repaired.
 
+`metadata.ota.minimum_version` is the reserved compatibility hint for contracts that require a
+newer ota binary than the one an operator may have installed. Keep it as a semver string such as
+`1.6.16`. Current ota builds validate it, reject contracts whose declared minimum exceeds the
+running binary, and use it to explain newer-field parse failures more clearly than a raw
+`unknown field` message.
+
 You can also pin curated fields explicitly with `manual` there when detector silence should not be
 treated as contract drift. When a field has no detect ownership entry, ota treats the existing
 contract value as `manual` by default.

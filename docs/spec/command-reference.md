@@ -60,6 +60,7 @@ Doctor first, contract second.
 ```bash
 ota --help
 ota --version
+ota --version --json
 ota --debug <command>
 ota --plain <command>
 ota --concise <command>
@@ -1214,6 +1215,11 @@ ota doctor --member api --member web --json [PATH]
 
 - when no contract exists, reports `Contract missing`, shows any trustworthy repo and host signals under `Repo Signals` across mainstream and long-tail detector-supported stacks, including repo type, dependency/build tools, likely runnable tasks, services, and host tool availability, and keeps the next step compare-first with `ota detect --dry-run`, `ota detect --contract`, and `ota init --dry-run`
 - the human summary now makes the top-level state explicit as `READY`, `READY WITH WARNINGS`, or `BLOCKED`
+- `ota --version` now exposes build identity when available, including the git commit and dirty
+  marker for source builds, so released and unreleased binaries do not masquerade as the same
+  version string
+- `ota --version --json` exposes the same identity in machine-readable form (`semver`,
+  `source_build`, `commit`, `dirty`) for CI and toolchain provenance checks
 - validates the contract first when one is present
 - when a root contract declares `workspace.type: monorepo`, plain `ota doctor` diagnoses the root contract and grouped summaries for each declared member
 - when `--member` is set, diagnoses the merged member contract
@@ -1721,7 +1727,12 @@ Current behavior:
 - prints a summary in text output, emits an execution receipt when `--receipt` is set, and includes `summary` plus a `receipt` object in repo-target JSON output; the compact `UP SUMMARY` now leads with `Status` for faster scan time, and monorepo aggregate JSON keeps grouped `members` results instead of inventing a top-level receipt
 - when the execution receipt carries follow-up guidance, text output appends that shared `Next:` block after `UP SUMMARY`, and the same receipt-backed lane stays on the repo-target JSON `receipt.next` surface so repo and workspace preparation flows end the same way
 - `--dry-run` prints `UP PREVIEW`, shows the selected execution backend, lifecycle, container image when relevant, a real named target when one would exist, the setup task, the actions ota would attempt, the actions ota would skip because current state already satisfies them, the compact contract identity, and the first actionable readiness finding when one exists
-- `--dry-run` now uses the same top-level readiness vocabulary as `doctor` and `check`: `READY`, `READY WITH WARNINGS`, or `BLOCKED`
+- `--dry-run` keeps the shared readiness verdict in JSON `status` / `summary.verdict`, but the
+  preview text and additive JSON `preview_status` now make the execution meaning explicit as
+  `RUNNABLE`, `RUNNABLE WITH WARNINGS`, or `BLOCKED`
+- `ota run <task> --dry-run` now diagnoses the selected task dependency path with the same
+  precondition truth surface used by `ota doctor` / `ota up`, so selected runtime, tool, and
+  toolchain mismatches block preview instead of being silently described as runnable
 - `--dry-run` never provisions, starts services, runs setup, or writes repo files
 - `--receipt` is only for mutating `ota up`; it conflicts with `--dry-run`
 - the detailed preview contract lives in [up-preview.md](up-preview.md)

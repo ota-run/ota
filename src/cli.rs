@@ -2915,8 +2915,11 @@ where
     if let Some(output) = maybe_handle_shell_completion(&args) {
         return output;
     }
-    if is_version_request(&args) {
-        let output = CommandOutput::success(render_version_output(&args));
+    if let Some(mode) = version_request_mode(&args) {
+        let output = match mode {
+            VersionOutputMode::Text => CommandOutput::success(render_version_output(&args)),
+            VersionOutputMode::Json => CommandOutput::success(render_version_json_output()),
+        };
         let update_notice_rx = should_show_version_update_notice(&args).then(spawn_update_notice);
         return maybe_append_update_notice(output, update_notice_rx);
     }
@@ -3423,7 +3426,7 @@ fn should_show_version_update_notice(args: &[OsString]) -> bool {
         && io::stderr().is_terminal()
         && !args
             .iter()
-            .any(|arg| arg.to_string_lossy().as_ref() == "--plain")
+            .any(|arg| matches!(arg.to_string_lossy().as_ref(), "--plain" | "--json"))
 }
 
 fn update_notice_wait_timeout() -> Duration {
@@ -3544,26 +3547,42 @@ impl CommandSpinner {
     }
 }
 
-fn is_version_request(args: &[OsString]) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VersionOutputMode {
+    Text,
+    Json,
+}
+
+fn version_request_mode(args: &[OsString]) -> Option<VersionOutputMode> {
     if args.len() < 2 {
-        return false;
+        return None;
     }
 
     let mut has_version = false;
+    let mut wants_json = false;
     for arg in &args[1..] {
         let value = arg.to_string_lossy();
         match value.as_ref() {
-            "--version" | "-V" => has_version = true,
+            "--version" | "-V" | "version" => has_version = true,
             "--plain" => {}
-            _ => return false,
+            "--json" => wants_json = true,
+            _ => return None,
         }
     }
 
-    has_version
+    if has_version {
+        Some(if wants_json {
+            VersionOutputMode::Json
+        } else {
+            VersionOutputMode::Text
+        })
+    } else {
+        None
+    }
 }
 
 fn render_version_output(args: &[OsString]) -> String {
-    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let version = rendered_build_version();
     if args
         .iter()
         .any(|arg| arg.to_string_lossy().as_ref() == "--plain")
@@ -3575,6 +3594,56 @@ fn render_version_output(args: &[OsString]) -> String {
     }
 
     format!("🦦 \x1b[1;38;5;136m{version}\x1b[0m")
+}
+
+fn render_version_json_output() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let source_build = option_env!("OTA_BUILD_SOURCE").is_some();
+    let commit = option_env!("OTA_BUILD_COMMIT");
+    let dirty = option_env!("OTA_BUILD_DIRTY").is_some();
+
+    serde_json::to_string_pretty(&serde_json::json!({
+        "ok": true,
+        "semver": version,
+        "version": format!("v{version}"),
+        "source_build": source_build,
+        "commit": commit,
+        "dirty": dirty,
+    }))
+    .expect("version json should serialize")
+}
+
+fn rendered_build_version() -> String {
+    rendered_build_version_from(
+        env!("CARGO_PKG_VERSION"),
+        option_env!("OTA_BUILD_SOURCE"),
+        option_env!("OTA_BUILD_COMMIT"),
+        option_env!("OTA_BUILD_DIRTY"),
+    )
+}
+
+fn rendered_build_version_from(
+    package_version: &str,
+    source_marker: Option<&str>,
+    commit: Option<&str>,
+    dirty_marker: Option<&str>,
+) -> String {
+    let mut version = format!("v{package_version}");
+    if let Some(commit) = commit {
+        version.push_str(" (");
+        if source_marker.is_some() {
+            version.push_str("source, ");
+        }
+        version.push_str("commit ");
+        version.push_str(commit);
+        if dirty_marker.is_some() {
+            version.push_str(", dirty");
+        }
+        version.push(')');
+    } else if source_marker.is_some() {
+        version.push_str(" (source)");
+    }
+    version
 }
 
 const COMPLETION_SETUP_MARKER_START: &str = "# >>> ota completion >>>";
@@ -6971,6 +7040,16 @@ exec /bin/sh -lc "$1"
         let mut normalized = value.to_string();
         if matches!(name, "doctor_premium.txt" | "doctor_plain_premium.txt") {
             normalized = normalized.replace("./bin/node.cmd", "./bin/node");
+            if let Some(home) = std::env::var_os("HOME") {
+                let mise_path = PathBuf::from(home)
+                    .join(".local")
+                    .join("bin")
+                    .join("mise")
+                    .display()
+                    .to_string()
+                    .replace('\\', "/");
+                normalized = normalized.replace(&mise_path, "./bin/node");
+            }
             normalized = normalized.replace(
                 "`./bin/node` with\n     `node --version`",
                 "`./bin/node` with `node --version`",
@@ -17339,7 +17418,27 @@ tasks:
             std::ffi::OsString::from("--plain"),
         ]);
 
-        assert_eq!(output, format!("ota v{}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(output, format!("ota {}", super::rendered_build_version()));
+    }
+
+    #[test]
+    fn version_output_marks_source_build_identity() {
+        assert_eq!(
+            super::rendered_build_version_from("1.6.15", Some("1"), Some("abc123def"), None),
+            "v1.6.15 (source, commit abc123def)"
+        );
+        assert_eq!(
+            super::rendered_build_version_from("1.6.15", Some("1"), Some("abc123def"), Some("1")),
+            "v1.6.15 (source, commit abc123def, dirty)"
+        );
+        assert_eq!(
+            super::rendered_build_version_from("1.6.15", Some("1"), None, None),
+            "v1.6.15 (source)"
+        );
+        assert_eq!(
+            super::rendered_build_version_from("1.6.15", None, None, None),
+            "v1.6.15"
+        );
     }
 
     #[test]
@@ -17347,9 +17446,33 @@ tasks:
         let output = run_with(["ota", "--plain", "--version"]);
 
         assert_eq!(output.exit_code, 0);
-        assert_eq!(output.stdout, format!("ota v{}", env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            output.stdout,
+            format!("ota {}", super::rendered_build_version())
+        );
         assert_eq!(output.stderr, None);
         assert!(!output.stdout.contains("🦦"));
+    }
+
+    #[test]
+    fn version_request_supports_json_output() {
+        let output = run_with(["ota", "--version", "--json"]);
+        assert_eq!(output.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("version json");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["semver"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(json["version"], format!("v{}", env!("CARGO_PKG_VERSION")));
+        assert!(json.get("source_build").is_some(), "{json}");
+        assert!(json.get("dirty").is_some(), "{json}");
+    }
+
+    #[test]
+    fn version_request_supports_version_token_with_json() {
+        let output = run_with(["ota", "version", "--json"]);
+        assert_eq!(output.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("version json");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["semver"], env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
@@ -17367,6 +17490,76 @@ unexpected: true
 
         assert_eq!(output.exit_code, 1);
         assert!(strip_ansi(output.stderr.as_deref().unwrap_or_default()).contains("unexpected"));
+    }
+
+    #[test]
+    fn validate_reports_required_minimum_ota_version() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+metadata:
+  ota:
+    minimum_version: "99.0.0"
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let combined = format!(
+            "{}\n{}",
+            strip_ansi(&output.stdout),
+            strip_ansi(output.stderr.as_deref().unwrap_or_default())
+        );
+        assert!(
+            combined.contains("metadata.ota.minimum_version"),
+            "{combined}"
+        );
+        assert!(combined.contains("requires Ota >="), "{combined}");
+    }
+
+    #[test]
+    fn validate_unknown_field_surfaces_minimum_ota_hint_when_declared() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  future_authority: strict
+metadata:
+  ota:
+    minimum_version: "99.0.0"
+"#,
+        );
+
+        let output = run_with(["ota", "validate", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("minimum_version: 99.0.0"), "{stderr}");
+        assert!(stderr.contains("use Ota >= `99.0.0`"), "{stderr}");
+    }
+
+    #[test]
+    fn doctor_enforces_required_minimum_ota_version() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+metadata:
+  ota:
+    minimum_version: "99.0.0"
+"#,
+        );
+
+        let output = run_with(["ota", "doctor", fixture.path()]);
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("requires Ota >= `99.0.0`"), "{stderr}");
     }
 
     #[test]
@@ -26452,12 +26645,15 @@ tasks:
         );
     }
 
+    fn read_repo_script(path: &str) -> String {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
+            .unwrap_or_else(|error| panic!("read {path}: {error}"))
+    }
+
     #[test]
     fn bump_version_scripts_recommend_canonical_ota_ci_task() {
-        let shell_script =
-            fs::read_to_string("scripts/bump-version.sh").expect("read bump-version.sh");
-        let powershell_script =
-            fs::read_to_string("scripts/bump-version.ps1").expect("read bump-version.ps1");
+        let shell_script = read_repo_script("scripts/bump-version.sh");
+        let powershell_script = read_repo_script("scripts/bump-version.ps1");
 
         assert!(
             shell_script
@@ -26480,9 +26676,7 @@ tasks:
 
     #[test]
     fn bootstrap_powershell_defers_locked_binary_replacement_for_wrapped_copy_item_errors() {
-        let script = fs::read_to_string("scripts/bootstrap.ps1")
-            .expect("read bootstrap.ps1")
-            .replace("\r\n", "\n");
+        let script = read_repo_script("scripts/bootstrap.ps1").replace("\r\n", "\n");
 
         assert!(script.contains("function Test-OtaWindows"), "{script}");
         assert!(!script.contains("$IsWindows"), "{script}");
@@ -26528,7 +26722,7 @@ tasks:
 
     #[test]
     fn bootstrap_powershell_uses_ascii_safe_user_visible_output() {
-        let script = fs::read_to_string("scripts/bootstrap.ps1").expect("read bootstrap.ps1");
+        let script = read_repo_script("scripts/bootstrap.ps1");
 
         assert!(
             script.contains("function Enable-OtaUnicodeOutput"),
@@ -26562,7 +26756,7 @@ tasks:
 
     #[test]
     fn install_powershell_downloads_bootstrap_to_temp_path() {
-        let script = fs::read_to_string("scripts/install.ps1").expect("read install.ps1");
+        let script = read_repo_script("scripts/install.ps1");
 
         assert!(
             script.contains("[string]::IsNullOrWhiteSpace($PSScriptRoot)"),
@@ -26616,9 +26810,7 @@ tasks:
 
     #[test]
     fn install_sh_uses_zip_release_asset_for_windows_targets() {
-        let script = fs::read_to_string("scripts/install.sh")
-            .expect("read install.sh")
-            .replace("\r\n", "\n");
+        let script = read_repo_script("scripts/install.sh").replace("\r\n", "\n");
 
         assert!(
             script.contains("*-pc-windows-msvc) asset=\"ota-${target}.zip\""),
@@ -26637,7 +26829,7 @@ tasks:
 
     #[test]
     fn install_sh_uses_ota_exe_for_windows_post_install_checks() {
-        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+        let script = read_repo_script("scripts/install.sh");
 
         assert!(script.contains("binary_name=\"ota.exe\""), "{script}");
         assert!(
@@ -26652,7 +26844,7 @@ tasks:
 
     #[test]
     fn install_sh_uses_localappdata_default_bin_dir_for_windows() {
-        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+        let script = read_repo_script("scripts/install.sh");
 
         assert!(script.contains("default_bin_dir()"), "{script}");
         assert!(
@@ -26680,7 +26872,7 @@ tasks:
 
     #[test]
     fn install_sh_normalizes_msys_paths_before_calling_powershell() {
-        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+        let script = read_repo_script("scripts/install.sh");
 
         assert!(script.contains("path_for_powershell()"), "{script}");
         assert!(script.contains("cygpath -w \"$1\""), "{script}");
@@ -26710,7 +26902,7 @@ tasks:
 
     #[test]
     fn install_sh_verifies_release_binary_it_just_installed_before_path() {
-        let script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
+        let script = read_repo_script("scripts/install.sh");
 
         assert!(script.contains("installed_binary_path=\"\""), "{script}");
         assert!(
@@ -26744,9 +26936,7 @@ tasks:
 
     #[test]
     fn install_sh_defers_locked_windows_binary_replacement() {
-        let script = fs::read_to_string("scripts/install.sh")
-            .expect("read install.sh")
-            .replace("\r\n", "\n");
+        let script = read_repo_script("scripts/install.sh").replace("\r\n", "\n");
 
         assert!(
             script.contains("schedule_windows_replacement_after_exit()"),
@@ -26778,9 +26968,7 @@ tasks:
 
     #[test]
     fn install_sh_uses_unicode_header_when_windows_shell_supports_utf8() {
-        let script = fs::read_to_string("scripts/install.sh")
-            .expect("read install.sh")
-            .replace("\r\n", "\n");
+        let script = read_repo_script("scripts/install.sh").replace("\r\n", "\n");
 
         assert!(script.contains("use_ascii_output()"), "{script}");
         assert!(script.contains("locale charmap"), "{script}");
@@ -26808,9 +26996,8 @@ tasks:
 
     #[test]
     fn release_install_scripts_refuse_cargo_fallback_in_explicit_release_mode() {
-        let shell_script = fs::read_to_string("scripts/install.sh").expect("read install.sh");
-        let powershell_script =
-            fs::read_to_string("scripts/bootstrap.ps1").expect("read bootstrap.ps1");
+        let shell_script = read_repo_script("scripts/install.sh");
+        let powershell_script = read_repo_script("scripts/bootstrap.ps1");
 
         assert!(
             shell_script.contains(
@@ -28027,15 +28214,15 @@ tasks:
 version: 1
 project:
   name: ota
-env:
-  vars:
-    OTA_DOCTOR_ORDER_REQUIRED:
-      required: true
 tools:
   cargo:
     version: "999.0.0"
     required: false
 checks:
+  - name: blocking-check
+    kind: health
+    severity: error
+    run: exit 1
   - name: informational-check
     kind: health
     severity: info
@@ -28050,7 +28237,9 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
-        let error_index = stdout.find("➤ Primary Blocker").unwrap();
+        let error_index = stdout
+            .find("➤ Primary Blocker Check failed: blocking-check")
+            .unwrap();
         let warn_index = stdout
             .find("WARN  Version mismatch for tool: cargo")
             .unwrap();
@@ -28593,6 +28782,7 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["dry_run"], true);
         assert_eq!(json["status"], "READY WITH WARNINGS");
+        assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
         assert_eq!(json["phase"], "preview");
         assert_eq!(json["summary"]["verdict"], "risky");
         assert_eq!(json["summary"]["agent_verdict"], "not_ready");
@@ -28642,7 +28832,7 @@ tasks:
 
         assert_eq!(text_output.exit_code, 0);
         let stdout = strip_ansi(&text_output.stdout);
-        assert!(stdout.contains("READY WITH WARNINGS"));
+        assert!(stdout.contains("RUNNABLE WITH WARNINGS"));
         assert!(stdout.contains("Missing tool: ota-tool-that-does-not-exist"));
 
         let json_output = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
@@ -28650,6 +28840,7 @@ tasks:
         assert_eq!(json_output.exit_code, 0);
         let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
         assert_eq!(json["status"], "READY WITH WARNINGS");
+        assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
         assert_eq!(json["summary"]["verdict"], "risky");
         assert_eq!(
             json["summary"]["primary_blocker"]["summary"],

@@ -39,8 +39,20 @@ permissions:
   pull-requests: write
 
 jobs:
+  json-schema-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Verify JSON schema/output conformance
+        run: |
+          cargo test --test json_schema_contracts
+          cargo test --test json_output_conformance
+
   readiness:
     runs-on: ubuntu-latest
+    needs: json-schema-guard
 
     steps:
       - uses: actions/checkout@v5

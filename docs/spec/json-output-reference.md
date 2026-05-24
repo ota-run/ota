@@ -1753,6 +1753,10 @@ Repo-level `ota run --json` is currently not a mutating execution receipt surfac
 `ota run <task> --dry-run --json` for planning, `ota receipt --json` for repo readiness receipts,
 and `ota workspace run --json` for coordinated multi-repo execution receipts.
 
+`preview_status` is the operator-facing preview label for this dry-run surface. It is
+`RUNNABLE`, `RUNNABLE WITH WARNINGS`, or `BLOCKED`. Keep using `summary.verdict` for the canonical
+shared readiness verdict.
+
 ```json
 {
   "ok": true,
@@ -1760,6 +1764,7 @@ and `ota workspace run --json` for coordinated multi-repo execution receipts.
   "contract": "/path/to/ota.yaml",
   "task": "ci",
   "dry_run": true,
+  "preview_status": "RUNNABLE",
   "summary": {
     "verdict": "ready",
     "agent_verdict": "ready",
@@ -2977,6 +2982,7 @@ Example contract-validation failure (before `up` execution starts):
   "path": "/abs/path/to/ota.yaml",
   "dry_run": true,
   "status": "READY WITH WARNINGS",
+  "preview_status": "RUNNABLE WITH WARNINGS",
   "phase": "preview",
   "summary": {
     "verdict": "risky",

@@ -157,6 +157,14 @@ pub struct Contract {
 }
 
 impl Contract {
+    pub fn minimum_ota_version(&self) -> Option<&str> {
+        self.metadata
+            .get("ota")
+            .and_then(serde_yaml::Value::as_mapping)
+            .and_then(|ota| ota.get(serde_yaml::Value::String(String::from("minimum_version"))))
+            .and_then(serde_yaml::Value::as_str)
+    }
+
     pub fn probe(&self, name: &str) -> Option<&ReadinessProbeSpec> {
         self.readiness.probes.get(name)
     }

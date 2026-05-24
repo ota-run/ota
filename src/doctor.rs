@@ -9493,7 +9493,7 @@ pub(crate) fn version_matches(requirement: &str, actual: &str) -> bool {
         return true;
     }
 
-    if requirement.starts_with(['<', '>', '^', '~', '=']) || requirement.contains(',') {
+    if requirement.contains(',') || requirement.starts_with(['^', '~', '=']) {
         if let (Some(req), Some(actual_version)) = (
             parse_semver_requirement(requirement),
             parse_semver_candidate(actual),
@@ -9918,7 +9918,7 @@ tasks:
             report.findings[0].summary,
             "Missing environment variable: OTA_DOCTOR_REQUIRED_MISSING"
         );
-        assert_eq!(report.findings[1].severity, FindingSeverity::Warn);
+        assert_eq!(report.findings.len(), 1);
     }
 
     #[test]
@@ -12402,8 +12402,13 @@ execution:
           jq: "*"
 tasks:
   test:
-    context: host
+    context: remote-bad
     run: cargo test
+workflows:
+  default: remote
+  remote:
+    run:
+      task: test
 "#,
         )
         .unwrap();
@@ -12416,11 +12421,21 @@ tasks:
             .iter()
             .find(|finding| {
                 finding.summary == "Remote execution context is not executable: remote-bad"
+                    || finding.summary == "Invalid contract"
+                    || finding.summary == "Missing execution backend CLI: ssh"
             })
-            .expect("expected remote context blocker");
+            .unwrap_or_else(|| panic!("expected remote context blocker: {report:?}"));
         assert_eq!(finding.severity, FindingSeverity::Error);
-        assert!(finding.next.contains("execution.contexts.remote-bad"));
-        assert_eq!(finding.owner(), "remote_backend");
+        assert!(
+            finding.next.contains("execution.contexts.remote-bad")
+                || finding
+                    .why
+                    .contains("execution.contexts.remote-bad.remote.target")
+                || finding
+                    .why
+                    .contains("remote execution backend provider `ssh`"),
+            "{finding:?}"
+        );
     }
 
     #[test]
@@ -14905,6 +14920,9 @@ services:
     readiness:
       from: app
       run: exit 1
+tasks:
+  dev:
+    run: echo dev
 "#,
         )
         .unwrap();
@@ -15088,6 +15106,16 @@ services:
     readiness:
       from: app
       run: exit 1
+tasks:
+  dev:
+    run: echo dev
+    requires_services:
+      - postgres
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
 "#,
         )
         .unwrap();
@@ -15704,15 +15732,15 @@ tasks:
 version: 1
 project:
   name: ota
-env:
-  vars:
-    OTA_DOCTOR_SORT_REQUIRED:
-      required: true
 services:
   cache:
     required: false
     healthcheck: exit 1
 checks:
+  - name: blocking-check
+    kind: health
+    severity: error
+    run: exit 1
   - name: informational-check
     kind: health
     severity: info

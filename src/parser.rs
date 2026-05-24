@@ -21,11 +21,13 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+use semver::Version;
 use serde_yaml::{Mapping, Value};
 
 use crate::schema::{Contract, SurfaceSpec, TaskRuntimeSpec};
@@ -38,28 +40,85 @@ struct ContractCacheKey {
     fingerprint: u64,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum LoadContractError {
-    #[error("failed to read contract `{path}`: {source}")]
     Read {
         path: String,
-        #[source]
         source: std::io::Error,
     },
-    #[error("failed to parse contract `{path}`: {source}")]
     Parse {
         path: String,
-        #[source]
         source: serde_yaml::Error,
+        hint: Option<String>,
     },
-    #[error(
-        "contract `{path}` does not declare `workspace.type: monorepo`; `--member {member}` requires a monorepo root contract"
-    )]
-    MemberModeUnsupported { path: String, member: String },
-    #[error("contract `{path}` does not declare monorepo member `{member}`")]
-    UnknownMember { path: String, member: String },
-    #[error("member contract `{path}` must not declare a top-level `workspace` block")]
-    MemberDeclaresWorkspace { path: String },
+    MemberModeUnsupported {
+        path: String,
+        member: String,
+    },
+    UnknownMember {
+        path: String,
+        member: String,
+    },
+    MemberDeclaresWorkspace {
+        path: String,
+    },
+    MinimumOtaVersionUnsupported {
+        path: String,
+        minimum_version: String,
+        current_version: String,
+    },
+}
+
+impl fmt::Display for LoadContractError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read { path, source } => {
+                write!(f, "failed to read contract `{path}`: {source}")
+            }
+            Self::Parse { path, source, hint } => {
+                write!(f, "failed to parse contract `{path}`: {source}")?;
+                if let Some(hint) = hint {
+                    write!(f, "\nHint: {hint}")?;
+                }
+                Ok(())
+            }
+            Self::MemberModeUnsupported { path, member } => write!(
+                f,
+                "contract `{path}` does not declare `workspace.type: monorepo`; `--member {member}` requires a monorepo root contract"
+            ),
+            Self::UnknownMember { path, member } => {
+                write!(
+                    f,
+                    "contract `{path}` does not declare monorepo member `{member}`"
+                )
+            }
+            Self::MemberDeclaresWorkspace { path } => write!(
+                f,
+                "member contract `{path}` must not declare a top-level `workspace` block"
+            ),
+            Self::MinimumOtaVersionUnsupported {
+                path,
+                minimum_version,
+                current_version,
+            } => write!(
+                f,
+                "contract `{path}` requires Ota >= `{minimum_version}` via `metadata.ota.minimum_version`, but this binary is `{current_version}`"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for LoadContractError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Read { source, .. } => Some(source),
+            Self::Parse { source, .. } => Some(source),
+            Self::MemberModeUnsupported { .. }
+            | Self::UnknownMember { .. }
+            | Self::MemberDeclaresWorkspace { .. }
+            | Self::MinimumOtaVersionUnsupported { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,13 +198,18 @@ pub fn load_contract_for_member_with_contents(
     }
 
     merge_yaml_value(&mut root_value, member_value);
+    let minimum_ota_version = document_minimum_ota_version(&root_value).map(ToOwned::to_owned);
 
-    let mut contract =
-        serde_yaml::from_value(root_value).map_err(|source| LoadContractError::Parse {
-            path: member_path.display().to_string(),
+    let mut contract = serde_yaml::from_value(root_value).map_err(|source| {
+        let hint = parse_contract_hint(minimum_ota_version.as_deref(), &source);
+        LoadContractError::Parse {
+            path: compact_display_path(&member_path),
             source,
-        })?;
+            hint,
+        }
+    })?;
     normalize_contract_surfaces(&mut contract);
+    enforce_contract_minimum_ota_version(&contract, &member_path)?;
 
     Ok((contract, member_path))
 }
@@ -169,13 +233,45 @@ pub fn monorepo_contract_origin_for_path(
 }
 
 pub fn parse_contract_str(path: &Path, contents: &str) -> Result<Contract, LoadContractError> {
+    let document = parse_contract_value(path, contents)?;
+    let minimum_ota_version = document_minimum_ota_version(&document).map(ToOwned::to_owned);
     let mut contract =
         serde_yaml::from_str(contents).map_err(|source| LoadContractError::Parse {
             path: compact_display_path(path),
+            hint: parse_contract_hint(minimum_ota_version.as_deref(), &source),
             source,
         })?;
     normalize_contract_surfaces(&mut contract);
+    enforce_contract_minimum_ota_version(&contract, path)?;
     Ok(contract)
+}
+
+fn enforce_contract_minimum_ota_version(
+    contract: &Contract,
+    path: &Path,
+) -> Result<(), LoadContractError> {
+    let Some(minimum_version) = contract.minimum_ota_version().map(str::trim) else {
+        return Ok(());
+    };
+    if minimum_version.is_empty() {
+        return Ok(());
+    }
+
+    let Ok(minimum) = Version::parse(minimum_version) else {
+        return Ok(());
+    };
+    let Ok(current) = Version::parse(env!("CARGO_PKG_VERSION")) else {
+        return Ok(());
+    };
+    if current >= minimum {
+        return Ok(());
+    }
+
+    Err(LoadContractError::MinimumOtaVersionUnsupported {
+        path: compact_display_path(path),
+        minimum_version: minimum.to_string(),
+        current_version: current.to_string(),
+    })
 }
 
 fn normalize_contract_surfaces(contract: &mut Contract) {
@@ -319,6 +415,50 @@ fn parse_contract_value(path: &Path, contents: &str) -> Result<Value, LoadContra
     serde_yaml::from_str(contents).map_err(|source| LoadContractError::Parse {
         path: compact_display_path(path),
         source,
+        hint: None,
+    })
+}
+
+fn document_minimum_ota_version(document: &Value) -> Option<&str> {
+    document
+        .as_mapping()?
+        .get(Value::String(String::from("metadata")))?
+        .as_mapping()?
+        .get(Value::String(String::from("ota")))?
+        .as_mapping()?
+        .get(Value::String(String::from("minimum_version")))?
+        .as_str()
+}
+
+fn parse_contract_hint(
+    minimum_ota_version: Option<&str>,
+    source: &serde_yaml::Error,
+) -> Option<String> {
+    let minimum_ota_version = minimum_ota_version?.trim();
+    if minimum_ota_version.is_empty() {
+        return None;
+    }
+
+    let current = Version::parse(env!("CARGO_PKG_VERSION")).ok()?;
+    let minimum = Version::parse(minimum_ota_version).ok()?;
+    let error_text = source.to_string();
+    if !error_text.contains("unknown field `") && !error_text.contains("unknown variant `") {
+        if current < minimum {
+            return Some(format!(
+                "this contract declares `metadata.ota.minimum_version: {minimum_ota_version}`; use Ota >= `{minimum_ota_version}` (current binary `{current}`)"
+            ));
+        }
+        return None;
+    }
+
+    Some(if current < minimum {
+        format!(
+            "this contract declares `metadata.ota.minimum_version: {minimum_ota_version}`; use Ota >= `{minimum_ota_version}` (current binary `{current}`)"
+        )
+    } else {
+        format!(
+            "this contract declares `metadata.ota.minimum_version: {minimum_ota_version}`; this binary satisfies the minimum semver, so the parse failure likely comes from build/schema drift rather than the contract itself"
+        )
     })
 }
 
@@ -688,6 +828,43 @@ workspace:
                 .to_string()
                 .contains("must not declare a top-level `workspace`")
         );
+    }
+
+    #[test]
+    fn member_parse_failures_surface_minimum_version_hint_when_declared() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join("api")).unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: repo-root
+workspace:
+  type: monorepo
+  members:
+    - api
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join("api").join("ota.yaml"),
+            r#"
+project:
+  name: api
+metadata:
+  ota:
+    minimum_version: "99.0.0"
+agent:
+  future_authority: strict
+"#,
+        )
+        .unwrap();
+
+        let error = load_contract_for_member(&fixture.path().join("ota.yaml"), "api").unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("minimum_version: 99.0.0"), "{message}");
+        assert!(message.contains("use Ota >= `99.0.0`"), "{message}");
     }
 
     #[test]

@@ -289,11 +289,13 @@ fn detects_uv_fixture() {
             .map(|project| project.name.as_str()),
         Some("ota-uv")
     );
-    assert_eq!(
-        report.contract.runtimes.get("python"),
-        Some(&">=3.12".to_string())
-    );
-    assert_eq!(report.contract.tools.get("uv"), Some(&"*".to_string()));
+    let python_toolchain = report
+        .contract
+        .toolchains
+        .get("python")
+        .expect("uv fixture should detect toolchains.python");
+    assert_eq!(python_toolchain.provider, ToolchainProvider::Uv);
+    assert_eq!(python_toolchain.version, ">=3.12");
 }
 
 #[test]
