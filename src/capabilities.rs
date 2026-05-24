@@ -34,6 +34,13 @@ pub(crate) struct ContractCapabilitySpec {
     pub introduced_in: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BuildIdentity {
+    pub source_build: bool,
+    pub commit: Option<&'static str>,
+    pub dirty: bool,
+}
+
 const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
     ContractCapabilitySpec {
         id: "toolchains",
@@ -105,59 +112,30 @@ pub(crate) fn unsupported_declared_contract_capabilities_in_contract(
     .collect()
 }
 
-pub(crate) fn format_contract_capability_diagnostic(
-    capabilities: &[&ContractCapabilitySpec],
-) -> Option<String> {
-    if capabilities.is_empty() {
-        return None;
-    }
-
-    let details = capabilities
-        .iter()
-        .map(|capability| {
-            format!(
-                "`{}` (introduced in Ota {})",
-                capability.id, capability.introduced_in
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let label = if capabilities.len() == 1 {
-        "unsupported contract capability"
-    } else {
-        "unsupported contract capabilities"
-    };
-    Some(format!("detected {label}: {details}"))
-}
-
 pub(crate) fn format_minimum_version_error(
     minimum_version: &str,
-    current_version: &str,
+    current: &Version,
     capabilities: &[&ContractCapabilitySpec],
 ) -> String {
-    let mut message = format!(
-        "requires Ota >= `{minimum_version}` via `metadata.ota.minimum_version`, but this binary is `{current_version}`"
-    );
-    if let Some(capability_hint) = format_contract_capability_diagnostic(capabilities) {
-        message.push_str("\nHint: ");
-        message.push_str(&capability_hint);
-    }
-    message
+    format_minimum_version_error_with_identity(
+        minimum_version,
+        current,
+        current_build_identity(),
+        capabilities,
+    )
 }
 
 pub(crate) fn format_minimum_version_upgrade_hint(
     minimum_version: &str,
-    current_version: &str,
+    current: &Version,
     capabilities: &[&ContractCapabilitySpec],
 ) -> String {
-    let mut hint = format!(
-        "this contract declares `metadata.ota.minimum_version: {minimum_version}`; use Ota >= `{minimum_version}` (current binary `{current_version}`)"
-    );
-    if let Some(capability_hint) = format_contract_capability_diagnostic(capabilities) {
-        hint.push_str("; ");
-        hint.push_str(&capability_hint);
-    }
-    hint
+    format_minimum_version_upgrade_hint_with_identity(
+        minimum_version,
+        current,
+        current_build_identity(),
+        capabilities,
+    )
 }
 
 fn detect_contract_capabilities_with(
@@ -176,6 +154,109 @@ fn capability_is_unsupported(capability: &ContractCapabilitySpec, current: &Vers
     Version::parse(capability.introduced_in)
         .map(|introduced| current < &introduced)
         .unwrap_or(false)
+}
+
+pub(crate) fn current_build_identity() -> BuildIdentity {
+    BuildIdentity {
+        source_build: option_env!("OTA_BUILD_SOURCE").is_some(),
+        commit: option_env!("OTA_BUILD_COMMIT"),
+        dirty: option_env!("OTA_BUILD_DIRTY").is_some(),
+    }
+}
+
+fn format_minimum_version_error_with_identity(
+    minimum_version: &str,
+    current: &Version,
+    identity: BuildIdentity,
+    capabilities: &[&ContractCapabilitySpec],
+) -> String {
+    let mut lines = Vec::new();
+    if let Some(feature_line) = format_contract_feature_mismatch_line(capabilities) {
+        lines.push(feature_line);
+    }
+    lines.push(format!(
+        "Contract minimum: Ota >= `{minimum_version}` via `metadata.ota.minimum_version`"
+    ));
+    lines.push(format!(
+        "Current binary: `{}`",
+        render_build_identity_summary(current, identity)
+    ));
+    lines.push(format_upgrade_guidance_line(minimum_version, identity));
+    lines.join("\n")
+}
+
+fn format_minimum_version_upgrade_hint_with_identity(
+    minimum_version: &str,
+    current: &Version,
+    identity: BuildIdentity,
+    capabilities: &[&ContractCapabilitySpec],
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(feature_line) = format_contract_feature_mismatch_line(capabilities) {
+        parts.push(feature_line);
+    }
+    parts.push(format!(
+        "contract minimum is Ota >= `{minimum_version}` via `metadata.ota.minimum_version`"
+    ));
+    parts.push(format!(
+        "current binary is `{}`",
+        render_build_identity_summary(current, identity)
+    ));
+    parts.push(format_upgrade_guidance_line(minimum_version, identity));
+    parts.join("; ")
+}
+
+fn format_contract_feature_mismatch_line(
+    capabilities: &[&ContractCapabilitySpec],
+) -> Option<String> {
+    if capabilities.is_empty() {
+        return None;
+    }
+
+    let details = capabilities
+        .iter()
+        .map(|capability| {
+            format!(
+                "`{}` (introduced in Ota {})",
+                capability.id, capability.introduced_in
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let label = if capabilities.len() == 1 {
+        "Unsupported contract feature"
+    } else {
+        "Unsupported contract features"
+    };
+    Some(format!("{label}: {details}"))
+}
+
+fn render_build_identity_summary(current: &Version, identity: BuildIdentity) -> String {
+    let mut details = Vec::new();
+    details.push(if identity.source_build {
+        String::from("source build")
+    } else {
+        String::from("release build")
+    });
+    if let Some(commit) = identity.commit {
+        details.push(format!("commit {commit}"));
+    }
+    if identity.dirty {
+        details.push(String::from("dirty"));
+    }
+    format!("Ota {} ({})", current, details.join(", "))
+}
+
+fn format_upgrade_guidance_line(minimum_version: &str, identity: BuildIdentity) -> String {
+    if identity.source_build {
+        String::from(format!(
+            "Next: rebuild this source checkout from Ota {minimum_version} or newer, then rerun `ota --version --json` to confirm capability support"
+        ))
+    } else {
+        String::from(format!(
+            "Next: install Ota >= `{minimum_version}` and rerun `ota --version --json` to confirm capability support"
+        ))
+    }
 }
 
 fn capability_present_in_document(capability: &ContractCapabilitySpec, document: &Value) -> bool {
@@ -390,27 +471,58 @@ agent:
     }
 
     #[test]
-    fn formats_contract_capability_diagnostic() {
-        let diagnostic = format_contract_capability_diagnostic(&[
-            &CONTRACT_CAPABILITY_SPECS[4],
-            &CONTRACT_CAPABILITY_SPECS[5],
-        ])
-        .unwrap();
-        assert!(diagnostic.contains("unsupported contract capabilities"));
-        assert!(diagnostic.contains("`agent.posture`"));
-        assert!(diagnostic.contains("`agent.exceptions.sensitive_writes`"));
-    }
-
-    #[test]
     fn formats_minimum_version_error_with_capability_hint() {
         let message = format_minimum_version_error(
             "1.6.15",
-            "1.6.14",
+            &Version::parse("1.6.14").unwrap(),
             &[&CONTRACT_CAPABILITY_SPECS[0], &CONTRACT_CAPABILITY_SPECS[1]],
         );
-        assert!(message.contains("requires Ota >= `1.6.15`"));
-        assert!(message.contains("Hint: detected unsupported contract capabilities"));
+        assert!(
+            message.contains("Unsupported contract features:"),
+            "{message}"
+        );
+        assert!(
+            message.contains("Contract minimum: Ota >= `1.6.15`"),
+            "{message}"
+        );
+        assert!(message.contains("Current binary: `Ota 1.6.14"), "{message}");
+        assert!(message.contains("Next: "), "{message}");
         assert!(message.contains("`toolchains`"));
         assert!(message.contains("`execution.contexts.only_on`"));
+    }
+
+    #[test]
+    fn minimum_version_upgrade_guidance_changes_for_source_builds() {
+        let current = Version::parse("1.6.14").unwrap();
+        let release = format_minimum_version_upgrade_hint_with_identity(
+            "1.6.15",
+            &current,
+            BuildIdentity {
+                source_build: false,
+                commit: None,
+                dirty: false,
+            },
+            &[&CONTRACT_CAPABILITY_SPECS[5]],
+        );
+        assert!(release.contains("install Ota >= `1.6.15`"), "{release}");
+
+        let source = format_minimum_version_upgrade_hint_with_identity(
+            "1.6.15",
+            &current,
+            BuildIdentity {
+                source_build: true,
+                commit: Some("abc1234"),
+                dirty: true,
+            },
+            &[&CONTRACT_CAPABILITY_SPECS[5]],
+        );
+        assert!(
+            source.contains("rebuild this source checkout from Ota 1.6.15 or newer"),
+            "{source}"
+        );
+        assert!(
+            source.contains("current binary is `Ota 1.6.14 (source build, commit abc1234, dirty)`"),
+            "{source}"
+        );
     }
 }

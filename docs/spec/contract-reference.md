@@ -2479,7 +2479,9 @@ metadata and will fail until that path is repaired.
 newer ota binary than the one an operator may have installed. Keep it as a semver string such as
 `1.6.16`. Current ota builds validate it, reject contracts whose declared minimum exceeds the
 running binary, and use it to explain newer-field parse failures more clearly than a raw
-`unknown field` message.
+`unknown field` message. Compatibility failures now report the contract minimum, the current
+binary identity, any detected unsupported contract feature, and the next upgrade or rebuild step;
+`ota --version --json` is the confirmation surface for that operator path.
 
 You can also pin curated fields explicitly with `manual` there when detector silence should not be
 treated as contract drift. When a field has no detect ownership entry, ota treats the existing

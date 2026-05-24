@@ -42,6 +42,9 @@
   `preview_status` present on repo and member `ota up --dry-run` payloads
 - minimum-version compatibility diagnostics now call out detected unsupported contract
   capabilities when the contract uses a known feature newer than the running binary
+- minimum-version compatibility errors are now feature-first and operator-grade: they report the
+  contract minimum, current binary identity, detected unsupported contract feature when known, and
+  the next install/rebuild step with `ota --version --json` as the confirmation lane
 - documented the product rule that `schema_version` moves only for non-additive contract-generation
   changes while additive compatibility growth extends `contract_capabilities[]`
 - added an `ota-readiness` CI guard lane (`json-schema-guard`) that runs
