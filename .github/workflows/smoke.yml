@@ -116,7 +116,7 @@ jobs:
           assert isinstance(body["plan"]["actions"], list)
           assert body["requested_task"]["name"] == "ci"
           assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
-          assert body["summary"]["verdict"] in {"ready", "risky", "blocked", "policy_blocked"}
+          assert body["summary"]["verdict"] in {"ready", "risky", "not_ready", "policy_blocked", "agent_blocked"}
           if output.returncode == 0:
               assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS"}
           else:
