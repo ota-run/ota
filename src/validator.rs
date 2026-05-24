@@ -4693,7 +4693,7 @@ fn sensitive_agent_writable_path_next(advisory: &SensitiveAgentWritablePathAdvis
             advisory.path
         ),
         _ => format!(
-            "move `{}` from `agent.writable_paths` to `agent.protected_paths` unless this slice intentionally needs this narrow exception; use `agent.acknowledged_sensitive_writable_paths` only when the broader posture is still correct",
+            "move `{}` from `agent.writable_paths` to `agent.protected_paths` unless this slice intentionally needs this narrow exception; use `agent.exceptions.sensitive_writes` only when the broader posture is still correct",
             advisory.path
         ),
     }
@@ -4993,8 +4993,7 @@ fn collect_sensitive_agent_writable_path_advisories(contract: &Contract) -> Vec<
     };
 
     let posture = agent.posture;
-    let acknowledged =
-        normalized_agent_boundary_paths(&agent.acknowledged_sensitive_writable_paths);
+    let acknowledged = normalized_agent_boundary_paths(agent.sensitive_writable_paths());
     let mut advisories = Vec::new();
     let mut seen = BTreeSet::new();
     for path in &agent.writable_paths {
@@ -7231,14 +7230,14 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
         }
     }
 
-    for path in &agent.acknowledged_sensitive_writable_paths {
+    for path in agent.sensitive_writable_paths() {
         if path.trim().is_empty() {
             errors.push(ValidationError::new(
-                "`agent.acknowledged_sensitive_writable_paths` entries must not be empty",
+                "`agent.exceptions.sensitive_writes` entries must not be empty",
             ));
         } else if normalize_dependency_isolated_path(path).is_none() {
             errors.push(ValidationError::new(
-                "`agent.acknowledged_sensitive_writable_paths` entries must be normalized relative paths without `..` or an absolute prefix",
+                "`agent.exceptions.sensitive_writes` entries must be normalized relative paths without `..` or an absolute prefix",
             ));
         }
     }
@@ -7256,16 +7255,16 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
     }
 
     let writable_paths = normalized_agent_boundary_paths(&agent.writable_paths);
-    let acknowledged_sensitive_writable_paths =
-        normalized_agent_boundary_paths(&agent.acknowledged_sensitive_writable_paths);
+    let sensitive_writable_exceptions =
+        normalized_agent_boundary_paths(agent.sensitive_writable_paths());
     let protected_paths = normalized_agent_boundary_paths(&agent.protected_paths);
-    for path in &acknowledged_sensitive_writable_paths {
+    for path in &sensitive_writable_exceptions {
         if !writable_paths.iter().any(|writable_path| {
             normalized_path_is_within(path, writable_path)
                 || normalized_path_is_within(writable_path, path)
         }) {
             errors.push(ValidationError::new(format!(
-                "`agent.acknowledged_sensitive_writable_paths` entry `{path}` must overlap a declared `agent.writable_paths` boundary"
+                "`agent.exceptions.sensitive_writes` entry `{path}` must overlap a declared `agent.writable_paths` boundary"
             )));
         }
     }
@@ -18004,7 +18003,7 @@ agent:
     }
 
     #[test]
-    fn skips_sensitive_writable_path_advisory_when_path_is_acknowledged() {
+    fn skips_sensitive_writable_path_advisory_when_path_is_excepted() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -18017,8 +18016,9 @@ tasks:
 agent:
   writable_paths:
     - ota.yaml
-  acknowledged_sensitive_writable_paths:
-    - ota.yaml
+  exceptions:
+    sensitive_writes:
+      - ota.yaml
 "#,
         )
         .unwrap();
@@ -18033,7 +18033,7 @@ agent:
     }
 
     #[test]
-    fn skips_sensitive_writable_path_advisory_when_broad_boundary_is_acknowledged() {
+    fn skips_sensitive_writable_path_advisory_when_broad_boundary_is_excepted() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -18046,8 +18046,9 @@ tasks:
 agent:
   writable_paths:
     - .github
-  acknowledged_sensitive_writable_paths:
-    - .github/workflows
+  exceptions:
+    sensitive_writes:
+      - .github/workflows
 "#,
         )
         .unwrap();
@@ -18062,7 +18063,7 @@ agent:
     }
 
     #[test]
-    fn rejects_acknowledged_sensitive_writable_path_outside_writable_paths() {
+    fn rejects_sensitive_writable_exception_outside_writable_paths() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -18075,8 +18076,9 @@ tasks:
 agent:
   writable_paths:
     - src
-  acknowledged_sensitive_writable_paths:
-    - ota.yaml
+  exceptions:
+    sensitive_writes:
+      - ota.yaml
 "#,
         )
         .unwrap();
@@ -18090,9 +18092,32 @@ agent:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "`agent.acknowledged_sensitive_writable_paths` entry `ota.yaml` must overlap a declared `agent.writable_paths` boundary",
+                "`agent.exceptions.sensitive_writes` entry `ota.yaml` must overlap a declared `agent.writable_paths` boundary",
             )),
             "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn legacy_sensitive_writable_path_alias_still_loads() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+agent:
+  writable_paths:
+    - ota.yaml
+  acknowledged_sensitive_writable_paths:
+    - ota.yaml
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.agent.unwrap().exceptions.sensitive_writes,
+            vec!["ota.yaml"]
         );
     }
 }

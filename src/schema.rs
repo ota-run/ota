@@ -3895,6 +3895,19 @@ pub struct AgentInferredBoundaryConfig {
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct AgentExceptionsConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sensitive_writes: Vec<String>,
+}
+
+impl AgentExceptionsConfig {
+    pub fn is_empty(&self) -> bool {
+        self.sensitive_writes.is_empty()
+    }
+}
+
+#[derive(Debug, Default, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
     #[serde(default)]
     pub posture: AgentPosture,
@@ -3908,8 +3921,8 @@ pub struct AgentConfig {
     pub verify_after_changes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub writable_paths: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub acknowledged_sensitive_writable_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "AgentExceptionsConfig::is_empty")]
+    pub exceptions: AgentExceptionsConfig,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protected_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3918,6 +3931,70 @@ pub struct AgentConfig {
     pub bootstrap: Option<AgentBootstrapConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawAgentConfig {
+    #[serde(default)]
+    posture: AgentPosture,
+    #[serde(default)]
+    entrypoint: Option<String>,
+    #[serde(default)]
+    default_task: Option<String>,
+    #[serde(default)]
+    safe_tasks: Vec<String>,
+    #[serde(default)]
+    verify_after_changes: Vec<String>,
+    #[serde(default)]
+    writable_paths: Vec<String>,
+    #[serde(default)]
+    exceptions: AgentExceptionsConfig,
+    #[serde(default)]
+    acknowledged_sensitive_writable_paths: Vec<String>,
+    #[serde(default)]
+    protected_paths: Vec<String>,
+    #[serde(default)]
+    inferred_boundary: Option<AgentInferredBoundaryConfig>,
+    #[serde(default)]
+    bootstrap: Option<AgentBootstrapConfig>,
+    #[serde(default)]
+    notes: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for AgentConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawAgentConfig::deserialize(deserializer)?;
+        let mut sensitive_writes = raw.exceptions.sensitive_writes;
+        for path in raw.acknowledged_sensitive_writable_paths {
+            if !sensitive_writes.iter().any(|existing| existing == &path) {
+                sensitive_writes.push(path);
+            }
+        }
+
+        Ok(Self {
+            posture: raw.posture,
+            entrypoint: raw.entrypoint,
+            default_task: raw.default_task,
+            safe_tasks: raw.safe_tasks,
+            verify_after_changes: raw.verify_after_changes,
+            writable_paths: raw.writable_paths,
+            exceptions: AgentExceptionsConfig { sensitive_writes },
+            protected_paths: raw.protected_paths,
+            inferred_boundary: raw.inferred_boundary,
+            bootstrap: raw.bootstrap,
+            notes: raw.notes,
+        })
+    }
+}
+
+impl AgentConfig {
+    pub fn sensitive_writable_paths(&self) -> &[String] {
+        &self.exceptions.sensitive_writes
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

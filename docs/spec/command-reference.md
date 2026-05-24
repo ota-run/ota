@@ -1287,7 +1287,9 @@ ota doctor --member api --member web --json [PATH]
   than the repo contract declares
 - warns when `agent.writable_paths` includes sensitive lockfile, env/config, runtime-topology,
   CI, or repo-contract paths when they exceed the declared `agent.posture`; narrow intentional
-  exceptions can still be acknowledged with `agent.acknowledged_sensitive_writable_paths`
+  exceptions can still be acknowledged with `agent.exceptions.sensitive_writes`
+- legacy contracts using `agent.acknowledged_sensitive_writable_paths` still load, but new
+  contracts should use `agent.exceptions.sensitive_writes`
 - reports an error when no `tasks` are declared, because the contract is not operational for `ota run`
 - runs configured checks
 - orders findings by severity

@@ -2365,6 +2365,9 @@ agent:
   writable_paths:
     - src
     - docs
+  exceptions:
+    sensitive_writes:
+      - .github/workflows
   protected_paths:
     - Cargo.lock
     - LICENSE
@@ -2392,9 +2395,11 @@ Current validation rules:
 - `safe_tasks` entries must reference known tasks
 - `verify_after_changes` entries must reference known tasks
 - `writable_paths` entries must not be empty and must be normalized relative paths
+- `exceptions.sensitive_writes` entries must not be empty and must be normalized relative paths
 - `protected_paths` entries must not be empty and must be normalized relative paths
 - `writable_paths` entries must not duplicate `protected_paths`; protected descendants may still
   carve out narrower exceptions inside a broader writable root
+- `exceptions.sensitive_writes` entries must overlap a declared `writable_paths` boundary
 - task `effects.writes` entries must be normalized relative paths when present
 - agent-safe task writes must not overlap declared `protected_paths`
 - when `writable_paths` is declared, agent-safe task writes must stay inside that writable boundary
@@ -2427,8 +2432,10 @@ Agent semantics:
 - task `effects.writes` makes the expected durable writes explicit so agent-safe task claims can be checked structurally
 - `verify_after_changes` are the tasks an AI agent should rerun after modifying files
 - `writable_paths` are the paths an AI agent may edit
-- `acknowledged_sensitive_writable_paths` records narrow intentional exceptions for sensitive paths
+- `exceptions.sensitive_writes` records narrow intentional exceptions for sensitive writable paths
   or broader writable boundaries when the declared `posture` is still otherwise correct
+- legacy contracts may still use `acknowledged_sensitive_writable_paths` as a compatibility alias,
+  but new contracts should use `exceptions.sensitive_writes`
 - `protected_paths` are the paths an AI agent should avoid editing casually
 - lockfiles, env/config files, runtime-topology files, CI workflow files, and repo contracts
   should usually stay under `protected_paths` for readiness slices unless the contract explicitly
