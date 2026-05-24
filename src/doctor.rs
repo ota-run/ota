@@ -1134,6 +1134,7 @@ const DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES: u32 = 120;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_FAILED_RETRIES: u32 = 600;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_TIMEOUT_RETRIES: u32 = 30;
 const DOCTOR_WORKFLOW_SURFACE_READINESS_INTERVAL_MS: u64 = 200;
+const DOCTOR_READINESS_MAX_START_PERIOD_MS: u64 = 5_000;
 const DOCTOR_WORKFLOW_SURFACE_MAX_PROBE_TIMEOUT_MS: u64 = 5_000;
 const DOCTOR_WORKFLOW_SURFACE_FAILED_RETRY_WINDOW_MS: u64 = 30_000;
 const DOCTOR_WORKFLOW_SURFACE_TIMEOUT_RETRY_WINDOW_MS: u64 = 30_000;
@@ -4612,6 +4613,7 @@ fn service_readiness_timing_policy(
             .start_period
             .as_deref()
             .and_then(crate::schema::parse_readiness_duration_spec)
+            .map(cap_doctor_readiness_start_period)
             .unwrap_or(Duration::ZERO),
         interval: readiness
             .interval
@@ -4622,6 +4624,12 @@ fn service_readiness_timing_policy(
             .retries
             .unwrap_or(DOCTOR_DEFAULT_SERVICE_READINESS_RETRIES),
     }
+}
+
+fn cap_doctor_readiness_start_period(duration: Duration) -> Duration {
+    duration.min(Duration::from_millis(
+        DOCTOR_READINESS_MAX_START_PERIOD_MS,
+    ))
 }
 
 fn structured_service_readiness_command(
@@ -8412,6 +8420,7 @@ fn workflow_surface_readiness_timing_policy(
         start_period: readiness
             .and_then(|readiness| readiness.start_period.as_deref())
             .and_then(crate::schema::parse_readiness_duration_spec)
+            .map(cap_doctor_readiness_start_period)
             .unwrap_or(Duration::ZERO),
         interval: readiness
             .and_then(|readiness| readiness.interval.as_deref())
@@ -13926,6 +13935,94 @@ workflows:
                 || finding.summary == "Signal surface readiness timed out: backend")
                 && finding.severity == FindingSeverity::Info
         }));
+    }
+
+    #[test]
+    fn workflow_surface_readiness_timing_caps_start_period_for_doctor() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  backend:
+    kind: http
+    port: 6553
+    readiness:
+      kind: http
+      path: /healthz/readiness
+      timeout: 50ms
+      interval: 10ms
+      retries: 1
+      start_period: 30s
+tasks:
+  dev:be:
+    run: pnpm dev:be
+    runtime:
+      kind: service
+      surfaces:
+        - backend
+workflows:
+  default: backend
+  backend:
+    run:
+      task: dev:be
+    readiness:
+      surfaces:
+        - backend
+"#,
+        )
+        .unwrap();
+
+        let timing = super::workflow_surface_readiness_timing_policy(&contract, "backend");
+        assert_eq!(
+            timing.start_period,
+            Duration::from_millis(super::DOCTOR_READINESS_MAX_START_PERIOD_MS)
+        );
+    }
+
+    #[test]
+    fn service_readiness_timing_caps_start_period_for_doctor() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    required: true
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+    readiness:
+      from: host
+      run: exit 1
+      start_period: 30s
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let readiness = contract
+            .services
+            .get("postgres")
+            .and_then(|service| service.readiness.as_ref())
+            .expect("service readiness should be present");
+        let timing = super::service_readiness_timing_policy(readiness);
+        assert_eq!(
+            timing.start_period,
+            Duration::from_millis(super::DOCTOR_READINESS_MAX_START_PERIOD_MS)
+        );
     }
 
     #[test]

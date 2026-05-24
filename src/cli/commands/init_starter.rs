@@ -883,14 +883,17 @@ fn starter_agent_config_from_parts(
         notes.push_str(&format!("Use `ota run {task_name}` to verify changes.\n"));
     }
 
+    let posture = AgentPosture::ReadinessStrict;
+    let exceptions = starter_agent_exceptions_for_boundary(posture, &boundary.writable_paths);
+
     Some(AgentConfig {
-        posture: AgentPosture::ReadinessStrict,
+        posture,
         entrypoint,
         default_task,
         safe_tasks,
         verify_after_changes,
         writable_paths: boundary.writable_paths,
-        exceptions: AgentExceptionsConfig::default(),
+        exceptions,
         protected_paths: boundary.protected_paths,
         inferred_boundary: Some(AgentInferredBoundaryConfig {
             reviewed: false,
@@ -902,6 +905,21 @@ fn starter_agent_config_from_parts(
         bootstrap: Some(starter_agent_bootstrap()),
         notes: Some(notes),
     })
+}
+
+fn starter_agent_exceptions_for_boundary(
+    posture: AgentPosture,
+    writable_paths: &[String],
+) -> AgentExceptionsConfig {
+    let mut exceptions = AgentExceptionsConfig::default();
+    if posture == AgentPosture::ContractAuthoring
+        && writable_paths
+            .iter()
+            .any(|path| path == "." || path == "ota.yaml")
+    {
+        exceptions.sensitive_writes.push(String::from("ota.yaml"));
+    }
+    exceptions
 }
 
 fn starter_agent_boundary_inference(
@@ -2389,10 +2407,10 @@ fn composer_has_test_script(root: &Path) -> bool {
 mod tests {
     use super::{
         StarterPack, StarterPackConfig, StarterPackOptions, bootstrap_init_contract,
-        starter_pack_contract,
+        starter_agent_exceptions_for_boundary, starter_pack_contract,
     };
     use crate::detector::{DetectContract, DetectReport, DetectTask};
-    use crate::schema::{EnvSource, EnvSourceKind};
+    use crate::schema::{AgentPosture, EnvSource, EnvSourceKind};
     use std::collections::BTreeMap;
     use tempfile::TempDir;
 
@@ -2446,6 +2464,14 @@ mod tests {
             Some(true)
         );
         let agent = contract.agent.expect("starter pack agent");
+        assert!(
+            agent.protected_paths.contains(&String::from("ota.yaml")),
+            "starter init contracts should protect ota.yaml by default"
+        );
+        assert!(
+            agent.exceptions.sensitive_writes.is_empty(),
+            "readiness-strict starter contracts should not emit sensitive write exceptions without broader authority"
+        );
         let inferred_boundary = agent
             .inferred_boundary
             .expect("starter pack inferred boundary");
@@ -2454,6 +2480,24 @@ mod tests {
             inferred_boundary.provenance.protected_paths,
             vec![String::from("init:contract_file_default")]
         );
+    }
+
+    #[test]
+    fn starter_contract_adds_ota_sensitive_write_exception_for_contract_authoring() {
+        let exceptions = starter_agent_exceptions_for_boundary(
+            AgentPosture::ContractAuthoring,
+            &[String::from("src"), String::from("ota.yaml")],
+        );
+
+        assert_eq!(exceptions.sensitive_writes, vec![String::from("ota.yaml")]);
+    }
+
+    #[test]
+    fn starter_contract_adds_ota_sensitive_write_exception_for_root_writable_boundary() {
+        let exceptions =
+            starter_agent_exceptions_for_boundary(AgentPosture::ContractAuthoring, &[String::from(".")]);
+
+        assert_eq!(exceptions.sensitive_writes, vec![String::from("ota.yaml")]);
     }
 
     #[test]
