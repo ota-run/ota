@@ -1145,6 +1145,98 @@ impl Contract {
 
         surface
     }
+
+    pub fn native_prerequisite_requirement_surface_for_os(
+        &self,
+        native_names: impl IntoIterator<Item = String>,
+        os: &str,
+    ) -> RequirementSurface {
+        let mut surface = RequirementSurface::default();
+        for native_name in native_names {
+            let Some(prerequisite) = self.native_prerequisites.get(native_name.as_str()) else {
+                continue;
+            };
+            let Some(platform) = prerequisite.platform_for_os(os) else {
+                continue;
+            };
+            for (name, requirement) in &platform.requires.runtimes {
+                surface.runtimes.insert(
+                    name.clone(),
+                    self.resolve_scoped_runtime_requirement(name, requirement),
+                );
+            }
+            for (name, requirement) in &platform.requires.tools {
+                surface.tools.insert(
+                    name.clone(),
+                    self.resolve_scoped_tool_requirement(name, requirement),
+                );
+            }
+        }
+        surface
+    }
+
+    pub fn native_prerequisite_required_toolchain_names_for_os(
+        &self,
+        native_names: impl IntoIterator<Item = String>,
+        os: &str,
+    ) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for native_name in native_names {
+            let Some(prerequisite) = self.native_prerequisites.get(native_name.as_str()) else {
+                continue;
+            };
+            let Some(platform) = prerequisite.platform_for_os(os) else {
+                continue;
+            };
+            names.extend(platform.requires.toolchains.iter().cloned());
+        }
+        names
+    }
+
+    pub fn native_prerequisite_required_env_names_for_os(
+        &self,
+        native_names: impl IntoIterator<Item = String>,
+        os: &str,
+    ) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for native_name in native_names {
+            let Some(prerequisite) = self.native_prerequisites.get(native_name.as_str()) else {
+                continue;
+            };
+            let Some(platform) = prerequisite.platform_for_os(os) else {
+                continue;
+            };
+            names.extend(platform.requires.env.iter().cloned());
+        }
+        names
+    }
+
+    pub fn native_prerequisite_required_check_names_for_os(
+        &self,
+        native_names: impl IntoIterator<Item = String>,
+        os: &str,
+    ) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        for native_name in native_names {
+            let Some(prerequisite) = self.native_prerequisites.get(native_name.as_str()) else {
+                continue;
+            };
+            let Some(platform) = prerequisite.platform_for_os(os) else {
+                continue;
+            };
+            names.extend(platform.requires.checks.iter().cloned());
+        }
+        names
+    }
+}
+
+#[cfg(test)]
+fn current_schema_os() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        _ => "linux",
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1756,17 +1848,37 @@ pub struct NativePrerequisitePlatformSpec {
     #[serde(default)]
     pub visual_studio_build_tools: bool,
     #[serde(default)]
+    pub visual_studio: Option<NativePrerequisiteVisualStudioSpec>,
+    #[serde(default)]
     pub activation: Option<NativePrerequisiteActivationSpec>,
+    #[serde(default)]
+    pub requires: NativePrerequisitePlatformRequires,
     #[serde(default)]
     pub install: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
 }
 
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativePrerequisitePlatformRequires {
+    #[serde(default)]
+    pub runtimes: BTreeMap<String, RuntimeRequirement>,
+    #[serde(default)]
+    pub tools: BTreeMap<String, ToolRequirement>,
+    #[serde(default)]
+    pub toolchains: Vec<String>,
+    #[serde(default)]
+    pub env: Vec<String>,
+    #[serde(default)]
+    pub checks: Vec<String>,
+}
+
 impl NativePrerequisitePlatformSpec {
     pub fn has_guidance(&self) -> bool {
         self.xcode_clt
             || self.visual_studio_build_tools
+            || self.visual_studio.is_some()
             || self.activation.is_some()
             || self
                 .install
@@ -1783,6 +1895,13 @@ impl NativePrerequisitePlatformSpec {
             || !self.choco.is_empty()
             || !self.scoop.is_empty()
     }
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct NativePrerequisiteVisualStudioSpec {
+    #[serde(default)]
+    pub components: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -4217,6 +4336,95 @@ workflows:
             contract
                 .selected_workflow_required_toolchain_names(Some("studio:docker"))
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn native_prerequisite_platform_requires_contribute_selected_names_and_surface() {
+        let platform = super::current_schema_os();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+tools:
+  make: "*"
+env:
+  vars:
+    NODE_GYP_HOME:
+      required: true
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      {platform}:
+        check: native-build-tools
+        apt: [build-essential]
+        requires:
+          runtimes:
+            python: ">=3.10"
+          tools:
+            make: "*"
+          toolchains:
+            - node
+          env:
+            - NODE_GYP_HOME
+          checks:
+            - native-build-tools-extra
+checks:
+  - name: native-build-tools
+    kind: precondition
+    severity: error
+    run: echo ready
+  - name: native-build-tools-extra
+    kind: precondition
+    severity: error
+    run: echo extra
+tasks:
+  install:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#
+            ),
+        )
+        .unwrap();
+
+        let surface = contract.native_prerequisite_requirement_surface_for_os(
+            [String::from("node-native-build-tools")],
+            platform,
+        );
+        assert!(surface.runtimes.contains_key("python"), "{surface:?}");
+        assert!(surface.tools.contains_key("make"), "{surface:?}");
+        assert!(
+            contract
+                .native_prerequisite_required_toolchain_names_for_os(
+                    [String::from("node-native-build-tools")],
+                    platform,
+                )
+                .contains("node")
+        );
+        assert!(
+            contract
+                .native_prerequisite_required_env_names_for_os(
+                    [String::from("node-native-build-tools")],
+                    platform,
+                )
+                .contains("NODE_GYP_HOME")
+        );
+        assert!(
+            contract
+                .native_prerequisite_required_check_names_for_os(
+                    [String::from("node-native-build-tools")],
+                    platform,
+                )
+                .contains("native-build-tools-extra")
         );
     }
 

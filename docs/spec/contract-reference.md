@@ -856,8 +856,8 @@ Optional.
 Use `native_prerequisites` for OS-native build-tool bundles that are not language runtimes or CLI
 tools. This is the right fit for prerequisites such as Linux compiler packages, macOS Xcode Command
 Line Tools, or Windows Visual Studio Build Tools. Ota diagnoses these through the selected
-platform precondition check and gives OS-specific install guidance; it does not silently install
-host build tools.
+platform precondition check or a structured platform probe and gives OS-specific install guidance;
+it does not silently install host build tools.
 
 Example:
 
@@ -875,8 +875,12 @@ native_prerequisites:
         check: node-native-build-tools-macos
         xcode_clt: true
       windows:
-        check: node-native-build-tools-windows
-        visual_studio_build_tools: true
+        visual_studio:
+          components:
+            - Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+        requires:
+          runtimes:
+            python: ">=3.10"
         winget:
           - Microsoft.VisualStudio.2022.BuildTools
         activation:
@@ -901,10 +905,6 @@ checks:
     kind: precondition
     severity: error
     run: sh -c "xcode-select -p && python3 --version"
-  - name: node-native-build-tools-windows
-    kind: precondition
-    severity: error
-    run: powershell -NoProfile -ExecutionPolicy Bypass -Command "$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'; if (!(Test-Path $vswhere)) { exit 1 }; & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath; if ($LASTEXITCODE -ne 0) { exit 1 }; py --version"
   - name: nix-shell-ready
     kind: precondition
     severity: error
@@ -922,10 +922,20 @@ Rules:
 
 - each native prerequisite must declare at least one `platforms.<os>` guidance entry
 - `native_prerequisites.<name>.check` may provide a shared fallback check; otherwise each
-  `platforms.<os>.check` must reference a declared `kind: precondition` check
+  `platforms.<os>.check` must reference a declared `kind: precondition` check, unless the
+  selected platform entry declares a structured Ota-owned probe such as `windows.visual_studio`
 - `platforms` may use `linux`, `macos`, and `windows`
 - platform entries may declare `apt`, `brew`, `winget`, `choco`, `scoop`, generic `packages`,
-  `xcode_clt`, `visual_studio_build_tools`, `activation`, `install`, or `note` guidance
+  `xcode_clt`, `visual_studio`, `visual_studio_build_tools`, `activation`, `install`, or `note`
+  guidance
+- `platforms.windows.visual_studio.components` lists Visual Studio Installer component IDs that
+  Ota checks with `vswhere`; this is preferred over embedding a raw PowerShell `vswhere` command
+  in `checks.run`
+- `platforms.<os>.requires` may declare `runtimes`, `tools`, `toolchains`, `env`, and `checks`
+  that belong to that native prerequisite on that host OS; tasks should reference the native
+  bundle through `requirements.native` instead of duplicating those checks at the task level
+- `visual_studio_build_tools: true` remains a compatibility shorthand, but new contracts should
+  prefer the structured `visual_studio` block when exact components matter
 - `activation.kind: visual_studio_dev_shell` is the Windows MSVC activation hint for checks
   and native task execution that require `cl`/MSVC tools from a Visual Studio Developer shell;
   `arch` defaults to `x64`

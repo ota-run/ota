@@ -149,6 +149,34 @@
                       "run": { "type": "string" }
                     }
                   },
+                  "requires": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["source"],
+                    "properties": {
+                      "runtimes": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" }
+                      },
+                      "tools": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" }
+                      },
+                      "toolchains": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "env": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "checks": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                      },
+                      "source": { "type": "string" }
+                    }
+                  },
                   "provisioning": {
                     "type": "array",
                     "items": { "type": "string" }

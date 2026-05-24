@@ -451,9 +451,28 @@ fn selected_backend_precondition_selections(
             .env_names
             .extend(task.requirements.env.iter().cloned());
         if matches!(backend, Backend::Native) {
+            let native_toolchains = contract.native_prerequisite_required_toolchain_names_for_os(
+                task.requirements.native.clone(),
+                current_os(),
+            );
+            let native_env = contract.native_prerequisite_required_env_names_for_os(
+                task.requirements.native.clone(),
+                current_os(),
+            );
+            selection.toolchain_names.extend(native_toolchains);
+            if !native_env.is_empty() {
+                selection.env_scoped = true;
+                selection.env_names.extend(native_env);
+            }
             selection
                 .native_names
                 .extend(task.requirements.native.iter().cloned());
+            selection.requirement_surface.merge(
+                &contract.native_prerequisite_requirement_surface_for_os(
+                    task.requirements.native.clone(),
+                    current_os(),
+                ),
+            );
         }
         merge_effective_launch_command_tool_requirement(
             &mut selection.requirement_surface,
@@ -529,6 +548,27 @@ fn scoped_precondition_selection(
         selection
             .native_names
             .extend(task.requirements.native.iter().cloned());
+        if matches!(backend, Backend::Native) {
+            let native_toolchains = contract.native_prerequisite_required_toolchain_names_for_os(
+                task.requirements.native.clone(),
+                current_os(),
+            );
+            let native_env = contract.native_prerequisite_required_env_names_for_os(
+                task.requirements.native.clone(),
+                current_os(),
+            );
+            selection.toolchain_names.extend(native_toolchains);
+            if !native_env.is_empty() {
+                selection.env_scoped = true;
+                selection.env_names.extend(native_env);
+            }
+            selection.requirement_surface.merge(
+                &contract.native_prerequisite_requirement_surface_for_os(
+                    task.requirements.native.clone(),
+                    current_os(),
+                ),
+            );
+        }
         if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
             && let Some(context) = contract
                 .execution
@@ -4627,9 +4667,7 @@ fn service_readiness_timing_policy(
 }
 
 fn cap_doctor_readiness_start_period(duration: Duration) -> Duration {
-    duration.min(Duration::from_millis(
-        DOCTOR_READINESS_MAX_START_PERIOD_MS,
-    ))
+    duration.min(Duration::from_millis(DOCTOR_READINESS_MAX_START_PERIOD_MS))
 }
 
 fn structured_service_readiness_command(
@@ -5376,17 +5414,25 @@ fn diagnose_native_prerequisites(
         if !prerequisite.active_for_os(target_os) {
             continue;
         }
-        let Some(check_name) = prerequisite.check_for_os(target_os) else {
+        let check_name = prerequisite.check_for_os(target_os);
+        let status = if let Some(check_name) = check_name {
+            let Some(check) = contract
+                .checks
+                .iter()
+                .find(|check| check.name == check_name)
+            else {
+                continue;
+            };
+            run_native_prerequisite_check(prerequisite, name, target_os, check, working_dir)
+        } else if let Some(platform) = prerequisite.platform_for_os(target_os)
+            && native_prerequisite_has_visual_studio_probe(platform)
+        {
+            run_visual_studio_native_prerequisite_check(platform)
+        } else {
             continue;
         };
-        let Some(check) = contract
-            .checks
-            .iter()
-            .find(|check| check.name == check_name)
-        else {
-            continue;
-        };
-        match run_native_prerequisite_check(prerequisite, name, target_os, check, working_dir) {
+        let check_name = check_name.unwrap_or("visual_studio");
+        match status {
             NativePrerequisiteCheckStatus::Passed => {}
             NativePrerequisiteCheckStatus::Failed(details) => {
                 findings.push(native_prerequisite_finding(
@@ -5412,6 +5458,70 @@ fn diagnose_native_prerequisites(
             }
         }
     }
+}
+
+fn native_prerequisite_has_visual_studio_probe(
+    platform: &crate::schema::NativePrerequisitePlatformSpec,
+) -> bool {
+    platform.visual_studio_build_tools || platform.visual_studio.is_some()
+}
+
+fn run_visual_studio_native_prerequisite_check(
+    platform: &crate::schema::NativePrerequisitePlatformSpec,
+) -> NativePrerequisiteCheckStatus {
+    let Some(vswhere_path) = visual_studio_vswhere_path() else {
+        return NativePrerequisiteCheckStatus::Failed(Some(String::from(
+            "`vswhere.exe` was not found under Program Files (x86)",
+        )));
+    };
+    if !vswhere_path.is_file() {
+        return NativePrerequisiteCheckStatus::Failed(Some(format!(
+            "`{}` was not found",
+            vswhere_path.display()
+        )));
+    }
+
+    let mut command = Command::new(vswhere_path);
+    command.arg("-latest").arg("-products").arg("*");
+    if let Some(visual_studio) = platform.visual_studio.as_ref() {
+        for component in &visual_studio.components {
+            command.arg("-requires").arg(component);
+        }
+    }
+    command.arg("-property").arg("installationPath");
+
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            let installation_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if installation_path.is_empty() {
+                NativePrerequisiteCheckStatus::Failed(Some(String::from(
+                    "vswhere did not report a Visual Studio installation path",
+                )))
+            } else {
+                NativePrerequisiteCheckStatus::Passed
+            }
+        }
+        Ok(output) => {
+            let details = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            NativePrerequisiteCheckStatus::Failed(
+                (!details.is_empty()).then_some(format!("vswhere failed: {details}")),
+            )
+        }
+        Err(error) => {
+            NativePrerequisiteCheckStatus::Failed(Some(format!("failed to run vswhere: {error}")))
+        }
+    }
+}
+
+fn visual_studio_vswhere_path() -> Option<PathBuf> {
+    std::env::var_os("ProgramFiles(x86)")
+        .map(PathBuf::from)
+        .map(|program_files_x86| {
+            program_files_x86
+                .join("Microsoft Visual Studio")
+                .join("Installer")
+                .join("vswhere.exe")
+        })
 }
 
 fn run_native_prerequisite_check(
@@ -5528,7 +5638,16 @@ fn native_prerequisite_next(
     if platform.xcode_clt {
         suggestions.push(String::from("run `xcode-select --install`"));
     }
-    if platform.visual_studio_build_tools {
+    if let Some(visual_studio) = platform.visual_studio.as_ref() {
+        if visual_studio.components.is_empty() {
+            suggestions.push(String::from("install Visual Studio Build Tools"));
+        } else {
+            suggestions.push(format!(
+                "install Visual Studio Build Tools with components: `{}`",
+                visual_studio.components.join(" ")
+            ));
+        }
+    } else if platform.visual_studio_build_tools {
         suggestions.push(String::from("install Visual Studio Build Tools"));
     }
     if let Some(activation) = platform.activation.as_ref() {
@@ -7982,6 +8101,14 @@ fn selected_task_requirement_check_names(
             scoped = true;
         }
         selected.extend(task.requirements.checks.iter().cloned());
+        let native_checks = contract.native_prerequisite_required_check_names_for_os(
+            task.requirements.native.clone(),
+            current_os(),
+        );
+        if !native_checks.is_empty() {
+            scoped = true;
+            selected.extend(native_checks);
+        }
     }
 
     (scoped || !selected.is_empty()).then_some(selected)
@@ -10008,6 +10135,8 @@ esac
 version: 1
 project:
   name: ota
+tools:
+  definitely-not-installed-native-tool: "*"
 env:
   vars:
     OTA_DOCTOR_REQUIRED_MISSING:
@@ -14796,6 +14925,58 @@ workflows:
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn structured_visual_studio_probe_uses_vswhere_components() {
+        let _guard = env_mutex_lock();
+        let tempdir = TempDir::new().unwrap();
+        let installer_dir = tempdir
+            .path()
+            .join("Microsoft Visual Studio")
+            .join("Installer");
+        fs::create_dir_all(&installer_dir).unwrap();
+        let log_path = tempdir.path().join("vswhere.args");
+        write_fake_command(
+            &installer_dir,
+            "vswhere.exe",
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nprintf '%s\\n' '/opt/VisualStudio'\n",
+                log_path.display()
+            ),
+        );
+
+        let original_program_files = env::var_os("ProgramFiles(x86)");
+        unsafe {
+            env::set_var("ProgramFiles(x86)", tempdir.path());
+        }
+        let platform = crate::schema::NativePrerequisitePlatformSpec {
+            visual_studio: Some(crate::schema::NativePrerequisiteVisualStudioSpec {
+                components: vec![String::from(
+                    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                )],
+            }),
+            ..Default::default()
+        };
+
+        let status = super::run_visual_studio_native_prerequisite_check(&platform);
+
+        unsafe {
+            match original_program_files {
+                Some(value) => env::set_var("ProgramFiles(x86)", value),
+                None => env::remove_var("ProgramFiles(x86)"),
+            }
+        }
+        assert!(
+            matches!(status, super::NativePrerequisiteCheckStatus::Passed),
+            "structured Visual Studio probe should pass"
+        );
+        let args = fs::read_to_string(log_path).unwrap();
+        assert!(
+            args.contains("-requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64"),
+            "{args}"
+        );
+    }
+
     #[test]
     fn legacy_preconditions_still_run_without_task_scoped_requirements() {
         let contract = parse_contract_str(
@@ -15557,6 +15738,91 @@ tasks:
                 .findings
                 .iter()
                 .any(|finding| finding.summary == "Missing tool: definitely-not-installed")
+        );
+    }
+
+    #[test]
+    fn preconditions_include_selected_native_prerequisite_platform_requires() {
+        let _guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    NODE_GYP_HOME:
+      required: true
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      linux:
+        check: node-native-build-tools-linux
+        apt:
+          - build-essential
+        requires:
+          tools:
+            definitely-not-installed-native-tool: "*"
+          env:
+            - NODE_GYP_HOME
+          checks:
+            - native-extra-check
+      macos:
+        check: node-native-build-tools-macos
+        xcode_clt: true
+        requires:
+          tools:
+            definitely-not-installed-native-tool: "*"
+          env:
+            - NODE_GYP_HOME
+          checks:
+            - native-extra-check
+checks:
+  - name: node-native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: echo native-tools-present
+  - name: node-native-build-tools-macos
+    kind: precondition
+    severity: error
+    run: echo native-tools-present
+  - name: native-extra-check
+    kind: precondition
+    severity: error
+    run: __ota_missing_native_extra_check__
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, synthetic_contract_path());
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary
+                    == "Missing tool: definitely-not-installed-native-tool"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing environment variable: NODE_GYP_HOME"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary.contains("native-extra-check")),
+            "{report:?}"
         );
     }
 

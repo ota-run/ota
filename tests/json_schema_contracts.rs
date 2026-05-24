@@ -1396,10 +1396,17 @@ fn receipt_schema_includes_native_prerequisite_activation_metadata() {
     let receipt_properties = &schema["oneOf"][0]["properties"]["receipt"]["properties"];
     let native_prerequisites = &receipt_properties["native_prerequisites"]["items"]["properties"];
     let activation = &native_prerequisites["activation"]["properties"];
+    let requires = &native_prerequisites["requires"]["properties"];
 
     assert!(receipt_properties.get("native_prerequisites").is_some());
     assert!(native_prerequisites.get("provisioning").is_some());
     assert!(native_prerequisites.get("note").is_some());
+    assert!(requires.get("runtimes").is_some());
+    assert!(requires.get("tools").is_some());
+    assert!(requires.get("toolchains").is_some());
+    assert!(requires.get("env").is_some());
+    assert!(requires.get("checks").is_some());
+    assert!(requires.get("source").is_some());
     assert!(activation.get("kind").is_some());
     assert!(activation.get("applied").is_some());
     assert!(activation.get("shell").is_some());

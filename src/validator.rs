@@ -1197,9 +1197,14 @@ fn validate_native_prerequisites(contract: &Contract, errors: &mut Vec<Validatio
                     errors,
                 );
             } else if prerequisite.check.is_none() {
-                errors.push(ValidationError::new(format!(
-                    "native prerequisite `{name}` platform `{platform}` must declare a `check` because no top-level check is declared"
-                )));
+                let has_structured_probe = platform == "windows"
+                    && (platform_detail.visual_studio_build_tools
+                        || platform_detail.visual_studio.is_some());
+                if !has_structured_probe {
+                    errors.push(ValidationError::new(format!(
+                        "native prerequisite `{name}` platform `{platform}` must declare a `check` because no top-level check is declared"
+                    )));
+                }
             }
             validate_native_prerequisite_values(
                 name,
@@ -1243,6 +1248,19 @@ fn validate_native_prerequisites(contract: &Contract, errors: &mut Vec<Validatio
                 &platform_detail.scoop,
                 errors,
             );
+            validate_native_prerequisite_visual_studio(
+                name,
+                platform,
+                platform_detail.visual_studio.as_ref(),
+                errors,
+            );
+            validate_native_prerequisite_platform_requires(
+                name,
+                platform,
+                platform_detail,
+                contract,
+                errors,
+            );
             validate_native_prerequisite_activation(
                 name,
                 platform,
@@ -1269,6 +1287,155 @@ fn validate_native_prerequisites(contract: &Contract, errors: &mut Vec<Validatio
             }
         }
     }
+}
+
+fn validate_native_prerequisite_platform_requires(
+    name: &str,
+    platform: &str,
+    platform_detail: &crate::schema::NativePrerequisitePlatformSpec,
+    contract: &Contract,
+    errors: &mut Vec<ValidationError>,
+) {
+    validate_named_versions(
+        &format!("native prerequisite `{name}` platform `{platform}` runtime requirement"),
+        &platform_detail.requires.runtimes,
+        errors,
+        |value| value.version(),
+    );
+    validate_runtime_details(&platform_detail.requires.runtimes, errors);
+    validate_named_versions(
+        &format!("native prerequisite `{name}` platform `{platform}` tool requirement"),
+        &platform_detail.requires.tools,
+        errors,
+        |value| value.version(),
+    );
+    validate_tool_details(&platform_detail.requires.tools, errors);
+
+    for toolchain_name in &platform_detail.requires.toolchains {
+        if toolchain_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` platform `{platform}` must not declare an empty `requires.toolchains` entry"
+            )));
+            continue;
+        }
+        if !contract.toolchains.contains_key(toolchain_name) {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` platform `{platform}` references unknown toolchain `{toolchain_name}` in `requires.toolchains`"
+            )));
+        }
+    }
+
+    let mut known_tools = contract.tools.keys().cloned().collect::<BTreeSet<_>>();
+    for toolchain_name in &platform_detail.requires.toolchains {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        for (kind, owned_name) in
+            duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
+        {
+            if kind == "tool" {
+                known_tools.insert(owned_name);
+            }
+        }
+    }
+    for tool_name in platform_detail.requires.tools.keys() {
+        if tool_name.trim().is_empty() {
+            continue;
+        }
+        if platform_detail.requires.toolchains.is_empty() {
+            if contract.tools.contains_key(tool_name.as_str()) {
+                continue;
+            }
+            let owners = toolchain_owners_for_tool(contract, tool_name, None);
+            if !owners.is_empty() {
+                let owner_list = owners
+                    .iter()
+                    .map(|owner| format!("`{owner}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                errors.push(ValidationError::new(format!(
+                    "native prerequisite `{name}` platform `{platform}` references tool requirement `{tool_name}` in `requires.tools` without an explicit toolchain scope; `{tool_name}` is owned by toolchain(s) {owner_list}. Declare `native_prerequisites.{name}.platforms.{platform}.requires.toolchains` explicitly (for example `[{}]`) to keep ownership deterministic",
+                    owners
+                        .iter()
+                        .map(|owner| format!(r#""{owner}""#))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+                continue;
+            }
+        }
+
+        if known_tools.contains(tool_name) {
+            continue;
+        }
+
+        errors.push(ValidationError::new(format!(
+            "native prerequisite `{name}` platform `{platform}` references unknown tool requirement `{tool_name}` in `requires.tools`"
+        )));
+    }
+
+    for env_name in &platform_detail.requires.env {
+        if env_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` platform `{platform}` must not declare an empty `requires.env` entry"
+            )));
+            continue;
+        }
+        if !contract.env.contains_key(env_name) {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` platform `{platform}` references unknown environment requirement `{env_name}` in `requires.env`"
+            )));
+        }
+    }
+
+    for check_name in &platform_detail.requires.checks {
+        if check_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` platform `{platform}` must not declare an empty `requires.checks` entry"
+            )));
+            continue;
+        }
+        let Some(check) = contract
+            .checks
+            .iter()
+            .find(|check| check.name == *check_name)
+        else {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` platform `{platform}` references unknown check `{check_name}` in `requires.checks`"
+            )));
+            continue;
+        };
+        if !matches!(check.kind, CheckKind::Precondition | CheckKind::File) {
+            errors.push(ValidationError::new(format!(
+                "native prerequisite `{name}` platform `{platform}` references non-precondition/file check `{check_name}` in `requires.checks`"
+            )));
+        }
+    }
+}
+
+fn validate_native_prerequisite_visual_studio(
+    name: &str,
+    platform: &str,
+    visual_studio: Option<&crate::schema::NativePrerequisiteVisualStudioSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(visual_studio) = visual_studio else {
+        return;
+    };
+
+    if platform != "windows" {
+        errors.push(ValidationError::new(format!(
+            "native prerequisite `{name}` platform `{platform}` `visual_studio` is only supported on `windows`"
+        )));
+    }
+
+    validate_native_prerequisite_values(
+        name,
+        platform,
+        "visual_studio.components",
+        &visual_studio.components,
+        errors,
+    );
 }
 
 fn validate_native_prerequisite_check_reference(
@@ -16653,6 +16820,155 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("native prerequisite should validate");
+    }
+
+    #[test]
+    fn accepts_structured_visual_studio_native_prerequisite_without_shell_check() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  node-native-build-tools:
+    description: Native compiler toolchain for packages with native addons
+    platforms:
+      windows:
+        visual_studio:
+          components:
+            - Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+        requires:
+          runtimes:
+            python: ">=3.10"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("structured Visual Studio probe should validate");
+    }
+
+    #[test]
+    fn rejects_empty_native_prerequisite_platform_requires_runtime_version() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      windows:
+        visual_studio:
+          components:
+            - Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+        requires:
+          runtimes:
+            python: ""
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("empty native prerequisite runtime requirement should fail");
+        assert!(
+            errors.errors().iter().any(|error| error.to_string().contains(
+                "native prerequisite `node-native-build-tools` platform `windows` runtime requirement `python` must declare a non-empty version"
+            )),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_native_prerequisite_platform_requires_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  node-native-build-tools:
+    platforms:
+      linux:
+        check: node-native-build-tools-linux
+        apt:
+          - build-essential
+        requires:
+          tools:
+            missing-native-tool: "*"
+checks:
+  - name: node-native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: echo ready
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("unknown native prerequisite tool requirement should fail");
+        assert!(
+            errors.errors().iter().any(|error| error.to_string().contains(
+                "native prerequisite `node-native-build-tools` platform `linux` references unknown tool requirement `missing-native-tool` in `requires.tools`"
+            )),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_structured_visual_studio_native_prerequisite_outside_windows() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  node-native-build-tools:
+    description: Native compiler toolchain for packages with native addons
+    platforms:
+      linux:
+        visual_studio:
+          components:
+            - Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      native:
+        - node-native-build-tools
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("Visual Studio structured probe should be Windows-only");
+        assert!(
+            errors.errors().iter().any(|error| error
+                .to_string()
+                .contains("`visual_studio` is only supported on `windows`")),
+            "{errors:?}"
+        );
     }
 
     #[test]

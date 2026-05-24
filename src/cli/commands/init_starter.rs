@@ -2494,8 +2494,10 @@ mod tests {
 
     #[test]
     fn starter_contract_adds_ota_sensitive_write_exception_for_root_writable_boundary() {
-        let exceptions =
-            starter_agent_exceptions_for_boundary(AgentPosture::ContractAuthoring, &[String::from(".")]);
+        let exceptions = starter_agent_exceptions_for_boundary(
+            AgentPosture::ContractAuthoring,
+            &[String::from(".")],
+        );
 
         assert_eq!(exceptions.sensitive_writes, vec![String::from("ota.yaml")]);
     }
