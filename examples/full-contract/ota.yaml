@@ -307,8 +307,9 @@ agent:
     - src
     - docs
     - .github/workflows
-  acknowledged_sensitive_writable_paths:
-    - .github/workflows
+  exceptions:
+    sensitive_writes:
+      - .github/workflows
   protected_paths:
     - ota.yaml
     - Cargo.lock
