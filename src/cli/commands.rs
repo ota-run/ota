@@ -40791,6 +40791,27 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_blocking_primary_blocker_ignores_warn_findings() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::Risky,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 1,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Selected task path mutates external state: docker"),
+                why: String::from("selected path mutates docker"),
+                next: String::from("keep the effect explicit"),
+                provenance: Some(String::from("repo contract")),
+                provenance_key: Some(String::from("repo_contract")),
+            }),
+        };
+
+        assert!(super::proof_runtime_blocking_primary_blocker(&summary).is_none());
+    }
+
+    #[test]
     fn proof_runtime_ok_uses_verdict_and_error_only() {
         let summary = DoctorSummary {
             verdict: DoctorVerdict::Ready,
@@ -40813,6 +40834,27 @@ workflows:
             &summary,
             Some("timed out while waiting for readiness")
         ));
+    }
+
+    #[test]
+    fn proof_runtime_ok_allows_warning_only_risky_summary() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::Risky,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 0,
+            warn_count: 1,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                severity: FindingSeverity::Warn,
+                summary: String::from("Selected task path mutates external state: docker"),
+                why: String::from("selected path mutates docker"),
+                next: String::from("keep the effect explicit"),
+                provenance: Some(String::from("repo contract")),
+                provenance_key: Some(String::from("repo_contract")),
+            }),
+        };
+
+        assert!(super::proof_runtime_ok(&summary, None));
     }
 
     #[test]
@@ -66786,7 +66828,7 @@ fn proof_runtime_blocking_primary_blocker(
     summary
         .primary_blocker
         .as_ref()
-        .filter(|blocker| blocker.severity != FindingSeverity::Info)
+        .filter(|blocker| blocker.severity == FindingSeverity::Error)
 }
 
 fn proof_runtime_effective_up_process_failure<'a>(
@@ -66804,7 +66846,7 @@ fn proof_runtime_effective_up_process_failure<'a>(
 }
 
 fn proof_runtime_ok(summary: &DoctorSummary, proof_error: Option<&str>) -> bool {
-    summary.verdict == DoctorVerdict::Ready && proof_error.is_none()
+    summary.error_count == 0 && proof_error.is_none()
 }
 
 fn proof_runtime_failure_class(
