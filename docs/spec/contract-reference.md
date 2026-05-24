@@ -1347,11 +1347,21 @@ Fields:
 `effects` fields:
 
 - `writes`: optional list of normalized relative paths the task body is expected to mutate
+- `network`: optional boolean; set `true` when the task requires network access or reaches out to
+  remote services during execution
+- `external_state`: optional list of lowercase tokens naming out-of-repo state the task mutates,
+  such as `docker` or `postgres`
 
 Task-effect rules:
 
 - use `effects.writes` for durable repo paths the task mutates directly
+- use `effects.network: true` when the task depends on networked fetches or remote calls and that
+  dependency should stay explicit for CI and agent execution
+- use `effects.external_state` when the task mutates state outside the repo filesystem, such as
+  Docker resources, databases, or hosted services
 - keep entries relative, normalized, and free of `..` segments
+- keep `effects.external_state` entries as lowercase tokens so the side-effect surface stays
+  machine-readable instead of turning into prose
 - `effects.writes` is contract truth for agent-safety review, not a log of every transient scratch file
 - when a task is agent-safe, declared writes should stay inside `agent.writable_paths` when that boundary is declared
 - agent-safe task writes must not overlap `agent.protected_paths`
@@ -2401,6 +2411,7 @@ Current validation rules:
   carve out narrower exceptions inside a broader writable root
 - `exceptions.sensitive_writes` entries must overlap a declared `writable_paths` boundary
 - task `effects.writes` entries must be normalized relative paths when present
+- task `effects.external_state` entries must be non-empty lowercase tokens when present
 - agent-safe task writes must not overlap declared `protected_paths`
 - when `writable_paths` is declared, agent-safe task writes must stay inside that writable boundary
 - `inferred_boundary.provenance.writable_paths` entries must not be empty when present
@@ -2430,6 +2441,8 @@ Agent semantics:
 - `default_task` is the normal verification task to run when no more specific task is needed
 - `safe_tasks` are the tasks an AI agent can run without broad risk
 - task `effects.writes` makes the expected durable writes explicit so agent-safe task claims can be checked structurally
+- task `effects.network` makes connectivity dependence explicit for agent-safe and CI-visible task review
+- task `effects.external_state` marks out-of-repo mutation such as Docker, database, or hosted-service state
 - `verify_after_changes` are the tasks an AI agent should rerun after modifying files
 - `writable_paths` are the paths an AI agent may edit
 - `exceptions.sensitive_writes` records narrow intentional exceptions for sensitive writable paths

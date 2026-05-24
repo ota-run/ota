@@ -116,6 +116,10 @@ tasks:
     script: |
       pnpm install
       pnpm exec prisma generate
+    effects:
+      writes:
+        - node_modules
+      network: true
     requirements:
       tools:
         pnpm: "10"
@@ -132,6 +136,15 @@ tasks:
     effects:
       writes:
         - node_modules
+      network: true
+  services:up:
+    context: host
+    description: Start the local service stack
+    category: setup
+    run: docker compose up -d postgres
+    effects:
+      external_state:
+        - docker
   dev:
     context: host
     description: Start the local development server on the host

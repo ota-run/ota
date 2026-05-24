@@ -177,6 +177,14 @@ Current shape:
       "introduced_in": "1.6.15"
     },
     {
+      "id": "tasks.effects.network",
+      "introduced_in": "1.6.15"
+    },
+    {
+      "id": "tasks.effects.external_state",
+      "introduced_in": "1.6.15"
+    },
+    {
       "id": "agent.posture",
       "introduced_in": "1.6.15"
     },
@@ -1430,6 +1438,9 @@ Success:
           "required": true
         }
       },
+      "effects": {
+        "writes": [".env.local"]
+      },
       "depends_on": [],
       "requires_services": ["postgres"],
       "safe_for_agent": false
@@ -1470,6 +1481,9 @@ Root monorepo summary output can also include grouped member results:
               "default": "live"
             }
           },
+          "effects": {
+            "network": true
+          },
           "depends_on": [],
           "requires_services": ["postgres"],
           "safe_for_agent": false
@@ -1480,6 +1494,8 @@ Root monorepo summary output can also include grouped member results:
 }
 ```
 
+Each task may also include additive `effects` when the contract declares durable writes
+(`writes`), a connectivity dependency (`network`), or out-of-repo mutation (`external_state`).
 When the repo declares `workflows`, `ota tasks --json` includes an additive top-level `workflow`
 object for the default workflow, and member summaries may include the same additive field.
 
@@ -2408,6 +2424,10 @@ selected workflow name as additive `workflow`.
           "description": "Install repo dependencies.",
           "kind": "run",
           "run": "pnpm install",
+          "effects": {
+            "writes": ["node_modules"],
+            "network": true
+          },
           "depends_on": ["env-local"],
           "after_success": ["verify-lockfile"],
           "after_failure": [],
@@ -2434,8 +2454,9 @@ selected workflow name as additive `workflow`.
 ```
 
 Non-acquired repos keep `acquired: false` and `tasks: []`. Each task report can also carry
-`requires_services`, `after_success`, `after_failure`, and `after_always` so automation can see
-the same service and post-outcome task graph that `ota run` executes. Structured task launch is
+`effects`, `requires_services`, `after_success`, `after_failure`, and `after_always` so
+automation can see the same repo writes, connectivity needs, external-state mutations, service
+requirements, and post-outcome task graph that `ota run` executes. Structured task launch is
 additive through `tasks[*].launch` when the repo task uses command or packaged-container launch.
 Structured task actions are additive through `tasks[*].action` when the repo task uses a
 first-class setup action such as `copy_if_missing`.

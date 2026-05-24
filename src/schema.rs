@@ -2626,11 +2626,15 @@ fn shell_single_quote(input: &str) -> String {
 pub struct TaskEffectsSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub writes: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub network: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_state: Vec<String>,
 }
 
 impl TaskEffectsSpec {
     pub fn is_empty(&self) -> bool {
-        self.writes.is_empty()
+        self.writes.is_empty() && !self.network && self.external_state.is_empty()
     }
 }
 
