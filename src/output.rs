@@ -1298,6 +1298,8 @@ pub struct WorkspaceTaskSummary {
     pub launch: Option<WorkspaceTaskLaunchSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<WorkspaceTaskActionSummary>,
+    #[serde(default, skip_serializing_if = "TaskEffectsSummary::is_empty")]
+    pub effects: TaskEffectsSummary,
     pub depends_on: Vec<String>,
     pub requires_services: Vec<String>,
     pub after_success: Vec<String>,
@@ -2892,6 +2894,8 @@ pub struct TaskSummary<'a> {
     pub launch: Option<TaskLaunchSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<TaskActionSummary<'a>>,
+    #[serde(default, skip_serializing_if = "TaskEffectsSummary::is_empty")]
+    pub effects: TaskEffectsSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_variant_os: Option<&'a str>,
     pub depends_on: Vec<String>,
@@ -2906,6 +2910,30 @@ pub struct TaskSummary<'a> {
     pub variants: Vec<TaskVariantView<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub modes: Vec<TaskModeView<'a>>,
+}
+
+#[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
+pub struct TaskEffectsSummary {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub writes: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub network: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub external_state: Vec<String>,
+}
+
+impl TaskEffectsSummary {
+    pub fn from_spec(spec: &crate::schema::TaskEffectsSpec) -> Self {
+        Self {
+            writes: spec.writes.clone(),
+            network: spec.network,
+            external_state: spec.external_state.clone(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.writes.is_empty() && !self.network && self.external_state.is_empty()
+    }
 }
 
 impl<'a> TaskSummary<'a> {
@@ -2938,6 +2966,7 @@ impl<'a> TaskSummary<'a> {
                 .flatten(),
             launch: summarize_task_launch(resolved_execution.launch()),
             action: summarize_task_action(resolved_execution.action()),
+            effects: TaskEffectsSummary::from_spec(&task.effects),
             selected_variant_os: resolved_execution.os,
             depends_on: task.depends_on.clone(),
             requires_services: task.requires_services.clone(),

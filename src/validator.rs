@@ -7371,6 +7371,28 @@ fn validate_task_effects(task_name: &str, task: &TaskSpec, errors: &mut Vec<Vali
             )));
         }
     }
+
+    let mut declared_external_state = BTreeSet::new();
+    for state in &task.effects.external_state {
+        let trimmed = state.trim();
+        if trimmed.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `external_state` entries must not be empty"
+            )));
+            continue;
+        }
+        if !is_valid_external_state_token(trimmed) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `external_state` entry `{trimmed}` must be a lowercase token like `docker` or `postgres`"
+            )));
+            continue;
+        }
+        if !declared_external_state.insert(trimmed.to_owned()) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `external_state` must not contain duplicate entry `{trimmed}`"
+            )));
+        }
+    }
 }
 
 fn validate_agent_safe_task_effects(contract: &Contract, errors: &mut Vec<ValidationError>) {
@@ -7427,6 +7449,34 @@ fn normalized_agent_boundary_paths(paths: &[String]) -> BTreeSet<String> {
         .iter()
         .filter_map(|path| normalize_dependency_isolated_path(path))
         .collect()
+}
+
+fn is_valid_external_state_token(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+
+    let mut last_was_separator = false;
+    let mut last = first;
+    for ch in chars {
+        if ch == '-' || ch == '_' {
+            if last_was_separator {
+                return false;
+            }
+            last_was_separator = true;
+        } else if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
+            last_was_separator = false;
+        } else {
+            return false;
+        }
+        last = ch;
+    }
+
+    !matches!(last, '-' | '_')
 }
 
 fn normalized_paths_overlap(left: &str, right: &str) -> bool {
@@ -17774,6 +17824,53 @@ agent:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "agent-safe task `build` declares effect `writes: [dist/output]`, but it is outside the declared `agent.writable_paths` boundary",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_task_external_state_effect_entries() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    effects:
+      external_state:
+        - Docker
+        - ""
+        - docker
+        - docker
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid external state entries should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup` effect `external_state` entry `Docker` must be a lowercase token like `docker` or `postgres`",
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error
+                .contains("task `setup` effect `external_state` entries must not be empty",)),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup` effect `external_state` must not contain duplicate entry `docker`",
             )),
             "{rendered:?}"
         );

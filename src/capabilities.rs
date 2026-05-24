@@ -59,6 +59,14 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.15",
     },
     ContractCapabilitySpec {
+        id: "tasks.effects.network",
+        introduced_in: "1.6.15",
+    },
+    ContractCapabilitySpec {
+        id: "tasks.effects.external_state",
+        introduced_in: "1.6.15",
+    },
+    ContractCapabilitySpec {
         id: "agent.posture",
         introduced_in: "1.6.15",
     },
@@ -267,6 +275,8 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
             document_has_path(document, &["metadata", "ota", "minimum_version"])
         }
         "tasks.effects.writes" => tasks_effects_writes_present(document),
+        "tasks.effects.network" => tasks_effects_network_present(document),
+        "tasks.effects.external_state" => tasks_effects_external_state_present(document),
         "agent.posture" => document_has_path(document, &["agent", "posture"]),
         "agent.exceptions.sensitive_writes" => {
             document_has_path(document, &["agent", "exceptions", "sensitive_writes"])
@@ -298,6 +308,11 @@ fn capability_present_in_contract(
             .tasks
             .values()
             .any(|task| !task.effects.writes.is_empty()),
+        "tasks.effects.network" => contract.tasks.values().any(|task| task.effects.network),
+        "tasks.effects.external_state" => contract
+            .tasks
+            .values()
+            .any(|task| !task.effects.external_state.is_empty()),
         "agent.posture" => contract
             .agent
             .as_ref()
@@ -333,6 +348,20 @@ fn tasks_effects_writes_present(document: &Value) -> bool {
     tasks.values().any(task_effects_writes_present)
 }
 
+fn tasks_effects_network_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(task_effects_network_present)
+}
+
+fn tasks_effects_external_state_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(task_effects_external_state_present)
+}
+
 fn execution_context_only_on_present(document: &Value) -> bool {
     let Some(contexts) = mapping_child(document, "execution")
         .and_then(|execution| mapping_child(execution, "contexts"))
@@ -347,6 +376,14 @@ fn execution_context_only_on_present(document: &Value) -> bool {
 
 fn task_effects_writes_present(task: &Value) -> bool {
     document_has_path(task, &["effects", "writes"])
+}
+
+fn task_effects_network_present(task: &Value) -> bool {
+    document_has_path(task, &["effects", "network"])
+}
+
+fn task_effects_external_state_present(task: &Value) -> bool {
+    document_has_path(task, &["effects", "external_state"])
 }
 
 fn mapping_child<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
@@ -390,6 +427,9 @@ tasks:
     effects:
       writes:
         - node_modules
+      network: true
+      external_state:
+        - docker
 "#,
         )
         .unwrap();
@@ -405,6 +445,8 @@ tasks:
                 "execution.contexts.only_on",
                 "metadata.ota.minimum_version",
                 "tasks.effects.writes",
+                "tasks.effects.network",
+                "tasks.effects.external_state",
                 "agent.posture",
                 "agent.exceptions.sensitive_writes",
             ]

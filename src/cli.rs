@@ -17478,6 +17478,20 @@ tasks:
             }),
             "{json}"
         );
+        assert!(
+            capabilities.iter().any(|capability| {
+                capability["id"] == "tasks.effects.network"
+                    && capability["introduced_in"].as_str().is_some()
+            }),
+            "{json}"
+        );
+        assert!(
+            capabilities.iter().any(|capability| {
+                capability["id"] == "tasks.effects.external_state"
+                    && capability["introduced_in"].as_str().is_some()
+            }),
+            "{json}"
+        );
     }
 
     #[test]
@@ -17775,6 +17789,12 @@ tasks:
       Use this to verify the code before merging.
     run: cargo test
     safe_for_agent: true
+    effects:
+      writes:
+        - target
+      network: true
+      external_state:
+        - docker
   build:
     category: build
     run: cargo build
@@ -17794,6 +17814,9 @@ tasks:
         assert_eq!(json["tasks"][0]["depends_on"][0], "test");
         assert_eq!(json["tasks"][1]["name"], "test");
         assert_eq!(json["tasks"][1]["safe_for_agent"], true);
+        assert_eq!(json["tasks"][1]["effects"]["writes"][0], "target");
+        assert_eq!(json["tasks"][1]["effects"]["network"], true);
+        assert_eq!(json["tasks"][1]["effects"]["external_state"][0], "docker");
         assert_eq!(
             json["tasks"][1]["notes"],
             "Use this to verify the code before merging.\n"
@@ -37642,6 +37665,29 @@ tasks:
     #[test]
     fn workspace_tasks_json_reports_dependency_order_and_tasks() {
         let fixture = WorkspaceFixture::new_multi_repo();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("db")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: db
+tasks:
+  setup:
+    run: echo setup
+    effects:
+      writes:
+        - .cache/db
+      network: true
+      external_state:
+        - docker
+"#,
+        )
+        .unwrap();
 
         let output = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
 
@@ -37653,6 +37699,15 @@ tasks:
         assert_eq!(json["summary"]["task_count"], 2);
         assert_eq!(json["repos"][0]["name"], "db");
         assert_eq!(json["repos"][0]["tasks"][0]["name"], "setup");
+        assert_eq!(
+            json["repos"][0]["tasks"][0]["effects"]["writes"][0],
+            ".cache/db"
+        );
+        assert_eq!(json["repos"][0]["tasks"][0]["effects"]["network"], true);
+        assert_eq!(
+            json["repos"][0]["tasks"][0]["effects"]["external_state"][0],
+            "docker"
+        );
         assert_eq!(json["repos"][0]["tasks"][0]["requires_services"], json!([]));
         assert_eq!(json["repos"][1]["name"], "api");
         assert_eq!(json["repos"][1]["depends_on"][0], "db");

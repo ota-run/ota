@@ -98,6 +98,10 @@
 - added `tasks.<name>.effects.writes` as first-class task side-effect metadata, and now validate
   agent-safe task writes against declared `agent.protected_paths` plus `agent.writable_paths`
   when that writable boundary is present
+- expanded task side-effect metadata with `tasks.<name>.effects.network` and
+  `tasks.<name>.effects.external_state`, surfaced those effects through `ota tasks --json`,
+  `ota workspace tasks --json`, text task inventory, and generated `AGENTS.md`, and added
+  validation for machine-readable external-state tokens
 
 ## 1.6.15
 

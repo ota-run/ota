@@ -25941,6 +25941,9 @@ pub fn workspace_tasks(
                                 action: crate::output::summarize_task_action_owned(
                                     execution.action(),
                                 ),
+                                effects: crate::output::TaskEffectsSummary::from_spec(
+                                    &task.effects,
+                                ),
                                 depends_on: filter_relationships(&task.depends_on),
                                 requires_services: task.requires_services.clone(),
                                 after_success: filter_relationships(&task.after_success),
@@ -33105,6 +33108,11 @@ fn render_tasks_text(
         }
         output.push_str(&format!(
             "\n  {} {}",
+            paint_key("Effects:"),
+            render_task_effects_text(&task.effects)
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
             paint_key("Mode Branches:"),
             render_task_mode_branches(task)
         ));
@@ -33172,6 +33180,28 @@ fn render_task_relationships(values: &[String]) -> String {
     } else {
         values.join(",")
     }
+}
+
+fn render_task_effects_text(effects: &crate::output::TaskEffectsSummary) -> String {
+    if effects.is_empty() {
+        return String::from("-");
+    }
+
+    let mut parts = Vec::new();
+    if !effects.writes.is_empty() {
+        parts.push(format!("writes={}", effects.writes.join(",")));
+    }
+    if effects.network {
+        parts.push(String::from("network=true"));
+    }
+    if !effects.external_state.is_empty() {
+        parts.push(format!(
+            "external_state={}",
+            effects.external_state.join(",")
+        ));
+    }
+
+    parts.join("; ")
 }
 
 fn render_task_launch_preview(launch: &crate::output::TaskLaunchSummary<'_>) -> String {
@@ -38000,6 +38030,29 @@ fn render_agents_markdown(
         if !agent.safe_tasks.is_empty() {
             render_agents_task_list(&mut output, "safe_tasks", &agent.safe_tasks);
         }
+        let safe_task_effects = agent
+            .safe_tasks
+            .iter()
+            .filter_map(|task_name| {
+                contract.tasks.get(task_name).map(|task| {
+                    (
+                        task_name.as_str(),
+                        crate::output::TaskEffectsSummary::from_spec(&task.effects),
+                    )
+                })
+            })
+            .filter(|(_, effects)| !effects.is_empty())
+            .collect::<Vec<_>>();
+        if !safe_task_effects.is_empty() {
+            output.push_str("- `safe_task_effects`:\n");
+            for (task_name, effects) in safe_task_effects {
+                output.push_str("  - `");
+                output.push_str(task_name);
+                output.push_str("`: ");
+                output.push_str(&render_task_effects_text(&effects));
+                output.push('\n');
+            }
+        }
         if !agent.verify_after_changes.is_empty() {
             render_agents_task_list(
                 &mut output,
@@ -41368,6 +41421,7 @@ tasks:
             script: Some("./scripts/api/run-api-tests.sh"),
             launch: None,
             action: None,
+            effects: crate::output::TaskEffectsSummary::default(),
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
@@ -41434,6 +41488,7 @@ tasks:
             script: Some("./scripts/api/run-api-tests.sh"),
             launch: None,
             action: None,
+            effects: crate::output::TaskEffectsSummary::default(),
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
@@ -41504,6 +41559,7 @@ tasks:
             script: None,
             launch: None,
             action: None,
+            effects: crate::output::TaskEffectsSummary::default(),
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
@@ -41545,6 +41601,51 @@ tasks:
         );
         assert!(
             rendered.contains("Exposes:\n    ● http://127.0.0.1:5678 (surface: backend)"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_tasks_text_surfaces_declared_effects() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "setup",
+            context: Some("host"),
+            default_mode: None,
+            description: Some("Prepare the repo"),
+            notes: None,
+            category: None,
+            env: &env,
+            inputs: &inputs,
+            kind: "script",
+            run: None,
+            script: Some("pnpm install"),
+            launch: None,
+            action: None,
+            effects: crate::output::TaskEffectsSummary {
+                writes: vec![String::from("node_modules")],
+                network: true,
+                external_state: vec![String::from("docker"), String::from("postgres")],
+            },
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: true,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+
+        assert!(
+            rendered.contains(
+                "Effects: writes=node_modules; network=true; external_state=docker,postgres"
+            ),
             "{rendered}"
         );
     }
@@ -41818,6 +41919,7 @@ workflows:
                     volumes: Vec::new(),
                 }),
                 action: None,
+                effects: crate::output::TaskEffectsSummary::default(),
                 selected_variant_os: None,
                 depends_on: Vec::new(),
                 requires_services: Vec::new(),
@@ -41894,6 +41996,11 @@ workflows:
                         volumes: Vec::new(),
                     }),
                     action: None,
+                    effects: crate::output::TaskEffectsSummary {
+                        writes: vec![String::from("node_modules")],
+                        network: true,
+                        external_state: vec![String::from("docker")],
+                    },
                     depends_on: Vec::new(),
                     requires_services: Vec::new(),
                     after_success: Vec::new(),
@@ -41905,6 +42012,10 @@ workflows:
 
         let rendered = strip_ansi_codes(&output.stdout);
         assert!(rendered.contains("Launch: npx n8n"), "{rendered}");
+        assert!(
+            rendered.contains("effects=writes=node_modules; network=true; external_state=docker"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -50348,6 +50459,49 @@ workflows:
         assert!(rendered.contains("- `prepare`: `ota run setup:env:local`"));
         assert!(rendered.contains("- `setup`: `ota run setup`"));
         assert!(rendered.contains("- `run`: `ota run dev`"));
+    }
+
+    #[test]
+    fn render_agents_markdown_includes_safe_task_effects() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    effects:
+      writes:
+        - node_modules
+      network: true
+      external_state:
+        - docker
+agent:
+  safe_tasks:
+    - setup
+"#,
+        )
+        .unwrap();
+
+        let agent = crate::output::AgentSummary::from_config(
+            contract.agent.as_ref().expect("agent config should exist"),
+        )
+        .expect("agent summary should exist");
+
+        let rendered = super::render_agents_markdown(
+            &contract,
+            Path::new("./ota.yaml"),
+            Some(&agent),
+            "./ota.yaml",
+        );
+
+        assert!(rendered.contains("- `safe_task_effects`:"));
+        assert!(
+            rendered.contains("`setup`: writes=node_modules; network=true; external_state=docker"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -67816,6 +67970,12 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                     task.requires_services.join(",")
                 ));
             }
+            if !task.effects.is_empty() {
+                stdout.push_str(&format!(
+                    " effects={}",
+                    render_task_effects_text(&task.effects)
+                ));
+            }
             if !task.after_success.is_empty() {
                 stdout.push_str(&format!(" after_success={}", task.after_success.join(",")));
             }
@@ -67914,6 +68074,7 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                 .flatten()
                 .collect::<Vec<_>>()
                 .join(" "),
+                render_task_effects_text(&task.effects),
                 task.run
                     .clone()
                     .or(task.script.clone())
@@ -67936,6 +68097,7 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
             "Depends On",
             "Requires Services",
             "Hooks",
+            "Effects",
             "Command",
             "Use",
         ],

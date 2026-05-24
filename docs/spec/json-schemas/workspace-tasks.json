@@ -43,6 +43,21 @@
         "from": { "type": "string" },
         "to": { "type": "string" }
       }
+    },
+    "taskEffects": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "writes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "network": { "type": "boolean" },
+        "external_state": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
     }
   },
   "type": "object",
@@ -99,6 +114,7 @@
                 "script": { "type": "string" },
                 "launch": { "$ref": "#/$defs/taskLaunch" },
                 "action": { "$ref": "#/$defs/taskAction" },
+                "effects": { "$ref": "#/$defs/taskEffects" },
                 "depends_on": {
                   "type": "array",
                   "items": { "type": "string" }
