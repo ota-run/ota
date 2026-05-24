@@ -36797,62 +36797,83 @@ fn render_doctor_verdict(verdict: DoctorVerdict) -> String {
 }
 
 fn render_doctor_readiness_status(verdict: DoctorVerdict) -> String {
-    match verdict {
-        DoctorVerdict::Ready => {
-            render_named_status("READY", primary_success_marker(), "1;38;2;0;255;120")
-        }
-        DoctorVerdict::Risky => render_named_status(
-            "READY WITH WARNINGS",
-            primary_warn_marker(),
-            "1;38;2;255;214;95",
-        ),
-        DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked => {
-            render_named_status("BLOCKED", primary_error_marker(), "1;38;2;255;122;122")
-        }
-    }
+    render_status_for_preview_semantics(
+        doctor_preview_semantics(verdict).readiness_label,
+        doctor_preview_semantics(verdict).style,
+    )
 }
 
 fn render_preview_readiness_status(verdict: DoctorVerdict) -> String {
-    match verdict {
-        DoctorVerdict::Ready => {
-            render_named_status("RUNNABLE", primary_success_marker(), "1;38;2;0;255;120")
-        }
-        DoctorVerdict::Risky => render_named_status(
-            "RUNNABLE WITH WARNINGS",
-            primary_warn_marker(),
-            "1;38;2;255;214;95",
-        ),
-        DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked => {
-            render_named_status("BLOCKED", primary_error_marker(), "1;38;2;255;122;122")
-        }
-    }
+    render_status_for_preview_semantics(
+        doctor_preview_semantics(verdict).preview_label,
+        doctor_preview_semantics(verdict).style,
+    )
 }
 
 fn doctor_readiness_status_label(verdict: DoctorVerdict) -> &'static str {
-    match verdict {
-        DoctorVerdict::Ready => "READY",
-        DoctorVerdict::Risky => "READY WITH WARNINGS",
-        DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked => {
-            "BLOCKED"
-        }
-    }
+    doctor_preview_semantics(verdict).readiness_label
 }
 
 fn doctor_preview_status_label(verdict: DoctorVerdict) -> &'static str {
+    doctor_preview_semantics(verdict).preview_label
+}
+
+fn doctor_verdict_blocks_preview(verdict: DoctorVerdict) -> bool {
+    doctor_preview_semantics(verdict).blocks_preview
+}
+
+#[derive(Clone, Copy)]
+enum PreviewStatusStyle {
+    Success,
+    Warning,
+    Error,
+}
+
+#[derive(Clone, Copy)]
+struct PreviewVerdictSemantics {
+    readiness_label: &'static str,
+    preview_label: &'static str,
+    blocks_preview: bool,
+    style: PreviewStatusStyle,
+}
+
+fn doctor_preview_semantics(verdict: DoctorVerdict) -> PreviewVerdictSemantics {
     match verdict {
-        DoctorVerdict::Ready => "RUNNABLE",
-        DoctorVerdict::Risky => "RUNNABLE WITH WARNINGS",
+        DoctorVerdict::Ready => PreviewVerdictSemantics {
+            readiness_label: "READY",
+            preview_label: "RUNNABLE",
+            blocks_preview: false,
+            style: PreviewStatusStyle::Success,
+        },
+        DoctorVerdict::Risky => PreviewVerdictSemantics {
+            readiness_label: "READY WITH WARNINGS",
+            preview_label: "RUNNABLE WITH WARNINGS",
+            blocks_preview: false,
+            style: PreviewStatusStyle::Warning,
+        },
         DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked => {
-            "BLOCKED"
+            PreviewVerdictSemantics {
+                readiness_label: "BLOCKED",
+                preview_label: "BLOCKED",
+                blocks_preview: true,
+                style: PreviewStatusStyle::Error,
+            }
         }
     }
 }
 
-fn doctor_verdict_blocks_preview(verdict: DoctorVerdict) -> bool {
-    matches!(
-        verdict,
-        DoctorVerdict::NotReady | DoctorVerdict::PolicyBlocked | DoctorVerdict::AgentBlocked
-    )
+fn render_status_for_preview_semantics(label: &'static str, style: PreviewStatusStyle) -> String {
+    match style {
+        PreviewStatusStyle::Success => {
+            render_named_status(label, primary_success_marker(), "1;38;2;0;255;120")
+        }
+        PreviewStatusStyle::Warning => {
+            render_named_status(label, primary_warn_marker(), "1;38;2;255;214;95")
+        }
+        PreviewStatusStyle::Error => {
+            render_named_status(label, primary_error_marker(), "1;38;2;255;122;122")
+        }
+    }
 }
 
 fn render_explain_section(
@@ -39202,6 +39223,7 @@ fn up_result_json_value(path: &str, result: &RepoUpResult) -> JsonValue {
             "path": path,
             "dry_run": true,
             "status": result.status,
+            "preview_status": doctor_preview_status_label(preview.summary.verdict),
             "phase": result.phase,
             "summary": preview.summary,
             "contract_identity": preview.contract_identity,
@@ -39251,6 +39273,7 @@ fn up_member_result_json_value(member: &str, result: &RepoUpResult) -> JsonValue
             "ok": result.ok,
             "dry_run": true,
             "status": result.status,
+            "preview_status": doctor_preview_status_label(preview.summary.verdict),
             "phase": result.phase,
             "summary": preview.summary,
             "contract_identity": preview.contract_identity,
@@ -39634,7 +39657,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpResult,
+        DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpPreview, RepoUpResult,
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
         build_env_report, build_up_preview, collect_validate_warnings,
         compact_contract_file_path_relative_to, compact_path_relative_to,
@@ -39659,7 +39682,7 @@ mod tests {
         ExecutionReceiptLogs, ExecutionReceiptSummary, ExecutionSummary, ListedWorkflowSummary,
         ServiceEndpointSummary, ServiceManagerSummary, ServiceProducerSummary,
         ServiceReadinessSummary, ServiceSummary, TaskSummary, ToolchainSelectionSummary,
-        WorkflowSummary,
+        UpPreviewExecution, UpPreviewPlan, WorkflowSummary,
     };
     use crate::parser::parse_contract_str;
     use crate::policy_pack::{
@@ -45490,6 +45513,112 @@ tasks:
             ),
             "{next}"
         );
+    }
+
+    #[test]
+    fn up_preview_json_helpers_include_preview_status_for_root_and_member_results() {
+        let result = RepoUpResult {
+            ok: false,
+            status: "BLOCKED",
+            phase: "preview",
+            report: DoctorReport {
+                ok: false,
+                provisioning: None,
+                adapter_bootstrap: None,
+                execution_target: None,
+                findings: Vec::new(),
+            },
+            preview: Some(RepoUpPreview {
+                summary: DoctorSummary {
+                    verdict: DoctorVerdict::NotReady,
+                    agent_verdict: DoctorVerdict::Ready,
+                    error_count: 1,
+                    warn_count: 0,
+                    info_count: 0,
+                    primary_blocker: None,
+                },
+                contract_identity: ContractIdentity {
+                    version: 1,
+                    project: crate::output::ContractIdentityProject {
+                        name: String::from("ota"),
+                        project_type: None,
+                    },
+                    metadata: Default::default(),
+                    execution: Default::default(),
+                    counts: crate::output::ContractIdentityCounts {
+                        runtimes: 0,
+                        tools: 0,
+                        env: 0,
+                        services: 0,
+                        checks: 0,
+                        tasks: 1,
+                        repos: None,
+                        policies: None,
+                    },
+                },
+                execution: UpPreviewExecution {
+                    backend: String::from("native"),
+                    context: None,
+                    lifecycle: None,
+                    image: None,
+                    target: None,
+                    task: Some(String::from("setup")),
+                },
+                plan: UpPreviewPlan {
+                    actions: Vec::new(),
+                    skipped: Vec::new(),
+                },
+                blockers: Vec::new(),
+            }),
+            receipt: ExecutionReceipt {
+                ok: false,
+                path: String::from("./ota.yaml"),
+                scope: String::from("repo"),
+                contract: String::from("./ota.yaml"),
+                contract_identity: None,
+                workspace: None,
+                backend: None,
+                context: None,
+                lifecycle: None,
+                image: None,
+                container_memory_bytes: None,
+                target: None,
+                provider: None,
+                cwd: None,
+                acquired: Vec::new(),
+                env: BTreeMap::new(),
+                env_sources: Vec::new(),
+                native_prerequisites: Vec::new(),
+                toolchains: Vec::new(),
+                runtime: None,
+                logs: None,
+                service_termination: None,
+                backend_fulfillment: None,
+                workloads: BTreeMap::new(),
+                policy: Vec::new(),
+                steps: Vec::new(),
+                blocked: Vec::new(),
+                status: None,
+                failed_task: None,
+                failed_dependency: None,
+                failure_origin: None,
+                summary: ExecutionReceiptSummary::default(),
+                next: None,
+            },
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: Some(1),
+            stdout: String::new(),
+            stderr: String::new(),
+        };
+
+        let root = super::up_result_json_value("./ota.yaml", &result);
+        assert_eq!(root["preview_status"], "BLOCKED");
+
+        let member = super::up_member_result_json_value("api", &result);
+        assert_eq!(member["preview_status"], "BLOCKED");
     }
 
     #[test]

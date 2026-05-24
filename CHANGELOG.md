@@ -36,6 +36,10 @@
 - enforce `metadata.ota.minimum_version` at contract load time across command surfaces (not only
   `validate`), so `doctor`, `up`, and related commands fail early with a clear minimum-version
   message when the running binary is too old
+- centralized preview-status semantics so `doctor`, `ota run --dry-run`, and `ota up --dry-run`
+  share one verdict model for `READY` / `READY WITH WARNINGS` / `BLOCKED` and
+  `RUNNABLE` / `RUNNABLE WITH WARNINGS` / `BLOCKED`, and fixed preview JSON helpers to keep
+  `preview_status` present on repo and member `ota up --dry-run` payloads
 - minimum-version compatibility diagnostics now call out detected unsupported contract
   capabilities when the contract uses a known feature newer than the running binary
 - documented the product rule that `schema_version` moves only for non-additive contract-generation

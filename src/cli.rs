@@ -28901,6 +28901,180 @@ tasks:
     }
 
     #[test]
+    fn preview_status_warning_semantics_stay_consistent_across_doctor_run_and_up() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  ota-tool-that-does-not-exist:
+    version: "*"
+    required: false
+tasks:
+  setup:
+    run: echo setup
+  ci:
+    run: echo ci
+"#,
+        );
+
+        let doctor_text = run_with(["ota", "doctor", fixture.path()]);
+        assert_eq!(doctor_text.exit_code, 0);
+        assert!(strip_ansi(&doctor_text.stdout).contains("READY WITH WARNINGS"));
+
+        let doctor_json = run_with(["ota", "doctor", "--json", fixture.path()]);
+        assert_eq!(doctor_json.exit_code, 0);
+        let doctor_json: Value = serde_json::from_str(&doctor_json.stdout).unwrap();
+        assert_eq!(doctor_json["summary"]["verdict"], "risky");
+
+        let run_text = run_with(["ota", "run", "ci", "--dry-run", fixture.path()]);
+        assert_eq!(run_text.exit_code, 0);
+        assert!(strip_ansi(&run_text.stdout).contains("RUNNABLE WITH WARNINGS"));
+
+        let run_json = run_with(["ota", "run", "ci", "--dry-run", "--json", fixture.path()]);
+        assert_eq!(run_json.exit_code, 0);
+        let run_json: Value = serde_json::from_str(&run_json.stdout).unwrap();
+        assert_eq!(run_json["preview_status"], "RUNNABLE WITH WARNINGS");
+        assert_eq!(run_json["summary"]["verdict"], "risky");
+
+        let up_text = run_with(["ota", "up", "--dry-run", fixture.path()]);
+        assert_eq!(up_text.exit_code, 0);
+        assert!(strip_ansi(&up_text.stdout).contains("RUNNABLE WITH WARNINGS"));
+
+        let up_json = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
+        assert_eq!(up_json.exit_code, 0);
+        let up_json: Value = serde_json::from_str(&up_json.stdout).unwrap();
+        assert_eq!(up_json["status"], "READY WITH WARNINGS");
+        assert_eq!(up_json["preview_status"], "RUNNABLE WITH WARNINGS");
+        assert_eq!(up_json["summary"]["verdict"], "risky");
+    }
+
+    #[test]
+    fn preview_status_blocked_semantics_stay_consistent_for_unsupported_host() {
+        let _guard = env_mutex_lock();
+        let unsupported = if std::env::consts::OS == "windows" {
+            "linux"
+        } else {
+            "windows"
+        };
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      only_on:
+        - {unsupported}
+tasks:
+  setup:
+    run: echo setup
+  ci:
+    run: echo ci
+"#
+        ));
+
+        let doctor_text = run_with(["ota", "doctor", fixture.path()]);
+        assert_eq!(doctor_text.exit_code, 1);
+        let doctor_text = strip_ansi(&doctor_text.stdout);
+        assert!(doctor_text.contains("BLOCKED"), "{doctor_text}");
+        assert!(
+            doctor_text.contains("Unsupported host platform"),
+            "{doctor_text}"
+        );
+
+        let doctor_json = run_with(["ota", "doctor", "--json", fixture.path()]);
+        assert_eq!(doctor_json.exit_code, 1);
+        let doctor_json: Value = serde_json::from_str(&doctor_json.stdout).unwrap();
+        assert_eq!(doctor_json["summary"]["verdict"], "not_ready");
+        assert!(
+            doctor_json["summary"]["primary_blocker"]["summary"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Unsupported host platform"),
+            "{doctor_json}"
+        );
+
+        let run_text = run_with(["ota", "run", "ci", "--dry-run", fixture.path()]);
+        assert_eq!(run_text.exit_code, 1);
+        let run_text = format!(
+            "{}\n{}",
+            strip_ansi(&run_text.stdout),
+            strip_ansi(run_text.stderr.as_deref().unwrap_or_default())
+        );
+        assert!(run_text.contains("BLOCKED"), "{run_text}");
+        assert!(run_text.contains("Unsupported host platform"), "{run_text}");
+
+        let run_json = run_with(["ota", "run", "ci", "--dry-run", "--json", fixture.path()]);
+        assert_eq!(run_json.exit_code, 1);
+        let run_json: Value = serde_json::from_str(&run_json.stdout).unwrap();
+        assert_eq!(run_json["preview_status"], "BLOCKED");
+        assert_eq!(run_json["summary"]["verdict"], "not_ready");
+        assert_eq!(
+            run_json["summary"]["primary_blocker"]["summary"],
+            "Unsupported host platform"
+        );
+
+        let up_text = run_with(["ota", "up", "--dry-run", fixture.path()]);
+        assert_eq!(up_text.exit_code, 1);
+        let up_text = strip_ansi(&up_text.stdout);
+        assert!(up_text.contains("BLOCKED"), "{up_text}");
+        assert!(up_text.contains("Unsupported host platform"), "{up_text}");
+
+        let up_json = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
+        assert_eq!(up_json.exit_code, 1);
+        let up_json: Value = serde_json::from_str(&up_json.stdout).unwrap();
+        assert_eq!(up_json["status"], "BLOCKED");
+        assert_eq!(up_json["preview_status"], "BLOCKED");
+        assert_eq!(up_json["summary"]["verdict"], "not_ready");
+        assert!(
+            up_json["summary"]["primary_blocker"]["summary"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Unsupported host platform"),
+            "{up_json}"
+        );
+    }
+
+    #[test]
+    fn run_dry_run_selected_task_requirement_mismatch_uses_blocked_preview_status_in_text_and_json()
+    {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  node: "999.0.0"
+tasks:
+  test:
+    run: node --version
+"#,
+        );
+
+        let text_output = run_with(["ota", "run", "test", "--dry-run", fixture.path()]);
+        assert_eq!(text_output.exit_code, 1);
+        let text = format!(
+            "{}\n{}",
+            strip_ansi(&text_output.stdout),
+            strip_ansi(text_output.stderr.as_deref().unwrap_or_default())
+        );
+        assert!(text.contains("BLOCKED"), "{text}");
+
+        let json_output = run_with(["ota", "run", "test", "--dry-run", "--json", fixture.path()]);
+        assert_eq!(json_output.exit_code, 1);
+        let json: Value = serde_json::from_str(&json_output.stdout).unwrap();
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(json["summary"]["verdict"], "not_ready");
+    }
+
+    #[test]
     fn up_dry_run_preview_explains_selected_toolchain_fulfillment_modes() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
