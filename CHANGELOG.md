@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- removed `visual_studio_build_tools: true` from docs and shipped workflow examples so public
+  guidance only teaches the structured `platforms.windows.visual_studio.components` form while
+  keeping legacy shorthand compatibility in the parser
 - added structured `native_prerequisites.<name>.platforms.windows.visual_studio.components`
   support plus platform-scoped `native_prerequisites.<name>.platforms.<os>.requires`
   runtime/tool/toolchain/env/check requirements, so contracts can model Windows native build

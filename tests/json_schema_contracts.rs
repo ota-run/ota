@@ -1499,3 +1499,26 @@ fn release_gate_workflow_publishes_all_schema_artifacts_to_latest_and_versioned_
     assert!(workflow.contains("scripts/install.ps1"));
     assert!(workflow.contains("--content-type text/plain"));
 }
+
+#[test]
+fn full_contract_schema_is_covered_by_schema_publication_when_present() {
+    let schema_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas/contract.json");
+    if !schema_path.exists() {
+        return;
+    }
+
+    let workflow_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release-gate.yml");
+    let workflow = fs::read_to_string(&workflow_path).expect("workflow should be readable");
+
+    assert!(
+        workflow.contains("find docs/spec/json-schemas -maxdepth 1 -type f"),
+        "full contract schema publication should stay on the same generated schema publication path"
+    );
+    let schema = load_schema("docs/spec/json-schemas/contract.json");
+    assert_eq!(
+        schema.get("$schema").and_then(|value| value.as_str()),
+        Some("https://json-schema.org/draft/2020-12/schema")
+    );
+}
