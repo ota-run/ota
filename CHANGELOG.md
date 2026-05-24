@@ -59,6 +59,10 @@
 - `ota init` starter agent boundaries now lock `ota.yaml` into `agent.protected_paths` as an
   explicit default and carry the matching `agent.exceptions.sensitive_writes: [ota.yaml]` rule
   whenever a starter intentionally grants contract-authoring authority with writable `ota.yaml`
+- `ota proof runtime` now treats warning-only risk findings such as
+  `effects.external_state` / `effects.network` selected-path advisories as visible proof context
+  instead of proof-failing blockers; only error-level proof findings now collapse a successful
+  readiness proof
 - `ota doctor` now also warns when a repo-owned devcontainer bootstrap command uses a different
   Node package manager than the repo contract declares, and when `agent.writable_paths` includes
   sensitive lockfile, env/config, runtime-topology, CI, or repo-contract paths beyond the
