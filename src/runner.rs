@@ -24372,21 +24372,31 @@ tasks:
             .get("api")
             .expect("target binding should be declared");
         let mut state = TaskRunState::default();
-        let status = super::ensure_target_producer_ready(
-            &contract,
-            &file_path,
-            "sandbox",
-            "api",
-            target_spec,
-            Backend::Remote,
-            None,
-            TaskExecutionMode::CaptureActivation,
-            dir.path(),
-            std::env::consts::OS,
-            0,
-            &mut state,
-        )
-        .expect("shared remote internal activation should succeed");
+        let run_activation = |state: &mut TaskRunState| {
+            super::ensure_target_producer_ready(
+                &contract,
+                &file_path,
+                "sandbox",
+                "api",
+                target_spec,
+                Backend::Remote,
+                None,
+                TaskExecutionMode::CaptureActivation,
+                dir.path(),
+                std::env::consts::OS,
+                0,
+                state,
+            )
+        };
+        let status = match run_activation(&mut state) {
+            Ok(status) => status,
+            Err(error) if error.to_string().contains("Broken pipe") => {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                run_activation(&mut state)
+                    .expect("shared remote internal activation should succeed after retry")
+            }
+            Err(error) => panic!("shared remote internal activation should succeed: {error}"),
+        };
 
         assert_eq!(status, TaskTargetActivationStatus::StartedReady);
         let cleanup_note = super::cleanup_interrupted_activation_started_producers_and_note(

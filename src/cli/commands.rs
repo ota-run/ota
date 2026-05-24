@@ -40316,18 +40316,42 @@ readiness:
     fn wait_for_proof_runtime_readiness_does_not_hide_surface_failure_when_service_run_exits_successfully()
      {
         let _guard = cwd_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("listener should become nonblocking");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buffer = [0u8; 256];
+                        let _ = stream.read(&mut buffer);
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
         let contract_dir = TempDir::new().unwrap();
         let contract_path = contract_dir.path().join("ota.yaml");
         fs::write(
             &contract_path,
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: proof-runtime-regression
 surfaces:
   site:
     kind: http
-    port: 3000
+    port: {port}
     path: /
     readiness:
       kind: http
@@ -40349,13 +40373,13 @@ tasks:
             address: 127.0.0.1
             port:
               mode: fixed
-              value: 3000
+              value: {port}
           project:
             host:
               address: 127.0.0.1
               port:
                 mode: fixed
-                value: 3000
+                value: {port}
 workflows:
   default: app
   app:
@@ -40364,7 +40388,8 @@ workflows:
     readiness:
       surfaces:
         - site
-"#,
+"#
+            ),
         )
         .unwrap();
 
@@ -40390,6 +40415,7 @@ workflows:
         .unwrap();
 
         let _ = child.wait();
+        server.join().expect("probe server should finish");
 
         assert!(!proof_ok);
         assert_eq!(phase, "service readiness");
@@ -57058,19 +57084,19 @@ policies:
                     "windows",
                     "activation:\n          kind: command\n          shell: cmd\n          run: set OTA_NATIVE_ACTIVATED=1",
                     "if not defined OTA_NATIVE_ACTIVATED exit /b 1",
-                    "cmd",
+                    "cargo",
                 ),
                 "macos" => (
                     "macos",
                     "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
                     "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
-                    "sh",
+                    "cargo",
                 ),
                 _ => (
                     "linux",
                     "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
                     "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
-                    "sh",
+                    "cargo",
                 ),
             };
         let contract = parse_contract_str(

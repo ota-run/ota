@@ -17618,7 +17618,8 @@ metadata:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("minimum_version: 99.0.0"), "{stderr}");
+        assert!(stderr.contains("metadata.ota.minimum_version"), "{stderr}");
+        assert!(stderr.contains("`99.0.0`"), "{stderr}");
         assert!(
             stderr.contains("contract minimum is Ota >= `99.0.0`"),
             "{stderr}"

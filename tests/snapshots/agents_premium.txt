@@ -21,6 +21,8 @@ Generated from `./ota.yaml` by `ota agents`.
 
 ## Agent Contract
 
+Use declared `ota run <task>` paths before raw package-manager, compiler, or test commands when this contract already defines the task you need. Drop to raw commands only for narrow debugging or one-off checks that the contract does not model yet.
+
 - `entrypoint`: `setup` (`ota run setup`)
 - `default_task`: `ci` (`ota run ci`)
 - `safe_tasks`:
