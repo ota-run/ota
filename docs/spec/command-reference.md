@@ -1072,9 +1072,9 @@ Current behavior:
 - `--dry-run` is the read-only repo run preview surface: it resolves the selected task path,
   env, toolchains, native prerequisites, dependencies, and execution plan without running setup,
   dependencies, task processes, or containers
-- `--dry-run` prints `RUN PREVIEW`, uses the shared `READY` / `BLOCKED` readiness vocabulary, and
-  shows `Mode: dry-run (no write)` plus the selected execution path, requirements, and planned
-  actions
+- `--dry-run` prints `RUN PREVIEW`, uses the execution-preview vocabulary
+  `RUNNABLE` / `RUNNABLE WITH WARNINGS` / `BLOCKED`, and shows `Mode: dry-run (no write)` plus
+  the selected execution path, requirements, and planned actions
 - repo-level `--json` currently requires `--dry-run`, so the machine-readable run surface is
   `ota run <task> --dry-run --json`
 - by default, interactive terminals stream raw child output live, while non-interactive text runs buffer output into the final report for a cleaner failure/success surface
