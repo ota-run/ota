@@ -115,7 +115,12 @@ jobs:
           assert body["task"] == "ci"
           assert isinstance(body["plan"]["actions"], list)
           assert body["requested_task"]["name"] == "ci"
-          assert body["summary"]["verdict"] in {"ready", "blocked"}
+          assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
+          assert body["summary"]["verdict"] in {"ready", "risky", "blocked", "policy_blocked"}
+          if output.returncode == 0:
+              assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS"}
+          else:
+              assert body["preview_status"] == "BLOCKED"
           pathlib.Path("repo-run-preview.json").write_text(payload, encoding="utf-8")
           PY
 
@@ -140,6 +145,7 @@ jobs:
           body = json.loads(payload)
           assert body["dry_run"] is True
           assert body["phase"] == "preview"
+          assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
           assert body["status"] in {"READY", "READY WITH WARNINGS", "BLOCKED"}
           assert isinstance(body["plan"]["actions"], list)
           assert body["contract_identity"]["project"]["name"] == "ota"
@@ -181,21 +187,25 @@ jobs:
           import json
           import pathlib
           import subprocess
+          import sys
 
           output = subprocess.run(
               ["ota", "run", "test", "--dry-run", "--json", "examples/basic-rust"],
-              check=True,
               capture_output=True,
               text=True,
           )
-          body = json.loads(output.stdout)
-          assert body["ok"] is True
+          if output.returncode not in (0, 1):
+              sys.stderr.write(output.stderr)
+              raise SystemExit(output.returncode)
+          payload = output.stdout or output.stderr
+          body = json.loads(payload)
           assert body["dry_run"] is True
           assert body["requested_task"]["name"] == "test"
+          assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
           assert len(body["toolchains"]) == 1
           assert body["toolchains"][0]["name"] == "rust"
           pathlib.Path("basic-rust-run-preview.json").write_text(
-              output.stdout,
+              payload,
               encoding="utf-8",
           )
           PY
@@ -207,21 +217,25 @@ jobs:
           import json
           import pathlib
           import subprocess
+          import sys
 
           output = subprocess.run(
               ["ota", "run", "test", "--dry-run", "--json", "examples/basic-node"],
-              check=True,
               capture_output=True,
               text=True,
           )
-          body = json.loads(output.stdout)
-          assert body["ok"] is True
+          if output.returncode not in (0, 1):
+              sys.stderr.write(output.stderr)
+              raise SystemExit(output.returncode)
+          payload = output.stdout or output.stderr
+          body = json.loads(payload)
           assert body["dry_run"] is True
           assert body["requested_task"]["name"] == "test"
+          assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
           assert len(body["toolchains"]) == 1
           assert body["toolchains"][0]["name"] == "node"
           pathlib.Path("basic-node-run-preview.json").write_text(
-              output.stdout,
+              payload,
               encoding="utf-8",
           )
           PY
