@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.16
+
 - removed `visual_studio_build_tools: true` from docs and shipped workflow examples so public
   guidance only teaches the structured `platforms.windows.visual_studio.components` form while
   keeping legacy shorthand compatibility in the parser
