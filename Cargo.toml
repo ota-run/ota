@@ -18,6 +18,7 @@ dotenvy = "0.15.7"
 ctrlc = "3.5.0"
 signal-hook = "0.3.18"
 jsonschema = { version = "0.18.3", features = ["draft202012"] }
+getrandom = "0.2.16"
 
 [dev-dependencies]
 fs2 = "0.4.3"

@@ -391,22 +391,33 @@ fn selected_backend_precondition_selections(
     }
 
     let scoped_runtimes = task_names.iter().any(|task_name| {
-        contract
-            .tasks
-            .get(task_name.as_str())
-            .is_some_and(|task| !task.requirements.runtimes.is_empty())
+        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
+            let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
+            let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+            !task
+                .scoped_requirement_surface_for_execution(backend, context_name)
+                .runtimes
+                .is_empty()
+        })
     });
     let scoped_tools = task_names.iter().any(|task_name| {
-        contract
-            .tasks
-            .get(task_name.as_str())
-            .is_some_and(|task| !task.scoped_requirement_surface().tools.is_empty())
+        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
+            let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
+            let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+            !task
+                .scoped_requirement_surface_for_execution(backend, context_name)
+                .tools
+                .is_empty()
+        })
     });
     let scoped_env = task_names.iter().any(|task_name| {
-        contract
-            .tasks
-            .get(task_name.as_str())
-            .is_some_and(|task| !task.requirements.env.is_empty())
+        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
+            let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
+            let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+            !task
+                .scoped_env_requirements_for_execution(backend, context_name)
+                .is_empty()
+        })
     });
 
     let mut selections = Vec::<BackendPreconditionSelection>::new();
@@ -431,7 +442,8 @@ fn selected_backend_precondition_selections(
                 selections.last_mut().expect("selection was just pushed")
             };
 
-        let scoped_surface = task.scoped_requirement_surface();
+        let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+        let scoped_surface = task.scoped_requirement_surface_for_execution(backend, context_name);
         for (name, requirement) in &scoped_surface.runtimes {
             selection.requirement_surface.runtimes.insert(
                 name.clone(),
@@ -446,32 +458,28 @@ fn selected_backend_precondition_selections(
         }
         selection
             .toolchain_names
-            .extend(task.requirements.toolchains.iter().cloned());
+            .extend(task.scoped_toolchain_requirements_for_execution(backend, context_name));
         selection
             .env_names
-            .extend(task.requirements.env.iter().cloned());
+            .extend(task.scoped_env_requirements_for_execution(backend, context_name));
         if matches!(backend, Backend::Native) {
+            let scoped_native =
+                task.scoped_native_requirements_for_execution(backend, context_name);
             let native_toolchains = contract.native_prerequisite_required_toolchain_names_for_os(
-                task.requirements.native.clone(),
+                scoped_native.clone(),
                 current_os(),
             );
-            let native_env = contract.native_prerequisite_required_env_names_for_os(
-                task.requirements.native.clone(),
-                current_os(),
-            );
+            let native_env = contract
+                .native_prerequisite_required_env_names_for_os(scoped_native.clone(), current_os());
             selection.toolchain_names.extend(native_toolchains);
             if !native_env.is_empty() {
                 selection.env_scoped = true;
                 selection.env_names.extend(native_env);
             }
-            selection
-                .native_names
-                .extend(task.requirements.native.iter().cloned());
+            selection.native_names.extend(scoped_native.iter().cloned());
             selection.requirement_surface.merge(
-                &contract.native_prerequisite_requirement_surface_for_os(
-                    task.requirements.native.clone(),
-                    current_os(),
-                ),
+                &contract
+                    .native_prerequisite_requirement_surface_for_os(scoped_native, current_os()),
             );
         }
         merge_effective_launch_command_tool_requirement(
@@ -524,10 +532,27 @@ fn scoped_precondition_selection(
         };
     }
 
+    let scoped_runtimes = task_names.iter().any(|task_name| {
+        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
+            let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+            !task
+                .scoped_requirement_surface_for_execution(backend, context_name)
+                .runtimes
+                .is_empty()
+        })
+    });
+    let scoped_tools = task_names.iter().any(|task_name| {
+        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
+            let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+            !task
+                .scoped_requirement_surface_for_execution(backend, context_name)
+                .tools
+                .is_empty()
+        })
+    });
+
     let mut selection = ScopedPreconditionSelection {
-        requirement_surface: contract
-            .selected_workflow_task_requirement_surface(workflow_name)
-            .unwrap_or_default(),
+        requirement_surface: RequirementSurface::default(),
         toolchain_names: contract.selected_workflow_required_toolchain_names(workflow_name),
         ..ScopedPreconditionSelection::default()
     };
@@ -536,37 +561,35 @@ fn scoped_precondition_selection(
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
+        let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
         selection
             .requirement_surface
-            .merge(&task.scoped_requirement_surface());
-        if !task.requirements.env.is_empty() {
+            .merge(&task.scoped_requirement_surface_for_execution(backend, context_name));
+        let scoped_env = task.scoped_env_requirements_for_execution(backend, context_name);
+        if !scoped_env.is_empty() {
             selection.env_scoped = true;
-            selection
-                .env_names
-                .extend(task.requirements.env.iter().cloned());
+            selection.env_names.extend(scoped_env);
         }
+        let scoped_native = task.scoped_native_requirements_for_execution(backend, context_name);
+        selection.native_names.extend(scoped_native.iter().cloned());
         selection
-            .native_names
-            .extend(task.requirements.native.iter().cloned());
+            .toolchain_names
+            .extend(task.scoped_toolchain_requirements_for_execution(backend, context_name));
         if matches!(backend, Backend::Native) {
             let native_toolchains = contract.native_prerequisite_required_toolchain_names_for_os(
-                task.requirements.native.clone(),
+                scoped_native.clone(),
                 current_os(),
             );
-            let native_env = contract.native_prerequisite_required_env_names_for_os(
-                task.requirements.native.clone(),
-                current_os(),
-            );
+            let native_env = contract
+                .native_prerequisite_required_env_names_for_os(scoped_native.clone(), current_os());
             selection.toolchain_names.extend(native_toolchains);
             if !native_env.is_empty() {
                 selection.env_scoped = true;
                 selection.env_names.extend(native_env);
             }
             selection.requirement_surface.merge(
-                &contract.native_prerequisite_requirement_surface_for_os(
-                    task.requirements.native.clone(),
-                    current_os(),
-                ),
+                &contract
+                    .native_prerequisite_requirement_surface_for_os(scoped_native, current_os()),
             );
         }
         if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
@@ -580,6 +603,17 @@ fn scoped_precondition_selection(
                 tools: context.requirements.tools.clone(),
             });
         }
+    }
+
+    if !scoped_runtimes {
+        let mut runtimes = contract.runtimes.clone();
+        runtimes.extend(selection.requirement_surface.runtimes.clone());
+        selection.requirement_surface.runtimes = runtimes;
+    }
+    if !scoped_tools && matches!(backend, Backend::Native) {
+        let mut tools = contract.tools.clone();
+        tools.extend(selection.requirement_surface.tools.clone());
+        selection.requirement_surface.tools = tools;
     }
 
     selection
@@ -635,18 +669,20 @@ fn selected_remote_task_requirement_selection(
             fallback_used = true;
             &mut fallback
         };
-        if !task.requirements.runtimes.is_empty() {
+        let context_name = task.context_for_backend(contract.execution.as_ref(), Backend::Remote);
+        let scoped_surface =
+            task.scoped_requirement_surface_for_execution(Backend::Remote, context_name);
+        if !scoped_surface.runtimes.is_empty() {
             target.scoped_runtimes = true;
         }
-        let scoped_surface = task.scoped_requirement_surface();
         if !scoped_surface.tools.is_empty() {
             target.scoped_tools = true;
         }
-        if !task.requirements.toolchains.is_empty() {
+        let scoped_toolchains =
+            task.scoped_toolchain_requirements_for_execution(Backend::Remote, context_name);
+        if !scoped_toolchains.is_empty() {
             target.scoped_toolchains = true;
-            target
-                .toolchain_names
-                .extend(task.requirements.toolchains.iter().cloned());
+            target.toolchain_names.extend(scoped_toolchains);
         }
         for (name, requirement) in &scoped_surface.runtimes {
             target.surface.runtimes.insert(
@@ -8094,14 +8130,18 @@ fn selected_task_requirement_check_names(
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
+        let backend =
+            effective_task_execution(contract, task_name.as_str(), ExecutionOverrides::default())
+                .backend;
+        let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+        let scoped_checks = task.scoped_check_requirements_for_execution(backend, context_name);
+        let scoped_native = task.scoped_native_requirements_for_execution(backend, context_name);
         if !task.requirements.is_empty() {
             scoped = true;
         }
-        selected.extend(task.requirements.checks.iter().cloned());
-        let native_checks = contract.native_prerequisite_required_check_names_for_os(
-            task.requirements.native.clone(),
-            current_os(),
-        );
+        selected.extend(scoped_checks);
+        let native_checks =
+            contract.native_prerequisite_required_check_names_for_os(scoped_native, current_os());
         if !native_checks.is_empty() {
             scoped = true;
             selected.extend(native_checks);

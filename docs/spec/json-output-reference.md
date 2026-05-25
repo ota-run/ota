@@ -153,8 +153,8 @@ Current shape:
 ```json
 {
   "ok": true,
-  "semver": "1.6.15",
-  "version": "v1.6.15",
+  "semver": "1.6.16",
+  "version": "v1.6.16",
   "source_build": false,
   "commit": null,
   "dirty": false,
@@ -183,6 +183,18 @@ Current shape:
     {
       "id": "tasks.effects.external_state",
       "introduced_in": "1.6.15"
+    },
+    {
+      "id": "tasks.action.ensure_env_file",
+      "introduced_in": "1.6.16"
+    },
+    {
+      "id": "tasks.action.ensure_file",
+      "introduced_in": "1.6.16"
+    },
+    {
+      "id": "tasks.runtime.readiness.signal_probes",
+      "introduced_in": "1.6.16"
     },
     {
       "id": "agent.posture",
@@ -1885,6 +1897,8 @@ shared readiness verdict.
     "after_always": [],
     "safe_for_agent": false
   },
+  "requested_context": "host",
+  "selected_context": "host",
   "env_summary": {
     "contract_count": 0,
     "source_count": 0,
@@ -1915,6 +1929,8 @@ Use this when a human or agent needs the selected run plan before execution:
 
 - `resolved` is the selected backend/lifecycle/image/provider plan
 - `requested_task` is the selected task body after contract validation
+- `requested_context` is the task-declared context (when present)
+- `selected_context` is the resolved execution context ota will apply for this preview
 - `env_summary`, `sources`, and `env` show the selected env state and blockers
 - `toolchains[]` keeps toolchain-owned capabilities on the toolchain instead of duplicating them as
   standalone runtime/tool evidence

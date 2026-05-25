@@ -1008,6 +1008,8 @@ pub struct TaskRequirementsSpec {
     pub env: Vec<String>,
     #[serde(default)]
     pub checks: Vec<String>,
+    #[serde(default)]
+    pub any_of: Vec<TaskRequirementAnyOfSpec>,
 }
 
 impl TaskRequirementsSpec {
@@ -1018,6 +1020,81 @@ impl TaskRequirementsSpec {
             && self.native.is_empty()
             && self.env.is_empty()
             && self.checks.is_empty()
+            && self.any_of.is_empty()
+    }
+
+    pub fn selected_any_of(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> Option<&TaskRequirementAnyOfSpec> {
+        self.any_of
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.when.matches(backend, context_name))
+            .max_by_key(|(_, entry)| entry.when.specificity())
+            .map(|(_, entry)| entry)
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRequirementAnyOfSpec {
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub when: TaskRequirementAnyOfWhen,
+    #[serde(default)]
+    pub runtimes: BTreeMap<String, RuntimeRequirement>,
+    #[serde(default)]
+    pub tools: BTreeMap<String, ToolRequirement>,
+    #[serde(default)]
+    pub toolchains: Vec<String>,
+    #[serde(default)]
+    pub native: Vec<String>,
+    #[serde(default)]
+    pub env: Vec<String>,
+    #[serde(default)]
+    pub checks: Vec<String>,
+}
+
+impl TaskRequirementAnyOfSpec {
+    pub fn is_empty(&self) -> bool {
+        self.runtimes.is_empty()
+            && self.tools.is_empty()
+            && self.toolchains.is_empty()
+            && self.native.is_empty()
+            && self.env.is_empty()
+            && self.checks.is_empty()
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRequirementAnyOfWhen {
+    #[serde(default)]
+    pub backend: Option<Backend>,
+    #[serde(default)]
+    pub context: Option<String>,
+}
+
+impl TaskRequirementAnyOfWhen {
+    pub fn matches(&self, backend: Backend, context_name: Option<&str>) -> bool {
+        if let Some(required_backend) = self.backend
+            && required_backend != backend
+        {
+            return false;
+        }
+        if let Some(required_context) = self.context.as_deref()
+            && Some(required_context) != context_name
+        {
+            return false;
+        }
+        true
+    }
+
+    fn specificity(&self) -> usize {
+        usize::from(self.backend.is_some()) + usize::from(self.context.is_some())
     }
 }
 
@@ -1043,7 +1120,10 @@ impl Contract {
                 continue;
             };
             saw_task = true;
-            let scoped_surface = task.scoped_requirement_surface();
+            let backend = task.workflow_backend(self.execution.as_ref());
+            let context_name = task.context_for_backend(self.execution.as_ref(), backend);
+            let scoped_surface =
+                task.scoped_requirement_surface_for_execution(backend, context_name);
             if !scoped_surface.runtimes.is_empty() {
                 scoped_runtimes = true;
             }
@@ -2126,6 +2206,7 @@ impl SurfaceSpec {
         let readiness = self.readiness.as_ref()?;
         Some(TaskRuntimeReadinessSpec {
             probe: None,
+            signal_probes: Vec::new(),
             kind: Some(readiness.kind),
             listener: Some(listener_name.to_string()),
             method: readiness.method,
@@ -3063,14 +3144,88 @@ impl TaskSpec {
     }
 
     pub fn scoped_requirement_surface(&self) -> RequirementSurface {
+        self.scoped_requirement_surface_for_execution(Backend::Native, self.context.as_deref())
+    }
+
+    pub fn scoped_requirement_surface_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> RequirementSurface {
+        let mut runtimes = self.requirements.runtimes.clone();
         let mut tools = self.requirements.tools.clone();
+        if let Some(selected_any_of) = self.requirements.selected_any_of(backend, context_name) {
+            for (name, requirement) in &selected_any_of.runtimes {
+                let merged = runtimes
+                    .get(name)
+                    .map(|base| base.merged_with_overlay(requirement))
+                    .unwrap_or_else(|| requirement.clone());
+                runtimes.insert(name.clone(), merged);
+            }
+            for (name, requirement) in &selected_any_of.tools {
+                let merged = tools
+                    .get(name)
+                    .map(|base| base.merged_with_overlay(requirement))
+                    .unwrap_or_else(|| requirement.clone());
+                tools.insert(name.clone(), merged);
+            }
+        }
         for (name, requirement) in self.inferred_command_launch_tool_requirements() {
             tools.entry(name).or_insert(requirement);
         }
-        RequirementSurface {
-            runtimes: self.requirements.runtimes.clone(),
-            tools,
-        }
+        RequirementSurface { runtimes, tools }
+    }
+
+    pub fn scoped_toolchain_requirements_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> Vec<String> {
+        let overlay = self
+            .requirements
+            .selected_any_of(backend, context_name)
+            .map(|branch| branch.toolchains.as_slice())
+            .unwrap_or_default();
+        merged_named_requirements(&self.requirements.toolchains, overlay)
+    }
+
+    pub fn scoped_native_requirements_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> Vec<String> {
+        let overlay = self
+            .requirements
+            .selected_any_of(backend, context_name)
+            .map(|branch| branch.native.as_slice())
+            .unwrap_or_default();
+        merged_named_requirements(&self.requirements.native, overlay)
+    }
+
+    pub fn scoped_env_requirements_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> Vec<String> {
+        let overlay = self
+            .requirements
+            .selected_any_of(backend, context_name)
+            .map(|branch| branch.env.as_slice())
+            .unwrap_or_default();
+        merged_named_requirements(&self.requirements.env, overlay)
+    }
+
+    pub fn scoped_check_requirements_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> Vec<String> {
+        let overlay = self
+            .requirements
+            .selected_any_of(backend, context_name)
+            .map(|branch| branch.checks.as_slice())
+            .unwrap_or_default();
+        merged_named_requirements(&self.requirements.checks, overlay)
     }
 
     pub fn declared_command_launch_executables(&self) -> BTreeSet<String> {
@@ -3305,12 +3460,16 @@ fn is_default_task_container_launch_volume_kind(kind: &TaskContainerLaunchVolume
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskActionSpec {
     CopyIfMissing(TaskCopyIfMissingActionSpec),
+    EnsureEnvFile(TaskEnsureEnvFileActionSpec),
+    EnsureFile(TaskEnsureFileActionSpec),
 }
 
 impl TaskActionSpec {
     pub const fn kind_str(&self) -> &'static str {
         match self {
             Self::CopyIfMissing(_) => "copy_if_missing",
+            Self::EnsureEnvFile(_) => "ensure_env_file",
+            Self::EnsureFile(_) => "ensure_file",
         }
     }
 
@@ -3318,6 +3477,29 @@ impl TaskActionSpec {
         match self {
             Self::CopyIfMissing(action) => {
                 format!("copy `{}` to `{}` if missing", action.from, action.to)
+            }
+            Self::EnsureEnvFile(action) => {
+                let seed = action
+                    .template
+                    .as_deref()
+                    .map(|template| format!(" from template `{template}`"))
+                    .unwrap_or_default();
+                format!(
+                    "ensure env file `{}`{seed} and inject missing keys",
+                    action.path
+                )
+            }
+            Self::EnsureFile(action) => {
+                let seed = action
+                    .template
+                    .as_deref()
+                    .map(|template| format!(" from template `{template}`"))
+                    .unwrap_or_default();
+                if action.random.is_some() {
+                    format!("ensure file `{}`{seed} with generated content", action.path)
+                } else {
+                    format!("ensure file `{}`{seed}", action.path)
+                }
             }
         }
     }
@@ -3328,6 +3510,58 @@ impl TaskActionSpec {
 pub struct TaskCopyIfMissingActionSpec {
     pub from: String,
     pub to: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEnsureEnvFileActionSpec {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub vars: BTreeMap<String, TaskEnsureEnvVarSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEnsureFileActionSpec {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub random: Option<TaskEnsureEnvRandomSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEnsureEnvVarSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub random: Option<TaskEnsureEnvRandomSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEnsureEnvRandomSpec {
+    #[serde(default = "default_ensure_env_random_bytes")]
+    pub bytes: usize,
+    #[serde(default)]
+    pub encoding: TaskEnsureEnvRandomEncoding,
+}
+
+const fn default_ensure_env_random_bytes() -> usize {
+    32
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskEnsureEnvRandomEncoding {
+    #[default]
+    Hex,
+    Base64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -3357,6 +3591,8 @@ pub enum TaskRuntimeKind {
 pub struct TaskRuntimeReadinessSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub signal_probes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<TaskRuntimeReadinessKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3887,6 +4123,17 @@ impl TaskWhen {
     }
 }
 
+fn merged_named_requirements(base: &[String], overlay: &[String]) -> Vec<String> {
+    let mut merged = Vec::new();
+    let mut seen = BTreeSet::new();
+    for name in base.iter().chain(overlay.iter()) {
+        if seen.insert(name.clone()) {
+            merged.push(name.clone());
+        }
+    }
+    merged
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskExecution<'a> {
     pub kind: &'static str,
@@ -4336,6 +4583,131 @@ workflows:
             contract
                 .selected_workflow_required_toolchain_names(Some("studio:docker"))
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn task_requirement_surface_selects_any_of_branch_for_task_context() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  docker: "*"
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    docker-host:
+      backend: native
+tasks:
+  setup:
+    context: docker-host
+    run: docker compose up -d
+    requirements:
+      any_of:
+        - label: local-services
+          when:
+            context: host
+          tools:
+            psql: "*"
+        - label: docker-services
+          when:
+            context: docker-host
+          tools:
+            docker: "*"
+"#,
+        )
+        .unwrap();
+
+        let surface = contract
+            .task_requirement_surface([String::from("setup")])
+            .expect("task surface should resolve");
+        assert!(
+            !surface.tools.contains_key("psql"),
+            "host alternative should not be selected for docker-host context"
+        );
+        assert!(
+            surface.tools.contains_key("docker"),
+            "matching docker-host alternative should be selected"
+        );
+    }
+
+    #[test]
+    fn task_scoped_named_requirements_select_any_of_branch_for_context() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    docker-host:
+      backend: native
+tasks:
+  setup:
+    context: docker-host
+    run: docker compose up -d
+    requirements:
+      toolchains:
+        - rust
+      native:
+        - host-prereq
+      env:
+        - HOST_ONLY
+      checks:
+        - host-check
+      any_of:
+        - when:
+            context: host
+          toolchains:
+            - host-tc
+          native:
+            - local-postgres
+          env:
+            - DATABASE_URL
+          checks:
+            - postgres-ready
+        - when:
+            context: docker-host
+          toolchains:
+            - docker-tc
+          native:
+            - docker-prereq
+          env:
+            - DOCKER_HOST
+          checks:
+            - docker-check
+"#,
+        )
+        .unwrap();
+
+        let task = contract
+            .tasks
+            .get("setup")
+            .expect("setup task should exist");
+        assert_eq!(
+            task.scoped_toolchain_requirements_for_execution(Backend::Native, Some("docker-host")),
+            vec!["rust", "docker-tc"]
+        );
+        assert_eq!(
+            task.scoped_native_requirements_for_execution(Backend::Native, Some("docker-host")),
+            vec!["host-prereq", "docker-prereq"]
+        );
+        assert_eq!(
+            task.scoped_env_requirements_for_execution(Backend::Native, Some("docker-host")),
+            vec!["HOST_ONLY", "DOCKER_HOST"]
+        );
+        assert_eq!(
+            task.scoped_check_requirements_for_execution(Backend::Native, Some("docker-host")),
+            vec!["host-check", "docker-check"]
         );
     }
 

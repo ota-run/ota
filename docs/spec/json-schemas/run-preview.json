@@ -135,6 +135,8 @@
         "resolved": { "$ref": "./execution.json#/oneOf/0/properties/resolved" },
         "overrides": { "$ref": "./execution.json#/oneOf/0/properties/overrides" },
         "requested_task": { "$ref": "./tasks.json#/oneOf/0/properties/tasks/items" },
+        "requested_context": { "type": "string" },
+        "selected_context": { "type": "string" },
         "env_summary": { "$ref": "#/$defs/envSummary" },
         "sources": {
           "type": "array",

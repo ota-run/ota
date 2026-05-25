@@ -30,9 +30,35 @@
   longer inherit host-global `tools` fallback when no scoped tool requirements are declared; global
   tool fallback remains for native selected paths, preventing host-only tools from leaking into
   unrelated container/remote readiness surfaces
-- aligned `ota run --dry-run --plain` context rendering so `Execution -> Context` and
-  `Contract -> Selected Context` now resolve from the same selected task-path context instead of
-  showing a mismatched default context label when multiple contexts share one backend family
+- tightened `ota run --dry-run` context semantics so preview text now shows both
+  `Task Context` and `Execution Context` explicitly (with `Contract -> Resolved Context`), and
+  JSON now includes additive `requested_context` and `selected_context` fields for machine-stable
+  context interpretation
+- extended agent-safe write-boundary validation across transitive task chains so a safe task now
+  fails validation when any reachable dependency/follow-on task writes a protected path or writes
+  outside `agent.writable_paths`
+- expanded first-class task disjunctive requirement branches with
+  `tasks.<name>.requirements.any_of` to support context/backend-scoped alternatives across
+  `runtimes`, `tools`, `toolchains`, `native`, `env`, and `checks`, and wired selected-path
+  resolution into doctor/up/run requirement surfaces so mixed paths (for example local-host vs
+  docker-host) do not force both lanes at once
+- added first-class `action.kind: ensure_env_file` for deterministic env bootstrap without shell
+  glue: Ota can now create/seed env files and append only missing keys (literal or generated random
+  values) while preserving existing user-edited entries; version capability reporting and minimum
+  version gating now include `tasks.action.ensure_env_file`
+- added first-class `action.kind: ensure_file` for deterministic single-file bootstrap without
+  shell glue: Ota can now create one repo-relative file from exactly one source (`template`,
+  literal `value`, or generated `random`) while leaving existing files untouched on repeat runs;
+  version capability reporting and minimum-version gating now include
+  `tasks.action.ensure_file`
+- added first-class `tasks.<name>.runtime.readiness.signal_probes` so one service runtime can gate
+  readiness on multiple named listener probes (for example API + worker liveness) instead of only
+  one aggregate endpoint check; version capability reporting includes
+  `tasks.runtime.readiness.signal_probes`
+- expanded `tasks.<name>.runtime.readiness.signal_probes` for native service runtimes so named
+  same-task listener probes may use `target.address_view: internal` with fixed listener bind
+  endpoints; this lets worker/internal listeners participate in runtime readiness without forcing
+  host endpoint projection
 - hardened smoke-workflow run-preview JSON assertions to validate verdict shape without
   hardcoding a fixed verdict enum, reducing CI brittleness as verdict taxonomy evolves
 - made smoke-workflow preview checks schema-driven by validating `ota run --dry-run --json` and

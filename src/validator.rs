@@ -2543,7 +2543,108 @@ fn validate_task_action(
                 )));
             }
         }
+        crate::schema::TaskActionSpec::EnsureEnvFile(spec) => {
+            validate_repo_relative_file_action_path(
+                task_name,
+                "action.path",
+                spec.path.as_str(),
+                errors,
+            );
+            if let Some(template) = spec.template.as_deref() {
+                validate_repo_relative_file_action_path(
+                    task_name,
+                    "action.template",
+                    template,
+                    errors,
+                );
+            }
+            if spec.vars.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_env_file` must declare at least one entry in `action.vars`"
+                )));
+            }
+            for (key, value_spec) in &spec.vars {
+                if !is_valid_env_key_name(key.as_str()) {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `ensure_env_file` has invalid env key `{key}` in `action.vars`; use shell-safe env key tokens like `DATABASE_URL`"
+                    )));
+                }
+                let has_value = value_spec.value.is_some();
+                let has_random = value_spec.random.is_some();
+                if has_value == has_random {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `ensure_env_file` key `{key}` must declare exactly one of `value` or `random`"
+                    )));
+                    continue;
+                }
+                if let Some(value) = value_spec.value.as_deref()
+                    && value.contains('\n')
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `ensure_env_file` key `{key}` must not include newline characters in `value`"
+                    )));
+                }
+                if let Some(random) = value_spec.random.as_ref()
+                    && !(1..=1024).contains(&random.bytes)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `ensure_env_file` key `{key}` random bytes must be between 1 and 1024"
+                    )));
+                }
+            }
+        }
+        crate::schema::TaskActionSpec::EnsureFile(spec) => {
+            validate_repo_relative_file_action_path(
+                task_name,
+                "action.path",
+                spec.path.as_str(),
+                errors,
+            );
+            if let Some(template) = spec.template.as_deref() {
+                validate_repo_relative_file_action_path(
+                    task_name,
+                    "action.template",
+                    template,
+                    errors,
+                );
+            }
+            let has_template = spec.template.is_some();
+            let has_value = spec.value.is_some();
+            let has_random = spec.random.is_some();
+            let selected =
+                usize::from(has_template) + usize::from(has_value) + usize::from(has_random);
+            if selected != 1 {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_file` must declare exactly one of `template`, `value`, or `random`"
+                )));
+            }
+            if let Some(value) = spec.value.as_deref()
+                && value.is_empty()
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_file` must not declare an empty `value`"
+                )));
+            }
+            if let Some(random) = spec.random.as_ref()
+                && !(1..=1024).contains(&random.bytes)
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_file` random bytes must be between 1 and 1024"
+                )));
+            }
+        }
     }
+}
+
+fn is_valid_env_key_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 fn validate_repo_relative_file_action_path(
@@ -3724,6 +3825,36 @@ fn validate_task_runtime_readiness(
         .map(str::trim)
         .unwrap_or_default();
     let uses_named_probe = !probe_name.is_empty();
+    let mut seen_signal_probes = BTreeSet::new();
+    let mut resolved_signal_probes = Vec::<(&str, &crate::schema::ReadinessProbeSpec)>::new();
+    for signal_probe in &readiness.signal_probes {
+        let name = signal_probe.trim();
+        if name.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness `signal_probes` must not include empty probe names"
+            )));
+            continue;
+        }
+        if !seen_signal_probes.insert(name.to_string()) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness `signal_probes` must not include duplicate probe `{name}`"
+            )));
+            continue;
+        }
+        if uses_named_probe && name == probe_name {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness `signal_probes` must not repeat primary `readiness.probe` `{name}`"
+            )));
+            continue;
+        }
+        let Some(probe) = contract.probe(name) else {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness `signal_probes` references unknown probe `{name}`"
+            )));
+            continue;
+        };
+        resolved_signal_probes.push((name, probe));
+    }
 
     let listener_name = readiness.listener.as_deref().map(str::trim);
     let referenced_listener = listener_name.and_then(|name| runtime.listeners.get(name));
@@ -3740,6 +3871,72 @@ fn validate_task_runtime_readiness(
                     .and_then(|execution| execution.shared_backends.get(binding))
             })
             .is_some_and(|shared_backend| shared_backend.backend == Backend::Remote);
+
+    for (signal_probe_name, signal_probe) in resolved_signal_probes {
+        let Some(target) = signal_probe.target.as_ref() else {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness `signal_probes` probe `{signal_probe_name}` must use a task target in `readiness.probes.{signal_probe_name}.target`"
+            )));
+            continue;
+        };
+        if target.kind != crate::schema::ReadinessProbeTargetKind::Task {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness `signal_probes` probe `{signal_probe_name}` must target the same task runtime listener"
+            )));
+            continue;
+        }
+        if target.name.trim() != task_name {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness `signal_probes` probe `{signal_probe_name}` must target task `{task_name}`, not `{}`",
+                target.name.trim()
+            )));
+            continue;
+        }
+        if !matches!(
+            target.address_view,
+            TaskTargetAddressView::Host | TaskTargetAddressView::Internal
+        ) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness `signal_probes` probe `{signal_probe_name}` currently supports only `target.address_view: host` or `target.address_view: internal`"
+            )));
+            continue;
+        }
+        if target.address_view == TaskTargetAddressView::Internal && backend != Backend::Native {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness `signal_probes` probe `{signal_probe_name}` with `target.address_view: internal` currently requires native execution"
+            )));
+            continue;
+        }
+        if target.address_view == TaskTargetAddressView::Internal
+            && target
+                .listener
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .is_none()
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` runtime readiness `signal_probes` probe `{signal_probe_name}` with `target.address_view: internal` must declare `target.listener`"
+            )));
+            continue;
+        }
+        let probe_listener_name = target
+            .listener
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        let probe_listener = probe_listener_name.and_then(|name| runtime.listeners.get(name));
+        validate_probe_backed_runtime_listener(
+            task_name,
+            runtime,
+            signal_probe.kind,
+            probe_listener_name,
+            probe_listener,
+            allows_shared_remote_bind_probe
+                || target.address_view == TaskTargetAddressView::Internal,
+            errors,
+        );
+    }
 
     if uses_named_probe {
         if !contract.readiness.probes.contains_key(probe_name) {
@@ -4992,11 +5189,16 @@ fn selected_task_toolchains<'a>(
     contract: &'a Contract,
     task: &'a TaskSpec,
 ) -> Vec<(&'a String, &'a ToolchainSpec)> {
-    if task.requirements.toolchains.is_empty() {
+    let mut required_toolchains = task.requirements.toolchains.clone();
+    for branch in &task.requirements.any_of {
+        required_toolchains.extend(branch.toolchains.iter().cloned());
+    }
+    required_toolchains.sort();
+    required_toolchains.dedup();
+    if required_toolchains.is_empty() {
         return contract.toolchains.iter().collect();
     }
-    task.requirements
-        .toolchains
+    required_toolchains
         .iter()
         .filter_map(|toolchain_name| {
             contract
@@ -5633,7 +5835,82 @@ fn validate_task_requirement_references(
         |value| value.version(),
     );
     validate_tool_details(&task.requirements.tools, errors);
-    for toolchain_name in &task.requirements.toolchains {
+
+    for (index, branch) in task.requirements.any_of.iter().enumerate() {
+        validate_named_versions(
+            &format!("task `{task_name}` requirements.any_of[{index}] runtime requirement"),
+            &branch.runtimes,
+            errors,
+            |value| value.version(),
+        );
+        validate_runtime_details(&branch.runtimes, errors);
+        validate_named_versions(
+            &format!("task `{task_name}` requirements.any_of[{index}] tool requirement"),
+            &branch.tools,
+            errors,
+            |value| value.version(),
+        );
+        validate_tool_details(&branch.tools, errors);
+        if branch.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` requirements.any_of[{index}] must declare at least one requirement (`runtimes`, `tools`, `toolchains`, `native`, `env`, or `checks`)"
+            )));
+        }
+        if branch.when.backend.is_none() && branch.when.context.is_none() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` requirements.any_of[{index}] must declare `when.backend` or `when.context`"
+            )));
+        }
+        if let Some(context_name) = branch.when.context.as_deref() {
+            if context_name.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` requirements.any_of[{index}] must not declare an empty `when.context`"
+                )));
+            } else if let Some(execution) = contract.execution.as_ref() {
+                if !execution.contexts.contains_key(context_name) {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` requirements.any_of[{index}] references unknown execution context `{context_name}`"
+                    )));
+                } else if let Some(required_backend) = branch.when.backend
+                    && let Some(context) = execution.contexts.get(context_name)
+                    && context.backend != required_backend
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` requirements.any_of[{index}] declares backend `{}` but context `{context_name}` uses backend `{}`",
+                        format_backend(required_backend),
+                        format_backend(context.backend),
+                    )));
+                }
+            } else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` requirements.any_of[{index}] declares `when.context: {context_name}` but this contract does not define `execution.contexts`"
+                )));
+            }
+        }
+    }
+
+    let mut matcher_keys = BTreeSet::new();
+    for (index, branch) in task.requirements.any_of.iter().enumerate() {
+        let matcher_key = format!(
+            "backend:{}|context:{}",
+            branch.when.backend.map(format_backend).unwrap_or("any"),
+            branch.when.context.as_deref().unwrap_or("any")
+        );
+        if !matcher_keys.insert(matcher_key.clone()) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` requirements.any_of[{index}] duplicates matcher `{matcher_key}`"
+            )));
+        }
+    }
+
+    let mut requirement_toolchains = task.requirements.toolchains.clone();
+    for branch in &task.requirements.any_of {
+        requirement_toolchains.extend(branch.toolchains.iter().cloned());
+    }
+    requirement_toolchains.sort();
+    requirement_toolchains.dedup();
+
+    for toolchain_name in &requirement_toolchains {
         if toolchain_name.trim().is_empty() {
             errors.push(ValidationError::new(format!(
                 "task `{task_name}` must not declare an empty `requirements.toolchains` entry"
@@ -5659,7 +5936,7 @@ fn validate_task_requirement_references(
             continue;
         }
 
-        if task.requirements.toolchains.is_empty() {
+        if requirement_toolchains.is_empty() {
             if contract.tools.contains_key(tool_name.as_str()) {
                 continue;
             }
@@ -5691,7 +5968,28 @@ fn validate_task_requirement_references(
         )));
     }
 
-    for env_name in &task.requirements.env {
+    for (index, branch) in task.requirements.any_of.iter().enumerate() {
+        for tool_name in branch.tools.keys() {
+            if tool_name.trim().is_empty() {
+                continue;
+            }
+            if known_tools.contains(tool_name) {
+                continue;
+            }
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` references unknown tool requirement `{tool_name}` in `requirements.any_of[{index}].tools`"
+            )));
+        }
+    }
+
+    let mut requirement_env = task.requirements.env.clone();
+    for branch in &task.requirements.any_of {
+        requirement_env.extend(branch.env.iter().cloned());
+    }
+    requirement_env.sort();
+    requirement_env.dedup();
+
+    for env_name in &requirement_env {
         if env_name.trim().is_empty() {
             errors.push(ValidationError::new(format!(
                 "task `{task_name}` must not declare an empty `requirements.env` entry"
@@ -5705,7 +6003,14 @@ fn validate_task_requirement_references(
         }
     }
 
-    for native_name in &task.requirements.native {
+    let mut requirement_native = task.requirements.native.clone();
+    for branch in &task.requirements.any_of {
+        requirement_native.extend(branch.native.iter().cloned());
+    }
+    requirement_native.sort();
+    requirement_native.dedup();
+
+    for native_name in &requirement_native {
         if native_name.trim().is_empty() {
             errors.push(ValidationError::new(format!(
                 "task `{task_name}` must not declare an empty `requirements.native` entry"
@@ -5718,9 +6023,16 @@ fn validate_task_requirement_references(
             )));
         }
     }
-    validate_task_native_requirement_activations(contract, task_name, task, errors);
+    validate_task_native_requirement_activations(contract, task_name, &requirement_native, errors);
 
-    for check_name in &task.requirements.checks {
+    let mut requirement_checks = task.requirements.checks.clone();
+    for branch in &task.requirements.any_of {
+        requirement_checks.extend(branch.checks.iter().cloned());
+    }
+    requirement_checks.sort();
+    requirement_checks.dedup();
+
+    for check_name in &requirement_checks {
         if check_name.trim().is_empty() {
             errors.push(ValidationError::new(format!(
                 "task `{task_name}` must not declare an empty `requirements.checks` entry"
@@ -5750,11 +6062,11 @@ fn validate_task_requirement_references(
 fn validate_task_native_requirement_activations(
     contract: &Contract,
     task_name: &str,
-    task: &TaskSpec,
+    native_requirements: &[String],
     errors: &mut Vec<ValidationError>,
 ) {
     let mut activations_by_platform = BTreeMap::<&str, BTreeSet<String>>::new();
-    for native_name in &task.requirements.native {
+    for native_name in native_requirements {
         let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
             continue;
         };
@@ -7114,14 +7426,11 @@ fn validate_readiness_probe_target(
                     }
                 }
             } else if target.address_view != TaskTargetAddressView::Host {
-                errors.push(ValidationError::new(format!(
-                    "`readiness.probes.{name}.target.address_view: {}` requires `target.observer.kind: task`",
-                    match target.address_view {
-                        TaskTargetAddressView::Topology => "topology",
-                        TaskTargetAddressView::Host => "host",
-                        TaskTargetAddressView::Internal => "internal",
-                    }
-                )));
+                if target.address_view == TaskTargetAddressView::Topology {
+                    errors.push(ValidationError::new(format!(
+                        "`readiness.probes.{name}.target.address_view: topology` requires `target.observer.kind: task`"
+                    )));
+                }
             }
             if let Some(task) = contract.tasks.get(target.name.as_str()) {
                 let listeners = declared_runtime_listener_names(task);
@@ -7230,7 +7539,10 @@ fn validate_task_target_probe_resolution(
         .filter(|observer| observer.kind == crate::schema::ReadinessProbeObserverKind::Task)
         .and_then(|observer| observer.task.as_deref())
         .map(str::trim)
-        .filter(|name| !name.is_empty());
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            (target.address_view == TaskTargetAddressView::Internal).then_some(target.name.as_str())
+        });
 
     match target.address_view {
         TaskTargetAddressView::Host => {
@@ -7368,7 +7680,9 @@ fn validate_task_target_probe_resolution(
                         Backend::Container => shared_container,
                         Backend::Remote => shared_remote,
                     };
-                    if !shared {
+                    let same_task_native = observer_task_name == target.name.as_str()
+                        && observer_backend == Backend::Native;
+                    if !shared && !same_task_native {
                         errors.push(ValidationError::new(format!(
                             "`readiness.probes.{probe_name}` uses `target.address_view: internal` with observer task `{observer_task_name}`, but `{observer_task_name}` and `{}` do not share one declared {} backend binding",
                             target.name,
@@ -7680,33 +7994,96 @@ fn validate_agent_safe_task_effects(contract: &Contract, errors: &mut Vec<Valida
     let writable_paths = normalized_agent_boundary_paths(&agent.writable_paths);
     let protected_paths = normalized_agent_boundary_paths(&agent.protected_paths);
 
-    for task_name in safe_task_names {
-        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+    for safe_task_name in safe_task_names {
+        if !contract.tasks.contains_key(safe_task_name.as_str()) {
+            continue;
+        }
+        let mut seen = BTreeSet::new();
+        for task_name in collect_reachable_task_names(safe_task_name.as_str(), &contract.tasks) {
+            let Some(task) = contract.tasks.get(task_name) else {
+                continue;
+            };
+            let normalized_writes = task
+                .effects
+                .writes
+                .iter()
+                .filter_map(|path| normalize_dependency_isolated_path(path))
+                .collect::<Vec<_>>();
+            for write_path in normalized_writes {
+                if !seen.insert((task_name.to_string(), write_path.clone())) {
+                    continue;
+                }
+                validate_agent_safe_task_effect_write_boundary(
+                    errors,
+                    safe_task_name.as_str(),
+                    task_name,
+                    write_path.as_str(),
+                    &protected_paths,
+                    &writable_paths,
+                );
+            }
+        }
+    }
+}
+
+fn collect_reachable_task_names<'a>(
+    root_task_name: &'a str,
+    tasks: &'a BTreeMap<String, TaskSpec>,
+) -> Vec<&'a str> {
+    let mut ordered = Vec::new();
+    let mut visited = BTreeSet::new();
+    let mut stack = vec![root_task_name];
+    while let Some(task_name) = stack.pop() {
+        if !visited.insert(task_name) {
+            continue;
+        }
+        ordered.push(task_name);
+        let Some(task) = tasks.get(task_name) else {
             continue;
         };
-        let normalized_writes = task
-            .effects
-            .writes
-            .iter()
-            .filter_map(|path| normalize_dependency_isolated_path(path))
-            .collect::<Vec<_>>();
-        for write_path in normalized_writes {
-            for protected_path in &protected_paths {
-                if normalized_paths_overlap(write_path.as_str(), protected_path.as_str()) {
-                    errors.push(ValidationError::new(format!(
-                        "agent-safe task `{task_name}` declares effect `writes: [{write_path}]`, which overlaps protected path `{protected_path}`"
-                    )));
-                }
+        for dependency in task_edges(task) {
+            if tasks.contains_key(dependency) {
+                stack.push(dependency.as_str());
             }
-            if !writable_paths.is_empty()
-                && !writable_paths.iter().any(|writable_path| {
-                    normalized_path_is_within(write_path.as_str(), writable_path.as_str())
-                })
-            {
+        }
+    }
+    ordered
+}
+
+fn validate_agent_safe_task_effect_write_boundary(
+    errors: &mut Vec<ValidationError>,
+    safe_task_name: &str,
+    task_name: &str,
+    write_path: &str,
+    protected_paths: &BTreeSet<String>,
+    writable_paths: &BTreeSet<String>,
+) {
+    for protected_path in protected_paths {
+        if normalized_paths_overlap(write_path, protected_path.as_str()) {
+            if task_name == safe_task_name {
                 errors.push(ValidationError::new(format!(
-                    "agent-safe task `{task_name}` declares effect `writes: [{write_path}]`, but it is outside the declared `agent.writable_paths` boundary"
+                    "agent-safe task `{safe_task_name}` declares effect `writes: [{write_path}]`, which overlaps protected path `{protected_path}`"
+                )));
+            } else {
+                errors.push(ValidationError::new(format!(
+                    "agent-safe task `{safe_task_name}` reaches dependency `{task_name}` with effect `writes: [{write_path}]`, which overlaps protected path `{protected_path}`"
                 )));
             }
+        }
+    }
+    if !writable_paths.is_empty()
+        && !writable_paths
+            .iter()
+            .any(|writable_path| normalized_path_is_within(write_path, writable_path.as_str()))
+    {
+        if task_name == safe_task_name {
+            errors.push(ValidationError::new(format!(
+                "agent-safe task `{safe_task_name}` declares effect `writes: [{write_path}]`, but it is outside the declared `agent.writable_paths` boundary"
+            )));
+        } else {
+            errors.push(ValidationError::new(format!(
+                "agent-safe task `{safe_task_name}` reaches dependency `{task_name}` with effect `writes: [{write_path}]`, but it is outside the declared `agent.writable_paths` boundary"
+            )));
         }
     }
 }
@@ -7810,7 +8187,9 @@ tasks:
         )
         .unwrap();
 
-        assert!(validate_contract(&contract).is_ok());
+        if let Err(errors) = validate_contract(&contract) {
+            panic!("unexpected validation errors: {errors}");
+        }
     }
 
     #[test]
@@ -7909,6 +8288,9 @@ tasks:
 version: 1
 project:
   name: ota
+tools:
+  docker: "*"
+  psql: "*"
 execution:
   preferred: container
   lifecycle: ephemeral
@@ -7922,7 +8304,9 @@ tasks:
         )
         .unwrap();
 
-        assert!(validate_contract(&contract).is_ok());
+        if let Err(errors) = validate_contract(&contract) {
+            panic!("unexpected validation errors: {errors}");
+        }
     }
 
     #[test]
@@ -8469,6 +8853,9 @@ workflows:
 version: 1
 project:
   name: ota
+tools:
+  docker: "*"
+  psql: "*"
 execution:
   default_context: host
   contexts:
@@ -8526,8 +8913,16 @@ workflows:
 version: 1
 project:
   name: ota
+tools:
+  docker: "*"
+  psql: "*"
 execution:
   default_context: host
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
   contexts:
     host:
       backend: native
@@ -8677,6 +9072,144 @@ tasks:
     }
 
     #[test]
+    fn validates_ensure_env_file_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env-local:
+    action:
+      kind: ensure_env_file
+      path: .env.local
+      template: .env.example
+      vars:
+        ENCRYPTION_KEY:
+          random:
+            encoding: base64
+            bytes: 32
+        PG_DATABASE_PASSWORD:
+          value: postgres
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ensure_env_file action should validate");
+    }
+
+    #[test]
+    fn rejects_invalid_ensure_env_file_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env-local:
+    action:
+      kind: ensure_env_file
+      path: .env.local
+      vars:
+        bad-key:
+          value: ok
+        DUP:
+          value: with
+          random:
+            bytes: 0
+        EMPTY:
+          random:
+            bytes: 0
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid ensure_env_file action should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:env-local` action `ensure_env_file` has invalid env key `bad-key` in `action.vars`"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:env-local` action `ensure_env_file` key `DUP` must declare exactly one of `value` or `random`"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:env-local` action `ensure_env_file` key `EMPTY` random bytes must be between 1 and 1024"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn validates_ensure_file_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:token:
+    action:
+      kind: ensure_file
+      path: secrets/token.txt
+      random:
+        bytes: 32
+        encoding: hex
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ensure_file action should validate");
+    }
+
+    #[test]
+    fn rejects_invalid_ensure_file_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:token:
+    action:
+      kind: ensure_file
+      path: secrets/token.txt
+      template: .env.example
+      value: abc123
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid ensure_file action should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:token` action `ensure_file` must declare exactly one of `template`, `value`, or `random`"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
     fn rejects_file_checks_and_actions_that_escape_the_repo() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -8720,8 +9253,16 @@ tasks:
 version: 1
 project:
   name: ota
+tools:
+  docker: "*"
+  psql: "*"
 execution:
   default_context: host
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
   contexts:
     host:
       backend: native
@@ -10076,8 +10617,16 @@ tasks:
 version: 1
 project:
   name: ota
+tools:
+  docker: "*"
+  psql: "*"
 execution:
   default_context: host
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
   contexts:
     host:
       backend: native
@@ -10594,6 +11143,7 @@ tasks:
           project:
             host:
               address: 127.0.0.1
+              primary: true
               port:
                 mode: fixed
                 value: 3000
@@ -10654,6 +11204,7 @@ tasks:
           project:
             host:
               address: 127.0.0.1
+              primary: true
               port:
                 mode: fixed
                 value: 3000
@@ -10712,6 +11263,7 @@ tasks:
           project:
             host:
               address: 127.0.0.1
+              primary: true
               port:
                 mode: fixed
                 value: 3000
@@ -10810,6 +11362,312 @@ tasks:
             error
                 .to_string()
                 .contains("runtime readiness `start_period` must be greater than zero")
+        }));
+    }
+
+    #[test]
+    fn allows_runtime_readiness_signal_probes_for_same_task_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+readiness:
+  probes:
+    worker-ready:
+      kind: tcp
+      timeout: 1000
+      target:
+        kind: task
+        name: dev
+        listener: worker
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+        signal_probes:
+          - worker-ready
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 3000
+        worker:
+          protocol: tcp
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 4000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 4000
+"#,
+        )
+        .unwrap();
+
+        if let Err(errors) = validate_contract(&contract) {
+            panic!("unexpected validation errors: {errors}");
+        }
+    }
+
+    #[test]
+    fn rejects_runtime_readiness_signal_probe_targeting_different_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+readiness:
+  probes:
+    worker-ready:
+      kind: tcp
+      timeout: 1000
+      target:
+        kind: task
+        name: worker
+        listener: worker
+tasks:
+  worker:
+    context: app
+    run: echo worker
+    runtime:
+      kind: service
+      listeners:
+        worker:
+          protocol: tcp
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 4000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 4000
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+        signal_probes:
+          - worker-ready
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("runtime readiness `signal_probes` probe `worker-ready` must target task `dev`, not `worker`")
+        }));
+    }
+
+    #[test]
+    fn allows_runtime_readiness_signal_probe_internal_for_native_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  shared_backends:
+    workbench:
+      scope: local
+      backend: native
+      lifecycle: persistent
+  contexts:
+    host:
+      backend: native
+readiness:
+  probes:
+    worker-ready:
+      kind: tcp
+      timeout: 1000
+      target:
+        kind: task
+        name: dev
+        listener: worker
+        address_view: internal
+        observer:
+          kind: task
+          task: dev
+tasks:
+  dev:
+    context: host
+    run: echo hi
+    runtime:
+      kind: service
+      backend_binding: workbench
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+        signal_probes:
+          - worker-ready
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 3000
+        worker:
+          protocol: tcp
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 4000
+"#,
+        )
+        .unwrap();
+
+        if let Err(errors) = validate_contract(&contract) {
+            panic!("unexpected validation errors: {errors}");
+        }
+    }
+
+    #[test]
+    fn rejects_runtime_readiness_signal_probe_internal_for_container_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+readiness:
+  probes:
+    worker-ready:
+      kind: tcp
+      timeout: 1000
+      target:
+        kind: task
+        name: dev
+        listener: worker
+        address_view: internal
+        observer:
+          kind: task
+          task: dev
+tasks:
+  dev:
+    context: app
+    run: echo hi
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+        signal_probes:
+          - worker-ready
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 3000
+        worker:
+          protocol: tcp
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 4000
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("runtime readiness `signal_probes` probe `worker-ready` with `target.address_view: internal` currently requires native execution")
         }));
     }
 
@@ -18240,6 +19098,238 @@ agent:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "agent-safe task `build` declares effect `writes: [dist/output]`, but it is outside the declared `agent.writable_paths` boundary",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_task_requirements_any_of_with_context_selector() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+tools:
+  docker: "*"
+  psql: "*"
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+checks:
+  - name: host-ready
+    kind: precondition
+    severity: error
+    run: echo ok
+native_prerequisites:
+  local-postgres:
+    platforms:
+      linux:
+        check: host-ready
+        apt: [postgresql-client]
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    docker-host:
+      backend: native
+tasks:
+  setup:
+    context: host
+    run: echo ok
+    requirements:
+      any_of:
+        - when:
+            context: host
+          tools:
+            psql: "*"
+          toolchains:
+            - node
+          native:
+            - local-postgres
+          env:
+            - DATABASE_URL
+          checks:
+            - host-ready
+        - when:
+            context: docker-host
+          tools:
+            docker: "*"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("requirements.any_of with selectors should validate");
+    }
+
+    #[test]
+    fn rejects_task_requirements_any_of_without_selector_or_entries() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: echo ok
+    requirements:
+      any_of:
+        - {}
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("requirements.any_of entries must be scoped and non-empty")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup` requirements.any_of[0] must declare at least one requirement (`runtimes`, `tools`, `toolchains`, `native`, `env`, or `checks`)"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup` requirements.any_of[0] must declare `when.backend` or `when.context`"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_task_requirements_any_of_duplicate_matchers() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    run: echo ok
+    requirements:
+      any_of:
+        - when:
+            context: host
+          tools:
+            psql: "*"
+        - when:
+            context: host
+          tools:
+            docker: "*"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate requirements.any_of matchers should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup` requirements.any_of[1] duplicates matcher `backend:any|context:host`"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_agent_safe_task_dependency_effect_writes_overlapping_protected_paths() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: ./scripts/setup.sh
+    effects:
+      writes:
+        - config.toml
+  verify:
+    run: ./scripts/verify.sh
+    safe_for_agent: true
+    depends_on:
+      - setup
+agent:
+  protected_paths:
+    - config.toml
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("safe task dependency should not write protected path")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "agent-safe task `verify` reaches dependency `setup` with effect `writes: [config.toml]`, which overlaps protected path `config.toml`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_agent_safe_task_dependency_effect_writes_outside_writable_boundary() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: ./scripts/setup.sh
+    effects:
+      writes:
+        - dist/output
+  verify:
+    run: ./scripts/verify.sh
+    safe_for_agent: true
+    depends_on:
+      - setup
+agent:
+  writable_paths:
+    - src
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("safe task dependency writes should stay inside writable paths")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "agent-safe task `verify` reaches dependency `setup` with effect `writes: [dist/output]`, but it is outside the declared `agent.writable_paths` boundary",
             )),
             "{rendered:?}"
         );

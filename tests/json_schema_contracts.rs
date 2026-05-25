@@ -37,10 +37,9 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     let success = &schema["oneOf"][0]["properties"];
     let workflow_properties = &schema["$defs"]["workflowSummary"]["properties"];
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
-    let task_action = &schema["$defs"]["taskAction"]["properties"];
-    let task_action_required = schema["$defs"]["taskAction"]["required"]
+    let task_action_variants = schema["$defs"]["taskAction"]["oneOf"]
         .as_array()
-        .expect("task action required fields");
+        .expect("task action variants");
     let agent_properties = &success["agent"]["properties"];
     let task_properties = &success["tasks"]["items"]["properties"];
     let member_properties = &success["members"]["items"]["properties"];
@@ -83,10 +82,21 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_launch.get("exe").is_some());
     assert!(task_launch.get("image").is_some());
     assert!(task_launch.get("volumes").is_some());
-    assert!(task_action.get("from").is_some());
-    assert!(task_action.get("to").is_some());
-    assert!(task_action_required.iter().any(|entry| entry == "from"));
-    assert!(task_action_required.iter().any(|entry| entry == "to"));
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"] == json!({ "const": "copy_if_missing" }))
+    );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_env_file" }))
+    );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_file" }))
+    );
     assert!(task_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_kind_enum.iter().any(|entry| entry == "container"));
     assert!(
@@ -94,6 +104,12 @@ fn tasks_schema_includes_agent_and_variant_fields() {
             .iter()
             .any(|entry| entry == "copy_if_missing")
     );
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "ensure_env_file")
+    );
+    assert!(task_kind_enum.iter().any(|entry| entry == "ensure_file"));
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "container"));
     assert!(member_task_properties.get("requires_services").is_some());
@@ -296,6 +312,7 @@ fn execution_topology_schema_covers_declared_graph_fields() {
     let success = &schema["oneOf"][0]["properties"];
     let task = &schema["$defs"]["task"]["properties"];
     let runtime = &schema["$defs"]["runtime"]["properties"];
+    let readiness = &schema["$defs"]["readiness"]["properties"];
     let probe = &schema["$defs"]["probe"]["properties"];
     let surface = &schema["$defs"]["surface"]["properties"];
     let task_kind_enum = task["kind"]["enum"].as_array().expect("task kind enum");
@@ -332,6 +349,7 @@ fn execution_topology_schema_covers_declared_graph_fields() {
     assert!(runtime.get("attached_surfaces").is_some());
     assert!(runtime.get("surface_attachments").is_some());
     assert!(runtime.get("listeners").is_some());
+    assert!(readiness.get("signal_probes").is_some());
     assert!(probe.get("target").is_some());
     assert!(surface.get("readiness").is_some());
     assert!(
@@ -339,6 +357,12 @@ fn execution_topology_schema_covers_declared_graph_fields() {
             .iter()
             .any(|entry| entry == "copy_if_missing")
     );
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "ensure_env_file")
+    );
+    assert!(task_kind_enum.iter().any(|entry| entry == "ensure_file"));
 }
 
 #[test]
@@ -460,6 +484,14 @@ fn run_preview_schema_includes_selected_task_env_and_plan_fields() {
     assert_eq!(
         single_target["requested_task"]["$ref"],
         serde_json::json!("./tasks.json#/oneOf/0/properties/tasks/items")
+    );
+    assert_eq!(
+        single_target["requested_context"]["type"],
+        serde_json::json!("string")
+    );
+    assert_eq!(
+        single_target["selected_context"]["type"],
+        serde_json::json!("string")
     );
     assert!(single_target.get("env_summary").is_some());
     assert!(single_target.get("sources").is_some());
@@ -1124,10 +1156,9 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
         .as_array()
         .expect("workspace task kind enum");
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
-    let task_action = &schema["$defs"]["taskAction"]["properties"];
-    let task_action_required = schema["$defs"]["taskAction"]["required"]
+    let task_action_variants = schema["$defs"]["taskAction"]["oneOf"]
         .as_array()
-        .expect("task action required fields");
+        .expect("task action variants");
 
     assert!(properties.get("summary").is_some());
     assert!(repo.get("acquired").is_some());
@@ -1145,10 +1176,21 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     assert!(task.get("action").is_some());
     assert!(task_launch.get("exe").is_some());
     assert!(task_launch.get("image").is_some());
-    assert!(task_action.get("from").is_some());
-    assert!(task_action.get("to").is_some());
-    assert!(task_action_required.iter().any(|entry| entry == "from"));
-    assert!(task_action_required.iter().any(|entry| entry == "to"));
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"] == json!({ "const": "copy_if_missing" }))
+    );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_env_file" }))
+    );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_file" }))
+    );
     assert!(task_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_kind_enum.iter().any(|entry| entry == "container"));
     assert!(
@@ -1156,6 +1198,12 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
             .iter()
             .any(|entry| entry == "copy_if_missing")
     );
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "ensure_env_file")
+    );
+    assert!(task_kind_enum.iter().any(|entry| entry == "ensure_file"));
 }
 
 #[test]
