@@ -991,26 +991,32 @@ JSON output:
 
 ## `ota json validate`
 
-Run a command, capture its JSON payload, validate that payload against a published Ota schema, and
-apply optional assertion gates.
+Validate a JSON payload against a published Ota schema with optional assertion gates. Payload can
+come from a command (`-- <command>`) or an existing artifact (`--input <file|->`).
 
 ```bash
 ota json validate \
   --schema run-preview.json \
   --allow-exit 0 \
   --allow-exit 1 \
-  --write-payload repo-run-preview.json \
   --assert-eq dry_run=true \
   --assert-in preview_status='["RUNNABLE","RUNNABLE WITH WARNINGS","BLOCKED"]' \
   -- ota run ci --dry-run --json .
+
+ota json validate \
+  --schema run-preview.json \
+  --input ./repo-run-preview.json \
+  --assert-type plan.actions:array
 ```
 
 Current behavior:
 
-- executes the provided command after `--` and captures its JSON payload from stdout, falling back
-  to stderr when stdout is empty
+- with `--input <path>`, reads JSON from the file; with `--input -`, reads JSON from stdin
+- without `--input`, executes the provided command after `--` and captures JSON from stdout
+  (falling back to stderr when stdout is empty)
 - accepts one or more allowed exit codes (`--allow-exit`); defaults to `0` when omitted
-- writes the captured payload to `--write-payload` before validation and assertions
+- in `--input` mode, uses synthetic exit code `0` for exit-map assertions
+- when `--write-payload` is set, writes the captured/read payload before validation and assertions
 - validates payload shape against schemas under `docs/spec/json-schemas/`, including relative
   `$ref` resolution used by published Ota JSON schemas
 - supports optional assertion gates for CI:
@@ -1023,7 +1029,7 @@ Current behavior:
 
 Text output:
 
-- success: `validated <payload-path> against <schema-name>`
+- success: `validated <payload-source> against <schema-name>`
 - failure: command execution, payload parse, schema mismatch, or assertion mismatch details
 
 JSON output:

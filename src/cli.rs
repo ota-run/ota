@@ -683,17 +683,20 @@ enum PolicyCommands {
 
 #[derive(Debug, Clone, Subcommand)]
 enum JsonCommands {
-    /// Run a command, capture its JSON payload, and validate it against a published schema.
+    /// Validate JSON payloads from command output or input artifacts against a published schema.
     Validate {
         /// Schema filename under docs/spec/json-schemas (for example: run-preview.json).
         #[arg(long)]
         schema: String,
+        /// Validate payload from a JSON file path or `-` for stdin instead of executing a command.
+        #[arg(long, value_name = "INPUT", conflicts_with = "command")]
+        input: Option<PathBuf>,
         /// Allowed exit code from the executed command. Repeat as needed.
         #[arg(long = "allow-exit")]
         allow_exit: Vec<i32>,
-        /// File path where the captured payload should be written.
+        /// Optional file path where the payload should be written after capture/read.
         #[arg(long = "write-payload")]
-        write_payload: PathBuf,
+        write_payload: Option<PathBuf>,
         /// Assert exact equality using path=value (repeatable).
         #[arg(long = "assert-eq")]
         assert_eq: Vec<String>,
@@ -709,8 +712,12 @@ enum JsonCommands {
         /// Assert an exit-code-to-value mapping using path=0:[\"A\"];1:[\"B\"].
         #[arg(long = "assert-exit-map")]
         assert_exit_map: Vec<String>,
-        /// Command to execute; place after `--`.
-        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        /// Command to execute; place after `--` when `--input` is not used.
+        #[arg(
+            required_unless_present = "input",
+            trailing_var_arg = true,
+            allow_hyphen_values = true
+        )]
         command: Vec<String>,
     },
 }
@@ -5018,6 +5025,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             command:
                 JsonCommands::Validate {
                     schema,
+                    input,
                     allow_exit,
                     write_payload,
                     assert_eq,
@@ -5029,8 +5037,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 },
         } => commands::json_validate(
             schema.as_str(),
+            input.as_deref(),
             allow_exit.as_slice(),
-            write_payload.as_path(),
+            write_payload.as_deref(),
             assert_eq.as_slice(),
             assert_in.as_slice(),
             assert_type.as_slice(),
@@ -5595,7 +5604,7 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         Commands::Clean { .. } => "ota clean --help",
         Commands::Policy { .. } => "run `ota policy --help` to inspect policy options",
         Commands::Json { .. } => {
-            "run `ota json validate --schema run-preview.json --write-payload out.json -- ota run ci --dry-run --json .`"
+            "run `ota json validate --schema run-preview.json --input ./payload.json` or `ota json validate --schema run-preview.json -- ota run ci --dry-run --json .`"
         }
         Commands::Completion { .. } => {
             "run `ota completion --setup` to install shell completion, `ota completion check` to verify the managed hook, or `ota completion zsh --script` to inspect the raw registration script"

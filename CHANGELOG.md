@@ -46,6 +46,10 @@
 - added first-class `ota json validate` support in the Rust CLI so CI can run command
   execution, payload capture, published-schema validation, and optional assertion checks without
   Python-side validator scripts
+- extended `ota json validate` with artifact-first input mode (`--input <file|->`) so CI can
+  validate existing JSON payloads without rerunning producer commands; input mode keeps assertion
+  parity (including exit-map checks via synthetic exit code `0`) and makes `--write-payload`
+  optional
 - removed deprecated `RefResolver`-based schema validation paths from smoke CI by switching to
   the new core `ota json validate` command surface
 - added workflow guard checks that fail CI if deprecated `RefResolver` usage reappears in
