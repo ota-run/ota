@@ -123,7 +123,8 @@ jobs:
           payload = output.stdout or output.stderr
           body = json.loads(payload)
 
-          from jsonschema import Draft202012Validator, RefResolver
+          from jsonschema import Draft202012Validator
+          from referencing import Registry, Resource
 
           schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
           schema_store = {}
@@ -135,12 +136,10 @@ jobs:
                   schema_store[candidate_id] = candidate_doc
           schema_path = (schema_dir / "run-preview.json").resolve()
           schema = schema_store[schema_path.as_uri()]
-          resolver = RefResolver(
-              base_uri=schema_path.as_uri(),
-              referrer=schema,
-              store=schema_store,
-          )
-          Draft202012Validator(schema, resolver=resolver).validate(body)
+          registry = Registry()
+          for uri, schema_doc in schema_store.items():
+              registry = registry.with_resource(uri, Resource.from_contents(schema_doc))
+          Draft202012Validator(schema, registry=registry).validate(body)
 
           assert body["dry_run"] is True
           assert body["task"] == "ci"
@@ -177,7 +176,8 @@ jobs:
           payload = output.stdout or output.stderr
           body = json.loads(payload)
 
-          from jsonschema import Draft202012Validator, RefResolver
+          from jsonschema import Draft202012Validator
+          from referencing import Registry, Resource
 
           schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
           schema_store = {}
@@ -189,12 +189,10 @@ jobs:
                   schema_store[candidate_id] = candidate_doc
           schema_path = (schema_dir / "up.json").resolve()
           schema = schema_store[schema_path.as_uri()]
-          resolver = RefResolver(
-              base_uri=schema_path.as_uri(),
-              referrer=schema,
-              store=schema_store,
-          )
-          Draft202012Validator(schema, resolver=resolver).validate(body)
+          registry = Registry()
+          for uri, schema_doc in schema_store.items():
+              registry = registry.with_resource(uri, Resource.from_contents(schema_doc))
+          Draft202012Validator(schema, registry=registry).validate(body)
 
           assert body["dry_run"] is True
           assert body["phase"] == "preview"
@@ -264,7 +262,8 @@ jobs:
           payload = output.stdout or output.stderr
           body = json.loads(payload)
 
-          from jsonschema import Draft202012Validator, RefResolver
+          from jsonschema import Draft202012Validator
+          from referencing import Registry, Resource
 
           schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
           schema_store = {}
@@ -276,12 +275,10 @@ jobs:
                   schema_store[candidate_id] = candidate_doc
           schema_path = (schema_dir / "run-preview.json").resolve()
           schema = schema_store[schema_path.as_uri()]
-          resolver = RefResolver(
-              base_uri=schema_path.as_uri(),
-              referrer=schema,
-              store=schema_store,
-          )
-          Draft202012Validator(schema, resolver=resolver).validate(body)
+          registry = Registry()
+          for uri, schema_doc in schema_store.items():
+              registry = registry.with_resource(uri, Resource.from_contents(schema_doc))
+          Draft202012Validator(schema, registry=registry).validate(body)
 
           assert body["dry_run"] is True
           assert body["requested_task"]["name"] == "test"
@@ -314,7 +311,8 @@ jobs:
           payload = output.stdout or output.stderr
           body = json.loads(payload)
 
-          from jsonschema import Draft202012Validator, RefResolver
+          from jsonschema import Draft202012Validator
+          from referencing import Registry, Resource
 
           schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
           schema_store = {}
@@ -326,12 +324,10 @@ jobs:
                   schema_store[candidate_id] = candidate_doc
           schema_path = (schema_dir / "run-preview.json").resolve()
           schema = schema_store[schema_path.as_uri()]
-          resolver = RefResolver(
-              base_uri=schema_path.as_uri(),
-              referrer=schema,
-              store=schema_store,
-          )
-          Draft202012Validator(schema, resolver=resolver).validate(body)
+          registry = Registry()
+          for uri, schema_doc in schema_store.items():
+              registry = registry.with_resource(uri, Resource.from_contents(schema_doc))
+          Draft202012Validator(schema, registry=registry).validate(body)
 
           assert body["dry_run"] is True
           assert body["requested_task"]["name"] == "test"
