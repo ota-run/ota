@@ -33,6 +33,16 @@
 - aligned `ota run --dry-run --plain` context rendering so `Execution -> Context` and
   `Contract -> Selected Context` now resolve from the same selected task-path context instead of
   showing a mismatched default context label when multiple contexts share one backend family
+- hardened smoke-workflow run-preview JSON assertions to validate verdict shape without
+  hardcoding a fixed verdict enum, reducing CI brittleness as verdict taxonomy evolves
+- made smoke-workflow preview checks schema-driven by validating `ota run --dry-run --json` and
+  `ota up --dry-run --json` payloads against the published contract schemas
+  (`docs/spec/json-schemas/run-preview.json`, `docs/spec/json-schemas/up.json`) across repo and
+  example lanes, keeping only minimal semantic assertions on top
+- made smoke schema validation fully local/offline by preloading published JSON schemas into the
+  validator store, so `$id`-based refs resolve without external fetches during CI
+- expanded published `tasks.json` task item shape with optional `context` and `notes` fields so
+  `run-preview.json` validation for `requested_task` remains schema-accurate on real contracts
 
 ## 1.6.16
 

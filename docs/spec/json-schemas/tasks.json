@@ -169,7 +169,9 @@
             "properties": {
               "name": { "type": "string" },
               "description": { "type": "string" },
+              "notes": { "type": "string" },
               "category": { "type": "string" },
+              "context": { "type": "string" },
               "default_mode": { "enum": ["native", "container", "remote"] },
               "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing"] },
               "run": { "type": "string" },
@@ -294,7 +296,9 @@
                   "properties": {
                     "name": { "type": "string" },
                     "description": { "type": "string" },
+                    "notes": { "type": "string" },
                     "category": { "type": "string" },
+                    "context": { "type": "string" },
                     "default_mode": { "enum": ["native", "container", "remote"] },
                     "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing"] },
                     "run": { "type": "string" },
