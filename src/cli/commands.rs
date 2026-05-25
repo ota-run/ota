@@ -32,6 +32,7 @@ use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 use serde_yaml::{Mapping, Value as YamlValue};
@@ -33920,6 +33921,397 @@ pub fn annotations(
     CommandOutput::success(lines.join("\n"))
 }
 
+pub fn json_validate(
+    schema: &str,
+    allow_exit: &[i32],
+    write_payload: &Path,
+    assert_eq_rules: &[String],
+    assert_in_rules: &[String],
+    assert_type_rules: &[String],
+    assert_non_empty_string_rules: &[String],
+    assert_exit_map_rules: &[String],
+    command: &[String],
+    _debug: bool,
+) -> CommandOutput {
+    let mut command = command.to_vec();
+    if command.first().is_some_and(|value| value == "--") {
+        command.remove(0);
+    }
+    if command.is_empty() {
+        return CommandOutput::failure_with_code(
+            String::from("missing command to execute; pass it after `--`"),
+            2,
+        );
+    }
+
+    let allowed_exit_codes: Vec<i32> = if allow_exit.is_empty() {
+        vec![0]
+    } else {
+        allow_exit.to_vec()
+    };
+
+    let output = match Command::new(command[0].as_str())
+        .args(&command[1..])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            return CommandOutput::failure(format!(
+                "failed to execute `{}`: {error}",
+                command.join(" ")
+            ));
+        }
+    };
+    let exit_code = output.status.code().unwrap_or(1);
+    if !allowed_exit_codes.contains(&exit_code) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return CommandOutput::failure_with_code(
+            format!(
+                "command exited with code {exit_code}, expected one of {:?}\n{}",
+                allowed_exit_codes, stderr
+            ),
+            exit_code,
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let payload = if stdout.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
+    if payload.trim().is_empty() {
+        return CommandOutput::failure("command produced no JSON payload".to_string());
+    }
+
+    if let Some(parent) = write_payload.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        return CommandOutput::failure(format!(
+            "failed to create payload output directory {}: {error}",
+            parent.display()
+        ));
+    }
+    if let Err(error) = fs::write(write_payload, &payload) {
+        return CommandOutput::failure(format!(
+            "failed to write payload to {}: {error}",
+            write_payload.display()
+        ));
+    }
+
+    let payload_json: JsonValue = match serde_json::from_str(&payload) {
+        Ok(payload_json) => payload_json,
+        Err(error) => {
+            return CommandOutput::failure(format!(
+                "captured payload is not valid JSON ({}): {error}",
+                write_payload.display()
+            ));
+        }
+    };
+
+    if let Err(error) = validate_payload_with_schema(schema, &payload_json) {
+        return CommandOutput::failure(error);
+    }
+    if let Err(error) = apply_schema_assertions(
+        &payload_json,
+        exit_code,
+        assert_eq_rules,
+        assert_in_rules,
+        assert_type_rules,
+        assert_non_empty_string_rules,
+        assert_exit_map_rules,
+    ) {
+        return CommandOutput::failure(error);
+    }
+
+    CommandOutput::success(format!(
+        "validated {} against {}",
+        write_payload.display(),
+        schema
+    ))
+}
+
+fn validate_payload_with_schema(schema_name: &str, payload: &JsonValue) -> Result<(), String> {
+    let schema_dir = resolve_schema_dir()?;
+    let schema_path = schema_dir.join(schema_name);
+    if !schema_path.exists() {
+        return Err(format!("schema file not found: {}", schema_path.display()));
+    }
+
+    let raw_schema = load_json_value(&schema_path)?;
+    let resolved_schema = resolve_schema_refs_runtime(&raw_schema, &schema_path)?;
+    let compiled = JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&resolved_schema)
+        .map_err(|error| {
+            format!(
+                "failed to compile schema `{}`: {error}",
+                schema_path.display()
+            )
+        })?;
+    if let Err(errors) = compiled.validate(payload) {
+        let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+        return Err(format!(
+            "payload did not match schema `{}`:\n{}",
+            schema_name,
+            messages.join("\n")
+        ));
+    }
+    Ok(())
+}
+
+fn resolve_schema_dir() -> Result<PathBuf, String> {
+    let cwd =
+        env::current_dir().map_err(|error| format!("failed to read current directory: {error}"))?;
+    let cwd_schema_dir = cwd.join("docs").join("spec").join("json-schemas");
+    if cwd_schema_dir.is_dir() {
+        return Ok(cwd_schema_dir);
+    }
+
+    let fallback_schema_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("docs")
+        .join("spec")
+        .join("json-schemas");
+    if fallback_schema_dir.is_dir() {
+        return Ok(fallback_schema_dir);
+    }
+
+    Err(String::from(
+        "schema directory not found; expected docs/spec/json-schemas in the current repo",
+    ))
+}
+
+fn load_json_value(path: &Path) -> Result<JsonValue, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    serde_json::from_str(&raw)
+        .map_err(|error| format!("failed to parse {} as JSON: {error}", path.display()))
+}
+
+fn resolve_schema_refs_runtime(
+    value: &JsonValue,
+    current_path: &Path,
+) -> Result<JsonValue, String> {
+    match value {
+        JsonValue::Object(map) if map.len() == 1 && map.contains_key("$ref") => {
+            let reference = map
+                .get("$ref")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| String::from("schema $ref must be a string"))?;
+            let (file_part, pointer_part) = reference.split_once('#').unwrap_or((reference, ""));
+            let target_path = if file_part.is_empty() {
+                current_path.to_path_buf()
+            } else {
+                current_path
+                    .parent()
+                    .ok_or_else(|| {
+                        format!("schema path has no parent: {}", current_path.display())
+                    })?
+                    .join(file_part)
+            };
+            let target_value = load_json_value(&target_path)?;
+            let pointer = pointer_part.trim_start_matches('#');
+            let referenced = resolve_json_pointer_runtime(&target_value, pointer)?;
+            resolve_schema_refs_runtime(referenced, &target_path)
+        }
+        JsonValue::Object(map) => {
+            let mut resolved = serde_json::Map::new();
+            for (key, inner) in map {
+                resolved.insert(
+                    key.clone(),
+                    resolve_schema_refs_runtime(inner, current_path)?,
+                );
+            }
+            Ok(JsonValue::Object(resolved))
+        }
+        JsonValue::Array(items) => {
+            let mut resolved = Vec::with_capacity(items.len());
+            for inner in items {
+                resolved.push(resolve_schema_refs_runtime(inner, current_path)?);
+            }
+            Ok(JsonValue::Array(resolved))
+        }
+        _ => Ok(value.clone()),
+    }
+}
+
+fn resolve_json_pointer_runtime<'a>(
+    value: &'a JsonValue,
+    pointer: &str,
+) -> Result<&'a JsonValue, String> {
+    if pointer.is_empty() {
+        return Ok(value);
+    }
+    let mut current = value;
+    for segment in pointer.trim_start_matches('/').split('/') {
+        let segment = segment.replace("~1", "/").replace("~0", "~");
+        current = match current {
+            JsonValue::Object(map) => map
+                .get(segment.as_str())
+                .ok_or_else(|| format!("missing object pointer segment `{segment}`"))?,
+            JsonValue::Array(items) => {
+                let index: usize = segment
+                    .parse()
+                    .map_err(|_| format!("invalid array pointer segment `{segment}`"))?;
+                items
+                    .get(index)
+                    .ok_or_else(|| format!("missing array pointer index `{index}`"))?
+            }
+            _ => {
+                return Err(format!(
+                    "cannot traverse pointer segment `{segment}` on non-container value"
+                ));
+            }
+        };
+    }
+    Ok(current)
+}
+
+fn apply_schema_assertions(
+    payload_json: &JsonValue,
+    exit_code: i32,
+    assert_eq_rules: &[String],
+    assert_in_rules: &[String],
+    assert_type_rules: &[String],
+    assert_non_empty_string_rules: &[String],
+    assert_exit_map_rules: &[String],
+) -> Result<(), String> {
+    for rule in assert_eq_rules {
+        let (path, expected_raw) = split_once_or_error(rule, '=', "--assert-eq")?;
+        let actual = resolve_payload_path(payload_json, path)?;
+        let expected = parse_json_value_or_string(expected_raw);
+        if actual != &expected {
+            return Err(format!(
+                "assert-eq failed for `{path}`: expected {expected:?}, got {actual:?}"
+            ));
+        }
+    }
+
+    for rule in assert_in_rules {
+        let (path, expected_raw) = split_once_or_error(rule, '=', "--assert-in")?;
+        let allowed = parse_json_value_or_string(expected_raw);
+        let allowed = allowed
+            .as_array()
+            .ok_or_else(|| format!("assert-in for `{path}` expects a JSON array"))?;
+        let actual = resolve_payload_path(payload_json, path)?;
+        if !allowed.iter().any(|candidate| candidate == actual) {
+            return Err(format!(
+                "assert-in failed for `{path}`: value {actual:?} not in {allowed:?}"
+            ));
+        }
+    }
+
+    for rule in assert_type_rules {
+        let (path, type_name) = split_once_or_error(rule, ':', "--assert-type")?;
+        let actual = resolve_payload_path(payload_json, path)?;
+        let ok = match type_name {
+            "string" => actual.is_string(),
+            "array" => actual.is_array(),
+            "object" => actual.is_object(),
+            "number" => actual.is_number(),
+            "boolean" => actual.is_boolean(),
+            _ => {
+                return Err(format!(
+                    "unsupported type `{type_name}` in --assert-type; use string|array|object|number|boolean"
+                ));
+            }
+        };
+        if !ok {
+            return Err(format!(
+                "assert-type failed for `{path}`: expected {type_name}, got {actual:?}"
+            ));
+        }
+    }
+
+    for path in assert_non_empty_string_rules {
+        let actual = resolve_payload_path(payload_json, path)?;
+        if !actual
+            .as_str()
+            .map(|value| !value.is_empty())
+            .unwrap_or(false)
+        {
+            return Err(format!(
+                "assert-non-empty-string failed for `{path}`: got {actual:?}"
+            ));
+        }
+    }
+
+    for rule in assert_exit_map_rules {
+        let (path, mapping_raw) = split_once_or_error(rule, '=', "--assert-exit-map")?;
+        let actual = resolve_payload_path(payload_json, path)?;
+        let mut matched_exit = false;
+        for clause in mapping_raw.split(';') {
+            let (code_raw, allowed_raw) = split_once_or_error(clause, ':', "--assert-exit-map")?;
+            let code: i32 = code_raw
+                .parse()
+                .map_err(|_| format!("invalid exit code `{code_raw}` in --assert-exit-map"))?;
+            if code != exit_code {
+                continue;
+            }
+            matched_exit = true;
+            let allowed = parse_json_value_or_string(allowed_raw);
+            let allowed = allowed.as_array().ok_or_else(|| {
+                format!("assert-exit-map for `{path}` expects JSON array values per exit code")
+            })?;
+            if !allowed.iter().any(|candidate| candidate == actual) {
+                return Err(format!(
+                    "assert-exit-map failed for `{path}`: exit {exit_code} value {actual:?} not in {allowed:?}"
+                ));
+            }
+        }
+        if !matched_exit {
+            return Err(format!(
+                "assert-exit-map for `{path}` has no mapping for exit code {exit_code}"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn resolve_payload_path<'a>(payload: &'a JsonValue, path: &str) -> Result<&'a JsonValue, String> {
+    let mut current = payload;
+    for segment in path.split('.') {
+        if segment.is_empty() {
+            return Err(format!("invalid path `{path}`"));
+        }
+        current = match current {
+            JsonValue::Object(map) => map
+                .get(segment)
+                .ok_or_else(|| format!("missing object segment `{segment}` in `{path}`"))?,
+            JsonValue::Array(items) => {
+                let index: usize = segment
+                    .parse()
+                    .map_err(|_| format!("invalid array segment `{segment}` in `{path}`"))?;
+                items
+                    .get(index)
+                    .ok_or_else(|| format!("missing array index `{index}` in `{path}`"))?
+            }
+            _ => {
+                return Err(format!(
+                    "cannot traverse segment `{segment}` in `{path}` on scalar value"
+                ));
+            }
+        };
+    }
+    Ok(current)
+}
+
+fn parse_json_value_or_string(raw: &str) -> JsonValue {
+    serde_json::from_str(raw).unwrap_or_else(|_| JsonValue::String(raw.to_string()))
+}
+
+fn split_once_or_error<'a>(
+    raw: &'a str,
+    delimiter: char,
+    flag: &str,
+) -> Result<(&'a str, &'a str), String> {
+    raw.split_once(delimiter).ok_or_else(|| {
+        format!("invalid {flag} value `{raw}`; expected `path{delimiter}value` format")
+    })
+}
+
 fn read_annotations_input(input: &Path) -> Result<String, String> {
     if input == Path::new("-") {
         let mut content = String::new();
@@ -39762,6 +40154,8 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
+    use serde_json::json;
+
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpPreview, RepoUpResult,
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
@@ -39833,6 +40227,57 @@ mod tests {
         } else {
             bin_dir.join(name)
         }
+    }
+
+    #[test]
+    fn resolve_payload_path_supports_object_and_array_segments() {
+        let payload = json!({
+            "summary": {
+                "verdict": "risky",
+                "items": [{"name": "first"}, {"name": "second"}]
+            }
+        });
+
+        let verdict =
+            super::resolve_payload_path(&payload, "summary.verdict").expect("verdict path");
+        assert_eq!(verdict, &json!("risky"));
+
+        let second =
+            super::resolve_payload_path(&payload, "summary.items.1.name").expect("array path");
+        assert_eq!(second, &json!("second"));
+    }
+
+    #[test]
+    fn apply_schema_assertions_enforces_exit_map() {
+        let payload = json!({
+            "preview_status": "BLOCKED",
+            "summary": { "verdict": "not_ready" }
+        });
+
+        super::apply_schema_assertions(
+            &payload,
+            1,
+            &[],
+            &[],
+            &[],
+            &[String::from("summary.verdict")],
+            &[String::from(
+                "preview_status=0:[\"RUNNABLE\"];1:[\"BLOCKED\"]",
+            )],
+        )
+        .expect("exit-map assertion should pass");
+
+        let error = super::apply_schema_assertions(
+            &payload,
+            0,
+            &[],
+            &[],
+            &[],
+            &[String::from("summary.verdict")],
+            &[String::from("preview_status=0:[\"RUNNABLE\"]")],
+        )
+        .expect_err("mismatched exit map should fail");
+        assert!(error.contains("assert-exit-map failed"), "{error}");
     }
 
     fn make_bootstrap_shims(dir: &Path) {
@@ -43432,7 +43877,10 @@ tasks:
         let stdout = strip_ansi_codes(&output.stdout);
         assert!(stdout.contains("Context: `host`"), "{stdout}");
         assert!(stdout.contains("Selected Context: `host`"), "{stdout}");
-        assert!(!stdout.contains("Selected Context: `docker-host`"), "{stdout}");
+        assert!(
+            !stdout.contains("Selected Context: `docker-host`"),
+            "{stdout}"
+        );
     }
 
     #[test]

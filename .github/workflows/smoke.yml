@@ -79,17 +79,6 @@ jobs:
             env -u RUSTC_WRAPPER cargo install --path . --locked
           fi
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
-      - name: Install JSON Schema validator
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install --disable-pip-version-check --quiet "jsonschema>=4.18,<5"
-
       - name: Ensure cargo is on PATH (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -103,105 +92,49 @@ jobs:
       - name: Validate repo contract
         run: ota validate . --plain
 
+      - name: Ensure no deprecated JSON schema resolver API in workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          deprecated_import='from jsonschema import .*Ref'"Resolver"
+          deprecated_ctor='Ref'"Resolver\\("
+          if rg -n "${deprecated_import}|${deprecated_ctor}" .github/workflows; then
+            echo "Found deprecated jsonschema.RefResolver usage in workflow files."
+            exit 1
+          fi
+
       - name: Smoke repo run preview JSON
         shell: bash
         run: |
-          python - <<'PY'
-          import json
-          import pathlib
-          import subprocess
-          import sys
-
-          output = subprocess.run(
-              ["ota", "run", "ci", "--dry-run", "--json", "."],
-              capture_output=True,
-              text=True,
-          )
-          if output.returncode not in (0, 1):
-              sys.stderr.write(output.stderr)
-              raise SystemExit(output.returncode)
-          payload = output.stdout or output.stderr
-          body = json.loads(payload)
-
-          from jsonschema import Draft202012Validator
-          from referencing import Registry, Resource
-
-          schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
-          schema_store = {}
-          for candidate in schema_dir.glob("*.json"):
-              candidate_doc = json.loads(candidate.read_text(encoding="utf-8"))
-              schema_store[candidate.resolve().as_uri()] = candidate_doc
-              candidate_id = candidate_doc.get("$id")
-              if isinstance(candidate_id, str) and candidate_id:
-                  schema_store[candidate_id] = candidate_doc
-          schema_path = (schema_dir / "run-preview.json").resolve()
-          schema = schema_store[schema_path.as_uri()]
-          registry = Registry()
-          for uri, schema_doc in schema_store.items():
-              registry = registry.with_resource(uri, Resource.from_contents(schema_doc))
-          Draft202012Validator(schema, registry=registry).validate(body)
-
-          assert body["dry_run"] is True
-          assert body["task"] == "ci"
-          assert isinstance(body["plan"]["actions"], list)
-          assert body["requested_task"]["name"] == "ci"
-          assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
-          verdict = body["summary"]["verdict"]
-          assert isinstance(verdict, str)
-          assert verdict
-          if output.returncode == 0:
-              assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS"}
-          else:
-              assert body["preview_status"] == "BLOCKED"
-          pathlib.Path("repo-run-preview.json").write_text(payload, encoding="utf-8")
-          PY
+          ota json validate \
+            --schema run-preview.json \
+            --allow-exit 0 \
+            --allow-exit 1 \
+            --write-payload repo-run-preview.json \
+            --assert-eq dry_run=true \
+            --assert-eq task=ci \
+            --assert-eq requested_task.name=ci \
+            --assert-type plan.actions:array \
+            --assert-in preview_status='["RUNNABLE","RUNNABLE WITH WARNINGS","BLOCKED"]' \
+            --assert-non-empty-string summary.verdict \
+            --assert-exit-map 'preview_status=0:["RUNNABLE","RUNNABLE WITH WARNINGS"];1:["BLOCKED"]' \
+            -- ota run ci --dry-run --json .
 
       - name: Smoke repo up preview JSON
         shell: bash
         run: |
-          python - <<'PY'
-          import json
-          import pathlib
-          import subprocess
-          import sys
-
-          output = subprocess.run(
-              ["ota", "up", "--dry-run", "--json", "."],
-              capture_output=True,
-              text=True,
-          )
-          if output.returncode not in (0, 1):
-              sys.stderr.write(output.stderr)
-              raise SystemExit(output.returncode)
-          payload = output.stdout or output.stderr
-          body = json.loads(payload)
-
-          from jsonschema import Draft202012Validator
-          from referencing import Registry, Resource
-
-          schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
-          schema_store = {}
-          for candidate in schema_dir.glob("*.json"):
-              candidate_doc = json.loads(candidate.read_text(encoding="utf-8"))
-              schema_store[candidate.resolve().as_uri()] = candidate_doc
-              candidate_id = candidate_doc.get("$id")
-              if isinstance(candidate_id, str) and candidate_id:
-                  schema_store[candidate_id] = candidate_doc
-          schema_path = (schema_dir / "up.json").resolve()
-          schema = schema_store[schema_path.as_uri()]
-          registry = Registry()
-          for uri, schema_doc in schema_store.items():
-              registry = registry.with_resource(uri, Resource.from_contents(schema_doc))
-          Draft202012Validator(schema, registry=registry).validate(body)
-
-          assert body["dry_run"] is True
-          assert body["phase"] == "preview"
-          assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
-          assert body["status"] in {"READY", "READY WITH WARNINGS", "BLOCKED"}
-          assert isinstance(body["plan"]["actions"], list)
-          assert body["contract_identity"]["project"]["name"] == "ota"
-          pathlib.Path("repo-up-preview.json").write_text(payload, encoding="utf-8")
-          PY
+          ota json validate \
+            --schema up.json \
+            --allow-exit 0 \
+            --allow-exit 1 \
+            --write-payload repo-up-preview.json \
+            --assert-eq dry_run=true \
+            --assert-eq phase=preview \
+            --assert-in preview_status='["RUNNABLE","RUNNABLE WITH WARNINGS","BLOCKED"]' \
+            --assert-in status='["READY","READY WITH WARNINGS","BLOCKED"]' \
+            --assert-type plan.actions:array \
+            --assert-eq contract_identity.project.name=ota \
+            -- ota up --dry-run --json .
 
   examples-smoke:
     name: Examples Smoke
@@ -225,16 +158,16 @@ jobs:
           set -euo pipefail
           env -u RUSTC_WRAPPER cargo install --path . --locked
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.x"
-
-      - name: Install JSON Schema validator
+      - name: Ensure no deprecated JSON schema resolver API in workflows
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check --quiet "jsonschema>=4.18,<5"
+          deprecated_import='from jsonschema import .*Ref'"Resolver"
+          deprecated_ctor='Ref'"Resolver\\("
+          if rg -n "${deprecated_import}|${deprecated_ctor}" .github/workflows; then
+            echo "Found deprecated jsonschema.RefResolver usage in workflow files."
+            exit 1
+          fi
 
       - name: Validate example contracts
         run: |
@@ -245,100 +178,30 @@ jobs:
       - name: Smoke Rust example preview
         shell: bash
         run: |
-          python - <<'PY'
-          import json
-          import pathlib
-          import subprocess
-          import sys
-
-          output = subprocess.run(
-              ["ota", "run", "test", "--dry-run", "--json", "examples/basic-rust"],
-              capture_output=True,
-              text=True,
-          )
-          if output.returncode not in (0, 1):
-              sys.stderr.write(output.stderr)
-              raise SystemExit(output.returncode)
-          payload = output.stdout or output.stderr
-          body = json.loads(payload)
-
-          from jsonschema import Draft202012Validator
-          from referencing import Registry, Resource
-
-          schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
-          schema_store = {}
-          for candidate in schema_dir.glob("*.json"):
-              candidate_doc = json.loads(candidate.read_text(encoding="utf-8"))
-              schema_store[candidate.resolve().as_uri()] = candidate_doc
-              candidate_id = candidate_doc.get("$id")
-              if isinstance(candidate_id, str) and candidate_id:
-                  schema_store[candidate_id] = candidate_doc
-          schema_path = (schema_dir / "run-preview.json").resolve()
-          schema = schema_store[schema_path.as_uri()]
-          registry = Registry()
-          for uri, schema_doc in schema_store.items():
-              registry = registry.with_resource(uri, Resource.from_contents(schema_doc))
-          Draft202012Validator(schema, registry=registry).validate(body)
-
-          assert body["dry_run"] is True
-          assert body["requested_task"]["name"] == "test"
-          assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
-          assert len(body["toolchains"]) == 1
-          assert body["toolchains"][0]["name"] == "rust"
-          pathlib.Path("basic-rust-run-preview.json").write_text(
-              payload,
-              encoding="utf-8",
-          )
-          PY
+          ota json validate \
+            --schema run-preview.json \
+            --allow-exit 0 \
+            --allow-exit 1 \
+            --write-payload basic-rust-run-preview.json \
+            --assert-eq dry_run=true \
+            --assert-eq requested_task.name=test \
+            --assert-in preview_status='["RUNNABLE","RUNNABLE WITH WARNINGS","BLOCKED"]' \
+            --assert-eq toolchains.0.name=rust \
+            -- ota run test --dry-run --json examples/basic-rust
 
       - name: Smoke Node example preview
         shell: bash
         run: |
-          python - <<'PY'
-          import json
-          import pathlib
-          import subprocess
-          import sys
-
-          output = subprocess.run(
-              ["ota", "run", "test", "--dry-run", "--json", "examples/basic-node"],
-              capture_output=True,
-              text=True,
-          )
-          if output.returncode not in (0, 1):
-              sys.stderr.write(output.stderr)
-              raise SystemExit(output.returncode)
-          payload = output.stdout or output.stderr
-          body = json.loads(payload)
-
-          from jsonschema import Draft202012Validator
-          from referencing import Registry, Resource
-
-          schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
-          schema_store = {}
-          for candidate in schema_dir.glob("*.json"):
-              candidate_doc = json.loads(candidate.read_text(encoding="utf-8"))
-              schema_store[candidate.resolve().as_uri()] = candidate_doc
-              candidate_id = candidate_doc.get("$id")
-              if isinstance(candidate_id, str) and candidate_id:
-                  schema_store[candidate_id] = candidate_doc
-          schema_path = (schema_dir / "run-preview.json").resolve()
-          schema = schema_store[schema_path.as_uri()]
-          registry = Registry()
-          for uri, schema_doc in schema_store.items():
-              registry = registry.with_resource(uri, Resource.from_contents(schema_doc))
-          Draft202012Validator(schema, registry=registry).validate(body)
-
-          assert body["dry_run"] is True
-          assert body["requested_task"]["name"] == "test"
-          assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
-          assert len(body["toolchains"]) == 1
-          assert body["toolchains"][0]["name"] == "node"
-          pathlib.Path("basic-node-run-preview.json").write_text(
-              payload,
-              encoding="utf-8",
-          )
-          PY
+          ota json validate \
+            --schema run-preview.json \
+            --allow-exit 0 \
+            --allow-exit 1 \
+            --write-payload basic-node-run-preview.json \
+            --assert-eq dry_run=true \
+            --assert-eq requested_task.name=test \
+            --assert-in preview_status='["RUNNABLE","RUNNABLE WITH WARNINGS","BLOCKED"]' \
+            --assert-eq toolchains.0.name=node \
+            -- ota run test --dry-run --json examples/basic-node
 
       - name: Smoke workspace tasks JSON
         shell: bash

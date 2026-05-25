@@ -100,6 +100,7 @@ ota currently ships these commands:
 - `ota diff`
 - `ota check`
 - `ota annotations`
+- `ota json validate`
 - `ota agents`
 - `ota clean`
 - `ota extensions`
@@ -987,6 +988,47 @@ Text output:
 JSON output:
 
 - none; this is a rendering command, not a contract reader
+
+## `ota json validate`
+
+Run a command, capture its JSON payload, validate that payload against a published Ota schema, and
+apply optional assertion gates.
+
+```bash
+ota json validate \
+  --schema run-preview.json \
+  --allow-exit 0 \
+  --allow-exit 1 \
+  --write-payload repo-run-preview.json \
+  --assert-eq dry_run=true \
+  --assert-in preview_status='["RUNNABLE","RUNNABLE WITH WARNINGS","BLOCKED"]' \
+  -- ota run ci --dry-run --json .
+```
+
+Current behavior:
+
+- executes the provided command after `--` and captures its JSON payload from stdout, falling back
+  to stderr when stdout is empty
+- accepts one or more allowed exit codes (`--allow-exit`); defaults to `0` when omitted
+- writes the captured payload to `--write-payload` before validation and assertions
+- validates payload shape against schemas under `docs/spec/json-schemas/`, including relative
+  `$ref` resolution used by published Ota JSON schemas
+- supports optional assertion gates for CI:
+  - `--assert-eq path=value`
+  - `--assert-in path=[...]`
+  - `--assert-type path:type` (`string|array|object|number|boolean`)
+  - `--assert-non-empty-string path`
+  - `--assert-exit-map path=0:[...];1:[...]`
+- is the canonical first-party gate for preview JSON contract checks in smoke CI
+
+Text output:
+
+- success: `validated <payload-path> against <schema-name>`
+- failure: command execution, payload parse, schema mismatch, or assertion mismatch details
+
+JSON output:
+
+- none; this is a validation/guard command
 
 ## `ota extensions`
 
