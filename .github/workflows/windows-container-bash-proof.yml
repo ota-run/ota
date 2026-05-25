@@ -31,6 +31,9 @@ on:
       - "src/**"
       - ".github/workflows/windows-container-bash-proof.yml"
   push:
+    branches:
+      - main
+      - "**"
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
