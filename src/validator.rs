@@ -6301,8 +6301,13 @@ fn validate_services(
             let uses_legacy_command = !run.is_empty();
             let uses_named_probe = !probe.is_empty();
             let structured_kind = readiness.kind;
+            let requires_from = !uses_named_probe
+                && !matches!(
+                    structured_kind,
+                    Some(crate::schema::ServiceReadinessKind::ComposeHealth)
+                );
 
-            if from.is_empty() && !uses_named_probe {
+            if from.is_empty() && requires_from {
                 errors.push(ValidationError::new(format!(
                     "service `{name}` readiness field `from` must not be empty"
                 )));
@@ -6377,7 +6382,7 @@ fn validate_services(
                 validate_service_readiness_timing(name, readiness, errors);
             } else if let Some(kind) = structured_kind {
                 match kind {
-                    crate::schema::TaskRuntimeReadinessKind::Http => {
+                    crate::schema::ServiceReadinessKind::Http => {
                         let path = readiness.path.as_deref().map(str::trim).unwrap_or_default();
                         if path.is_empty() {
                             errors.push(ValidationError::new(format!(
@@ -6427,7 +6432,7 @@ fn validate_services(
                         }
                         validate_service_readiness_timing(name, readiness, errors);
                     }
-                    crate::schema::TaskRuntimeReadinessKind::Tcp => {
+                    crate::schema::ServiceReadinessKind::Tcp => {
                         if readiness.method.is_some() {
                             errors.push(ValidationError::new(format!(
                                 "service `{name}` structured TCP readiness must not declare `readiness.method`"
@@ -6455,6 +6460,37 @@ fn validate_services(
                         }
                         validate_service_readiness_timing(name, readiness, errors);
                     }
+                    crate::schema::ServiceReadinessKind::ComposeHealth => {
+                        if !from.is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured compose health readiness must not declare `readiness.from`"
+                            )));
+                        }
+                        for (field_name, present) in [
+                            ("method", readiness.method.is_some()),
+                            ("path", readiness.path.is_some()),
+                            ("headers", !readiness.headers.is_empty()),
+                            ("success", readiness.success.is_some()),
+                            ("body", readiness.body.is_some()),
+                            ("timeout", readiness.timeout.is_some()),
+                        ] {
+                            if present {
+                                errors.push(ValidationError::new(format!(
+                                    "service `{name}` structured compose health readiness must not declare `readiness.{field_name}`"
+                                )));
+                            }
+                        }
+                        let compose_manager = service
+                            .manager
+                            .as_ref()
+                            .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Compose);
+                        if !compose_manager {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured compose health readiness requires `manager.kind: compose`"
+                            )));
+                        }
+                        validate_service_readiness_timing(name, readiness, errors);
+                    }
                 }
             }
             if service.healthcheck.is_some() {
@@ -6463,6 +6499,10 @@ fn validate_services(
                 )));
             }
             if !from.is_empty()
+                && !matches!(
+                    structured_kind,
+                    Some(crate::schema::ServiceReadinessKind::ComposeHealth)
+                )
                 && contract
                     .execution
                     .as_ref()
@@ -6473,7 +6513,13 @@ fn validate_services(
                     from
                 )));
             }
-            if !from.is_empty() && !service.endpoints.contains_key(from) {
+            if !from.is_empty()
+                && !matches!(
+                    structured_kind,
+                    Some(crate::schema::ServiceReadinessKind::ComposeHealth)
+                )
+                && !service.endpoints.contains_key(from)
+            {
                 errors.push(ValidationError::new(format!(
                     "service `{name}` readiness from `{}` requires a matching `services.{name}.endpoints.{}` projection",
                     from,
@@ -12205,6 +12251,119 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_structured_service_compose_health_readiness_without_endpoint_projection() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  worker:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: worker
+    readiness:
+      kind: compose_health
+      interval: 2s
+      retries: 10
+      start_period: 5s
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_structured_service_compose_health_readiness_on_non_compose_manager() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  worker:
+    manager:
+      kind: host
+      name: local-worker
+    readiness:
+      kind: compose_health
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "service `worker` structured compose health readiness requires `manager.kind: compose`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_structured_service_compose_health_readiness_with_endpoint_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  worker:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: worker
+    readiness:
+      kind: compose_health
+      from: host
+      path: /health
+      timeout: 3s
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let rendered = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "service `worker` structured compose health readiness must not declare `readiness.from`",
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "service `worker` structured compose health readiness must not declare `readiness.path`",
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "service `worker` structured compose health readiness must not declare `readiness.timeout`",
+            )),
+            "{rendered:?}"
+        );
     }
 
     #[test]

@@ -591,7 +591,7 @@ service.
 
 ```bash
 ota assist declare-readiness --task <name> [--style spring-http|http|tcp] [PATH]
-ota assist declare-readiness --service <name> [--style spring-http|http|tcp] [PATH]
+ota assist declare-readiness --service <name> [--style spring-http|http|tcp|compose-health] [PATH]
 ota assist declare-readiness --member api --task <name> [PATH]
 ota assist declare-readiness --json --task <name> [PATH]
 ota assist declare-readiness --write --task <name> [PATH]
@@ -607,7 +607,9 @@ Current behavior:
 - supports `--task` for `tasks.<name>.runtime.readiness`
 - supports `--service` for `services.<name>.readiness`
 - supports `--member` through the existing merged monorepo contract path while writing only to the selected member overlay file
-- supports `spring-http`, `http`, and `tcp` styles
+- supports `spring-http`, `http`, and `tcp` styles for task readiness
+- supports `spring-http`, `http`, `tcp`, and `compose-health` styles for managed service readiness
+- `--style compose-health` is service-only and requires a compose-managed service (`services.<name>.manager.kind: compose`)
 - task targeting can infer from existing runtime and listener truth when that choice is unique
 - managed service targeting requires explicit `--style` unless the service already has a structured readiness kind that assist is refining
 - refuses when the target is ambiguous, unknown, missing the runtime/service surface needed for a truthful readiness declaration, or when the requested style conflicts with the selected listener protocol
@@ -621,6 +623,7 @@ ota assist declare-readiness --task dev
 ota assist declare-readiness --task dev --style spring-http --write
 ota assist declare-readiness --service api --style http
 ota assist declare-readiness --service postgres --style tcp
+ota assist declare-readiness --service worker --style compose-health
 ota assist declare-readiness --member api --task dev --json
 ```
 
@@ -653,6 +656,7 @@ Current behavior:
 - `--endpoint`, `--address`, and `--port` control the selected endpoint projection; when safe, ota defaults the endpoint to `host` and the address to `127.0.0.1`
 - `--required true|false` sets the service requirement flag explicitly
 - `--style spring-http|http|tcp` adds or replaces structured readiness anchored to the selected endpoint
+- `--style compose-health` is valid for compose-managed services and anchors readiness to compose container health state (`readiness.kind: compose_health`)
 - `--compose-file`, `--compose-service`, and `--manager-name` refine compose-managed service metadata
 - producer-owned service previews remove conflicting local manager, endpoint, and readiness truth in favor of the canonical workspace producer binding
 - compose-managed previews default `manager.name` to `local` and `manager.service` to the declared service name when those values are otherwise absent
@@ -665,6 +669,7 @@ Examples:
 ```bash
 ota assist declare-service --name postgres --manager compose --compose-file docker-compose.yml --port 5432 --style tcp
 ota assist declare-service --name api --manager compose --compose-file docker-compose.yml --port 3000 --style http --write
+ota assist declare-service --name worker --manager compose --compose-file docker-compose.yml --style compose-health
 ota assist declare-service --name cache --manager host --port 6379 --json
 ota assist declare-service --name user-api --producer-repo api --producer dev:http --write
 ota assist declare-service --member api --name api --manager compose --port 3000 --write

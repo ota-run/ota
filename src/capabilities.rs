@@ -83,6 +83,10 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.16",
     },
     ContractCapabilitySpec {
+        id: "services.readiness.compose_health",
+        introduced_in: "1.6.16",
+    },
+    ContractCapabilitySpec {
         id: "tasks.runtime.readiness.signal_probes",
         introduced_in: "1.6.16",
     },
@@ -309,6 +313,7 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         "tasks.action.ensure_file" => tasks_action_ensure_file_present(document),
         "tasks.action.ensure_directory" => tasks_action_ensure_directory_present(document),
         "checks.changed_files" => checks_changed_files_present(document),
+        "services.readiness.compose_health" => services_readiness_compose_health_present(document),
         "tasks.runtime.readiness.signal_probes" => {
             tasks_runtime_readiness_signal_probes_present(document)
         }
@@ -374,6 +379,14 @@ fn capability_present_in_contract(
             .checks
             .iter()
             .any(|check| check.kind == crate::schema::CheckKind::ChangedFiles),
+        "services.readiness.compose_health" => contract.services.values().any(|service| {
+            service.readiness.as_ref().is_some_and(|readiness| {
+                matches!(
+                    readiness.kind,
+                    Some(crate::schema::ServiceReadinessKind::ComposeHealth)
+                )
+            })
+        }),
         "tasks.runtime.readiness.signal_probes" => contract.tasks.values().any(|task| {
             task.runtime
                 .as_ref()
@@ -552,6 +565,22 @@ fn checks_changed_files_present(document: &Value) -> bool {
         .any(|check| mapping_child(check, "kind").and_then(Value::as_str) == Some("changed_files"))
 }
 
+fn services_readiness_compose_health_present(document: &Value) -> bool {
+    let Some(services) = mapping_child(document, "services").and_then(Value::as_mapping) else {
+        return false;
+    };
+    services.values().any(|service| {
+        mapping_child(service, "readiness")
+            .and_then(Value::as_mapping)
+            .and_then(|readiness| {
+                readiness
+                    .get(Value::String(String::from("kind")))
+                    .and_then(Value::as_str)
+            })
+            == Some("compose_health")
+    })
+}
+
 fn native_prerequisites_requires_present(document: &Value) -> bool {
     let Some(native_prerequisites) =
         mapping_child(document, "native_prerequisites").and_then(Value::as_mapping)
@@ -668,6 +697,15 @@ checks:
     changed_files:
       paths:
         - apps/web/**
+services:
+  worker:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: worker
+    readiness:
+      kind: compose_health
 native_prerequisites:
   node-native-build-tools:
     platforms:
@@ -699,6 +737,7 @@ native_prerequisites:
                 "tasks.action.ensure_file",
                 "tasks.action.ensure_directory",
                 "checks.changed_files",
+                "services.readiness.compose_health",
                 "tasks.runtime.readiness.signal_probes",
                 "agent.posture",
                 "agent.exceptions.sensitive_writes",
@@ -782,6 +821,15 @@ checks:
     changed_files:
       paths:
         - apps/web/**
+services:
+  worker:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: worker
+    readiness:
+      kind: compose_health
 "#,
         )
         .unwrap();
@@ -800,6 +848,7 @@ checks:
                 "tasks.action.ensure_file",
                 "tasks.action.ensure_directory",
                 "checks.changed_files",
+                "services.readiness.compose_health",
                 "tasks.runtime.readiness.signal_probes",
                 "agent.posture",
                 "agent.exceptions.sensitive_writes",

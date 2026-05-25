@@ -2684,7 +2684,7 @@ pub struct ServiceReadinessSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<TaskRuntimeReadinessKind>,
+    pub kind: Option<ServiceReadinessKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub method: Option<TaskRuntimeReadinessHttpMethod>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2714,8 +2714,26 @@ impl ServiceReadinessSpec {
         self.run.clone()
     }
 
-    pub fn structured_kind(&self) -> Option<TaskRuntimeReadinessKind> {
+    pub fn structured_kind(&self) -> Option<ServiceReadinessKind> {
         self.kind
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceReadinessKind {
+    Http,
+    Tcp,
+    ComposeHealth,
+}
+
+impl ServiceReadinessKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Tcp => "tcp",
+            Self::ComposeHealth => "compose_health",
+        }
     }
 }
 
@@ -2777,6 +2795,21 @@ impl ServiceManagerSpec {
             ),
             ServiceManagerKind::Host => healthcheck.to_string(),
         }
+    }
+
+    pub fn compose_health_status_command(&self, service_name: &str) -> Option<String> {
+        if self.kind != ServiceManagerKind::Compose {
+            return None;
+        }
+        let compose_service = shell_single_quote(self.compose_service(service_name));
+        Some(format!(
+            "cid=$({prefix} ps -q {service} 2>/dev/null | head -n 1); \
+[ -n \"$cid\" ] || exit 1; \
+health=$(docker inspect --format '{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' \"$cid\" 2>/dev/null || true); \
+[ \"$health\" = healthy ]",
+            prefix = self.compose_command_prefix(),
+            service = compose_service
+        ))
     }
 
     fn compose_service<'a>(&'a self, service_name: &'a str) -> &'a str {

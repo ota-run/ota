@@ -143,7 +143,8 @@ use crate::runner::{
 };
 use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
-    ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessSpec,
+    ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessKind,
+    ServiceReadinessSpec,
     TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
     TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode,
     TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
@@ -3868,7 +3869,8 @@ enum ResolvedAssistReadinessTarget {
     },
     Service {
         name: String,
-        from: String,
+        from: Option<String>,
+        compose_managed: bool,
         existing: Option<ServiceReadinessSpec>,
     },
 }
@@ -4962,6 +4964,10 @@ fn is_http_readiness_style(style: AssistReadinessStyleArg) -> bool {
     )
 }
 
+fn is_compose_health_readiness_style(style: AssistReadinessStyleArg) -> bool {
+    matches!(style, AssistReadinessStyleArg::ComposeHealth)
+}
+
 fn assist_subject_map<'a>(
     task: Option<&'a str>,
     service: Option<&'a str>,
@@ -4981,6 +4987,7 @@ fn assist_readiness_style_name(style: AssistReadinessStyleArg) -> &'static str {
         AssistReadinessStyleArg::SpringHttp => "spring-http",
         AssistReadinessStyleArg::Http => "http",
         AssistReadinessStyleArg::Tcp => "tcp",
+        AssistReadinessStyleArg::ComposeHealth => "compose-health",
     }
 }
 
@@ -10215,25 +10222,6 @@ fn build_assist_service_proposal(
         }
     }
 
-    let endpoint_name =
-        resolve_assist_service_endpoint_name(existing.as_ref(), endpoint, address, port, style)?;
-    let endpoint_spec = existing
-        .as_ref()
-        .and_then(|service| service.endpoints.get(&endpoint_name));
-    let address = address
-        .map(str::to_string)
-        .or_else(|| endpoint_spec.map(|endpoint| endpoint.address.clone()))
-        .unwrap_or_else(|| String::from("127.0.0.1"));
-    let port = match port.or_else(|| endpoint_spec.map(|endpoint| endpoint.port)) {
-        Some(port) => port,
-        None => {
-            return Err((
-                format!("service `{name}` needs an explicit endpoint port"),
-                String::from("rerun with `--port <number>` to declare the service endpoint"),
-            ));
-        }
-    };
-
     let manager_kind = manager
         .or_else(|| {
             existing
@@ -10250,6 +10238,68 @@ fn build_assist_service_proposal(
                 String::from("rerun with `--manager compose` or `--manager host`"),
             )
         })?;
+    let compose_health_style = matches!(style, Some(AssistReadinessStyleArg::ComposeHealth));
+    if compose_health_style && !matches!(manager_kind, AssistServiceManagerArg::Compose) {
+        return Err((
+            String::from(
+                "`--style compose-health` requires `--manager compose` (or an existing compose manager)",
+            ),
+            String::from("rerun with `--manager compose`, or choose `--style tcp|http`"),
+        ));
+    }
+
+    let endpoint_inputs_present = endpoint.is_some() || address.is_some() || port.is_some();
+    let endpoint_name = if compose_health_style && !endpoint_inputs_present {
+        existing
+            .as_ref()
+            .and_then(|service| {
+                service
+                    .readiness
+                    .as_ref()
+                    .and_then(|readiness| readiness.from.clone())
+                    .or_else(|| {
+                        if service.endpoints.contains_key("host") {
+                            Some(String::from("host"))
+                        } else if service.endpoints.len() == 1 {
+                            service.endpoints.keys().next().cloned()
+                        } else {
+                            None
+                        }
+                    })
+            })
+    } else {
+        Some(resolve_assist_service_endpoint_name(
+            existing.as_ref(),
+            endpoint,
+            address,
+            port,
+            style,
+        )?)
+    };
+    let endpoint_spec = endpoint_name.as_ref().and_then(|endpoint_name| {
+        existing
+            .as_ref()
+            .and_then(|service| service.endpoints.get(endpoint_name))
+    });
+    let endpoint_address = endpoint_name.as_ref().map(|_| {
+        address
+            .map(str::to_string)
+            .or_else(|| endpoint_spec.map(|endpoint| endpoint.address.clone()))
+            .unwrap_or_else(|| String::from("127.0.0.1"))
+    });
+    let endpoint_port = if endpoint_name.is_some() {
+        match port.or_else(|| endpoint_spec.map(|endpoint| endpoint.port)) {
+            Some(port) => Some(port),
+            None => {
+                return Err((
+                    format!("service `{name}` needs an explicit endpoint port"),
+                    String::from("rerun with `--port <number>` to declare the service endpoint"),
+                ));
+            }
+        }
+    } else {
+        None
+    };
 
     let existing_manager = existing
         .as_ref()
@@ -10283,7 +10333,7 @@ fn build_assist_service_proposal(
     };
 
     let readiness = match style {
-        Some(style) => Some(build_assist_service_readiness(&endpoint_name, style)),
+        Some(style) => Some(build_assist_service_readiness(endpoint_name.as_deref(), style)),
         None => existing
             .as_ref()
             .and_then(|service| service.readiness.clone()),
@@ -10301,13 +10351,17 @@ fn build_assist_service_proposal(
         file: compose_file_value.clone(),
         service: compose_service_value.clone(),
     });
-    after.endpoints.insert(
-        endpoint_name.clone(),
-        crate::schema::ServiceEndpointSpec {
-            address: address.clone(),
-            port,
-        },
-    );
+    if let (Some(endpoint_name), Some(address), Some(port)) =
+        (endpoint_name.as_ref(), endpoint_address.as_ref(), endpoint_port)
+    {
+        after.endpoints.insert(
+            endpoint_name.clone(),
+            crate::schema::ServiceEndpointSpec {
+                address: address.clone(),
+                port,
+            },
+        );
+    }
     after.readiness = readiness;
 
     let after_value = serde_yaml::to_value(&after).map_err(|error| {
@@ -10332,18 +10386,31 @@ fn build_assist_service_proposal(
     } else {
         assumptions.push(format!("service `{name}` will be created under `services`"));
     }
-    assumptions.push(format!(
-        "endpoint `{endpoint_name}` is the service projection boundary"
-    ));
+    if let Some(endpoint_name) = endpoint_name.as_ref() {
+        assumptions.push(format!(
+            "endpoint `{endpoint_name}` is the service projection boundary"
+        ));
+    } else if compose_health_style {
+        assumptions.push(String::from(
+            "compose health state is the service readiness boundary",
+        ));
+    }
     assumptions.push(format!(
         "manager `{}` is the service owner",
         assist_service_manager_name(manager_kind)
     ));
     if let Some(style) = style {
-        assumptions.push(format!(
-            "structured readiness will anchor to endpoint `{endpoint_name}` with style `{}`",
-            assist_readiness_style_name(style)
-        ));
+        if let Some(endpoint_name) = endpoint_name.as_ref() {
+            assumptions.push(format!(
+                "structured readiness will anchor to endpoint `{endpoint_name}` with style `{}`",
+                assist_readiness_style_name(style)
+            ));
+        } else {
+            assumptions.push(format!(
+                "structured readiness style `{}` will follow compose container health state",
+                assist_readiness_style_name(style)
+            ));
+        }
     }
 
     Ok(AssistServiceProposal {
@@ -10352,9 +10419,9 @@ fn build_assist_service_proposal(
         manager_name: manager_name_value,
         compose_file: compose_file_value,
         compose_service: compose_service_value,
-        endpoint: Some(endpoint_name),
-        address: Some(address),
-        port: Some(port),
+        endpoint: endpoint_name,
+        address: endpoint_address,
+        port: endpoint_port,
         producer_task: None,
         producer_repo: None,
         producer_listener: None,
@@ -10575,15 +10642,15 @@ fn resolve_assist_service_endpoint_name(
 }
 
 fn build_assist_service_readiness(
-    endpoint: &str,
+    endpoint: Option<&str>,
     style: AssistReadinessStyleArg,
 ) -> crate::schema::ServiceReadinessSpec {
     match style {
         AssistReadinessStyleArg::SpringHttp => crate::schema::ServiceReadinessSpec {
-            from: Some(endpoint.to_string()),
+            from: endpoint.map(str::to_string),
             run: None,
             probe: None,
-            kind: Some(TaskRuntimeReadinessKind::Http),
+            kind: Some(ServiceReadinessKind::Http),
             method: Some(TaskRuntimeReadinessHttpMethod::Get),
             path: Some(String::from("/actuator/health")),
             headers: BTreeMap::from([(String::from("Accept"), String::from("application/json"))]),
@@ -10597,10 +10664,10 @@ fn build_assist_service_readiness(
             start_period: Some(String::from("10s")),
         },
         AssistReadinessStyleArg::Http => crate::schema::ServiceReadinessSpec {
-            from: Some(endpoint.to_string()),
+            from: endpoint.map(str::to_string),
             run: None,
             probe: None,
-            kind: Some(TaskRuntimeReadinessKind::Http),
+            kind: Some(ServiceReadinessKind::Http),
             method: Some(TaskRuntimeReadinessHttpMethod::Get),
             path: Some(String::from("/health")),
             headers: BTreeMap::new(),
@@ -10612,10 +10679,10 @@ fn build_assist_service_readiness(
             start_period: Some(String::from("10s")),
         },
         AssistReadinessStyleArg::Tcp => crate::schema::ServiceReadinessSpec {
-            from: Some(endpoint.to_string()),
+            from: endpoint.map(str::to_string),
             run: None,
             probe: None,
-            kind: Some(TaskRuntimeReadinessKind::Tcp),
+            kind: Some(ServiceReadinessKind::Tcp),
             method: None,
             path: None,
             headers: BTreeMap::new(),
@@ -10623,6 +10690,21 @@ fn build_assist_service_readiness(
             body: None,
             interval: Some(String::from("5s")),
             timeout: Some(String::from("3s")),
+            retries: Some(5),
+            start_period: Some(String::from("10s")),
+        },
+        AssistReadinessStyleArg::ComposeHealth => crate::schema::ServiceReadinessSpec {
+            from: None,
+            run: None,
+            probe: None,
+            kind: Some(ServiceReadinessKind::ComposeHealth),
+            method: None,
+            path: None,
+            headers: BTreeMap::new(),
+            success: None,
+            body: None,
+            interval: Some(String::from("5s")),
+            timeout: None,
             retries: Some(5),
             start_period: Some(String::from("10s")),
         },
@@ -10711,6 +10793,9 @@ fn build_assist_readiness_proposal(
                     retries: Some(5),
                     start_period: Some(String::from("10s")),
                 },
+                AssistReadinessStyleArg::ComposeHealth => unreachable!(
+                    "compose-health style is service-only and rejected for task targets"
+                ),
             };
             let before_value = existing
                 .as_ref()
@@ -10751,15 +10836,21 @@ fn build_assist_readiness_proposal(
         Ok(ResolvedAssistReadinessTarget::Service {
             name,
             from,
+            compose_managed,
             existing,
         }) => {
-            let style = resolve_assist_style_for_service(existing.as_ref(), requested_style)?;
+            let style = resolve_assist_style_for_service(
+                existing.as_ref(),
+                requested_style,
+                compose_managed,
+            )?;
+            let endpoint_from = from.unwrap_or_else(|| String::from("host"));
             let after = match style {
                 AssistReadinessStyleArg::SpringHttp => ServiceReadinessSpec {
-                    from: Some(from.clone()),
+                    from: Some(endpoint_from.clone()),
                     run: None,
                     probe: None,
-                    kind: Some(TaskRuntimeReadinessKind::Http),
+                    kind: Some(ServiceReadinessKind::Http),
                     method: Some(TaskRuntimeReadinessHttpMethod::Get),
                     path: Some(String::from("/actuator/health")),
                     headers: BTreeMap::from([(
@@ -10776,10 +10867,10 @@ fn build_assist_readiness_proposal(
                     start_period: Some(String::from("10s")),
                 },
                 AssistReadinessStyleArg::Http => ServiceReadinessSpec {
-                    from: Some(from.clone()),
+                    from: Some(endpoint_from.clone()),
                     run: None,
                     probe: None,
-                    kind: Some(TaskRuntimeReadinessKind::Http),
+                    kind: Some(ServiceReadinessKind::Http),
                     method: Some(TaskRuntimeReadinessHttpMethod::Get),
                     path: Some(String::from("/health")),
                     headers: BTreeMap::new(),
@@ -10791,10 +10882,10 @@ fn build_assist_readiness_proposal(
                     start_period: Some(String::from("10s")),
                 },
                 AssistReadinessStyleArg::Tcp => ServiceReadinessSpec {
-                    from: Some(from.clone()),
+                    from: Some(endpoint_from.clone()),
                     run: None,
                     probe: None,
-                    kind: Some(TaskRuntimeReadinessKind::Tcp),
+                    kind: Some(ServiceReadinessKind::Tcp),
                     method: None,
                     path: None,
                     headers: BTreeMap::new(),
@@ -10802,6 +10893,21 @@ fn build_assist_readiness_proposal(
                     body: None,
                     interval: Some(String::from("5s")),
                     timeout: Some(String::from("3s")),
+                    retries: Some(5),
+                    start_period: Some(String::from("10s")),
+                },
+                AssistReadinessStyleArg::ComposeHealth => ServiceReadinessSpec {
+                    from: None,
+                    run: None,
+                    probe: None,
+                    kind: Some(ServiceReadinessKind::ComposeHealth),
+                    method: None,
+                    path: None,
+                    headers: BTreeMap::new(),
+                    success: None,
+                    body: None,
+                    interval: Some(String::from("5s")),
+                    timeout: None,
                     retries: Some(5),
                     start_period: Some(String::from("10s")),
                 },
@@ -10829,10 +10935,19 @@ fn build_assist_readiness_proposal(
                 subject_kind: "service",
                 subject_name: name.clone(),
                 style,
-                assumptions: vec![
-                    format!("service `{name}` already declares endpoint `{from}`"),
-                    format!("structured readiness should anchor to endpoint `{from}`"),
-                ],
+                assumptions: if is_compose_health_readiness_style(style) {
+                    vec![
+                        format!("service `{name}` is compose-managed"),
+                        String::from("structured readiness should follow compose health state"),
+                    ]
+                } else {
+                    vec![
+                        format!("service `{name}` already declares endpoint `{endpoint_from}`"),
+                        format!(
+                            "structured readiness should anchor to endpoint `{endpoint_from}`"
+                        ),
+                    ]
+                },
                 change_path: format!("services.{name}.readiness"),
                 yaml_path: vec![String::from("services"), name, String::from("readiness")],
                 before_value,
@@ -10849,6 +10964,13 @@ fn resolve_assist_style_for_task(
     listener_name: &str,
     requested_style: Option<AssistReadinessStyleArg>,
 ) -> Result<AssistReadinessStyleArg, (String, String)> {
+    if matches!(requested_style, Some(AssistReadinessStyleArg::ComposeHealth)) {
+        return Err((
+            String::from("`--style compose-health` is only valid for `--service` targets"),
+            String::from("rerun with `--task` and `--style tcp|http|spring-http`"),
+        ));
+    }
+
     let runtime = contract
         .tasks
         .get(task)
@@ -10903,20 +11025,32 @@ fn resolve_assist_style_for_task(
 fn resolve_assist_style_for_service(
     existing: Option<&ServiceReadinessSpec>,
     requested_style: Option<AssistReadinessStyleArg>,
+    compose_managed: bool,
 ) -> Result<AssistReadinessStyleArg, (String, String)> {
     if let Some(style) = requested_style {
+        if is_compose_health_readiness_style(style) && !compose_managed {
+            return Err((
+                String::from(
+                    "`--style compose-health` requires a compose-managed service (`manager.kind: compose`)",
+                ),
+                String::from(
+                    "set `services.<name>.manager.kind: compose`, or choose `--style tcp` / `--style http`",
+                ),
+            ));
+        }
         return Ok(style);
     }
 
     match existing.and_then(ServiceReadinessSpec::structured_kind) {
-        Some(TaskRuntimeReadinessKind::Tcp) => Ok(AssistReadinessStyleArg::Tcp),
-        Some(TaskRuntimeReadinessKind::Http) => Ok(AssistReadinessStyleArg::Http),
+        Some(ServiceReadinessKind::Tcp) => Ok(AssistReadinessStyleArg::Tcp),
+        Some(ServiceReadinessKind::Http) => Ok(AssistReadinessStyleArg::Http),
+        Some(ServiceReadinessKind::ComposeHealth) => Ok(AssistReadinessStyleArg::ComposeHealth),
         None => Err((
             String::from(
                 "managed service readiness style is ambiguous without an explicit `--style`",
             ),
             String::from(
-                "rerun with `--style tcp` for raw port checks or `--style http` / `spring-http` for HTTP health endpoints",
+                "rerun with `--style compose-health` for compose health state, `--style tcp` for raw port checks, or `--style http` / `spring-http` for HTTP health endpoints",
             ),
         )),
     }
@@ -10958,20 +11092,37 @@ fn resolve_assist_readiness_target(
             String::from("run `ota services` to inspect declared managed services"),
         )
     })?;
-    let from = if let Some(existing) = spec
+    let compose_managed = spec
+        .manager
+        .as_ref()
+        .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Compose);
+    let wants_compose_health = matches!(
+        requested_style,
+        Some(AssistReadinessStyleArg::ComposeHealth)
+    ) || matches!(
+        spec.readiness
+            .as_ref()
+            .and_then(ServiceReadinessSpec::structured_kind),
+        Some(ServiceReadinessKind::ComposeHealth)
+    );
+    let from = if wants_compose_health {
+        None
+    } else if let Some(existing) = spec
         .readiness
         .as_ref()
         .and_then(|readiness| readiness.from.clone())
     {
-        existing
+        Some(existing)
     } else if spec.endpoints.contains_key("host") {
-        String::from("host")
+        Some(String::from("host"))
     } else if spec.endpoints.len() == 1 {
-        spec.endpoints
-            .keys()
-            .next()
-            .cloned()
-            .expect("single endpoint")
+        Some(
+            spec.endpoints
+                .keys()
+                .next()
+                .cloned()
+                .expect("single endpoint"),
+        )
     } else {
         return Err((
             format!(
@@ -10985,6 +11136,7 @@ fn resolve_assist_readiness_target(
     Ok(ResolvedAssistReadinessTarget::Service {
         name: service.to_string(),
         from,
+        compose_managed,
         existing: spec.readiness.clone(),
     })
 }

@@ -201,6 +201,10 @@ Current shape:
       "introduced_in": "1.6.16"
     },
     {
+      "id": "services.readiness.compose_health",
+      "introduced_in": "1.6.16"
+    },
+    {
       "id": "tasks.runtime.readiness.signal_probes",
       "introduced_in": "1.6.16"
     },

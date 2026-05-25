@@ -553,7 +553,7 @@ Fields:
 - `readiness`: optional explicit readiness check that runs in a named execution context
 - `readiness.from`: context name that owns the runtime for the check and matches one declared endpoint projection
 - legacy `readiness.run`: command to execute in that context
-- structured `readiness.kind`: `tcp` or `http`
+- structured `readiness.kind`: `tcp`, `http`, or `compose_health`
 - structured `readiness.method`: optional HTTP method, default `GET`
 - structured `readiness.path`: required for structured HTTP readiness and must start with `/`
 - structured `readiness.headers`: optional HTTP request headers
@@ -579,6 +579,7 @@ Current behavior:
   - legacy command form: `from` + `run`
   - reusable probe form: `from` + `probe` (+ optional polling controls such as `interval`, `retries`, and `start_period`)
   - structured probe form: `from` + `kind` (+ `path` for HTTP, with optional request/response/timing controls)
+  - structured compose-health form: `kind: compose_health` for compose-managed container health state without endpoint/host-port probing
 - unknown `depends_on` references are invalid
 - service dependency cycles are invalid
 - `timeout` must be greater than zero when set
@@ -591,6 +592,8 @@ Current behavior:
 - `services.<name>.readiness.probe` can reference one top-level `readiness.probes.<name>` declaration so service-manager readiness reuses the same transport and timeout truth as checks and workflows while `from` still selects the service endpoint projection
 - structured `services.<name>.readiness.kind: http` probes the declared endpoint with the same request/response model shipped for task runtime readiness
 - structured `services.<name>.readiness.kind: tcp` probes the declared endpoint for listener reachability from the declared context
+- structured `services.<name>.readiness.kind: compose_health` reads the compose-managed container health status directly (`healthy`) and does not require `readiness.from` or `services.<name>.endpoints`
+- `kind: compose_health` requires `services.<name>.manager.kind: compose` and must not declare endpoint-probe fields such as `from`, `method`, `path`, `headers`, `success`, `body`, or `timeout`
 - legacy `services.<name>.readiness.run` remains supported for repo-specific command probes that do not fit the structured HTTP/TCP model yet
 - reusable and structured top-level service readiness use the same default wait model as task runtime readiness: when `retries` is omitted, Ota uses the default bounded budget and reports failure after the limit is reached; declaring `retries` makes that budget explicit and tuned for the service
 - `services.<name>.endpoints.<context>` projects a context-specific address/port pair for readiness reporting and topology checks

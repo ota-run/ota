@@ -59,6 +59,12 @@
   explicit path matchers and optional `base_ref` / `head_ref` range control; selected-path
   diagnosis now treats these checks as precondition-style gates where requested, and version
   capability reporting and minimum-version gating now include `checks.changed_files`
+- added first-class `services.<name>.readiness.kind: compose_health` for compose-managed service
+  health-state readiness without host-port probing: Ota now supports direct compose container
+  health gating (`healthy`), validates compose-only readiness shape (`manager.kind: compose` with
+  no endpoint-probe fields), surfaces the capability in minimum-version gating, and extends
+  `ota assist declare-readiness --service ... --style compose-health` plus
+  `ota assist declare-service --style compose-health` for service-side proposal generation
 - added `agent.exceptions.sensitive_writes` contract advisories that flag non-sensitive or
   posture-redundant exceptions so intentional boundary exceptions stay narrow and meaningful
 - added first-class `tasks.<name>.runtime.readiness.signal_probes` so one service runtime can gate
