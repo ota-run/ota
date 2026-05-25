@@ -15812,12 +15812,25 @@ native_prerequisites:
             - NODE_GYP_HOME
           checks:
             - native-extra-check
+      windows:
+        check: node-native-build-tools-windows
+        requires:
+          tools:
+            definitely-not-installed-native-tool: "*"
+          env:
+            - NODE_GYP_HOME
+          checks:
+            - native-extra-check
 checks:
   - name: node-native-build-tools-linux
     kind: precondition
     severity: error
     run: echo native-tools-present
   - name: node-native-build-tools-macos
+    kind: precondition
+    severity: error
+    run: echo native-tools-present
+  - name: node-native-build-tools-windows
     kind: precondition
     severity: error
     run: echo native-tools-present
