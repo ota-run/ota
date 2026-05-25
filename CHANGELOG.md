@@ -51,6 +51,16 @@
   literal `value`, or generated `random`) while leaving existing files untouched on repeat runs;
   version capability reporting and minimum-version gating now include
   `tasks.action.ensure_file`
+- added first-class `action.kind: ensure_directory` for deterministic directory bootstrap without
+  shell glue: Ota can now create a repo-relative directory when missing, no-op when it already
+  exists as a directory, and fail clearly when the path exists as a non-directory; version
+  capability reporting and minimum-version gating now include `tasks.action.ensure_directory`
+- added first-class `checks[].kind: changed_files` for git-diff-backed conditional checks using
+  explicit path matchers and optional `base_ref` / `head_ref` range control; selected-path
+  diagnosis now treats these checks as precondition-style gates where requested, and version
+  capability reporting and minimum-version gating now include `checks.changed_files`
+- added `agent.exceptions.sensitive_writes` contract advisories that flag non-sensitive or
+  posture-redundant exceptions so intentional boundary exceptions stay narrow and meaningful
 - added first-class `tasks.<name>.runtime.readiness.signal_probes` so one service runtime can gate
   readiness on multiple named listener probes (for example API + worker liveness) instead of only
   one aggregate endpoint check; version capability reporting includes

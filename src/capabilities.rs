@@ -75,6 +75,14 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.16",
     },
     ContractCapabilitySpec {
+        id: "tasks.action.ensure_directory",
+        introduced_in: "1.6.16",
+    },
+    ContractCapabilitySpec {
+        id: "checks.changed_files",
+        introduced_in: "1.6.16",
+    },
+    ContractCapabilitySpec {
         id: "tasks.runtime.readiness.signal_probes",
         introduced_in: "1.6.16",
     },
@@ -299,6 +307,8 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         "tasks.effects.external_state" => tasks_effects_external_state_present(document),
         "tasks.action.ensure_env_file" => tasks_action_ensure_env_file_present(document),
         "tasks.action.ensure_file" => tasks_action_ensure_file_present(document),
+        "tasks.action.ensure_directory" => tasks_action_ensure_directory_present(document),
+        "checks.changed_files" => checks_changed_files_present(document),
         "tasks.runtime.readiness.signal_probes" => {
             tasks_runtime_readiness_signal_probes_present(document)
         }
@@ -354,6 +364,16 @@ fn capability_present_in_contract(
                 Some(crate::schema::TaskActionSpec::EnsureFile(_))
             )
         }),
+        "tasks.action.ensure_directory" => contract.tasks.values().any(|task| {
+            matches!(
+                task.action.as_ref(),
+                Some(crate::schema::TaskActionSpec::EnsureDirectory(_))
+            )
+        }),
+        "checks.changed_files" => contract
+            .checks
+            .iter()
+            .any(|check| check.kind == crate::schema::CheckKind::ChangedFiles),
         "tasks.runtime.readiness.signal_probes" => contract.tasks.values().any(|task| {
             task.runtime
                 .as_ref()
@@ -507,6 +527,31 @@ fn native_prerequisites_visual_studio_present(document: &Value) -> bool {
     })
 }
 
+fn tasks_action_ensure_directory_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(|task| {
+        mapping_child(task, "action")
+            .and_then(Value::as_mapping)
+            .and_then(|action| {
+                action
+                    .get(Value::String(String::from("kind")))
+                    .and_then(Value::as_str)
+            })
+            == Some("ensure_directory")
+    })
+}
+
+fn checks_changed_files_present(document: &Value) -> bool {
+    let Some(checks) = mapping_child(document, "checks").and_then(Value::as_sequence) else {
+        return false;
+    };
+    checks
+        .iter()
+        .any(|check| mapping_child(check, "kind").and_then(Value::as_str) == Some("changed_files"))
+}
+
 fn native_prerequisites_requires_present(document: &Value) -> bool {
     let Some(native_prerequisites) =
         mapping_child(document, "native_prerequisites").and_then(Value::as_mapping)
@@ -576,6 +621,10 @@ tasks:
       random:
         bytes: 32
         encoding: hex
+  bootstrap:cache:
+    action:
+      kind: ensure_directory
+      path: .cache/dev
     runtime:
       kind: service
       readiness:
@@ -612,6 +661,13 @@ readiness:
         kind: task
         name: setup
         listener: backend
+checks:
+  - name: web-changed
+    kind: changed_files
+    severity: info
+    changed_files:
+      paths:
+        - apps/web/**
 native_prerequisites:
   node-native-build-tools:
     platforms:
@@ -641,6 +697,8 @@ native_prerequisites:
                 "tasks.effects.external_state",
                 "tasks.action.ensure_env_file",
                 "tasks.action.ensure_file",
+                "tasks.action.ensure_directory",
+                "checks.changed_files",
                 "tasks.runtime.readiness.signal_probes",
                 "agent.posture",
                 "agent.exceptions.sensitive_writes",
@@ -683,6 +741,10 @@ tasks:
       random:
         bytes: 32
         encoding: hex
+  bootstrap:cache:
+    action:
+      kind: ensure_directory
+      path: .cache/dev
     runtime:
       kind: service
       readiness:
@@ -713,6 +775,13 @@ readiness:
         kind: task
         name: setup
         listener: backend
+checks:
+  - name: web-changed
+    kind: changed_files
+    severity: info
+    changed_files:
+      paths:
+        - apps/web/**
 "#,
         )
         .unwrap();
@@ -729,6 +798,8 @@ readiness:
                 "execution.contexts.only_on",
                 "tasks.action.ensure_env_file",
                 "tasks.action.ensure_file",
+                "tasks.action.ensure_directory",
+                "checks.changed_files",
                 "tasks.runtime.readiness.signal_probes",
                 "agent.posture",
                 "agent.exceptions.sensitive_writes",

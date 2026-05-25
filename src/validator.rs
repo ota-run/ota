@@ -1407,7 +1407,7 @@ fn validate_native_prerequisite_platform_requires(
         };
         if !matches!(check.kind, CheckKind::Precondition | CheckKind::File) {
             errors.push(ValidationError::new(format!(
-                "native prerequisite `{name}` platform `{platform}` references non-precondition/file check `{check_name}` in `requires.checks`"
+                "native prerequisite `{name}` platform `{platform}` references unsupported check kind `{check_name}` in `requires.checks`; only `precondition` or `file` checks are allowed"
             )));
         }
     }
@@ -2632,6 +2632,14 @@ fn validate_task_action(
                     "task `{task_name}` action `ensure_file` random bytes must be between 1 and 1024"
                 )));
             }
+        }
+        crate::schema::TaskActionSpec::EnsureDirectory(spec) => {
+            validate_repo_relative_file_action_path(
+                task_name,
+                "action.path",
+                spec.path.as_str(),
+                errors,
+            );
         }
     }
 }
@@ -4906,6 +4914,7 @@ pub enum ContractAdvisory {
     LikelyUnusedAttachment(AttachmentUseAdvisory),
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
+    SensitiveWriteException(SensitiveWriteExceptionAdvisory),
     AgentSafeTaskNetwork(AgentSafeTaskNetworkAdvisory),
     AgentSafeTaskExternalState(AgentSafeTaskExternalStateAdvisory),
 }
@@ -4938,6 +4947,12 @@ pub struct ManagedIsolatedPathMutationAdvisory {
 pub struct SensitiveAgentWritablePathAdvisory {
     pub path: String,
     pub category: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SensitiveWriteExceptionAdvisory {
+    pub path: String,
     pub reason: String,
 }
 
@@ -4982,6 +4997,10 @@ impl ContractAdvisory {
                 "`agent.writable_paths` includes sensitive {} `{}`",
                 advisory.category, advisory.path
             ),
+            ContractAdvisory::SensitiveWriteException(advisory) => format!(
+                "`agent.exceptions.sensitive_writes` includes unnecessary path `{}`",
+                advisory.path
+            ),
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => format!(
                 "agent-safe task `{}` requires network access",
                 advisory.task_name
@@ -5012,6 +5031,7 @@ impl ContractAdvisory {
                 advisory.task_name, advisory.isolated_path, advisory.context_name
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => advisory.reason.clone(),
+            ContractAdvisory::SensitiveWriteException(advisory) => advisory.reason.clone(),
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => format!(
                 "task `{}` is declared agent-safe but also declares `effects.network: true`, so unattended execution still depends on registry, API, or remote service reachability",
                 advisory.task_name
@@ -5032,6 +5052,7 @@ impl ContractAdvisory {
             ContractAdvisory::LikelyUnusedAttachment(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
+            | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
@@ -5045,6 +5066,7 @@ impl ContractAdvisory {
             ContractAdvisory::LikelyUnusedAttachment(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
+            | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
@@ -5059,6 +5081,7 @@ impl ContractAdvisory {
             )),
             ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
+            | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
@@ -5084,6 +5107,10 @@ impl ContractAdvisory {
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 format!("{}", sensitive_agent_writable_path_next(advisory))
             }
+            ContractAdvisory::SensitiveWriteException(advisory) => format!(
+                "remove `{}` from `agent.exceptions.sensitive_writes`, or move it to `agent.protected_paths` / tighten `agent.writable_paths` if this path should stay guarded",
+                advisory.path
+            ),
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => format!(
                 "keep `effects.network: true` explicit for `{}`, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended networked execution is not acceptable",
                 advisory.task_name
@@ -5120,6 +5147,7 @@ pub fn collect_contract_advisories(contract: &Contract) -> Vec<ContractAdvisory>
     advisories.extend(collect_attachment_use_advisories(contract));
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
+    advisories.extend(collect_sensitive_write_exception_advisories(contract));
     advisories.extend(collect_agent_safe_task_effect_advisories(contract));
     advisories
 }
@@ -5444,6 +5472,48 @@ fn collect_sensitive_agent_writable_path_advisories(contract: &Contract) -> Vec<
         }
     }
 
+    advisories
+}
+
+fn collect_sensitive_write_exception_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let Some(agent) = contract.agent.as_ref() else {
+        return Vec::new();
+    };
+    let posture = agent.posture;
+    let mut advisories = Vec::new();
+    let mut seen = BTreeSet::new();
+    for path in agent.sensitive_writable_paths() {
+        let Some(normalized) = normalize_dependency_isolated_path(path) else {
+            continue;
+        };
+        if !seen.insert(normalized.clone()) {
+            continue;
+        }
+        let matches = classify_sensitive_agent_writable_path(normalized.as_str());
+        if matches.is_empty() {
+            advisories.push(ContractAdvisory::SensitiveWriteException(
+                SensitiveWriteExceptionAdvisory {
+                    path: normalized,
+                    reason: String::from(
+                        "this path does not map to Ota's sensitive writable categories, so the exception does not tighten or explain agent authority",
+                    ),
+                },
+            ));
+            continue;
+        }
+        if matches.iter().all(|match_| {
+            posture_allows_sensitive_agent_writable_category(posture, match_.category)
+        }) {
+            advisories.push(ContractAdvisory::SensitiveWriteException(
+                SensitiveWriteExceptionAdvisory {
+                    path: normalized,
+                    reason: String::from(
+                        "this exception is redundant for the declared `agent.posture`; the posture already permits that sensitive category",
+                    ),
+                },
+            ));
+        }
+    }
     advisories
 }
 
@@ -6051,9 +6121,12 @@ fn validate_task_requirement_references(
             continue;
         };
 
-        if !matches!(check.kind, CheckKind::Precondition | CheckKind::File) {
+        if !matches!(
+            check.kind,
+            CheckKind::Precondition | CheckKind::File | CheckKind::ChangedFiles
+        ) {
             errors.push(ValidationError::new(format!(
-                "task `{task_name}` references non-precondition/file check `{check_name}` in `requirements.checks`"
+                "task `{task_name}` references unsupported check kind `{check_name}` in `requirements.checks`; only `precondition`, `file`, or `changed_files` checks are allowed"
             )));
         }
     }
@@ -6736,19 +6809,20 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
             check.run.is_some(),
             check.probe.is_some(),
             check.path.is_some(),
+            check.changed_files.is_some(),
         ]
         .into_iter()
         .filter(|present| *present)
         .count();
         if check_target_count > 1 {
             errors.push(ValidationError::new(format!(
-                "check `{}` must declare only one of `run`, `probe`, or `path`",
+                "check `{}` must declare only one of `run`, `probe`, `path`, or `changed_files`",
                 check.name
             )));
         }
         if check_target_count == 0 {
             errors.push(ValidationError::new(format!(
-                "check `{}` must declare one of `run`, `probe`, or `path`",
+                "check `{}` must declare one of `run`, `probe`, `path`, or `changed_files`",
                 check.name
             )));
         }
@@ -6775,6 +6849,61 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 "check `{}` must use `kind: file` when declaring `expect`",
                 check.name
             )));
+        }
+        if check.kind == CheckKind::ChangedFiles && check.changed_files.is_none() {
+            errors.push(ValidationError::new(format!(
+                "changed_files check `{}` must declare `changed_files`",
+                check.name
+            )));
+        }
+        if check.kind != CheckKind::ChangedFiles && check.changed_files.is_some() {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must use `kind: changed_files` when declaring `changed_files`",
+                check.name
+            )));
+        }
+        if check.kind == CheckKind::ChangedFiles {
+            if check.run.is_some()
+                || check.probe.is_some()
+                || check.path.is_some()
+                || check.expect.is_some()
+            {
+                errors.push(ValidationError::new(format!(
+                    "changed_files check `{}` must not declare `run`, `probe`, `path`, or `expect`",
+                    check.name
+                )));
+            }
+            if let Some(changed_files) = check.changed_files.as_ref() {
+                if changed_files.paths.is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "changed_files check `{}` must declare at least one path matcher in `changed_files.paths`",
+                        check.name
+                    )));
+                }
+                for path in &changed_files.paths {
+                    validate_repo_relative_check_path(check.name.as_str(), path.as_str(), errors);
+                }
+                if changed_files
+                    .base_ref
+                    .as_deref()
+                    .is_some_and(|value| value.trim().is_empty())
+                {
+                    errors.push(ValidationError::new(format!(
+                        "changed_files check `{}` must declare a non-empty `changed_files.base_ref` when present",
+                        check.name
+                    )));
+                }
+                if changed_files
+                    .head_ref
+                    .as_deref()
+                    .is_some_and(|value| value.trim().is_empty())
+                {
+                    errors.push(ValidationError::new(format!(
+                        "changed_files check `{}` must declare a non-empty `changed_files.head_ref` when present",
+                        check.name
+                    )));
+                }
+            }
         }
         if check
             .run
@@ -8269,7 +8398,7 @@ tasks:
             messages
                 .iter()
                 .any(|message| message
-                    .contains("references non-precondition/file check `health-check`")),
+                    .contains("references unsupported check kind `health-check`")),
             "{messages:?}"
         );
         assert!(
@@ -9009,7 +9138,7 @@ checks:
             validate_contract(&contract).expect_err("check with run and probe should be rejected");
         assert!(
             error.to_string().contains(
-                "check `backend-ready` must declare only one of `run`, `probe`, or `path`"
+                "check `backend-ready` must declare only one of `run`, `probe`, `path`, or `changed_files`"
             )
         );
     }
@@ -9032,10 +9161,71 @@ checks:
 
         let error = validate_contract(&contract)
             .expect_err("check without run or probe should be rejected");
+        assert!(error.to_string().contains(
+            "check `backend-ready` must declare one of `run`, `probe`, `path`, or `changed_files`"
+        ));
+    }
+
+    #[test]
+    fn validates_changed_files_check_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: web-changed
+    kind: changed_files
+    severity: info
+    changed_files:
+      paths:
+        - apps/web/**
+      include_untracked: true
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("changed_files check should validate");
+    }
+
+    #[test]
+    fn rejects_invalid_changed_files_check_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: web-changed
+    kind: changed_files
+    severity: info
+    run: echo changed
+    changed_files:
+      paths: []
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid changed_files check should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
         assert!(
-            error
-                .to_string()
-                .contains("check `backend-ready` must declare one of `run`, `probe`, or `path`")
+            rendered.iter().any(|error| error.contains(
+                "changed_files check `web-changed` must not declare `run`, `probe`, `path`, or `expect`"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "changed_files check `web-changed` must declare at least one path matcher in `changed_files.paths`"
+            )),
+            "{rendered:?}"
         );
     }
 
@@ -9173,6 +9363,26 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("ensure_file action should validate");
+    }
+
+    #[test]
+    fn validates_ensure_directory_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:cache:
+    action:
+      kind: ensure_directory
+      path: .cache/dev
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ensure_directory action should validate");
     }
 
     #[test]

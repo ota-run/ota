@@ -3344,6 +3344,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 ContractAdvisory::SensitiveAgentWritablePath(advisory)
             }
+            ContractAdvisory::SensitiveWriteException(advisory) => {
+                ContractAdvisory::SensitiveWriteException(advisory)
+            }
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
                 if !selected_task_names.is_empty()
                     && !selected_task_names.contains(advisory.task_name.as_str())
@@ -3398,6 +3401,15 @@ fn diagnose_contract_advisories(
                 ),
                 why: ContractAdvisory::SensitiveAgentWritablePath(advisory.clone()).why(),
                 next: ContractAdvisory::SensitiveAgentWritablePath(advisory).next(),
+            },
+            ContractAdvisory::SensitiveWriteException(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "`agent.exceptions.sensitive_writes` includes unnecessary path `{}`",
+                    advisory.path
+                ),
+                why: ContractAdvisory::SensitiveWriteException(advisory.clone()).why(),
+                next: ContractAdvisory::SensitiveWriteException(advisory).next(),
             },
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => Finding {
                 severity: FindingSeverity::Warn,
@@ -7708,7 +7720,7 @@ fn diagnose_checks(
         let is_explicitly_selected_check =
             is_selected_precondition || is_selected_check || is_selected_signal_check;
 
-        if scope == DoctorScope::Preconditions && check.kind != CheckKind::Precondition {
+        if scope == DoctorScope::Preconditions && !is_precondition_style_check(check.kind) {
             continue;
         }
         if scope == DoctorScope::Preconditions {
@@ -7722,7 +7734,7 @@ fn diagnose_checks(
                 // Explicit task-scoped prerequisite checks participate in `ota check` for the
                 // selected workflow without changing legacy check selection when none are declared.
             } else {
-                if check.kind == CheckKind::Precondition {
+                if is_precondition_style_check(check.kind) {
                     continue;
                 }
                 if scoped_workflow_targets && !has_explicit_workflow_check_selection {
@@ -7733,7 +7745,7 @@ fn diagnose_checks(
                 }
             }
         } else {
-            if check.kind == CheckKind::Precondition {
+            if is_precondition_style_check(check.kind) {
                 if let Some(selected) = selected_precondition_checks.as_ref()
                     && !selected.contains(check.name.as_str())
                 {
@@ -8012,6 +8024,17 @@ fn failed_check_next(
     {
         return failed_probe_next(probe_name, probe);
     }
+    if check.kind == crate::schema::CheckKind::ChangedFiles {
+        let matchers = check
+            .changed_files
+            .as_ref()
+            .map(|changed_files| changed_files.paths.join(", "))
+            .unwrap_or_else(|| String::from("<unset>"));
+        return format!(
+            "update `changed_files.paths` for check `{}` or rerun in a range where [{matchers}] changed, then rerun `ota doctor`",
+            check.name
+        );
+    }
     if check.kind == crate::schema::CheckKind::File {
         let path = check.path.as_deref().unwrap_or("-");
         if let Some(setup_task) = contract.selected_setup_task_name_for(workflow_name) {
@@ -8268,6 +8291,10 @@ fn selected_workflow_service_names<'a>(
     )
 }
 
+fn is_precondition_style_check(kind: CheckKind) -> bool {
+    matches!(kind, CheckKind::Precondition | CheckKind::ChangedFiles)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CheckStatus {
     Passed,
@@ -8301,6 +8328,9 @@ fn run_declared_check(
     command_override: Option<&str>,
     overrides: ExecutionOverrides,
 ) -> CheckStatus {
+    if check.kind == crate::schema::CheckKind::ChangedFiles {
+        return run_changed_files_check(check, working_dir);
+    }
     if check.kind == crate::schema::CheckKind::File {
         return run_file_check(check, working_dir);
     }
@@ -8318,6 +8348,81 @@ fn run_declared_check(
             overrides,
         );
     }
+    CheckStatus::Failed
+}
+
+fn run_changed_files_check(check: &crate::schema::CheckSpec, working_dir: &Path) -> CheckStatus {
+    let Some(changed_files) = check.changed_files.as_ref() else {
+        return CheckStatus::Failed;
+    };
+    if changed_files.paths.is_empty() {
+        return CheckStatus::Failed;
+    }
+
+    let mut diff = Command::new("git");
+    diff.arg("-C")
+        .arg(working_dir)
+        .arg("diff")
+        .arg("--name-only");
+    if let Some(base_ref) = changed_files
+        .base_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let head_ref = changed_files
+            .head_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("HEAD");
+        diff.arg(format!("{base_ref}..{head_ref}"));
+    } else {
+        diff.arg("HEAD");
+    }
+    diff.arg("--");
+    for matcher in &changed_files.paths {
+        diff.arg(matcher);
+    }
+
+    let diff_output = match diff.output() {
+        Ok(output) => output,
+        Err(_) => return CheckStatus::Failed,
+    };
+    if !diff_output.status.success() {
+        return CheckStatus::Failed;
+    }
+    if !String::from_utf8_lossy(&diff_output.stdout)
+        .trim()
+        .is_empty()
+    {
+        return CheckStatus::Passed;
+    }
+
+    if changed_files.include_untracked {
+        let mut untracked = Command::new("git");
+        untracked
+            .arg("-C")
+            .arg(working_dir)
+            .arg("ls-files")
+            .arg("--others")
+            .arg("--exclude-standard")
+            .arg("--");
+        for matcher in &changed_files.paths {
+            untracked.arg(matcher);
+        }
+        let output = match untracked.output() {
+            Ok(output) => output,
+            Err(_) => return CheckStatus::Failed,
+        };
+        if !output.status.success() {
+            return CheckStatus::Failed;
+        }
+        if !String::from_utf8_lossy(&output.stdout).trim().is_empty() {
+            return CheckStatus::Passed;
+        }
+    }
+
     CheckStatus::Failed
 }
 
@@ -8830,6 +8935,8 @@ fn tcp_readiness_endpoint_status(
 fn failed_check_summary(check: &crate::schema::CheckSpec) -> String {
     if check.kind == crate::schema::CheckKind::File {
         format!("File check failed: {}", check.name)
+    } else if check.kind == crate::schema::CheckKind::ChangedFiles {
+        format!("Changed-files check not satisfied: {}", check.name)
     } else if check.probe.is_some() {
         format!("Probe check failed: {}", check.name)
     } else {
@@ -8842,6 +8949,31 @@ fn failed_check_why(contract: &Contract, check: &crate::schema::CheckSpec) -> St
         let path = check.path.as_deref().unwrap_or("-");
         let expected = file_check_expectation_label(check.expect);
         format!("expected `{path}` to be {expected}, but the file check did not pass")
+    } else if check.kind == crate::schema::CheckKind::ChangedFiles {
+        if let Some(changed_files) = check.changed_files.as_ref() {
+            let matchers = changed_files.paths.join(", ");
+            let compare = changed_files
+                .base_ref
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|base| {
+                    let head = changed_files
+                        .head_ref
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("HEAD");
+                    format!("{base}..{head}")
+                })
+                .unwrap_or_else(|| String::from("working tree vs HEAD"));
+            format!("no changed files matched [{matchers}] for `{compare}`")
+        } else {
+            format!(
+                "the configured `{}` changed-files check did not succeed",
+                check.name
+            )
+        }
     } else if let Some(probe_name) = check.probe.as_deref() {
         format!(
             "the configured `{}` probe-backed check ({}) did not succeed",
@@ -8856,6 +8988,8 @@ fn failed_check_why(contract: &Contract, check: &crate::schema::CheckSpec) -> St
 fn timed_out_check_summary(check: &crate::schema::CheckSpec) -> String {
     if check.kind == crate::schema::CheckKind::File {
         format!("File check timed out: {}", check.name)
+    } else if check.kind == crate::schema::CheckKind::ChangedFiles {
+        format!("Changed-files check timed out: {}", check.name)
     } else if check.probe.is_some() {
         format!("Probe check timed out: {}", check.name)
     } else {
@@ -8915,6 +9049,12 @@ fn timed_out_check_next(contract: &Contract, check: &crate::schema::CheckSpec) -
         && let Some(probe) = contract.probe(probe_name)
     {
         return timed_out_probe_next(probe_name, probe);
+    }
+    if check.kind == crate::schema::CheckKind::ChangedFiles {
+        return format!(
+            "reduce changed-files matcher scope for `{}` or rerun when git metadata is available, then rerun `ota doctor`",
+            check.name
+        );
     }
     let command = check.run.as_deref().unwrap_or("<unknown>");
     format!(

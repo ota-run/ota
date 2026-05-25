@@ -1265,6 +1265,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::SensitiveWriteException(value) => format!(
+            "{} path `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.path,
+            paint_key("Category:"),
+            render_validate_warning_detail("sensitive-write exception"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::AgentSafeTaskNetwork(value) => format!(
             "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -33364,6 +33375,10 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
             }
             (None, Some(path)) => format!("ensure file `{path}`"),
             _ => String::from("ensure file"),
+        },
+        "ensure_directory" => match action.to {
+            Some(path) => format!("ensure directory `{path}`"),
+            None => String::from("ensure directory"),
         },
         _ => String::from("-"),
     }

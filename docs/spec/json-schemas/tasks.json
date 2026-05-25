@@ -143,6 +143,15 @@
               }
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": { "const": "ensure_directory" },
+            "path": { "type": "string" }
+          }
         }
       ]
     },
@@ -224,7 +233,7 @@
               "category": { "type": "string" },
               "context": { "type": "string" },
               "default_mode": { "enum": ["native", "container", "remote"] },
-              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file"] },
+              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
               "launch": { "$ref": "#/$defs/taskLaunch" },
@@ -351,7 +360,7 @@
                     "category": { "type": "string" },
                     "context": { "type": "string" },
                     "default_mode": { "enum": ["native", "container", "remote"] },
-                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "launch": { "$ref": "#/$defs/taskLaunch" },
