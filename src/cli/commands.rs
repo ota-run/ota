@@ -33923,8 +33923,9 @@ pub fn annotations(
 
 pub fn json_validate(
     schema: &str,
+    input: Option<&Path>,
     allow_exit: &[i32],
-    write_payload: &Path,
+    write_payload: Option<&Path>,
     assert_eq_rules: &[String],
     assert_in_rules: &[String],
     assert_type_rules: &[String],
@@ -33933,79 +33934,107 @@ pub fn json_validate(
     command: &[String],
     _debug: bool,
 ) -> CommandOutput {
-    let mut command = command.to_vec();
-    if command.first().is_some_and(|value| value == "--") {
-        command.remove(0);
-    }
-    if command.is_empty() {
-        return CommandOutput::failure_with_code(
-            String::from("missing command to execute; pass it after `--`"),
-            2,
-        );
-    }
-
     let allowed_exit_codes: Vec<i32> = if allow_exit.is_empty() {
         vec![0]
     } else {
         allow_exit.to_vec()
     };
 
-    let output = match Command::new(command[0].as_str())
-        .args(&command[1..])
-        .output()
-    {
-        Ok(output) => output,
-        Err(error) => {
+    let mut source_label = String::from("command output");
+    let (exit_code, payload) = if let Some(input_path) = input {
+        if !allowed_exit_codes.contains(&0) {
+            return CommandOutput::failure_with_code(
+                format!(
+                    "`--input` mode has synthetic exit code 0, but allowed exits are {:?}",
+                    allowed_exit_codes
+                ),
+                2,
+            );
+        }
+        source_label = if input_path == Path::new("-") {
+            String::from("stdin")
+        } else {
+            input_path.display().to_string()
+        };
+        let payload = match read_text_input(input_path) {
+            Ok(payload) => payload,
+            Err(error) => return CommandOutput::failure(error),
+        };
+        if payload.trim().is_empty() {
+            return CommandOutput::failure(format!("JSON input from {source_label} is empty"));
+        }
+        (0, payload)
+    } else {
+        let mut command = command.to_vec();
+        if command.first().is_some_and(|value| value == "--") {
+            command.remove(0);
+        }
+        if command.is_empty() {
+            return CommandOutput::failure_with_code(
+                String::from("missing command to execute; pass it after `--`"),
+                2,
+            );
+        }
+
+        let output = match Command::new(command[0].as_str())
+            .args(&command[1..])
+            .output()
+        {
+            Ok(output) => output,
+            Err(error) => {
+                return CommandOutput::failure(format!(
+                    "failed to execute `{}`: {error}",
+                    command.join(" ")
+                ));
+            }
+        };
+        let exit_code = output.status.code().unwrap_or(1);
+        if !allowed_exit_codes.contains(&exit_code) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return CommandOutput::failure_with_code(
+                format!(
+                    "command exited with code {exit_code}, expected one of {:?}\n{}",
+                    allowed_exit_codes, stderr
+                ),
+                exit_code,
+            );
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let payload = if stdout.trim().is_empty() {
+            stderr
+        } else {
+            stdout
+        };
+        if payload.trim().is_empty() {
+            return CommandOutput::failure("command produced no JSON payload".to_string());
+        }
+        (exit_code, payload)
+    };
+
+    if let Some(write_payload) = write_payload {
+        if let Some(parent) = write_payload.parent()
+            && let Err(error) = fs::create_dir_all(parent)
+        {
             return CommandOutput::failure(format!(
-                "failed to execute `{}`: {error}",
-                command.join(" ")
+                "failed to create payload output directory {}: {error}",
+                parent.display()
             ));
         }
-    };
-    let exit_code = output.status.code().unwrap_or(1);
-    if !allowed_exit_codes.contains(&exit_code) {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return CommandOutput::failure_with_code(
-            format!(
-                "command exited with code {exit_code}, expected one of {:?}\n{}",
-                allowed_exit_codes, stderr
-            ),
-            exit_code,
-        );
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let payload = if stdout.trim().is_empty() {
-        stderr
-    } else {
-        stdout
-    };
-    if payload.trim().is_empty() {
-        return CommandOutput::failure("command produced no JSON payload".to_string());
-    }
-
-    if let Some(parent) = write_payload.parent()
-        && let Err(error) = fs::create_dir_all(parent)
-    {
-        return CommandOutput::failure(format!(
-            "failed to create payload output directory {}: {error}",
-            parent.display()
-        ));
-    }
-    if let Err(error) = fs::write(write_payload, &payload) {
-        return CommandOutput::failure(format!(
-            "failed to write payload to {}: {error}",
-            write_payload.display()
-        ));
+        if let Err(error) = fs::write(write_payload, &payload) {
+            return CommandOutput::failure(format!(
+                "failed to write payload to {}: {error}",
+                write_payload.display()
+            ));
+        }
     }
 
     let payload_json: JsonValue = match serde_json::from_str(&payload) {
         Ok(payload_json) => payload_json,
         Err(error) => {
             return CommandOutput::failure(format!(
-                "captured payload is not valid JSON ({}): {error}",
-                write_payload.display()
+                "captured payload from {source_label} is not valid JSON: {error}"
             ));
         }
     };
@@ -34025,11 +34054,15 @@ pub fn json_validate(
         return CommandOutput::failure(error);
     }
 
-    CommandOutput::success(format!(
-        "validated {} against {}",
-        write_payload.display(),
-        schema
-    ))
+    if let Some(write_payload) = write_payload {
+        CommandOutput::success(format!(
+            "validated {} against {}",
+            write_payload.display(),
+            schema
+        ))
+    } else {
+        CommandOutput::success(format!("validated {source_label} against {schema}"))
+    }
 }
 
 fn validate_payload_with_schema(schema_name: &str, payload: &JsonValue) -> Result<(), String> {
@@ -34312,7 +34345,7 @@ fn split_once_or_error<'a>(
     })
 }
 
-fn read_annotations_input(input: &Path) -> Result<String, String> {
+fn read_text_input(input: &Path) -> Result<String, String> {
     if input == Path::new("-") {
         let mut content = String::new();
         io::stdin()
@@ -34323,6 +34356,10 @@ fn read_annotations_input(input: &Path) -> Result<String, String> {
 
     fs::read_to_string(input)
         .map_err(|error| format!("failed to read {}: {error}", input.display()))
+}
+
+fn read_annotations_input(input: &Path) -> Result<String, String> {
+    read_text_input(input)
 }
 
 #[derive(Clone, Copy)]
@@ -40278,6 +40315,84 @@ mod tests {
         )
         .expect_err("mismatched exit map should fail");
         assert!(error.contains("assert-exit-map failed"), "{error}");
+    }
+
+    #[test]
+    fn json_validate_accepts_input_file_without_command_or_output_path() {
+        let temp = TempDir::new().expect("temp dir");
+        let input_path = temp.path().join("version.json");
+        fs::write(
+            &input_path,
+            serde_json::to_string(&json!({
+                "ok": true,
+                "semver": "1.6.16",
+                "version": "1.6.16",
+                "source_build": false,
+                "commit": serde_json::Value::Null,
+                "dirty": false,
+                "schema_version": 1,
+                "contract_capabilities": []
+            }))
+            .expect("serialize payload"),
+        )
+        .expect("write payload");
+
+        let output = super::json_validate(
+            "version.json",
+            Some(input_path.as_path()),
+            &[],
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            false,
+        );
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        assert!(output.stdout.contains("validated"), "{}", output.stdout);
+    }
+
+    #[test]
+    fn json_validate_input_mode_rejects_nonzero_allowed_exits() {
+        let temp = TempDir::new().expect("temp dir");
+        let input_path = temp.path().join("version.json");
+        fs::write(
+            &input_path,
+            serde_json::to_string(&json!({
+                "ok": true,
+                "semver": "1.6.16",
+                "version": "1.6.16",
+                "source_build": false,
+                "commit": serde_json::Value::Null,
+                "dirty": false,
+                "schema_version": 1,
+                "contract_capabilities": []
+            }))
+            .expect("serialize payload"),
+        )
+        .expect("write payload");
+
+        let output = super::json_validate(
+            "version.json",
+            Some(input_path.as_path()),
+            &[1],
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            false,
+        );
+        assert_eq!(output.exit_code, 2, "{output:?}");
+        let stderr = output.stderr.as_deref().unwrap_or_default();
+        assert!(
+            stderr.contains("synthetic exit code 0"),
+            "expected synthetic exit code guidance, got: {stderr}"
+        );
     }
 
     fn make_bootstrap_shims(dir: &Path) {
