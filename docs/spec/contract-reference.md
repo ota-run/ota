@@ -1482,6 +1482,10 @@ and fails if the path already exists as a non-directory.
   executables even when `requirements.tools` is omitted
 - declare `requirements.tools.<name>` explicitly when you need to pin a version, attach
   acquisition metadata, or override defaults for that launch executable
+- `requirements.tools` is task-path truth and can be self-contained: tool names do not need a
+  matching top-level `tools.<name>` declaration to validate
+- if a required tool is owned by one or more declared toolchains, keep ownership deterministic by
+  declaring `requirements.toolchains` explicitly on that task path
 - `requirements.any_of[]` entries must declare at least one requirement
   (`runtimes`, `tools`, `toolchains`, `native`, `env`, or `checks`) plus a deterministic selector
   (`when.context` or `when.backend`) so Ota can resolve one branch on the selected path

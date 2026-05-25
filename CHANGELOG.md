@@ -30,6 +30,10 @@
   longer inherit host-global `tools` fallback when no scoped tool requirements are declared; global
   tool fallback remains for native selected paths, preventing host-only tools from leaking into
   unrelated container/remote readiness surfaces
+- made `tasks.<name>.requirements.tools` and `requirements.any_of[].tools` self-contained tool
+  gates: task-path tool names no longer require duplicate top-level `tools.<name>` declarations
+  just to validate, while toolchain-owned names still require explicit
+  `tasks.<name>.requirements.toolchains` scoping to keep ownership deterministic
 - tightened `ota run --dry-run` context semantics so preview text now shows both
   `Task Context` and `Execution Context` explicitly (with `Contract -> Resolved Context`), and
   JSON now includes additive `requested_context` and `selected_context` fields for machine-stable

@@ -5993,14 +5993,6 @@ fn validate_task_requirement_references(
             )));
         }
     }
-    let mut known_tools = contract.tools.keys().cloned().collect::<BTreeSet<_>>();
-    for (toolchain_name, toolchain) in selected_task_toolchains(contract, task) {
-        for (kind, name) in duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain) {
-            if kind == "tool" {
-                known_tools.insert(name);
-            }
-        }
-    }
     for tool_name in task.requirements.tools.keys() {
         if tool_name.trim().is_empty() {
             continue;
@@ -6027,28 +6019,6 @@ fn validate_task_requirement_references(
                 )));
                 continue;
             }
-        }
-
-        if known_tools.contains(tool_name) {
-            continue;
-        }
-
-        errors.push(ValidationError::new(format!(
-            "task `{task_name}` references unknown tool requirement `{tool_name}` in `requirements.tools`"
-        )));
-    }
-
-    for (index, branch) in task.requirements.any_of.iter().enumerate() {
-        for tool_name in branch.tools.keys() {
-            if tool_name.trim().is_empty() {
-                continue;
-            }
-            if known_tools.contains(tool_name) {
-                continue;
-            }
-            errors.push(ValidationError::new(format!(
-                "task `{task_name}` references unknown tool requirement `{tool_name}` in `requirements.any_of[{index}].tools`"
-            )));
         }
     }
 
@@ -19077,7 +19047,7 @@ tasks:
     }
 
     #[test]
-    fn rejects_unknown_task_tool_requirement_without_top_level_or_toolchain_owner() {
+    fn accepts_task_tool_requirement_without_top_level_or_toolchain_owner() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -19102,19 +19072,39 @@ tasks:
         )
         .unwrap();
 
-        let rendered = validate_contract(&contract)
-            .expect_err("unknown task tool requirements should fail validation")
-            .errors()
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
-
-        assert!(
-            rendered.iter().any(|error| error.contains(
-                "task `setup` references unknown tool requirement `npmx` in `requirements.tools`",
-            )),
-            "{rendered:?}"
+        validate_contract(&contract).expect(
+            "task-level requirements.tools entries should be self-contained even when not declared globally",
         );
+    }
+
+    #[test]
+    fn accepts_any_of_tool_requirement_without_top_level_or_toolchain_owner() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  verify:
+    run: echo verify
+    requirements:
+      any_of:
+        - when:
+            context: host
+          tools:
+            custom-checker: "^1"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("requirements.any_of tools should be self-contained when names are explicit");
     }
 
     #[test]
