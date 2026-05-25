@@ -14394,6 +14394,16 @@ fn render_run_preview_text(
     plan: &RunPreviewPlan,
     persist_logs: bool,
 ) -> String {
+    let selected_context = declared_execution.and_then(|execution| {
+        requested_task
+            .context
+            .filter(|context_name| {
+                execution.contexts.iter().any(|context| {
+                    context.name == *context_name && context.backend == execution_plan.backend
+                })
+            })
+            .or_else(|| selected_execution_plan_context_name(Some(execution), execution_plan))
+    });
     let mut stdout = format!(
         "{}\n\n{}\n\n{}",
         format_command_header("RUN PREVIEW", task_name),
@@ -14439,7 +14449,7 @@ fn render_run_preview_text(
             &paint_backticked_code(target),
         ));
     }
-    if let Some(context) = requested_task.context {
+    if let Some(context) = selected_context {
         stdout.push('\n');
         stdout.push_str(&detail_list_row(
             &paint_key("Context:"),
@@ -14452,8 +14462,6 @@ fn render_run_preview_text(
         render_contract_identity_text(contract_identity)
     ));
     if let Some(declared_execution) = declared_execution {
-        let selected_context =
-            selected_execution_plan_context_name(Some(declared_execution), execution_plan);
         if let Some(context_label) =
             render_execution_plan_selected_context_label(Some(declared_execution), selected_context)
         {
@@ -43375,6 +43383,56 @@ tasks:
                 || blocker.starts_with("Missing runtime: node"),
             "{json}"
         );
+    }
+
+    #[test]
+    fn run_dry_run_plain_keeps_selected_context_aligned_with_selected_task_context() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: docker-host
+  contexts:
+    docker-host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+    host:
+      backend: native
+tasks:
+  verify:
+    context: host
+    run: echo ok
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi_codes(&output.stdout);
+        assert!(stdout.contains("Context: `host`"), "{stdout}");
+        assert!(stdout.contains("Selected Context: `host`"), "{stdout}");
+        assert!(!stdout.contains("Selected Context: `docker-host`"), "{stdout}");
     }
 
     #[test]

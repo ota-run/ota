@@ -30,6 +30,9 @@
   longer inherit host-global `tools` fallback when no scoped tool requirements are declared; global
   tool fallback remains for native selected paths, preventing host-only tools from leaking into
   unrelated container/remote readiness surfaces
+- aligned `ota run --dry-run --plain` context rendering so `Execution -> Context` and
+  `Contract -> Selected Context` now resolve from the same selected task-path context instead of
+  showing a mismatched default context label when multiple contexts share one backend family
 
 ## 1.6.16
 
