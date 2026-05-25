@@ -193,6 +193,14 @@ Current shape:
       "introduced_in": "1.6.16"
     },
     {
+      "id": "tasks.action.ensure_directory",
+      "introduced_in": "1.6.16"
+    },
+    {
+      "id": "checks.changed_files",
+      "introduced_in": "1.6.16"
+    },
+    {
       "id": "tasks.runtime.readiness.signal_probes",
       "introduced_in": "1.6.16"
     },

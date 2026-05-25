@@ -3462,6 +3462,7 @@ pub enum TaskActionSpec {
     CopyIfMissing(TaskCopyIfMissingActionSpec),
     EnsureEnvFile(TaskEnsureEnvFileActionSpec),
     EnsureFile(TaskEnsureFileActionSpec),
+    EnsureDirectory(TaskEnsureDirectoryActionSpec),
 }
 
 impl TaskActionSpec {
@@ -3470,6 +3471,7 @@ impl TaskActionSpec {
             Self::CopyIfMissing(_) => "copy_if_missing",
             Self::EnsureEnvFile(_) => "ensure_env_file",
             Self::EnsureFile(_) => "ensure_file",
+            Self::EnsureDirectory(_) => "ensure_directory",
         }
     }
 
@@ -3500,6 +3502,9 @@ impl TaskActionSpec {
                 } else {
                     format!("ensure file `{}`{seed}", action.path)
                 }
+            }
+            Self::EnsureDirectory(action) => {
+                format!("ensure directory `{}` exists", action.path)
             }
         }
     }
@@ -3532,6 +3537,12 @@ pub struct TaskEnsureFileActionSpec {
     pub value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub random: Option<TaskEnsureEnvRandomSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEnsureDirectoryActionSpec {
+    pub path: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -4191,6 +4202,8 @@ pub struct CheckSpec {
     pub expect: Option<FileCheckExpectation>,
     #[serde(default)]
     pub timeout: Option<u64>,
+    #[serde(default)]
+    pub changed_files: Option<ChangedFilesCheckSpec>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -4199,6 +4212,21 @@ pub enum CheckKind {
     Precondition,
     Health,
     File,
+    #[serde(rename = "changed_files")]
+    ChangedFiles,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ChangedFilesCheckSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub include_untracked: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]

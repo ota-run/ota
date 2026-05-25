@@ -6374,6 +6374,9 @@ fn execute_native_file_action_task(
         crate::schema::TaskActionSpec::EnsureFile(spec) => {
             execute_ensure_file_action(task_name, spec, working_dir)
         }
+        crate::schema::TaskActionSpec::EnsureDirectory(spec) => {
+            execute_ensure_directory_action(task_name, spec, working_dir)
+        }
     }
 }
 
@@ -6560,6 +6563,40 @@ fn execute_ensure_file_action(
     };
 
     Ok(file_action_output(created_message))
+}
+
+fn execute_ensure_directory_action(
+    task_name: &str,
+    spec: &crate::schema::TaskEnsureDirectoryActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    let path = working_dir.join(spec.path.trim());
+    if path.exists() {
+        if path.is_dir() {
+            return Ok(file_action_output(format!(
+                "`{}` already exists; no directory create needed\n",
+                spec.path.trim()
+            )));
+        }
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not ensure directory `{}` because a non-directory entry already exists at that path",
+                spec.path.trim()
+            ),
+        });
+    }
+    std::fs::create_dir_all(&path).map_err(|source| RunError::FileActionFailed {
+        task: task_name.to_string(),
+        message: format!(
+            "could not create directory `{}`: {source}",
+            spec.path.trim()
+        ),
+    })?;
+    Ok(file_action_output(format!(
+        "ensured directory `{}`\n",
+        spec.path.trim()
+    )))
 }
 
 fn parse_env_keys(content: &str) -> BTreeSet<String> {
@@ -44652,6 +44689,48 @@ tasks:
             ),
             "{}",
             output.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_directory_action_creates_directory_once() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:cache:
+    action:
+      kind: ensure_directory
+      path: .cache/dev
+"#,
+        );
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:cache")
+            .expect("ensure directory action should run");
+        assert_eq!(first.exit_code, 0);
+        let cache_path = fixture.dir.path().join(".cache/dev");
+        assert!(
+            cache_path.is_dir(),
+            "expected {:?} to be a directory",
+            cache_path
+        );
+        assert!(
+            first.stdout.contains("ensured directory `.cache/dev`"),
+            "{}",
+            first.stdout
+        );
+
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:cache")
+            .expect("ensure directory action should be idempotent");
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second
+                .stdout
+                .contains("`.cache/dev` already exists; no directory create needed"),
+            "{}",
+            second.stdout
         );
     }
 

@@ -3173,6 +3173,11 @@ fn summarize_task_action<'a>(
             from: spec.template.as_deref(),
             to: Some(spec.path.as_str()),
         }),
+        crate::schema::TaskActionSpec::EnsureDirectory(spec) => Some(TaskActionSummary {
+            kind: "ensure_directory",
+            from: None,
+            to: Some(spec.path.as_str()),
+        }),
     }
 }
 
@@ -3230,6 +3235,11 @@ pub fn summarize_task_action_owned(
         crate::schema::TaskActionSpec::EnsureFile(spec) => Some(WorkspaceTaskActionSummary {
             kind: "ensure_file",
             from: spec.template.clone(),
+            to: Some(spec.path.clone()),
+        }),
+        crate::schema::TaskActionSpec::EnsureDirectory(spec) => Some(WorkspaceTaskActionSummary {
+            kind: "ensure_directory",
+            from: None,
             to: Some(spec.path.clone()),
         }),
     }

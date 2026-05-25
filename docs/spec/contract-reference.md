@@ -1418,7 +1418,7 @@ Task-effect rules:
 `action` fields:
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
-  `ensure_file`
+  `ensure_file`, or `ensure_directory`
 - `action.kind: copy_if_missing`
   - `action.from`: required repo-relative source file
   - `action.to`: required repo-relative destination file
@@ -1438,6 +1438,8 @@ Task-effect rules:
     - `action.random`: generate random file content
   - `action.random.bytes`: optional byte length (default `32`)
   - `action.random.encoding`: optional `hex` or `base64` (default `hex`)
+- `action.kind: ensure_directory`
+  - `action.path`: required repo-relative directory path to create when missing
 
 Use `action.kind: copy_if_missing` for setup steps like creating `.env.local` from
 `.env.example` without depending on POSIX `test` / `cp` or PowerShell conditionals. The action is
@@ -1450,6 +1452,10 @@ missing keys from `action.vars`, so repeated runs do not clobber user-edited val
 Use `action.kind: ensure_file` when setup needs one deterministic bootstrap file (for example a
 secret token file) without shell glue. It creates `action.path` once from one explicit source
 (`template`, `value`, or `random`) and leaves existing files untouched on repeat runs.
+
+Use `action.kind: ensure_directory` when setup needs a deterministic repo-local directory without
+shell glue. It creates `action.path` when missing, no-ops when it already exists as a directory,
+and fails if the path already exists as a non-directory.
 
 `requirements` fields:
 
@@ -1484,8 +1490,8 @@ secret token file) without shell glue. It creates `action.path` once from one ex
   dependency closure and merge those task-scoped requirements before diagnosing preconditions
 - an explicitly selected workflow with no `setup.task` has no setup prerequisite phase; legacy
   `tasks.setup` fallback is reserved for the unselected default compatibility path
-- `requirements.checks` must reference top-level checks declared with `kind: precondition` or
-  `kind: file`
+- `requirements.checks` must reference top-level checks declared with `kind: precondition`,
+  `kind: file`, or `kind: changed_files`
 - when the selected workflow task closure declares any task-scoped requirements, unreferenced
   top-level precondition checks are treated as reusable definitions rather than global gates for
   that path; reference a check from `requirements.checks` when that task path needs it
@@ -2381,27 +2387,81 @@ checks:
     severity: error
     path: node_modules
     expect: directory
+  - name: app-source-changed
+    kind: changed_files
+    severity: info
+    changed_files:
+      paths:
+        - apps/web/**
+      include_untracked: true
 ```
 
 Fields:
 
 - `name`: required, non-empty string
-- `kind`: `precondition`, `health`, or `file`
+- `kind`: `precondition`, `health`, `file`, or `changed_files`
 - `severity`: `error`, `warn`, or `info`
 - `run`: optional shell command when the check is command-backed
 - `probe`: optional probe reference when the check is probe-backed
 - `path`: optional repo-relative path when the check is file-backed
 - `expect`: required for `kind: file`; one of `exists`, `file`, `directory`, or `missing`
+- `changed_files`: required for `kind: changed_files`
+  - `changed_files.paths`: required non-empty repo-relative path matchers
+  - `changed_files.base_ref`: optional git base ref for diff range
+  - `changed_files.head_ref`: optional git head ref for diff range
+  - `changed_files.include_untracked`: optional boolean; when true, untracked files matching
+    `paths` also satisfy the check
 - `timeout`: optional integer in milliseconds
+
+Choose check kind by intent:
+
+- use `kind: precondition` for prerequisite commands that must pass before setup or run
+  (runtime/tool presence, host capability checks, policy gates)
+- use `kind: health` with `probe` for readiness/liveness that should reuse one declared
+  `readiness.probes.<name>` contract
+- use `kind: file` for deterministic repo filesystem expectations without shell drift
+  (`node_modules` exists, lockfile is present, bootstrap file is intentionally missing)
+- use `kind: changed_files` when the gate should depend on whether a path set changed in git
+  rather than host/runtime state
+
+`kind: file` + `expect` decision:
+
+- `expect: exists` when either file or directory is acceptable
+- `expect: file` when only regular file presence should satisfy the check
+- `expect: directory` when only directory presence should satisfy the check
+- `expect: missing` when absence is required (for example enforce no generated artifact in tree)
+
+`kind: changed_files` decision:
+
+- set only `paths` to compare against `HEAD` by default
+- set both `base_ref` and `head_ref` for explicit CI ranges (for example PR base to branch head)
+- set `include_untracked: true` when new untracked files in the matcher set should count as
+  changed
+
+`severity` decision:
+
+- use `error` when failure should block readiness and execution
+- use `warn` when failure is actionable but should not block the main path
+- use `info` when the check is informational signal only (for example change-scope hints)
+
+`timeout` decision:
+
+- set timeout for checks that can hang or run unpredictably on shared CI agents
+- keep timeout unset for fast deterministic checks (ota uses normal completion behavior)
+- for probe-backed checks, set timeout on the check only when this check needs a tighter override
+  than the shared probe timeout
 
 Current behavior:
 
 - `up` uses preconditions before setup
 - `doctor` runs configured checks and reports findings by severity
-- checks must declare exactly one of `run`, `probe`, or `path`
+- checks must declare exactly one of `run`, `probe`, `path`, or `changed_files`
 - `checks[].probe` must reference a named `readiness.probes.<name>` declaration
 - file checks use the repo filesystem directly and do not invoke a shell; prefer them over
   `run: test -d ...` or other OS-specific shell checks for file and directory state
+- changed-files checks evaluate tracked diffs via git (`base_ref..head_ref` when both refs are
+  declared, otherwise against `HEAD`) and may include untracked matches when
+  `include_untracked: true`
 - probe-backed checks use the check timeout when one is declared, otherwise they inherit the probe
   timeout
 - when `timeout` is set, `doctor` fails the check if it does not finish within the configured millisecond budget
@@ -2507,8 +2567,6 @@ Agent semantics:
 - do not use `exceptions.sensitive_writes` for normal readiness slices where the agent should not
   edit the contract, CI, topology, env/config, or lockfiles; put those files under
   `protected_paths` instead
-- legacy contracts may still use `acknowledged_sensitive_writable_paths` as a compatibility alias,
-  but new contracts should use `exceptions.sensitive_writes`
 - `protected_paths` are the paths an AI agent should avoid editing casually
 - lockfiles, env/config files, runtime-topology files, CI workflow files, and repo contracts
   should usually stay under `protected_paths` for readiness slices unless the contract explicitly
