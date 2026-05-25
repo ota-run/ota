@@ -79,6 +79,17 @@ jobs:
             env -u RUSTC_WRAPPER cargo install --path . --locked
           fi
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install JSON Schema validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --quiet "jsonschema>=4.18,<5"
+
       - name: Ensure cargo is on PATH (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -111,12 +122,34 @@ jobs:
               raise SystemExit(output.returncode)
           payload = output.stdout or output.stderr
           body = json.loads(payload)
+
+          from jsonschema import Draft202012Validator, RefResolver
+
+          schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
+          schema_store = {}
+          for candidate in schema_dir.glob("*.json"):
+              candidate_doc = json.loads(candidate.read_text(encoding="utf-8"))
+              schema_store[candidate.resolve().as_uri()] = candidate_doc
+              candidate_id = candidate_doc.get("$id")
+              if isinstance(candidate_id, str) and candidate_id:
+                  schema_store[candidate_id] = candidate_doc
+          schema_path = (schema_dir / "run-preview.json").resolve()
+          schema = schema_store[schema_path.as_uri()]
+          resolver = RefResolver(
+              base_uri=schema_path.as_uri(),
+              referrer=schema,
+              store=schema_store,
+          )
+          Draft202012Validator(schema, resolver=resolver).validate(body)
+
           assert body["dry_run"] is True
           assert body["task"] == "ci"
           assert isinstance(body["plan"]["actions"], list)
           assert body["requested_task"]["name"] == "ci"
           assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
-          assert body["summary"]["verdict"] in {"ready", "risky", "not_ready", "policy_blocked", "agent_blocked"}
+          verdict = body["summary"]["verdict"]
+          assert isinstance(verdict, str)
+          assert verdict
           if output.returncode == 0:
               assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS"}
           else:
@@ -143,6 +176,26 @@ jobs:
               raise SystemExit(output.returncode)
           payload = output.stdout or output.stderr
           body = json.loads(payload)
+
+          from jsonschema import Draft202012Validator, RefResolver
+
+          schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
+          schema_store = {}
+          for candidate in schema_dir.glob("*.json"):
+              candidate_doc = json.loads(candidate.read_text(encoding="utf-8"))
+              schema_store[candidate.resolve().as_uri()] = candidate_doc
+              candidate_id = candidate_doc.get("$id")
+              if isinstance(candidate_id, str) and candidate_id:
+                  schema_store[candidate_id] = candidate_doc
+          schema_path = (schema_dir / "up.json").resolve()
+          schema = schema_store[schema_path.as_uri()]
+          resolver = RefResolver(
+              base_uri=schema_path.as_uri(),
+              referrer=schema,
+              store=schema_store,
+          )
+          Draft202012Validator(schema, resolver=resolver).validate(body)
+
           assert body["dry_run"] is True
           assert body["phase"] == "preview"
           assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
@@ -174,6 +227,17 @@ jobs:
           set -euo pipefail
           env -u RUSTC_WRAPPER cargo install --path . --locked
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install JSON Schema validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --quiet "jsonschema>=4.18,<5"
+
       - name: Validate example contracts
         run: |
           ota validate examples/basic-rust --plain
@@ -199,6 +263,26 @@ jobs:
               raise SystemExit(output.returncode)
           payload = output.stdout or output.stderr
           body = json.loads(payload)
+
+          from jsonschema import Draft202012Validator, RefResolver
+
+          schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
+          schema_store = {}
+          for candidate in schema_dir.glob("*.json"):
+              candidate_doc = json.loads(candidate.read_text(encoding="utf-8"))
+              schema_store[candidate.resolve().as_uri()] = candidate_doc
+              candidate_id = candidate_doc.get("$id")
+              if isinstance(candidate_id, str) and candidate_id:
+                  schema_store[candidate_id] = candidate_doc
+          schema_path = (schema_dir / "run-preview.json").resolve()
+          schema = schema_store[schema_path.as_uri()]
+          resolver = RefResolver(
+              base_uri=schema_path.as_uri(),
+              referrer=schema,
+              store=schema_store,
+          )
+          Draft202012Validator(schema, resolver=resolver).validate(body)
+
           assert body["dry_run"] is True
           assert body["requested_task"]["name"] == "test"
           assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
@@ -229,6 +313,26 @@ jobs:
               raise SystemExit(output.returncode)
           payload = output.stdout or output.stderr
           body = json.loads(payload)
+
+          from jsonschema import Draft202012Validator, RefResolver
+
+          schema_dir = pathlib.Path("docs/spec/json-schemas").resolve()
+          schema_store = {}
+          for candidate in schema_dir.glob("*.json"):
+              candidate_doc = json.loads(candidate.read_text(encoding="utf-8"))
+              schema_store[candidate.resolve().as_uri()] = candidate_doc
+              candidate_id = candidate_doc.get("$id")
+              if isinstance(candidate_id, str) and candidate_id:
+                  schema_store[candidate_id] = candidate_doc
+          schema_path = (schema_dir / "run-preview.json").resolve()
+          schema = schema_store[schema_path.as_uri()]
+          resolver = RefResolver(
+              base_uri=schema_path.as_uri(),
+              referrer=schema,
+              store=schema_store,
+          )
+          Draft202012Validator(schema, resolver=resolver).validate(body)
+
           assert body["dry_run"] is True
           assert body["requested_task"]["name"] == "test"
           assert body["preview_status"] in {"RUNNABLE", "RUNNABLE WITH WARNINGS", "BLOCKED"}
