@@ -32,6 +32,9 @@ on:
       - "docs/spec/**"
       - ".github/workflows/windows-native-proof.yml"
   push:
+    branches:
+      - main
+      - "**"
     paths:
       - "Cargo.toml"
       - "Cargo.lock"
