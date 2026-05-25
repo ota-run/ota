@@ -10665,8 +10665,18 @@ tasks:
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
-        write_fake_command(&bin_dir, "node", "#!/bin/sh\necho v22.12.0\n");
-        write_fake_command(&bin_dir, "npm", "#!/bin/sh\necho 10.5.0\n");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.12.0\r\n"
+        } else {
+            "#!/bin/sh\necho v22.12.0\n"
+        };
+        let npm_body = if cfg!(windows) {
+            "@echo off\r\necho 10.5.0\r\n"
+        } else {
+            "#!/bin/sh\necho 10.5.0\n"
+        };
+        write_fake_command(&bin_dir, "node", node_body);
+        write_fake_command(&bin_dir, "npm", npm_body);
         let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let output = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
