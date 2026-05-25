@@ -43291,6 +43291,7 @@ tasks:
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn run_dry_run_blocks_when_selected_native_prerequisite_requires_do_not_match_host() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
