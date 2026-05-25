@@ -320,6 +320,7 @@ agent:
     - src
     - docs
     - .github/workflows
+    - node_modules
   exceptions:
     sensitive_writes:
       - .github/workflows
