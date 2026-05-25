@@ -43,6 +43,8 @@
   validator store, so `$id`-based refs resolve without external fetches during CI
 - expanded published `tasks.json` task item shape with optional `context` and `notes` fields so
   `run-preview.json` validation for `requested_task` remains schema-accurate on real contracts
+- removed deprecated Python `jsonschema.RefResolver` usage from smoke workflow schema checks by
+  switching preview validation to `referencing.Registry`/`Resource`-backed local schema resolution
 
 ## 1.6.16
 
