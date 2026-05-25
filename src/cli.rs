@@ -1090,6 +1090,7 @@ enum AssistReadinessStyleArg {
     SpringHttp,
     Http,
     Tcp,
+    ComposeHealth,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -41507,6 +41508,44 @@ services:
     }
 
     #[test]
+    fn assist_declare_readiness_json_preview_supports_compose_health_style() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+services:
+  worker:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: worker
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--json",
+            "--service",
+            "worker",
+            "--style",
+            "compose-health",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["operation"], "declare-readiness");
+        assert_eq!(json["subject"]["service"], "worker");
+        assert_eq!(json["changes"][0]["after"]["kind"], "compose_health");
+        assert_eq!(json["changes"][0]["after"]["from"], Value::Null);
+    }
+
+    #[test]
     fn assist_declare_readiness_refuses_ambiguous_managed_service_style_without_selector() {
         let fixture = ContractFixture::new(
             r#"
@@ -41762,6 +41801,91 @@ execution:
         assert!(stdout.contains("ota assist declare-service --name postgres --manager compose"));
         assert!(!stdout.contains("depends_on: []"));
         assert!(!stdout.contains("--required false"));
+    }
+
+    #[test]
+    fn assist_declare_service_supports_compose_health_style_for_compose_manager() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--json",
+            "--name",
+            "worker",
+            "--manager",
+            "compose",
+            "--compose-file",
+            "docker-compose.yml",
+            "--style",
+            "compose-health",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["operation"], "declare-service");
+        assert_eq!(json["subject"]["service"], "worker");
+        assert_eq!(json["changes"][0]["after"]["manager"]["kind"], "compose");
+        assert_eq!(
+            json["changes"][0]["after"]["readiness"]["kind"],
+            "compose_health"
+        );
+        assert_eq!(
+            json["changes"][0]["after"]["readiness"]["from"],
+            Value::Null
+        );
+        assert_eq!(
+            json["changes"][0]["after"]["endpoints"],
+            serde_json::json!({})
+        );
+    }
+
+    #[test]
+    fn assist_declare_service_rejects_compose_health_style_for_host_manager() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--name",
+            "worker",
+            "--manager",
+            "host",
+            "--style",
+            "compose-health",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("`--style compose-health` requires `--manager compose`"));
     }
 
     #[test]

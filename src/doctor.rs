@@ -4163,13 +4163,18 @@ fn service_finding(
     }
 
     if service.required {
+        let compose_managed = service
+            .manager
+            .as_ref()
+            .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Compose);
         let can_anchor_structured_readiness = service
             .readiness
             .as_ref()
             .and_then(ServiceReadinessSpec::from_context)
             .is_some()
             || service.endpoints.contains_key("host")
-            || service.endpoints.len() == 1;
+            || service.endpoints.len() == 1
+            || compose_managed;
 
         let why = if can_anchor_structured_readiness {
             format!(
@@ -4182,9 +4187,15 @@ fn service_finding(
         };
 
         let next = if can_anchor_structured_readiness {
-            format!(
-                "declare readiness with `ota assist declare-readiness --service {name} --style tcp` or `--style http`, then rerun `ota doctor`"
-            )
+            if compose_managed {
+                format!(
+                    "declare readiness with `ota assist declare-readiness --service {name} --style compose-health` (or `--style tcp` / `--style http`), then rerun `ota doctor`"
+                )
+            } else {
+                format!(
+                    "declare readiness with `ota assist declare-readiness --service {name} --style tcp` or `--style http`, then rerun `ota doctor`"
+                )
+            }
         } else {
             format!(
                 "refine the managed service with `ota assist declare-service --name {name} --style tcp` or `--style http`, then rerun `ota doctor`"
@@ -4475,6 +4486,13 @@ fn run_service_readiness(
     working_dir: &Path,
     readiness: &crate::schema::ServiceReadinessSpec,
 ) -> Result<CheckStatus, RunError> {
+    if matches!(
+        readiness.structured_kind(),
+        Some(crate::schema::ServiceReadinessKind::ComposeHealth)
+    ) {
+        return run_service_compose_health_readiness(name, service, working_dir, readiness);
+    }
+
     let Some(from_context) = readiness.from_context() else {
         return Ok(CheckStatus::Failed);
     };
@@ -4607,7 +4625,7 @@ fn run_service_readiness(
     loop {
         if is_native_backend {
             match kind {
-                crate::schema::TaskRuntimeReadinessKind::Http => {
+                crate::schema::ServiceReadinessKind::Http => {
                     let request = HttpReadinessRequest {
                         method: readiness
                             .method
@@ -4641,7 +4659,7 @@ fn run_service_readiness(
                         }
                     }
                 }
-                crate::schema::TaskRuntimeReadinessKind::Tcp => {
+                crate::schema::ServiceReadinessKind::Tcp => {
                     let timeout = readiness
                         .timeout
                         .as_deref()
@@ -4660,6 +4678,9 @@ fn run_service_readiness(
                         }
                     }
                 }
+                crate::schema::ServiceReadinessKind::ComposeHealth => unreachable!(
+                    "compose health readiness is handled before endpoint projection"
+                ),
             }
         } else {
             let command = structured_service_readiness_command(readiness, endpoint, kind);
@@ -4718,15 +4739,61 @@ fn cap_doctor_readiness_start_period(duration: Duration) -> Duration {
 fn structured_service_readiness_command(
     readiness: &crate::schema::ServiceReadinessSpec,
     endpoint: &crate::schema::ServiceEndpointSpec,
-    kind: crate::schema::TaskRuntimeReadinessKind,
+    kind: crate::schema::ServiceReadinessKind,
 ) -> String {
     match kind {
-        crate::schema::TaskRuntimeReadinessKind::Http => {
+        crate::schema::ServiceReadinessKind::Http => {
             service_http_readiness_probe_command(readiness, endpoint)
         }
-        crate::schema::TaskRuntimeReadinessKind::Tcp => {
+        crate::schema::ServiceReadinessKind::Tcp => {
             service_tcp_readiness_probe_command(readiness, endpoint)
         }
+        crate::schema::ServiceReadinessKind::ComposeHealth => {
+            unreachable!("compose health readiness does not use endpoint probing commands")
+        }
+    }
+}
+
+fn run_service_compose_health_readiness(
+    name: &str,
+    service: &ServiceSpec,
+    working_dir: &Path,
+    readiness: &crate::schema::ServiceReadinessSpec,
+) -> Result<CheckStatus, RunError> {
+    let command = service
+        .manager
+        .as_ref()
+        .and_then(|manager| manager.compose_health_status_command(name));
+    let Some(command) = command else {
+        return Ok(CheckStatus::Failed);
+    };
+
+    let timing = service_readiness_timing_policy(readiness);
+    if !timing.start_period.is_zero() {
+        thread::sleep(timing.start_period);
+    }
+
+    let backend = ResolvedExecutionBackend::Native {
+        shared_local_backend: None,
+    };
+    let mut failed_attempts = 0u32;
+    loop {
+        match run_backend_command_captured(
+            &format!("readiness:{name}"),
+            command.as_str(),
+            working_dir,
+            &backend,
+        ) {
+            Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
+            Ok(_) => {
+                failed_attempts = failed_attempts.saturating_add(1);
+                if failed_attempts >= timing.retries {
+                    return Ok(CheckStatus::Failed);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+        thread::sleep(timing.interval);
     }
 }
 
@@ -16342,7 +16409,7 @@ tasks:
     }
 
     #[test]
-    fn required_compose_service_without_endpoint_routes_to_declare_service() {
+    fn required_compose_service_without_endpoint_routes_to_compose_health_readiness() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
             r#"
@@ -16369,8 +16436,107 @@ tasks:
         assert_eq!(report.findings.len(), 1);
         assert_eq!(
             report.findings[0].next,
-            "refine the managed service with `ota assist declare-service --name postgres --style tcp` or `--style http`, then rerun `ota doctor`"
+            "declare readiness with `ota assist declare-readiness --service postgres --style compose-health` (or `--style tcp` / `--style http`), then rerun `ota doctor`"
         );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn diagnose_service_supports_structured_compose_health_readiness() {
+        struct EnvPathGuard {
+            original: Option<std::ffi::OsString>,
+        }
+
+        impl Drop for EnvPathGuard {
+            fn drop(&mut self) {
+                match &self.original {
+                    Some(path) => unsafe {
+                        env::set_var("PATH", path);
+                    },
+                    None => unsafe {
+                        env::remove_var("PATH");
+                    },
+                }
+            }
+        }
+
+        let _guard = env_mutex_lock();
+        let temp_dir = TempDir::new().unwrap();
+        let bin_dir = temp_dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let original_path = env::var_os("PATH");
+        let path_separator = ':';
+        let new_path = match &original_path {
+            Some(path) => {
+                format!(
+                    "{}{}{}",
+                    bin_dir.display(),
+                    path_separator,
+                    path.to_string_lossy()
+                )
+            }
+            None => bin_dir.display().to_string(),
+        };
+        let _path_guard = EnvPathGuard {
+            original: original_path,
+        };
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        write_fake_command(
+            &bin_dir,
+            "docker",
+            "#!/bin/sh\n\
+if [ \"$1\" = \"compose\" ]; then\n\
+  shift\n\
+  while [ $# -gt 0 ]; do\n\
+    if [ \"$1\" = \"ps\" ]; then\n\
+      shift\n\
+      if [ \"$1\" = \"-q\" ]; then\n\
+        echo worker-container\n\
+        exit 0\n\
+      fi\n\
+    fi\n\
+    shift\n\
+  done\n\
+  exit 1\n\
+fi\n\
+if [ \"$1\" = \"inspect\" ]; then\n\
+  echo healthy\n\
+  exit 0\n\
+fi\n\
+exit 1\n",
+        );
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  worker:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: worker
+    readiness:
+      kind: compose_health
+      interval: 10ms
+      retries: 1
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_service(&contract, synthetic_contract_path(), "worker");
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
     }
 
     #[test]
