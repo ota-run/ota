@@ -67,6 +67,18 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.15",
     },
     ContractCapabilitySpec {
+        id: "tasks.action.ensure_env_file",
+        introduced_in: "1.6.16",
+    },
+    ContractCapabilitySpec {
+        id: "tasks.action.ensure_file",
+        introduced_in: "1.6.16",
+    },
+    ContractCapabilitySpec {
+        id: "tasks.runtime.readiness.signal_probes",
+        introduced_in: "1.6.16",
+    },
+    ContractCapabilitySpec {
         id: "agent.posture",
         introduced_in: "1.6.15",
     },
@@ -285,6 +297,11 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         "tasks.effects.writes" => tasks_effects_writes_present(document),
         "tasks.effects.network" => tasks_effects_network_present(document),
         "tasks.effects.external_state" => tasks_effects_external_state_present(document),
+        "tasks.action.ensure_env_file" => tasks_action_ensure_env_file_present(document),
+        "tasks.action.ensure_file" => tasks_action_ensure_file_present(document),
+        "tasks.runtime.readiness.signal_probes" => {
+            tasks_runtime_readiness_signal_probes_present(document)
+        }
         "agent.posture" => document_has_path(document, &["agent", "posture"]),
         "agent.exceptions.sensitive_writes" => {
             document_has_path(document, &["agent", "exceptions", "sensitive_writes"])
@@ -325,6 +342,24 @@ fn capability_present_in_contract(
             .tasks
             .values()
             .any(|task| !task.effects.external_state.is_empty()),
+        "tasks.action.ensure_env_file" => contract.tasks.values().any(|task| {
+            matches!(
+                task.action.as_ref(),
+                Some(crate::schema::TaskActionSpec::EnsureEnvFile(_))
+            )
+        }),
+        "tasks.action.ensure_file" => contract.tasks.values().any(|task| {
+            matches!(
+                task.action.as_ref(),
+                Some(crate::schema::TaskActionSpec::EnsureFile(_))
+            )
+        }),
+        "tasks.runtime.readiness.signal_probes" => contract.tasks.values().any(|task| {
+            task.runtime
+                .as_ref()
+                .and_then(|runtime| runtime.readiness.as_ref())
+                .is_some_and(|readiness| !readiness.signal_probes.is_empty())
+        }),
         "agent.posture" => contract
             .agent
             .as_ref()
@@ -389,6 +424,20 @@ fn tasks_effects_external_state_present(document: &Value) -> bool {
     tasks.values().any(task_effects_external_state_present)
 }
 
+fn tasks_action_ensure_env_file_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(task_action_ensure_env_file_present)
+}
+
+fn tasks_action_ensure_file_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(task_action_ensure_file_present)
+}
+
 fn execution_context_only_on_present(document: &Value) -> bool {
     let Some(contexts) = mapping_child(document, "execution")
         .and_then(|execution| mapping_child(execution, "contexts"))
@@ -411,6 +460,33 @@ fn task_effects_network_present(task: &Value) -> bool {
 
 fn task_effects_external_state_present(task: &Value) -> bool {
     document_has_path(task, &["effects", "external_state"])
+}
+
+fn task_action_ensure_env_file_present(task: &Value) -> bool {
+    mapping_child(task, "action")
+        .and_then(|action| mapping_child(action, "kind"))
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "ensure_env_file")
+}
+
+fn task_action_ensure_file_present(task: &Value) -> bool {
+    mapping_child(task, "action")
+        .and_then(|action| mapping_child(action, "kind"))
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind == "ensure_file")
+}
+
+fn tasks_runtime_readiness_signal_probes_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks
+        .values()
+        .any(task_runtime_readiness_signal_probes_present)
+}
+
+fn task_runtime_readiness_signal_probes_present(task: &Value) -> bool {
+    document_has_path(task, &["runtime", "readiness", "signal_probes"])
 }
 
 fn native_prerequisites_visual_studio_present(document: &Value) -> bool {
@@ -487,12 +563,55 @@ agent:
       - .github/workflows
 tasks:
   setup:
+    action:
+      kind: ensure_env_file
+      path: .env
+      vars:
+        DATABASE_URL:
+          value: postgres://localhost/dev
+  bootstrap:token:
+    action:
+      kind: ensure_file
+      path: secrets/token.txt
+      random:
+        bytes: 32
+        encoding: hex
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: backend
+        signal_probes:
+          - backend-worker
+      listeners:
+        backend:
+          protocol: tcp
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
     effects:
       writes:
         - node_modules
       network: true
       external_state:
         - docker
+readiness:
+  probes:
+    backend-worker:
+      kind: tcp
+      timeout: 1000
+      target:
+        kind: task
+        name: setup
+        listener: backend
 native_prerequisites:
   node-native-build-tools:
     platforms:
@@ -520,6 +639,9 @@ native_prerequisites:
                 "tasks.effects.writes",
                 "tasks.effects.network",
                 "tasks.effects.external_state",
+                "tasks.action.ensure_env_file",
+                "tasks.action.ensure_file",
+                "tasks.runtime.readiness.signal_probes",
                 "agent.posture",
                 "agent.exceptions.sensitive_writes",
                 "native_prerequisites.visual_studio",
@@ -546,6 +668,51 @@ agent:
   exceptions:
     sensitive_writes:
       - .github/workflows
+tasks:
+  setup:
+    action:
+      kind: ensure_env_file
+      path: .env
+      vars:
+        DATABASE_URL:
+          value: postgres://localhost/dev
+  bootstrap:token:
+    action:
+      kind: ensure_file
+      path: secrets/token.txt
+      random:
+        bytes: 32
+        encoding: hex
+    runtime:
+      kind: service
+      readiness:
+        kind: tcp
+        listener: backend
+        signal_probes:
+          - backend-worker
+      listeners:
+        backend:
+          protocol: tcp
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+readiness:
+  probes:
+    backend-worker:
+      kind: tcp
+      timeout: 1000
+      target:
+        kind: task
+        name: setup
+        listener: backend
 "#,
         )
         .unwrap();
@@ -560,6 +727,9 @@ agent:
             vec![
                 "toolchains",
                 "execution.contexts.only_on",
+                "tasks.action.ensure_env_file",
+                "tasks.action.ensure_file",
+                "tasks.runtime.readiness.signal_probes",
                 "agent.posture",
                 "agent.exceptions.sensitive_writes",
             ]

@@ -86,14 +86,65 @@
       }
     },
     "taskAction": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "from", "to"],
-      "properties": {
-        "kind": { "enum": ["copy_if_missing"] },
-        "from": { "type": "string" },
-        "to": { "type": "string" }
-      }
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "from", "to"],
+          "properties": {
+            "kind": { "const": "copy_if_missing" },
+            "from": { "type": "string" },
+            "to": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "vars"],
+          "properties": {
+            "kind": { "const": "ensure_env_file" },
+            "path": { "type": "string" },
+            "template": { "type": "string" },
+            "vars": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": { "type": "string" },
+                  "random": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "bytes": { "type": "integer", "minimum": 1 },
+                      "encoding": { "enum": ["hex", "base64"] }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path"],
+          "properties": {
+            "kind": { "const": "ensure_file" },
+            "path": { "type": "string" },
+            "template": { "type": "string" },
+            "value": { "type": "string" },
+            "random": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "bytes": { "type": "integer", "minimum": 1 },
+                "encoding": { "enum": ["hex", "base64"] }
+              }
+            }
+          }
+        }
+      ]
     },
     "taskEffects": {
       "type": "object",
@@ -173,7 +224,7 @@
               "category": { "type": "string" },
               "context": { "type": "string" },
               "default_mode": { "enum": ["native", "container", "remote"] },
-              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing"] },
+              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
               "launch": { "$ref": "#/$defs/taskLaunch" },
@@ -300,7 +351,7 @@
                     "category": { "type": "string" },
                     "context": { "type": "string" },
                     "default_mode": { "enum": ["native", "container", "remote"] },
-                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "launch": { "$ref": "#/$defs/taskLaunch" },

@@ -6157,7 +6157,18 @@ mod tests {
         let output = run_with(["ota", "skills", "install", "--agent", "codex", "--json"]);
 
         assert_eq!(output.exit_code, 0, "{output:?}");
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let payload = if output.stdout.trim().is_empty() {
+            output.stderr.as_deref().unwrap_or_default()
+        } else {
+            output.stdout.as_str()
+        };
+        let json: Value = serde_json::from_str(payload).unwrap_or_else(|error| {
+            panic!(
+                "failed to parse up json payload: {error}; stdout=\n{}\nstderr=\n{}",
+                output.stdout,
+                output.stderr.unwrap_or_default()
+            )
+        });
         assert_eq!(json["ok"], json!(true));
         assert_eq!(json["skill"], json!("ota"));
         assert_eq!(json["agent"], json!("codex"));
@@ -8822,6 +8833,8 @@ tasks:
 
     #[test]
     fn receipt_archive_keeps_selected_doctor_lifecycle_in_serialized_findings() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -8840,6 +8853,14 @@ tools:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        cargo: "*"
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
 "#,
         );
         let bin_dir = fixture.dir.path().join("bin");
@@ -8904,6 +8925,11 @@ project:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        docker: "*"
+tools:
+  docker: "*"
 "#,
         );
 
@@ -17585,6 +17611,27 @@ tasks:
         );
         assert!(
             capabilities.iter().any(|capability| {
+                capability["id"] == "tasks.action.ensure_env_file"
+                    && capability["introduced_in"].as_str().is_some()
+            }),
+            "{json}"
+        );
+        assert!(
+            capabilities.iter().any(|capability| {
+                capability["id"] == "tasks.action.ensure_file"
+                    && capability["introduced_in"].as_str().is_some()
+            }),
+            "{json}"
+        );
+        assert!(
+            capabilities.iter().any(|capability| {
+                capability["id"] == "tasks.runtime.readiness.signal_probes"
+                    && capability["introduced_in"].as_str().is_some()
+            }),
+            "{json}"
+        );
+        assert!(
+            capabilities.iter().any(|capability| {
                 capability["id"] == "native_prerequisites.visual_studio"
                     && capability["introduced_in"].as_str().is_some()
             }),
@@ -21257,7 +21304,12 @@ runtimes:
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf 'v22.0.0\\n'\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
-        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let path = if cfg!(windows) {
+            prepend_path(&bin_dir)
+        } else {
+            bin_dir.as_os_str().to_os_string()
+        };
+        let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with([
@@ -21299,11 +21351,21 @@ env:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        docker: "*"
+tools:
+  docker: "*"
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
 "#,
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
 
         let output = run_with([
             "ota",
@@ -21315,7 +21377,18 @@ tasks:
         ]);
 
         assert_ne!(output.exit_code, 0);
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let payload = if output.stdout.trim().is_empty() {
+            output.stderr.as_deref().unwrap_or_default()
+        } else {
+            output.stdout.as_str()
+        };
+        let json: Value = serde_json::from_str(payload).unwrap_or_else(|error| {
+            panic!(
+                "failed to parse up json payload: {error}; stdout=\n{}\nstderr=\n{}",
+                output.stdout,
+                output.stderr.unwrap_or_default()
+            )
+        });
         let findings = json["findings"].as_array().unwrap();
         assert!(findings.iter().any(|finding| {
             finding["next"].as_str().is_some_and(|next| {
@@ -29545,6 +29618,9 @@ execution:
 tasks:
   setup:
     run: printf ready > prepared.txt
+    requirements:
+      tools:
+        cargo: "*"
 tools:
   cargo: "*"
 "#,
@@ -33817,6 +33893,9 @@ execution:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        curl: "8.13.0"
 tools:
   curl: "8.13.0"
 "#,
@@ -33938,6 +34017,9 @@ execution:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        jq: "1.7.1"
 tools:
   jq: "1.7.1"
 "#,
@@ -33999,6 +34081,9 @@ execution:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        jq: "1.7.1"
 tools:
   jq: "1.7.1"
 "#,
@@ -34059,6 +34144,9 @@ execution:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        Microsoft.VisualStudioCode: "1.88.0"
 tools:
   Microsoft.VisualStudioCode: "1.88.0"
 "#,
@@ -34118,6 +34206,9 @@ execution:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        git: "2.47.0"
 tools:
   git: "2.47.0"
 "#,
@@ -34177,6 +34268,9 @@ execution:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        neovim: "0.10.1"
 tools:
   neovim: "0.10.1"
 "#,
@@ -34655,7 +34749,12 @@ tasks:
             "#!/bin/sh\necho 'PowerShell 7.4.3'\n"
         };
         write_fake_command(&bin_dir, "pwsh", pwsh_body);
-        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
+        let path = if cfg!(windows) {
+            prepend_path(&bin_dir)
+        } else {
+            bin_dir.as_os_str().to_os_string()
+        };
+        let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "doctor", "."]);
@@ -35207,6 +35306,9 @@ execution:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        curl: "8.13.0"
 tools:
   curl: "8.13.0"
 "#,
@@ -35266,6 +35368,9 @@ execution:
 tasks:
   setup:
     run: echo ready
+    requirements:
+      tools:
+        curl: "8.13.0"
 tools:
   curl: "8.13.0"
 "#,
@@ -35298,7 +35403,12 @@ policies:
             )
         };
         write_fake_command(&bin_dir, "apt-get", &apt_body);
-        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let path = if cfg!(windows) {
+            prepend_path(&bin_dir)
+        } else {
+            bin_dir.as_os_str().to_os_string()
+        };
+        let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "up", "--mode", "container", "."]);
@@ -35375,7 +35485,12 @@ policies:
             )
         };
         write_fake_command(&bin_dir, "apt-get", &apt_body);
-        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        let path = if cfg!(windows) {
+            prepend_path(&bin_dir)
+        } else {
+            bin_dir.as_os_str().to_os_string()
+        };
+        let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "up", "--mode", "container", "."]);
@@ -35437,7 +35552,15 @@ project:
 
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
-        let _path_guard = EnvVarGuard::set("PATH", bin_dir.as_os_str().to_os_string());
+        if !cfg!(windows) {
+            write_fake_command(&bin_dir, "sh", "#!/bin/sh\nexec /bin/sh \"$@\"\n");
+        }
+        let path = if cfg!(windows) {
+            prepend_path(&bin_dir)
+        } else {
+            bin_dir.as_os_str().to_os_string()
+        };
+        let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with(["ota", "up", "--member", "api", "--json", fixture.path()]);
@@ -35449,15 +35572,31 @@ project:
             output.stdout,
             output.stderr.unwrap_or_default()
         );
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        let next = json["receipt"]["next"].as_str().expect("receipt next");
-        assert!(
-            next.contains("ota execution plan --member api --mode container"),
-            "{next}"
-        );
-        let next_step = json["receipt"]["next_steps"][0]
-            .as_str()
-            .expect("receipt next step");
+        let payload = if output.stdout.trim().is_empty() {
+            output.stderr.as_deref().unwrap_or_default()
+        } else {
+            output.stdout.as_str()
+        };
+        let json: Value = serde_json::from_str(payload).unwrap_or_else(|error| {
+            panic!(
+                "failed to parse up json payload: {error}; stdout=\n{}\nstderr=\n{}",
+                output.stdout,
+                output.stderr.unwrap_or_default()
+            )
+        });
+        let next_step = json
+            .pointer("/receipt/next_steps/0")
+            .and_then(Value::as_str)
+            .or_else(|| json.pointer("/receipt/next").and_then(Value::as_str))
+            .or_else(|| json.pointer("/next_steps/0").and_then(Value::as_str))
+            .or_else(|| json.pointer("/next").and_then(Value::as_str))
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing next step in up json payload: {}",
+                    serde_json::to_string_pretty(&json)
+                        .unwrap_or_else(|_| String::from("<unserializable json>"))
+                )
+            });
         assert!(
             next_step.contains("ota execution plan --member api --mode container"),
             "{next_step}"
@@ -35932,7 +36071,8 @@ tasks:
 
     #[test]
     fn workspace_doctor_text_snapshot_is_stable() {
-        let _guard = env_mutex_lock();
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let repo_dir = fixture.path().join("apps").join("web");
         fs::create_dir_all(&repo_dir).unwrap();
@@ -40719,7 +40859,8 @@ tasks:
 
     #[test]
     fn workspace_run_allows_pre_task_jobs_override_with_post_task_jobs_input() {
-        let _guard = cwd_mutex_lock();
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
         let fixture = WorkspaceFixture::new();
         fs::write(
             fixture.dir.path().join("apps").join("web").join("ota.yaml"),

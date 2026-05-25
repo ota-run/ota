@@ -6368,7 +6368,284 @@ fn execute_native_file_action_task(
                 copy.to.trim()
             )))
         }
+        crate::schema::TaskActionSpec::EnsureEnvFile(spec) => {
+            execute_ensure_env_file_action(task_name, spec, working_dir)
+        }
+        crate::schema::TaskActionSpec::EnsureFile(spec) => {
+            execute_ensure_file_action(task_name, spec, working_dir)
+        }
     }
+}
+
+fn execute_ensure_env_file_action(
+    task_name: &str,
+    spec: &crate::schema::TaskEnsureEnvFileActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    let path = working_dir.join(spec.path.trim());
+    let mut created = false;
+    if !path.exists() {
+        if let Some(parent) = path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent).map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not create parent directory for `{}`: {source}",
+                    spec.path.trim()
+                ),
+            })?;
+        }
+        if let Some(template) = spec.template.as_deref() {
+            let template_path = working_dir.join(template.trim());
+            if !template_path.is_file() {
+                return Err(RunError::FileActionFailed {
+                    task: task_name.to_string(),
+                    message: format!("template `{}` is not a file", template.trim()),
+                });
+            }
+            std::fs::copy(&template_path, &path).map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not copy template `{}` to `{}`: {source}",
+                    template.trim(),
+                    spec.path.trim()
+                ),
+            })?;
+        } else {
+            std::fs::write(&path, "").map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!("could not create `{}`: {source}", spec.path.trim()),
+            })?;
+        }
+        created = true;
+    }
+
+    let content = std::fs::read_to_string(&path).map_err(|source| RunError::FileActionFailed {
+        task: task_name.to_string(),
+        message: format!("could not read `{}`: {source}", spec.path.trim()),
+    })?;
+    let existing_keys = parse_env_keys(content.as_str());
+    let mut missing = Vec::<(String, String)>::new();
+    for (key, value_spec) in &spec.vars {
+        if existing_keys.contains(key.as_str()) {
+            continue;
+        }
+        let value = resolve_ensure_env_var_value(task_name, key.as_str(), value_spec)?;
+        missing.push((key.clone(), value));
+    }
+
+    if !missing.is_empty() {
+        let mut append = String::new();
+        if !content.is_empty() && !content.ends_with('\n') {
+            append.push('\n');
+        }
+        for (key, value) in &missing {
+            append.push_str(key);
+            append.push('=');
+            append.push_str(value);
+            append.push('\n');
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!("could not append to `{}`: {source}", spec.path.trim()),
+            })?;
+        use std::io::Write;
+        file.write_all(append.as_bytes())
+            .map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not append env values to `{}`: {source}",
+                    spec.path.trim()
+                ),
+            })?;
+    }
+
+    let summary = if created {
+        format!(
+            "ensured `{}` (created), appended {} env key(s)\n",
+            spec.path.trim(),
+            missing.len()
+        )
+    } else {
+        format!(
+            "ensured `{}`, appended {} env key(s)\n",
+            spec.path.trim(),
+            missing.len()
+        )
+    };
+    Ok(file_action_output(summary))
+}
+
+fn execute_ensure_file_action(
+    task_name: &str,
+    spec: &crate::schema::TaskEnsureFileActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    let path = working_dir.join(spec.path.trim());
+    if path.exists() {
+        return Ok(file_action_output(format!(
+            "`{}` already exists; no write needed\n",
+            spec.path.trim()
+        )));
+    }
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not create parent directory for `{}`: {source}",
+                spec.path.trim()
+            ),
+        })?;
+    }
+
+    let created_message = if let Some(template) = spec.template.as_deref() {
+        let template_path = working_dir.join(template.trim());
+        if !template_path.is_file() {
+            return Err(RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!("template `{}` is not a file", template.trim()),
+            });
+        }
+        std::fs::copy(&template_path, &path).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not copy template `{}` to `{}`: {source}",
+                template.trim(),
+                spec.path.trim()
+            ),
+        })?;
+        format!(
+            "ensured `{}` from template `{}`\n",
+            spec.path.trim(),
+            template.trim()
+        )
+    } else {
+        let content = if let Some(value) = spec.value.as_deref() {
+            value.to_string()
+        } else if let Some(random) = spec.random.as_ref() {
+            let mut buffer = vec![0_u8; random.bytes];
+            getrandom::getrandom(&mut buffer).map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not generate random content for `{}`: {source}",
+                    spec.path.trim()
+                ),
+            })?;
+            match random.encoding {
+                crate::schema::TaskEnsureEnvRandomEncoding::Hex => encode_hex(buffer.as_slice()),
+                crate::schema::TaskEnsureEnvRandomEncoding::Base64 => {
+                    encode_base64(buffer.as_slice())
+                }
+            }
+        } else {
+            return Err(RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "action `ensure_file` for `{}` must declare one of `template`, `value`, or `random`",
+                    spec.path.trim()
+                ),
+            });
+        };
+        std::fs::write(&path, content).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not write `{}`: {source}", spec.path.trim()),
+        })?;
+        format!("ensured `{}`\n", spec.path.trim())
+    };
+
+    Ok(file_action_output(created_message))
+}
+
+fn parse_env_keys(content: &str) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((raw_key, _)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = raw_key.trim();
+        if !key.is_empty() {
+            keys.insert(key.to_string());
+        }
+    }
+    keys
+}
+
+fn resolve_ensure_env_var_value(
+    task_name: &str,
+    key: &str,
+    value_spec: &crate::schema::TaskEnsureEnvVarSpec,
+) -> Result<String, RunError> {
+    if let Some(value) = value_spec.value.as_deref() {
+        return Ok(value.to_string());
+    }
+    if let Some(random) = value_spec.random.as_ref() {
+        let bytes = random.bytes;
+        let mut buffer = vec![0_u8; bytes];
+        getrandom::getrandom(&mut buffer).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not generate random value for env key `{key}`: {source}"),
+        })?;
+        return Ok(match random.encoding {
+            crate::schema::TaskEnsureEnvRandomEncoding::Hex => encode_hex(buffer.as_slice()),
+            crate::schema::TaskEnsureEnvRandomEncoding::Base64 => encode_base64(buffer.as_slice()),
+        });
+    }
+    Err(RunError::FileActionFailed {
+        task: task_name.to_string(),
+        message: format!(
+            "env key `{key}` must declare either `value` or `random` in `action.vars`"
+        ),
+    })
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let mut index = 0;
+    while index + 3 <= bytes.len() {
+        let chunk = ((bytes[index] as u32) << 16)
+            | ((bytes[index + 1] as u32) << 8)
+            | (bytes[index + 2] as u32);
+        out.push(TABLE[((chunk >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((chunk >> 12) & 0x3f) as usize] as char);
+        out.push(TABLE[((chunk >> 6) & 0x3f) as usize] as char);
+        out.push(TABLE[(chunk & 0x3f) as usize] as char);
+        index += 3;
+    }
+    let rem = bytes.len() - index;
+    if rem == 1 {
+        let chunk = (bytes[index] as u32) << 16;
+        out.push(TABLE[((chunk >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((chunk >> 12) & 0x3f) as usize] as char);
+        out.push('=');
+        out.push('=');
+    } else if rem == 2 {
+        let chunk = ((bytes[index] as u32) << 16) | ((bytes[index + 1] as u32) << 8);
+        out.push(TABLE[((chunk >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((chunk >> 12) & 0x3f) as usize] as char);
+        out.push(TABLE[((chunk >> 6) & 0x3f) as usize] as char);
+        out.push('=');
+    }
+    out
 }
 
 fn file_action_output(stdout: String) -> TaskCommandOutput {
@@ -7441,22 +7718,25 @@ fn direct_task_requirement_versions(
 
     let runtime_source = format!("task `{task_name}` runtimes");
     let tool_source = format!("task `{task_name}` tools");
+    let context_name = task.context_for_backend(contract.execution.as_ref(), Backend::Native);
+    let scoped_surface =
+        task.scoped_requirement_surface_for_execution(Backend::Native, context_name);
     merge_requirement_versions(
         &mut runtimes,
-        &task.requirements.runtimes,
+        &scoped_surface.runtimes,
         target_os,
         runtime_source.as_str(),
     )?;
     merge_requirement_versions(
         &mut tools,
-        &task.requirements.tools,
+        &scoped_surface.tools,
         target_os,
         tool_source.as_str(),
     )?;
-    let native_surface = contract.native_prerequisite_requirement_surface_for_os(
-        task.requirements.native.clone(),
-        target_os,
-    );
+    let scoped_native =
+        task.scoped_native_requirements_for_execution(Backend::Native, context_name);
+    let native_surface =
+        contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os);
     merge_requirement_versions(
         &mut runtimes,
         &native_surface.runtimes,
@@ -14940,6 +15220,85 @@ fn runtime_readiness_target(
     }
 }
 
+fn runtime_readiness_targets(
+    contract: Option<&Contract>,
+    runtime_spec: &TaskRuntimeSpec,
+    runtime: &ResolvedTaskRuntime,
+) -> Option<Vec<RuntimeReadinessTarget>> {
+    let mut targets = Vec::new();
+    targets.push(runtime_readiness_target(contract, runtime_spec, runtime)?);
+    let Some(readiness) = runtime_spec.readiness.as_ref() else {
+        return Some(targets);
+    };
+    let contract = contract?;
+    for signal_probe in &readiness.signal_probes {
+        let probe_name = signal_probe.trim();
+        if probe_name.is_empty() {
+            continue;
+        }
+        let probe = contract.probe(probe_name)?;
+        let target = if let Some(target) = probe.target.as_ref() {
+            if target.kind == crate::schema::ReadinessProbeTargetKind::Task
+                && target.address_view == TaskTargetAddressView::Internal
+            {
+                let listener_name = target.listener.as_deref().map(str::trim)?;
+                let listener = runtime.listeners.get(listener_name)?;
+                let port = listener.bind.port;
+                match probe.kind {
+                    crate::schema::ReadinessProbeKind::Http => RuntimeReadinessTarget::Http {
+                        address: listener.bind.address.clone(),
+                        port,
+                        request: named_probe_http_request_contract(contract, probe_name, probe)
+                            .ok()?,
+                    },
+                    crate::schema::ReadinessProbeKind::Tcp => RuntimeReadinessTarget::Tcp {
+                        address: listener.bind.address.clone(),
+                        port,
+                    },
+                }
+            } else {
+                let resolved = resolve_named_readiness_probe(contract, probe_name).ok()?;
+                match resolved {
+                    ResolvedNamedReadinessProbe::Http {
+                        address,
+                        port,
+                        request,
+                        ..
+                    } => RuntimeReadinessTarget::Http {
+                        address,
+                        port,
+                        request,
+                    },
+                    ResolvedNamedReadinessProbe::Tcp { address, port, .. } => {
+                        RuntimeReadinessTarget::Tcp { address, port }
+                    }
+                }
+            }
+        } else {
+            let resolved = resolve_named_readiness_probe(contract, probe_name).ok()?;
+            match resolved {
+                ResolvedNamedReadinessProbe::Http {
+                    address,
+                    port,
+                    request,
+                    ..
+                } => RuntimeReadinessTarget::Http {
+                    address,
+                    port,
+                    request,
+                },
+                ResolvedNamedReadinessProbe::Tcp { address, port, .. } => {
+                    RuntimeReadinessTarget::Tcp { address, port }
+                }
+            }
+        };
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    Some(targets)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HostRuntimeReadinessProbe {
     pub listener: String,
@@ -15174,6 +15533,15 @@ fn readiness_target_observed_with_timeout(
             request,
         } => remote_target_probe_http_reachable(probe, address.as_str(), *port, request, timeout),
     }
+}
+
+fn readiness_targets_observed_with_timeout(
+    targets: &[RuntimeReadinessTarget],
+    timeout: Option<Duration>,
+) -> bool {
+    targets
+        .iter()
+        .all(|target| readiness_target_observed_with_timeout(target, timeout))
 }
 
 fn readiness_http_request(readiness: Option<&TaskRuntimeReadinessSpec>) -> HttpReadinessRequest {
@@ -16044,7 +16412,7 @@ fn start_runtime_readiness_probe(
     if !resolved_runtime_has_public_endpoint(runtime) {
         return None;
     }
-    let readiness_target = runtime_readiness_target(contract, runtime_spec, runtime)?;
+    let readiness_targets = runtime_readiness_targets(contract, runtime_spec, runtime)?;
     let timing = readiness_timing_policy(contract, runtime_spec.readiness.as_ref());
     let ready_line = announce_ready_endpoint
         .then(|| ready_runtime_public_endpoint_line(runtime))
@@ -16057,13 +16425,16 @@ fn start_runtime_readiness_probe(
     // ever became reachable while the workload was running; it must not tear the
     // workload down or impose a fixed startup deadline on service execution.
     let probe_notifier = notifier;
-    let thread_target = readiness_target.clone();
+    let thread_targets = readiness_targets.clone();
     let handle = thread::spawn(move || {
         let mut interrupt_grace_applied = false;
         let mut next_probe_at = Instant::now() + timing.start_period;
         while !thread_stop.load(Ordering::Relaxed) {
             if Instant::now() >= next_probe_at
-                && readiness_target_observed_with_timeout(&thread_target, timing.timeout)
+                && readiness_targets_observed_with_timeout(
+                    thread_targets.as_slice(),
+                    timing.timeout,
+                )
             {
                 thread_observed.store(true, Ordering::Relaxed);
                 if let Some(line) = ready_line.as_deref() {
@@ -16089,7 +16460,10 @@ fn start_runtime_readiness_probe(
                 while std::time::Instant::now() < grace_deadline
                     && !thread_stop.load(Ordering::Relaxed)
                 {
-                    if readiness_target_observed_with_timeout(&thread_target, timing.timeout) {
+                    if readiness_targets_observed_with_timeout(
+                        thread_targets.as_slice(),
+                        timing.timeout,
+                    ) {
                         thread_observed.store(true, Ordering::Relaxed);
                         if let Some(line) = ready_line.as_deref() {
                             if let Some(notifier) = probe_notifier.as_ref() {
@@ -20172,7 +20546,15 @@ fn task_native_activation_env(
         return Ok(None);
     }
 
-    let requests = collect_native_task_activation_requests(contract, task, current_os);
+    let backend_kind = resolved_execution_backend_kind(backend);
+    let context_name = task.context_for_backend(contract.execution.as_ref(), backend_kind);
+    let requests = collect_native_task_activation_requests(
+        contract,
+        task,
+        backend_kind,
+        context_name,
+        current_os,
+    );
     if requests.is_empty() {
         return Ok(None);
     }
@@ -20200,12 +20582,14 @@ fn task_native_activation_env(
 fn collect_native_task_activation_requests(
     contract: &Contract,
     task: &TaskSpec,
+    backend: Backend,
+    context_name: Option<&str>,
     current_os: &str,
 ) -> Vec<NativeTaskActivationRequest> {
     let mut requests = Vec::new();
-    let mut seen = BTreeSet::new();
-    for native_name in &task.requirements.native {
-        if !seen.insert(native_name.as_str()) {
+    let mut seen = BTreeSet::<String>::new();
+    for native_name in task.scoped_native_requirements_for_execution(backend, context_name) {
+        if !seen.insert(native_name.clone()) {
             continue;
         }
         let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
@@ -20218,7 +20602,7 @@ fn collect_native_task_activation_requests(
             continue;
         };
         requests.push(NativeTaskActivationRequest {
-            prerequisite_name: native_name.clone(),
+            prerequisite_name: native_name,
             activation: activation.clone(),
         });
     }
@@ -20896,13 +21280,13 @@ mod tests {
         EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides, HttpReadinessRequest,
         LEGACY_EXECUTION_CONTEXT_NAME, ProvisioningExecutionTarget, ResolvedExecutionBackend,
         ResolvedSharedLocalBackend, ResolvedTaskRuntime, ResolvedTaskRuntimeBind,
-        ResolvedTaskRuntimeEndpoint, ResolvedTaskRuntimeHost, RunError,
-        RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind,
-        RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode, TaskExecutionRelation,
-        TaskRunState, TaskTargetActivationEvidence, TaskTargetActivationStatus,
-        TaskTargetResolutionSource, activation_loader_label, backend_fulfillment_plan,
-        clean_execution, clean_execution_report, container_identity_seed, contract_working_dir,
-        current_os, effective_task_env_for_backend, effective_task_execution,
+        ResolvedTaskRuntimeEndpoint, ResolvedTaskRuntimeHost, ResolvedTaskRuntimeListener,
+        ResolvedTaskRuntimeResolution, RunError, RuntimeListenerHostPublicationFailure,
+        RuntimeListenerResolutionKind, RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode,
+        TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
+        TaskTargetActivationStatus, TaskTargetResolutionSource, activation_loader_label,
+        backend_fulfillment_plan, clean_execution, clean_execution_report, container_identity_seed,
+        contract_working_dir, current_os, effective_task_env_for_backend, effective_task_execution,
         ephemeral_container_stream_command, execute_task_with_hooks, extract_probe_version_token,
         looks_like_posix_script, looks_like_powershell_script, parse_windows_env_block,
         persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
@@ -32549,6 +32933,49 @@ tasks:
     }
 
     #[test]
+    fn runtime_readiness_targets_require_all_targets_to_be_ready() {
+        let primary = TcpListener::bind(("127.0.0.1", 0)).expect("primary listener should bind");
+        let primary_port = primary
+            .local_addr()
+            .expect("primary address should resolve")
+            .port();
+        let signal = TcpListener::bind(("127.0.0.1", 0)).expect("signal listener should bind");
+        let signal_port = signal
+            .local_addr()
+            .expect("signal address should resolve")
+            .port();
+
+        let targets = vec![
+            RuntimeReadinessTarget::Tcp {
+                address: String::from("127.0.0.1"),
+                port: primary_port,
+            },
+            RuntimeReadinessTarget::Tcp {
+                address: String::from("127.0.0.1"),
+                port: signal_port,
+            },
+        ];
+        assert!(
+            super::readiness_targets_observed_with_timeout(
+                targets.as_slice(),
+                Some(Duration::from_millis(100))
+            ),
+            "all readiness targets should be reachable while both listeners are active"
+        );
+
+        drop(signal);
+        thread::sleep(Duration::from_millis(20));
+
+        assert!(
+            !super::readiness_targets_observed_with_timeout(
+                targets.as_slice(),
+                Some(Duration::from_millis(100))
+            ),
+            "readiness should fail when any signal target becomes unreachable"
+        );
+    }
+
+    #[test]
     fn loopback_http_probe_tries_ipv6_for_ipv4_loopback_surface() {
         let listener = match TcpListener::bind("[::1]:0") {
             Ok(listener) => listener,
@@ -32932,6 +33359,138 @@ tasks:
         assert_eq!(
             probe.request.as_ref().map(|request| request.path.as_str()),
             Some("/ready")
+        );
+    }
+
+    #[test]
+    fn runtime_readiness_targets_include_internal_signal_probe_for_native_worker_listener() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+readiness:
+  probes:
+    worker-ready:
+      kind: tcp
+      timeout: 1000
+      target:
+        kind: task
+        name: dev
+        listener: worker
+        address_view: internal
+        observer:
+          kind: task
+          task: dev
+tasks:
+  dev:
+    context: host
+    run: echo dev
+    runtime:
+      kind: service
+      readiness:
+        kind: http
+        listener: http
+        path: /health
+        signal_probes:
+          - worker-ready
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              primary: true
+              port:
+                mode: fixed
+                value: 3000
+              path: /health
+        worker:
+          protocol: tcp
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 4000
+"#,
+        );
+
+        let runtime_spec = fixture
+            .contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref())
+            .expect("dev task runtime should exist");
+        let runtime = ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::from([
+                (
+                    String::from("http"),
+                    ResolvedTaskRuntimeListener {
+                        protocol: TaskRuntimeProtocol::Http,
+                        bind: ResolvedTaskRuntimeBind {
+                            address: String::from("127.0.0.1"),
+                            port: 3000,
+                        },
+                        resolved: Some(ResolvedTaskRuntimeResolution {
+                            host: Some(ResolvedTaskRuntimeHost {
+                                address: String::from("127.0.0.1"),
+                                port: 3000,
+                                url: Some(String::from("http://127.0.0.1:3000/health")),
+                            }),
+                        }),
+                    },
+                ),
+                (
+                    String::from("worker"),
+                    ResolvedTaskRuntimeListener {
+                        protocol: TaskRuntimeProtocol::Tcp,
+                        bind: ResolvedTaskRuntimeBind {
+                            address: String::from("127.0.0.1"),
+                            port: 4000,
+                        },
+                        resolved: None,
+                    },
+                ),
+            ]),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: ResolvedTaskRuntimeBind {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                },
+                host: ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/health")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+
+        let targets =
+            super::runtime_readiness_targets(Some(&fixture.contract), runtime_spec, &runtime)
+                .expect("runtime readiness targets should resolve");
+
+        assert!(
+            targets.iter().any(|target| matches!(
+                target,
+                super::RuntimeReadinessTarget::Tcp { address, port } if address == "127.0.0.1" && *port == 4000
+            )),
+            "{targets:?}"
         );
     }
 
@@ -43962,6 +44521,137 @@ tasks:
                 .to_string()
                 .contains("source `.env.example` is not a file"),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn ensure_env_file_action_creates_and_appends_only_missing_keys() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env-local:
+    action:
+      kind: ensure_env_file
+      path: .env.local
+      template: .env.example
+      vars:
+        TOKEN:
+          random:
+            encoding: hex
+            bytes: 8
+        PG_DATABASE_PASSWORD:
+          value: postgres
+"#,
+        );
+        fixture.write(".env.example", "EXISTING=1\n");
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:env-local")
+            .expect("ensure env action should run");
+        assert_eq!(first.exit_code, 0);
+        let first_content =
+            fs::read_to_string(fixture.dir.path().join(".env.local")).expect("env file");
+        assert!(first_content.contains("EXISTING=1\n"), "{first_content}");
+        assert!(
+            first_content.contains("PG_DATABASE_PASSWORD=postgres\n"),
+            "{first_content}"
+        );
+        assert!(first_content.lines().any(|line| {
+            line.starts_with("TOKEN=") && line.trim().len() == "TOKEN=".len() + 16
+        }));
+        assert!(
+            first.stdout.contains("appended 2 env key(s)"),
+            "{}",
+            first.stdout
+        );
+
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:env-local")
+            .expect("re-running ensure env action should stay idempotent");
+        assert_eq!(second.exit_code, 0);
+        let second_content =
+            fs::read_to_string(fixture.dir.path().join(".env.local")).expect("env file");
+        assert_eq!(second_content, first_content);
+        assert!(
+            second.stdout.contains("appended 0 env key(s)"),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_file_action_creates_file_once_from_random_value() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:token:
+    action:
+      kind: ensure_file
+      path: secrets/token.txt
+      random:
+        encoding: hex
+        bytes: 8
+"#,
+        );
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:token")
+            .expect("ensure file action should run");
+        assert_eq!(first.exit_code, 0);
+        let token_path = fixture.dir.path().join("secrets/token.txt");
+        let first_content = fs::read_to_string(&token_path).expect("token file");
+        assert_eq!(first_content.trim().len(), 16, "{first_content}");
+        assert!(
+            first.stdout.contains("ensured `secrets/token.txt`"),
+            "{}",
+            first.stdout
+        );
+
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:token")
+            .expect("re-running ensure file action should stay idempotent");
+        assert_eq!(second.exit_code, 0);
+        let second_content = fs::read_to_string(token_path).expect("token file");
+        assert_eq!(second_content, first_content);
+        assert!(
+            second.stdout.contains("already exists; no write needed"),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_file_action_copies_from_template() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:secret:
+    action:
+      kind: ensure_file
+      path: secrets/api-key.txt
+      template: templates/api-key.example
+"#,
+        );
+        fixture.write("templates/api-key.example", "example-key\n");
+
+        let output = run_task(&fixture.contract, fixture.file_path(), "setup:secret")
+            .expect("template-based ensure file action should run");
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("secrets/api-key.txt")).unwrap(),
+            "example-key\n"
+        );
+        assert!(
+            output.stdout.contains(
+                "ensured `secrets/api-key.txt` from template `templates/api-key.example`"
+            ),
+            "{}",
+            output.stdout
         );
     }
 

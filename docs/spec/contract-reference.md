@@ -1417,19 +1417,47 @@ Task-effect rules:
 
 `action` fields:
 
-- `action.kind`: required action kind; currently `copy_if_missing`
+- `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
+  `ensure_file`
 - `action.kind: copy_if_missing`
   - `action.from`: required repo-relative source file
   - `action.to`: required repo-relative destination file
+- `action.kind: ensure_env_file`
+  - `action.path`: required repo-relative env-file path to create/update
+  - `action.template`: optional repo-relative seed file copied when `action.path` is missing
+  - `action.vars`: required key map for missing env keys to append
+  - `action.vars.<KEY>.value`: literal value for missing key
+  - `action.vars.<KEY>.random`: generated value for missing key
+  - `action.vars.<KEY>.random.bytes`: optional byte length (default `32`)
+  - `action.vars.<KEY>.random.encoding`: optional `hex` or `base64` (default `hex`)
+- `action.kind: ensure_file`
+  - `action.path`: required repo-relative file path to create when missing
+  - exactly one bootstrap source is required:
+    - `action.template`: copy this repo-relative template file
+    - `action.value`: write this literal file content
+    - `action.random`: generate random file content
+  - `action.random.bytes`: optional byte length (default `32`)
+  - `action.random.encoding`: optional `hex` or `base64` (default `hex`)
 
 Use `action.kind: copy_if_missing` for setup steps like creating `.env.local` from
 `.env.example` without depending on POSIX `test` / `cp` or PowerShell conditionals. The action is
 idempotent: if `to` already exists, Ota leaves it untouched.
 
+Use `action.kind: ensure_env_file` when a setup path needs deterministic env bootstrap without a
+shell script. It creates `action.path` (optionally seeded from `action.template`) and appends only
+missing keys from `action.vars`, so repeated runs do not clobber user-edited values.
+
+Use `action.kind: ensure_file` when setup needs one deterministic bootstrap file (for example a
+secret token file) without shell glue. It creates `action.path` once from one explicit source
+(`template`, `value`, or `random`) and leaves existing files untouched on repeat runs.
+
 `requirements` fields:
 
 - `requirements.runtimes`: optional runtime requirements that apply only to this task path
 - `requirements.tools`: optional tool requirements that apply only to this task path
+- `requirements.any_of`: optional context/backend-scoped alternative requirement branches for
+  path-scoped requirements (`runtimes`, `tools`, `toolchains`, `native`, `env`, `checks`) useful
+  for "A or B" prerequisite modeling without shell conditionals
 - `requirements.native`: optional native prerequisite names from top-level `native_prerequisites`
 - `requirements.env`: optional list of names from top-level `env.vars`
 - `requirements.checks`: optional list of names from top-level `checks`
@@ -1445,6 +1473,11 @@ idempotent: if `to` already exists, Ota leaves it untouched.
   executables even when `requirements.tools` is omitted
 - declare `requirements.tools.<name>` explicitly when you need to pin a version, attach
   acquisition metadata, or override defaults for that launch executable
+- `requirements.any_of[]` entries must declare at least one requirement
+  (`runtimes`, `tools`, `toolchains`, `native`, `env`, or `checks`) plus a deterministic selector
+  (`when.context` or `when.backend`) so Ota can resolve one branch on the selected path
+- use `requirements.any_of` for disjunctive prerequisite paths such as "host-local service lane"
+  vs "docker-host lane" while keeping each branch explicit and reviewable in contract truth
 - use `requirements.native` when a task needs host-native build tools but Ota should diagnose and
   guide instead of silently installing OS packages
 - workflow-aware readiness commands evaluate the selected workflow's `prepare.task` / `setup.task` / `run.task`
@@ -1769,6 +1802,11 @@ Current `runtime.readiness` support for service tasks:
   - references one top-level `readiness.probes.<name>` declaration
   - reuses that probe's transport and timeout contract while the selected listener still determines the runtime endpoint
   - may optionally declare `listener` when the readiness target should bind to one non-default runtime listener explicitly
+  - may declare `signal_probes: [<name>, ...]` to require additional named task-listener probes
+    before Ota reports the runtime as ready; each signal probe must target the same task runtime
+    (`target.kind: task`, `target.name: <task>`) and may use:
+    - `target.address_view: host` for projected host listener probes
+    - `target.address_view: internal` for fixed same-task listener probes on native runtime paths
   - may still declare `interval`, `retries`, and `start_period` to control polling semantics for this runtime
   - must not also declare inline `kind`, `method`, `path`, `headers`, `success`, `body`, or `timeout`
 - `kind: http`

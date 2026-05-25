@@ -10652,6 +10652,7 @@ fn build_assist_readiness_proposal(
             let after = match style {
                 AssistReadinessStyleArg::SpringHttp => TaskRuntimeReadinessSpec {
                     probe: None,
+                    signal_probes: Vec::new(),
                     kind: Some(TaskRuntimeReadinessKind::Http),
                     listener: Some(listener.clone()),
                     method: Some(TaskRuntimeReadinessHttpMethod::Get),
@@ -10671,6 +10672,7 @@ fn build_assist_readiness_proposal(
                 },
                 AssistReadinessStyleArg::Http => TaskRuntimeReadinessSpec {
                     probe: None,
+                    signal_probes: Vec::new(),
                     kind: Some(TaskRuntimeReadinessKind::Http),
                     listener: Some(listener.clone()),
                     method: Some(TaskRuntimeReadinessHttpMethod::Get),
@@ -10685,6 +10687,7 @@ fn build_assist_readiness_proposal(
                 },
                 AssistReadinessStyleArg::Tcp => TaskRuntimeReadinessSpec {
                     probe: None,
+                    signal_probes: Vec::new(),
                     kind: Some(TaskRuntimeReadinessKind::Tcp),
                     listener: Some(listener.clone()),
                     method: None,
@@ -13828,6 +13831,37 @@ fn render_run_preview_target(
     ) {
         Ok(resolved) => resolved,
         Err(error) => {
+            let unresolved_execution_plan = ExecutionPlanResolved {
+                backend: format_backend(
+                    effective_task_execution(&target.contract, task_name.as_str(), overrides)
+                        .backend,
+                )
+                .to_string(),
+                backend_source: String::from("task"),
+                lifecycle: effective_task_execution(
+                    &target.contract,
+                    task_name.as_str(),
+                    overrides,
+                )
+                .lifecycle
+                .map(format_lifecycle)
+                .map(str::to_string),
+                lifecycle_source: None,
+                image: None,
+                engine: None,
+                engine_candidates: Vec::new(),
+                provider: None,
+                target: None,
+                target_strategy: String::from("unresolved"),
+                cwd: None,
+            };
+            let (requested_context, selected_context) = run_preview_context_selection(
+                declared_execution.as_ref(),
+                &unresolved_execution_plan,
+                &requested_task,
+            );
+            let requested_context = requested_context.map(str::to_string);
+            let selected_context = selected_context.map(str::to_string);
             let summary = DoctorSummary {
                 verdict: DoctorVerdict::NotReady,
                 agent_verdict: DoctorVerdict::Ready,
@@ -13849,30 +13883,7 @@ fn render_run_preview_target(
                 &summary,
                 &contract_identity,
                 declared_execution.as_ref(),
-                &ExecutionPlanResolved {
-                    backend: format_backend(
-                        effective_task_execution(&target.contract, task_name.as_str(), overrides)
-                            .backend,
-                    )
-                    .to_string(),
-                    backend_source: String::from("task"),
-                    lifecycle: effective_task_execution(
-                        &target.contract,
-                        task_name.as_str(),
-                        overrides,
-                    )
-                    .lifecycle
-                    .map(format_lifecycle)
-                    .map(str::to_string),
-                    lifecycle_source: None,
-                    image: None,
-                    engine: None,
-                    engine_candidates: Vec::new(),
-                    provider: None,
-                    target: None,
-                    target_strategy: String::from("unresolved"),
-                    cwd: None,
-                },
+                &unresolved_execution_plan,
                 applied_overrides.as_ref(),
                 &requested_task,
                 &env_report,
@@ -13895,36 +13906,11 @@ fn render_run_preview_target(
                         summary,
                         contract_identity,
                         declared_execution,
-                        resolved: ExecutionPlanResolved {
-                            backend: format_backend(
-                                effective_task_execution(
-                                    &target.contract,
-                                    task_name.as_str(),
-                                    overrides,
-                                )
-                                .backend,
-                            )
-                            .to_string(),
-                            backend_source: String::from("task"),
-                            lifecycle: effective_task_execution(
-                                &target.contract,
-                                task_name.as_str(),
-                                overrides,
-                            )
-                            .lifecycle
-                            .map(format_lifecycle)
-                            .map(str::to_string),
-                            lifecycle_source: None,
-                            image: None,
-                            engine: None,
-                            engine_candidates: Vec::new(),
-                            provider: None,
-                            target: None,
-                            target_strategy: String::from("unresolved"),
-                            cwd: None,
-                        },
+                        resolved: unresolved_execution_plan,
                         overrides: applied_overrides,
                         requested_task,
+                        requested_context,
+                        selected_context,
                         env_summary: env_report.summary,
                         sources: env_report.sources,
                         env: env_report.env,
@@ -13969,6 +13955,13 @@ fn render_run_preview_target(
         &env_report,
         &preconditions_report,
     );
+    let (requested_context, selected_context) = run_preview_context_selection(
+        declared_execution.as_ref(),
+        &execution_plan,
+        &requested_task,
+    );
+    let requested_context = requested_context.map(str::to_string);
+    let selected_context = selected_context.map(str::to_string);
     let exit_code = if doctor_verdict_blocks_preview(summary.verdict) {
         1
     } else {
@@ -14011,6 +14004,8 @@ fn render_run_preview_target(
                 resolved: execution_plan,
                 overrides: applied_overrides,
                 requested_task,
+                requested_context,
+                selected_context,
                 env_summary: env_report.summary,
                 sources: env_report.sources,
                 env: env_report.env,
@@ -14283,7 +14278,10 @@ fn build_run_preview_plan(
         plan.requirement_lines.push(line);
     }
     if let Some(task) = contract.tasks.get(task_name) {
-        for native_name in &task.requirements.native {
+        let effective = effective_task_execution(contract, task_name, overrides);
+        for native_name in
+            task.scoped_native_requirements_for_execution(effective.backend, effective.context_name)
+        {
             plan.requirement_lines
                 .push(format!("native prerequisite `{native_name}`"));
         }
@@ -14380,6 +14378,28 @@ fn run_preview_task_execution_action(
     format!("would execute task `{}`{backend_detail}", task.name)
 }
 
+fn run_preview_context_selection<'a>(
+    declared_execution: Option<&'a ExecutionSummary<'_>>,
+    execution_plan: &ExecutionPlanResolved,
+    requested_task: &TaskSummary<'a>,
+) -> (Option<&'a str>, Option<&'a str>) {
+    let requested_context = requested_task.context;
+    let selected_context = requested_context
+        .filter(|context_name| {
+            declared_execution
+                .and_then(|execution| {
+                    execution
+                        .contexts
+                        .iter()
+                        .find(|context| context.name == *context_name)
+                })
+                .is_some_and(|context| execution_context_matches_resolved(context, execution_plan))
+        })
+        .or_else(|| selected_execution_plan_context_name(declared_execution, execution_plan))
+        .or(requested_context);
+    (requested_context, selected_context)
+}
+
 fn render_run_preview_text(
     task_name: &str,
     path: &str,
@@ -14395,16 +14415,8 @@ fn render_run_preview_text(
     plan: &RunPreviewPlan,
     persist_logs: bool,
 ) -> String {
-    let selected_context = declared_execution.and_then(|execution| {
-        requested_task
-            .context
-            .filter(|context_name| {
-                execution.contexts.iter().any(|context| {
-                    context.name == *context_name && context.backend == execution_plan.backend
-                })
-            })
-            .or_else(|| selected_execution_plan_context_name(Some(execution), execution_plan))
-    });
+    let (requested_context, selected_context) =
+        run_preview_context_selection(declared_execution, execution_plan, requested_task);
     let mut stdout = format!(
         "{}\n\n{}\n\n{}",
         format_command_header("RUN PREVIEW", task_name),
@@ -14450,10 +14462,17 @@ fn render_run_preview_text(
             &paint_backticked_code(target),
         ));
     }
+    if let Some(context) = requested_context {
+        stdout.push('\n');
+        stdout.push_str(&detail_list_row(
+            &paint_key("Task Context:"),
+            &paint_backticked_code(context),
+        ));
+    }
     if let Some(context) = selected_context {
         stdout.push('\n');
         stdout.push_str(&detail_list_row(
-            &paint_key("Context:"),
+            &paint_key("Execution Context:"),
             &paint_backticked_code(context),
         ));
     }
@@ -14468,7 +14487,7 @@ fn render_run_preview_text(
         {
             stdout.push('\n');
             stdout.push_str(&detail_list_row(
-                &paint_key("Selected Context:"),
+                &paint_key("Resolved Context:"),
                 &context_label,
             ));
         }
@@ -14608,21 +14627,39 @@ fn selected_task_requirement_surface(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Option<RequirementSurface> {
-    let mut surface = contract.task_requirement_surface([task_name.to_string()])?;
     let effective = effective_task_execution(contract, task_name, overrides);
+    let task = contract.tasks.get(task_name)?;
+    let mut surface =
+        task.scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
+    for (name, requirement) in &surface.runtimes.clone() {
+        surface.runtimes.insert(
+            name.clone(),
+            contract.resolve_scoped_runtime_requirement(name, requirement),
+        );
+    }
+    for (name, requirement) in &surface.tools.clone() {
+        surface.tools.insert(
+            name.clone(),
+            contract.resolve_scoped_tool_requirement(name, requirement),
+        );
+    }
+    if surface.runtimes.is_empty() {
+        surface.runtimes = contract.runtimes.clone();
+    }
     if !matches!(effective.backend, Backend::Native)
-        && contract
-            .tasks
-            .get(task_name)
-            .is_some_and(|task| task.scoped_requirement_surface().tools.is_empty())
+        && task
+            .scoped_requirement_surface_for_execution(effective.backend, effective.context_name)
+            .tools
+            .is_empty()
     {
         for tool_name in contract.tools.keys() {
             surface.tools.remove(tool_name);
         }
+    } else if surface.tools.is_empty() {
+        surface.tools = contract.tools.clone();
     }
-    if let Some(task) = contract.tasks.get(task_name)
-        && let Some(exe) =
-            task.effective_command_launch_executable_for_backend(effective.backend, current_os())
+    if let Some(exe) =
+        task.effective_command_launch_executable_for_backend(effective.backend, current_os())
     {
         surface
             .tools
@@ -14637,11 +14674,11 @@ fn selected_task_requirement_surface(
             tools: context.requirements.tools.clone(),
         });
     }
-    if matches!(effective.backend, Backend::Native)
-        && let Some(task) = contract.tasks.get(task_name)
-    {
+    if matches!(effective.backend, Backend::Native) {
+        let scoped_native = task
+            .scoped_native_requirements_for_execution(effective.backend, effective.context_name);
         surface.merge(&contract.native_prerequisite_requirement_surface_for_os(
-            task.requirements.native.clone(),
+            scoped_native,
             requirement_target_os_for_backend(effective.backend),
         ));
     }
@@ -14659,7 +14696,7 @@ fn selected_task_toolchain_preview_actions(
     );
     let mut actions = Vec::new();
     let mut seen = BTreeSet::new();
-    for toolchain_name in contract.task_required_toolchain_names(task_name) {
+    for toolchain_name in selected_task_scoped_toolchain_names(contract, task_name, overrides) {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
@@ -14701,7 +14738,9 @@ fn selected_task_activation_requirement_surface(
         requirement_surface_with_toolchain_owned_tools_for_required_tools(
             contract,
             &requirement_surface,
-            &contract.task_required_toolchain_names(task_name),
+            &selected_task_scoped_toolchain_names(contract, task_name, overrides)
+                .into_iter()
+                .collect(),
             requirement_target_os_for_backend(Backend::Native),
             Some(&required_tool_names),
         ),
@@ -14722,8 +14761,11 @@ fn selected_task_native_activation_actions(
     ) {
         return Vec::new();
     }
+    let effective = effective_task_execution(contract, task_name, overrides);
     let mut actions = Vec::new();
-    for native_name in &task.requirements.native {
+    for native_name in
+        task.scoped_native_requirements_for_execution(effective.backend, effective.context_name)
+    {
         let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
             continue;
         };
@@ -14734,11 +14776,25 @@ fn selected_task_native_activation_actions(
             continue;
         };
         actions.push(NativeRequirementActivationAction {
-            prerequisite_name: native_name.clone(),
+            prerequisite_name: native_name,
             activation: activation.clone(),
         });
     }
     actions
+}
+
+fn selected_task_scoped_toolchain_names(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> BTreeSet<String> {
+    let Some(task) = contract.tasks.get(task_name) else {
+        return BTreeSet::new();
+    };
+    let effective = effective_task_execution(contract, task_name, overrides);
+    task.scoped_toolchain_requirements_for_execution(effective.backend, effective.context_name)
+        .into_iter()
+        .collect()
 }
 
 pub fn self_update(version: Option<&str>, channel: Option<&str>, debug: bool) -> CommandOutput {
@@ -33295,6 +33351,20 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
             action.from.unwrap_or("-"),
             action.to.unwrap_or("-")
         ),
+        "ensure_env_file" => match (action.from, action.to) {
+            (Some(template), Some(path)) => {
+                format!("ensure env file `{path}` from template `{template}`")
+            }
+            (None, Some(path)) => format!("ensure env file `{path}`"),
+            _ => String::from("ensure env file"),
+        },
+        "ensure_file" => match (action.from, action.to) {
+            (Some(template), Some(path)) => {
+                format!("ensure file `{path}` from template `{template}`")
+            }
+            (None, Some(path)) => format!("ensure file `{path}`"),
+            _ => String::from("ensure file"),
+        },
         _ => String::from("-"),
     }
 }
@@ -37707,22 +37777,26 @@ fn selected_execution_plan_context_name<'a>(
     execution
         .contexts
         .iter()
-        .find(|context| {
-            context.backend == resolved.backend
-                && (resolved.lifecycle.is_none()
-                    || context.lifecycle == resolved.lifecycle.as_deref())
-                && match (context.container.as_ref(), resolved.image.as_deref()) {
-                    (Some(container), Some(image)) => container.image == image,
-                    (None, None) => true,
-                    _ => false,
-                }
-                && match (context.remote.as_ref(), resolved.provider.as_deref()) {
-                    (Some(remote), Some(provider)) => remote.provider == provider,
-                    (None, None) => true,
-                    _ => false,
-                }
-        })
+        .find(|context| execution_context_matches_resolved(context, resolved))
         .map(|context| context.name)
+}
+
+fn execution_context_matches_resolved(
+    context: &ExecutionContextSummary<'_>,
+    resolved: &ExecutionPlanResolved,
+) -> bool {
+    context.backend == resolved.backend
+        && (resolved.lifecycle.is_none() || context.lifecycle == resolved.lifecycle.as_deref())
+        && match (context.container.as_ref(), resolved.image.as_deref()) {
+            (Some(container), Some(image)) => container.image == image,
+            (None, None) => true,
+            _ => false,
+        }
+        && match (context.remote.as_ref(), resolved.provider.as_deref()) {
+            (Some(remote), Some(provider)) => remote.provider == provider,
+            (None, None) => true,
+            _ => false,
+        }
 }
 
 fn render_execution_plan_why_lines(
@@ -43990,12 +44064,62 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi_codes(&output.stdout);
-        assert!(stdout.contains("Context: `host`"), "{stdout}");
-        assert!(stdout.contains("Selected Context: `host`"), "{stdout}");
+        assert!(stdout.contains("Task Context: `host`"), "{stdout}");
+        assert!(stdout.contains("Execution Context: `host`"), "{stdout}");
+        assert!(stdout.contains("Resolved Context: `host`"), "{stdout}");
         assert!(
-            !stdout.contains("Selected Context: `docker-host`"),
+            !stdout.contains("Resolved Context: `docker-host`"),
             "{stdout}"
         );
+    }
+
+    #[test]
+    fn run_dry_run_json_reports_requested_and_selected_context() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: docker-host
+  contexts:
+    docker-host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+    host:
+      backend: native
+tasks:
+  verify:
+    context: host
+    run: echo ok
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("json preview");
+        assert_eq!(json["requested_context"], "host");
+        assert_eq!(json["selected_context"], "host");
     }
 
     #[test]
@@ -47331,6 +47455,14 @@ workflows:
             Some("contributor"),
             &preflight,
         );
+        assert_eq!(
+            super::up_doctor_mode(
+                &contract,
+                ExecutionOverrides::default(),
+                Some("contributor")
+            ),
+            DoctorMode::Native
+        );
 
         assert!(
             preview
@@ -47635,12 +47767,14 @@ workflows:
             Some("contributor"),
             &preflight,
         );
-
         assert!(
             preview
                 .plan
                 .actions
-                .contains(&String::from("activate tool `bun` via `sh` command"))
+                .contains(&String::from("activate tool `bun` via `sh` command")),
+            "actions={:?} skipped={:?}",
+            preview.plan.actions,
+            preview.plan.skipped
         );
     }
 
@@ -47754,6 +47888,8 @@ tasks:
             ],
         };
 
+        let surface =
+            super::up_policy_requirement_surface(&contract, ExecutionOverrides::default(), None);
         let actions = super::selected_up_provisioning_actions(
             &contract,
             ExecutionOverrides::default(),
@@ -47761,7 +47897,7 @@ tasks:
             &preflight,
         );
 
-        assert_eq!(actions.len(), 1);
+        assert_eq!(actions.len(), 1, "surface={surface:?} actions={actions:?}");
         assert_eq!(actions[0].name, "java");
     }
 
@@ -55672,6 +55808,51 @@ tasks:
     }
 
     #[test]
+    fn selected_task_requirement_surface_resolves_any_of_for_selected_context() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    docker-host:
+      backend: native
+tasks:
+  setup:
+    context: docker-host
+    run: docker compose up -d
+    requirements:
+      any_of:
+        - label: local-services
+          when:
+            context: host
+          tools:
+            psql: "*"
+        - label: docker-services
+          when:
+            context: docker-host
+          tools:
+            docker: "*"
+"#,
+        )
+        .expect("contract should parse");
+
+        let surface = super::selected_task_requirement_surface(
+            &contract,
+            "setup",
+            ExecutionOverrides::default(),
+        )
+        .expect("task requirement surface should resolve");
+        assert!(surface.tools.contains_key("docker"), "{surface:?}");
+        assert!(!surface.tools.contains_key("psql"), "{surface:?}");
+    }
+
+    #[test]
     fn up_run_error_uses_selected_execution_mode_for_toolchain_requirement_text() {
         let temp_dir = TempDir::new().expect("temp dir");
         let contract_path = temp_dir.path().join("ota.yaml");
@@ -57764,71 +57945,47 @@ policies:
 
     #[test]
     fn up_success_receipt_includes_selected_native_prerequisites() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
+        let fixture = TempDir::new().expect("temp dir");
+        let marker = fixture.path().join("ota-native-activated");
+        let marker_display = marker.display();
         let (platform_name, activation_block, setup_run, required_tool) =
             match super::current_requirement_platform() {
                 "windows" => (
                     "windows",
-                    "activation:\n          kind: command\n          shell: cmd\n          run: set OTA_NATIVE_ACTIVATED=1",
-                    "if not defined OTA_NATIVE_ACTIVATED exit /b 1",
+                    format!(
+                        "activation:\n          kind: command\n          shell: cmd\n          run: echo 1>\"{}\"",
+                        marker_display
+                    ),
+                    format!(
+                        "cmd /d /s /c \"if not exist \\\"{}\\\" exit /b 1\"",
+                        marker_display
+                    ),
                     "cargo",
                 ),
                 "macos" => (
                     "macos",
-                    "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
-                    "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
+                    format!(
+                        "activation:\n          kind: command\n          shell: sh\n          run: printf '1' > '{}'",
+                        marker_display
+                    ),
+                    format!("sh -c 'test -f \"{}\"'", marker_display),
                     "cargo",
                 ),
                 _ => (
                     "linux",
-                    "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
-                    "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
+                    format!(
+                        "activation:\n          kind: command\n          shell: sh\n          run: printf '1' > '{}'",
+                        marker_display
+                    ),
+                    format!("sh -c 'test -f \"{}\"'", marker_display),
                     "cargo",
                 ),
             };
-        let contract = parse_contract_str(
-            Path::new("./ota.yaml"),
-            &format!(
-                r#"
-version: 1
-project:
-  name: target-test
-tools:
-  {required_tool}: "*"
-native_prerequisites:
-  shell-env:
-    platforms:
-      {platform_name}:
-        check: shell-env-check
-        requires:
-          tools:
-            {required_tool}: "*"
-        {activation_block}
-checks:
-  - name: shell-env-check
-    kind: precondition
-    severity: error
-    run: {setup_run}
-tasks:
-  setup:
-    run: {setup_run}
-    requirements:
-      native: [shell-env]
-workflows:
-  default: app
-  app:
-    setup:
-      task: setup
-"#
-            ),
-        )
-        .unwrap();
 
-        let fixture = TempDir::new().expect("temp dir");
-        let contract_path = fixture.path().join("ota.yaml");
-        fs::write(
-            &contract_path,
-            format!(
-                r#"
+        let contract_source = format!(
+            r#"
 version: 1
 project:
   name: target-test
@@ -57859,9 +58016,10 @@ workflows:
     setup:
       task: setup
 "#
-            ),
-        )
-        .expect("write contract");
+        );
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(&contract_path, &contract_source).expect("write contract");
+        let contract = parse_contract_str(&contract_path, &contract_source).unwrap();
         let result = super::execute_repo_up(
             &contract,
             &contract_path,
@@ -57897,18 +58055,18 @@ workflows:
         ) {
             "windows" => (
                 "windows",
-                "activation:\n          kind: command\n          shell: cmd\n          run: set OTA_NATIVE_ACTIVATED=1",
-                "cmd /d /s /c \"if not defined OTA_NATIVE_ACTIVATED exit /b 1\"",
+                "activation:\n          kind: command\n          shell: cmd\n          run: echo 1>.ota-native-activated",
+                "cmd /d /s /c \"if not exist .ota-native-activated exit /b 1\"",
             ),
             "macos" => (
                 "macos",
-                "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
-                "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
+                "activation:\n          kind: command\n          shell: sh\n          run: printf '1' > .ota-native-activated",
+                "sh -c 'test -f .ota-native-activated'",
             ),
             _ => (
                 "linux",
-                "activation:\n          kind: command\n          shell: sh\n          run: export OTA_NATIVE_ACTIVATED=1",
-                "sh -c 'test \"$OTA_NATIVE_ACTIVATED\" = \"1\"'",
+                "activation:\n          kind: command\n          shell: sh\n          run: printf '1' > .ota-native-activated",
+                "sh -c 'test -f .ota-native-activated'",
             ),
         };
         let contract = parse_contract_str(
@@ -63465,27 +63623,19 @@ fn selected_toolchain_summaries_for_task_names(
         return summaries;
     }
 
-    let scoped_any = task_names.iter().any(|task_name| {
-        contract
-            .tasks
-            .get(task_name.as_str())
-            .is_some_and(|task| !task.requirements.toolchains.is_empty())
-    });
     for task_name in task_names {
         let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
         let target_os = requirement_target_os_for_backend(backend);
-        let toolchain_names = if scoped_any {
-            contract
-                .tasks
-                .get(task_name.as_str())
-                .map(|task| task.requirements.toolchains.clone())
-                .unwrap_or_default()
-        } else {
-            contract
+        let mut toolchain_names =
+            selected_task_scoped_toolchain_names(contract, task_name.as_str(), overrides)
+                .into_iter()
+                .collect::<Vec<_>>();
+        if toolchain_names.is_empty() {
+            toolchain_names = contract
                 .task_required_toolchain_names(task_name.as_str())
                 .into_iter()
-                .collect::<Vec<_>>()
-        };
+                .collect::<Vec<_>>();
+        }
 
         for toolchain_name in toolchain_names {
             let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
@@ -72261,30 +72411,53 @@ fn selected_workflow_task_requirement_surface(
     workflow_name: Option<&str>,
 ) -> Option<RequirementSurface> {
     let task_names = contract.selected_workflow_task_closure_names(workflow_name);
-    let mut surface = contract.task_requirement_surface(task_names.clone())?;
+    if task_names.is_empty() {
+        return None;
+    }
+    let mut surface = RequirementSurface::default();
+    let mut scoped_runtimes = false;
+    let mut scoped_tools = false;
+    let mut selected_tool_names = BTreeSet::new();
     let retains_global_tool_fallback = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
-            task.scoped_requirement_surface().tools.is_empty()
-                && matches!(
-                    effective_task_execution(contract, task_name.as_str(), overrides).backend,
-                    Backend::Native
-                )
+            let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+            task.scoped_requirement_surface_for_execution(effective.backend, effective.context_name)
+                .tools
+                .is_empty()
+                && matches!(effective.backend, Backend::Native)
         })
     });
-    if !retains_global_tool_fallback {
-        for tool_name in contract.tools.keys() {
-            surface.tools.remove(tool_name);
-        }
-    }
 
     for task_name in task_names {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
         let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        let scoped = task
+            .scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
+        if !scoped.runtimes.is_empty() {
+            scoped_runtimes = true;
+        }
+        if !scoped.tools.is_empty() {
+            scoped_tools = true;
+        }
+        for (name, requirement) in &scoped.runtimes {
+            surface.runtimes.insert(
+                name.clone(),
+                contract.resolve_scoped_runtime_requirement(name, requirement),
+            );
+        }
+        for (name, requirement) in &scoped.tools {
+            selected_tool_names.insert(name.clone());
+            surface.tools.insert(
+                name.clone(),
+                contract.resolve_scoped_tool_requirement(name, requirement),
+            );
+        }
         if let Some(exe) =
             task.effective_command_launch_executable_for_backend(effective.backend, current_os())
         {
+            selected_tool_names.insert(exe.clone());
             surface
                 .tools
                 .entry(exe)
@@ -72293,17 +72466,39 @@ fn selected_workflow_task_requirement_surface(
         if let Some(context_name) = effective.context_name
             && let Some((_, context)) = named_execution_context(contract, context_name)
         {
+            for name in context.requirements.tools.keys() {
+                selected_tool_names.insert(name.clone());
+            }
             surface.merge(&RequirementSurface {
                 runtimes: context.requirements.runtimes.clone(),
                 tools: context.requirements.tools.clone(),
             });
         }
         if matches!(effective.backend, Backend::Native) {
+            let scoped_native = task.scoped_native_requirements_for_execution(
+                effective.backend,
+                effective.context_name,
+            );
             surface.merge(&contract.native_prerequisite_requirement_surface_for_os(
-                task.requirements.native.clone(),
+                scoped_native,
                 requirement_target_os_for_backend(effective.backend),
             ));
         }
+    }
+
+    if !scoped_runtimes {
+        let mut merged_runtimes = contract.runtimes.clone();
+        merged_runtimes.extend(surface.runtimes);
+        surface.runtimes = merged_runtimes;
+    }
+    if !scoped_tools && retains_global_tool_fallback {
+        let mut merged_tools = contract.tools.clone();
+        merged_tools.extend(surface.tools);
+        surface.tools = merged_tools;
+    } else if !retains_global_tool_fallback {
+        surface
+            .tools
+            .retain(|tool_name, _| selected_tool_names.contains(tool_name));
     }
 
     Some(surface)
@@ -72348,29 +72543,21 @@ fn up_policy_requirement_surface(
         );
     }
 
-    let scoped_any = task_names.iter().any(|task_name| {
-        contract
-            .tasks
-            .get(task_name.as_str())
-            .is_some_and(|task| !task.requirements.toolchains.is_empty())
-    });
-
     for task_name in task_names {
+        let task_name = task_name.as_str();
         let target_os = requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+            effective_task_execution(contract, task_name, overrides).backend,
         );
-        let toolchain_names = if scoped_any {
-            contract
-                .tasks
-                .get(task_name.as_str())
-                .map(|task| task.requirements.toolchains.clone())
-                .unwrap_or_default()
-        } else {
-            contract
-                .task_required_toolchain_names(task_name.as_str())
+        let mut toolchain_names =
+            selected_task_scoped_toolchain_names(contract, task_name, overrides)
                 .into_iter()
-                .collect::<Vec<_>>()
-        };
+                .collect::<Vec<_>>();
+        if toolchain_names.is_empty() {
+            toolchain_names = contract
+                .task_required_toolchain_names(task_name)
+                .into_iter()
+                .collect::<Vec<_>>();
+        }
         let toolchain_names = toolchain_names.into_iter().collect();
         surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
             contract,
@@ -72599,33 +72786,26 @@ fn up_activation_requirement_surface(
         );
     }
 
-    let scoped_any = task_names.iter().any(|task_name| {
-        contract
-            .tasks
-            .get(task_name.as_str())
-            .is_some_and(|task| !task.requirements.toolchains.is_empty())
-    });
     let mut surface = requirement_surface;
 
     for task_name in task_names {
+        let task_name = task_name.as_str();
         if !matches!(
-            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+            effective_task_execution(contract, task_name, overrides).backend,
             Backend::Native
         ) {
             continue;
         }
-        let toolchain_names = if scoped_any {
-            contract
-                .tasks
-                .get(task_name.as_str())
-                .map(|task| task.requirements.toolchains.clone())
-                .unwrap_or_default()
-        } else {
-            contract
-                .task_required_toolchain_names(task_name.as_str())
+        let mut toolchain_names =
+            selected_task_scoped_toolchain_names(contract, task_name, overrides)
                 .into_iter()
-                .collect::<Vec<_>>()
-        };
+                .collect::<Vec<_>>();
+        if toolchain_names.is_empty() {
+            toolchain_names = contract
+                .task_required_toolchain_names(task_name)
+                .into_iter()
+                .collect::<Vec<_>>();
+        }
         let toolchain_names = toolchain_names.into_iter().collect();
         surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
             contract,
@@ -72672,12 +72852,6 @@ fn selected_up_toolchain_preview_actions(
     let task_names = contract.selected_workflow_task_closure_names(workflow_name);
     let mut actions = Vec::new();
     let mut seen = BTreeSet::new();
-    let scoped_any = task_names.iter().any(|task_name| {
-        contract
-            .tasks
-            .get(task_name.as_str())
-            .is_some_and(|task| !task.requirements.toolchains.is_empty())
-    });
 
     if task_names.is_empty() {
         let target_os = requirement_target_os_for_backend(fallback_backend);
@@ -72702,21 +72876,20 @@ fn selected_up_toolchain_preview_actions(
     }
 
     for task_name in task_names {
+        let task_name = task_name.as_str();
         let target_os = requirement_target_os_for_backend(
-            effective_task_execution(contract, task_name.as_str(), overrides).backend,
+            effective_task_execution(contract, task_name, overrides).backend,
         );
-        let toolchain_names = if scoped_any {
-            contract
-                .tasks
-                .get(task_name.as_str())
-                .map(|task| task.requirements.toolchains.clone())
-                .unwrap_or_default()
-        } else {
-            contract
-                .task_required_toolchain_names(task_name.as_str())
+        let mut toolchain_names =
+            selected_task_scoped_toolchain_names(contract, task_name, overrides)
                 .into_iter()
-                .collect::<Vec<_>>()
-        };
+                .collect::<Vec<_>>();
+        if toolchain_names.is_empty() {
+            toolchain_names = contract
+                .task_required_toolchain_names(task_name)
+                .into_iter()
+                .collect::<Vec<_>>();
+        }
         for toolchain_name in toolchain_names {
             let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
                 continue;
@@ -72820,15 +72993,18 @@ fn selected_up_native_preparation_actions_for_os(
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        if !matches!(
-            effective_task_execution(contract, task_name.as_str(), overrides).backend,
-            Backend::Native
-        ) {
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        if !matches!(effective.backend, Backend::Native) {
             continue;
         }
-        for native_name in &task.requirements.native {
+        for native_name in
+            task.scoped_native_requirements_for_execution(effective.backend, effective.context_name)
+        {
             if !seen.insert(native_name.clone())
-                || !native_requirement_targets_missing_finding(native_name, &preflight.findings)
+                || !native_requirement_targets_missing_finding(
+                    native_name.as_str(),
+                    &preflight.findings,
+                )
             {
                 continue;
             }
@@ -72861,13 +73037,13 @@ fn selected_up_native_activation_actions_for_os(
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        if !matches!(
-            effective_task_execution(contract, task_name.as_str(), overrides).backend,
-            Backend::Native
-        ) {
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        if !matches!(effective.backend, Backend::Native) {
             continue;
         }
-        for native_name in &task.requirements.native {
+        for native_name in
+            task.scoped_native_requirements_for_execution(effective.backend, effective.context_name)
+        {
             if !seen.insert(native_name.clone()) {
                 continue;
             }

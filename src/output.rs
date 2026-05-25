@@ -681,6 +681,10 @@ pub struct RunPreviewSuccess<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overrides: Option<ExecutionPlanOverrides>,
     pub requested_task: TaskSummary<'a>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_context: Option<String>,
     pub env_summary: EnvSummary,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<EnvSourceEntry>,
@@ -3159,6 +3163,16 @@ fn summarize_task_action<'a>(
             from: Some(copy.from.as_str()),
             to: Some(copy.to.as_str()),
         }),
+        crate::schema::TaskActionSpec::EnsureEnvFile(spec) => Some(TaskActionSummary {
+            kind: "ensure_env_file",
+            from: spec.template.as_deref(),
+            to: Some(spec.path.as_str()),
+        }),
+        crate::schema::TaskActionSpec::EnsureFile(spec) => Some(TaskActionSummary {
+            kind: "ensure_file",
+            from: spec.template.as_deref(),
+            to: Some(spec.path.as_str()),
+        }),
     }
 }
 
@@ -3207,6 +3221,16 @@ pub fn summarize_task_action_owned(
             kind: "copy_if_missing",
             from: Some(copy.from.clone()),
             to: Some(copy.to.clone()),
+        }),
+        crate::schema::TaskActionSpec::EnsureEnvFile(spec) => Some(WorkspaceTaskActionSummary {
+            kind: "ensure_env_file",
+            from: spec.template.clone(),
+            to: Some(spec.path.clone()),
+        }),
+        crate::schema::TaskActionSpec::EnsureFile(spec) => Some(WorkspaceTaskActionSummary {
+            kind: "ensure_file",
+            from: spec.template.clone(),
+            to: Some(spec.path.clone()),
         }),
     }
 }
