@@ -562,6 +562,12 @@ enum Commands {
         path: Option<PathBuf>,
     },
     #[command(display_order = 19)]
+    /// Validate and assert JSON payloads against published Ota schemas.
+    Json {
+        #[command(subcommand)]
+        command: JsonCommands,
+    },
+    #[command(display_order = 19)]
     /// Install and manage first-party Ota skills for agent tools.
     Skills {
         #[command(subcommand)]
@@ -672,6 +678,40 @@ enum PolicyCommands {
         json: bool,
         /// Path to an ota.yaml file or a directory containing one.
         path: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+enum JsonCommands {
+    /// Run a command, capture its JSON payload, and validate it against a published schema.
+    Validate {
+        /// Schema filename under docs/spec/json-schemas (for example: run-preview.json).
+        #[arg(long)]
+        schema: String,
+        /// Allowed exit code from the executed command. Repeat as needed.
+        #[arg(long = "allow-exit")]
+        allow_exit: Vec<i32>,
+        /// File path where the captured payload should be written.
+        #[arg(long = "write-payload")]
+        write_payload: PathBuf,
+        /// Assert exact equality using path=value (repeatable).
+        #[arg(long = "assert-eq")]
+        assert_eq: Vec<String>,
+        /// Assert membership using path=[\"A\",\"B\"] JSON array syntax (repeatable).
+        #[arg(long = "assert-in")]
+        assert_in: Vec<String>,
+        /// Assert type using path:type where type is string|array|object|number|boolean.
+        #[arg(long = "assert-type")]
+        assert_type: Vec<String>,
+        /// Assert the path resolves to a non-empty string (repeatable).
+        #[arg(long = "assert-non-empty-string")]
+        assert_non_empty_string: Vec<String>,
+        /// Assert an exit-code-to-value mapping using path=0:[\"A\"];1:[\"B\"].
+        #[arg(long = "assert-exit-map")]
+        assert_exit_map: Vec<String>,
+        /// Command to execute; place after `--`.
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        command: Vec<String>,
     },
 }
 
@@ -4974,6 +5014,31 @@ fn dispatch(cli: Cli) -> CommandOutput {
             format_from_json(json),
             debug,
         ),
+        Commands::Json {
+            command:
+                JsonCommands::Validate {
+                    schema,
+                    allow_exit,
+                    write_payload,
+                    assert_eq,
+                    assert_in,
+                    assert_type,
+                    assert_non_empty_string,
+                    assert_exit_map,
+                    command,
+                },
+        } => commands::json_validate(
+            schema.as_str(),
+            allow_exit.as_slice(),
+            write_payload.as_path(),
+            assert_eq.as_slice(),
+            assert_in.as_slice(),
+            assert_type.as_slice(),
+            assert_non_empty_string.as_slice(),
+            assert_exit_map.as_slice(),
+            command.as_slice(),
+            debug,
+        ),
         Commands::Completion {
             shell,
             setup,
@@ -5529,6 +5594,9 @@ fn append_try_footer(stderr: String, command: &Commands) -> String {
         }
         Commands::Clean { .. } => "ota clean --help",
         Commands::Policy { .. } => "run `ota policy --help` to inspect policy options",
+        Commands::Json { .. } => {
+            "run `ota json validate --schema run-preview.json --write-payload out.json -- ota run ci --dry-run --json .`"
+        }
         Commands::Completion { .. } => {
             "run `ota completion --setup` to install shell completion, `ota completion check` to verify the managed hook, or `ota completion zsh --script` to inspect the raw registration script"
         }
@@ -5769,6 +5837,7 @@ fn command_requests_json(command: &Commands) -> bool {
         Commands::Completion { .. }
         | Commands::Uninstall
         | Commands::SelfUpdate { .. }
+        | Commands::Json { .. }
         | Commands::Annotations { .. } => false,
     }
 }
@@ -5833,6 +5902,9 @@ fn command_where_label(command: &Commands) -> &'static str {
             command: Some(PolicyCommands::Review { .. }),
             ..
         } => "ota policy review",
+        Commands::Json {
+            command: JsonCommands::Validate { .. },
+        } => "ota json validate",
         Commands::Uninstall => "ota uninstall",
         Commands::SelfUpdate { .. } => "ota self-update",
         Commands::Detect { .. } => "ota detect",

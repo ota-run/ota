@@ -39,12 +39,17 @@
   `ota up --dry-run --json` payloads against the published contract schemas
   (`docs/spec/json-schemas/run-preview.json`, `docs/spec/json-schemas/up.json`) across repo and
   example lanes, keeping only minimal semantic assertions on top
-- made smoke schema validation fully local/offline by preloading published JSON schemas into the
-  validator store, so `$id`-based refs resolve without external fetches during CI
+- kept smoke schema validation fully local/offline by resolving published schema `$ref` paths
+  from the repository schema tree instead of fetching remote schema IDs during CI
 - expanded published `tasks.json` task item shape with optional `context` and `notes` fields so
   `run-preview.json` validation for `requested_task` remains schema-accurate on real contracts
-- removed deprecated Python `jsonschema.RefResolver` usage from smoke workflow schema checks by
-  switching preview validation to `referencing.Registry`/`Resource`-backed local schema resolution
+- added first-class `ota json validate` support in the Rust CLI so CI can run command
+  execution, payload capture, published-schema validation, and optional assertion checks without
+  Python-side validator scripts
+- removed deprecated `RefResolver`-based schema validation paths from smoke CI by switching to
+  the new core `ota json validate` command surface
+- added workflow guard checks that fail CI if deprecated `RefResolver` usage reappears in
+  `.github/workflows`
 
 ## 1.6.16
 
