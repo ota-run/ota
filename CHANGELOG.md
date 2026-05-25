@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- scoped selected task/workflow requirement resolution so non-native paths (container/remote) no
+  longer inherit host-global `tools` fallback when no scoped tool requirements are declared; global
+  tool fallback remains for native selected paths, preventing host-only tools from leaking into
+  unrelated container/remote readiness surfaces
+
 ## 1.6.16
 
 - removed `visual_studio_build_tools: true` from docs and shipped workflow examples so public

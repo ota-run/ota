@@ -838,6 +838,10 @@ Rules:
 - workspace overlays may specialize member tool requirements, but provenance must remain visible in diagnosis output
 - when a managed ecosystem is already declared under `toolchains`, prefer that owner and avoid
   repeating the same capability here
+- selected non-native task/workflow paths (container or remote) do not automatically inherit
+  host-global `tools` fallback when no scoped tool requirements are declared; declare non-native
+  tool requirements on the selected task path (`tasks.<name>.requirements.tools`) or selected
+  execution context (`execution.contexts.<name>.requirements.tools`)
 
 Use `only_on` to scope where a tool is required, and use `platforms` only when values change on a matching OS.
 `required: false` keeps the tool active but downgrades missing/version mismatch findings to warnings.

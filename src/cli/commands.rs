@@ -14601,6 +14601,16 @@ fn selected_task_requirement_surface(
 ) -> Option<RequirementSurface> {
     let mut surface = contract.task_requirement_surface([task_name.to_string()])?;
     let effective = effective_task_execution(contract, task_name, overrides);
+    if !matches!(effective.backend, Backend::Native)
+        && contract
+            .tasks
+            .get(task_name)
+            .is_some_and(|task| task.scoped_requirement_surface().tools.is_empty())
+    {
+        for tool_name in contract.tools.keys() {
+            surface.tools.remove(tool_name);
+        }
+    }
     if let Some(task) = contract.tasks.get(task_name)
         && let Some(exe) =
             task.effective_command_launch_executable_for_backend(effective.backend, current_os())
@@ -54987,6 +54997,60 @@ workflows:
     }
 
     #[test]
+    fn selected_task_requirement_surface_scopes_global_tools_to_native_task_paths() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  docker: "*"
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  verify:ci:
+    context: host
+    run: cargo check
+  build:
+    context: app
+    run: pnpm build
+"#,
+        )
+        .expect("contract should parse");
+
+        let host_surface = super::selected_task_requirement_surface(
+            &contract,
+            "verify:ci",
+            ExecutionOverrides::default(),
+        )
+        .expect("host task requirement surface should resolve");
+        assert!(
+            host_surface.tools.contains_key("docker"),
+            "native task path should retain global tool fallback"
+        );
+
+        let container_surface = super::selected_task_requirement_surface(
+            &contract,
+            "build",
+            ExecutionOverrides::default(),
+        )
+        .expect("container task requirement surface should resolve");
+        assert!(
+            !container_surface.tools.contains_key("docker"),
+            "container task path must not inherit host-global tool requirements"
+        );
+    }
+
+    #[test]
     fn up_run_error_uses_selected_execution_mode_for_toolchain_requirement_text() {
         let temp_dir = TempDir::new().expect("temp dir");
         let contract_path = temp_dir.path().join("ota.yaml");
@@ -71576,9 +71640,23 @@ fn selected_workflow_task_requirement_surface(
     workflow_name: Option<&str>,
 ) -> Option<RequirementSurface> {
     let task_names = contract.selected_workflow_task_closure_names(workflow_name);
-    let mut surface = contract.task_requirement_surface(task_names)?;
+    let mut surface = contract.task_requirement_surface(task_names.clone())?;
+    let retains_global_tool_fallback = task_names.iter().any(|task_name| {
+        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
+            task.scoped_requirement_surface().tools.is_empty()
+                && matches!(
+                    effective_task_execution(contract, task_name.as_str(), overrides).backend,
+                    Backend::Native
+                )
+        })
+    });
+    if !retains_global_tool_fallback {
+        for tool_name in contract.tools.keys() {
+            surface.tools.remove(tool_name);
+        }
+    }
 
-    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+    for task_name in task_names {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };

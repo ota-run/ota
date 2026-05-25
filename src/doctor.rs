@@ -499,7 +499,7 @@ fn selected_backend_precondition_selections(
             runtimes.extend(selection.requirement_surface.runtimes.clone());
             selection.requirement_surface.runtimes = runtimes;
         }
-        if !scoped_tools {
+        if !scoped_tools && matches!(selection.backend, Backend::Native) {
             let mut tools = contract.tools.clone();
             tools.extend(selection.requirement_surface.tools.clone());
             selection.requirement_surface.tools = tools;
@@ -671,9 +671,6 @@ fn selected_remote_task_requirement_selection(
         let mut surface = entry.surface;
         if !entry.scoped_runtimes {
             surface.runtimes = contract.runtimes.clone();
-        }
-        if !entry.scoped_tools {
-            surface.tools = contract.tools.clone();
         }
         ScopedPreconditionSelection {
             requirement_surface: surface,
@@ -9931,7 +9928,7 @@ mod tests {
 
     use crate::parser::parse_contract_str;
     use crate::policy_pack::ProvisioningTargetKind;
-    use crate::runner::HttpReadinessRequest;
+    use crate::runner::{ExecutionOverrides, HttpReadinessRequest};
     use crate::schema::ServiceSpec;
     #[cfg(windows)]
     use crate::test_support::cwd_mutex_lock;
@@ -15921,6 +15918,54 @@ services:
                 .findings
                 .iter()
                 .any(|finding| finding.summary == "Missing tool: definitely-not-installed")
+        );
+    }
+
+    #[test]
+    fn container_precondition_surface_excludes_host_global_tool_fallback_for_selected_path() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  docker: "*"
+execution:
+  default_context: app
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  build:
+    context: app
+    run: pnpm build
+workflows:
+  default: app
+  app:
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let selection = super::selected_backend_precondition_selections(
+            &contract,
+            None,
+            ExecutionOverrides::default(),
+        )
+        .into_iter()
+        .find(|selection| selection.backend == Backend::Container)
+        .expect("container backend selection should resolve");
+        let surface = selection.requirement_surface;
+        assert!(
+            !surface.tools.contains_key("docker"),
+            "container selected path should not inherit global host tool fallback"
         );
     }
 
