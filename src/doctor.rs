@@ -3341,6 +3341,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => {
                 ContractAdvisory::MutatesManagedIsolatedPath(advisory)
             }
+            ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory) => {
+                ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory)
+            }
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 ContractAdvisory::SensitiveAgentWritablePath(advisory)
             }
@@ -3395,6 +3398,15 @@ fn diagnose_contract_advisories(
                 ),
                 why: ContractAdvisory::MutatesManagedIsolatedPath(advisory.clone()).why(),
                 next: ContractAdvisory::MutatesManagedIsolatedPath(advisory).next(),
+            },
+            ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "Node contract uses split ownership (`runtimes.node` + tools: {})",
+                    advisory.package_managers.join(", ")
+                ),
+                why: ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory.clone()).why(),
+                next: ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory).next(),
             },
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => Finding {
                 severity: FindingSeverity::Warn,
@@ -10664,6 +10676,42 @@ tasks:
                     .why
                     .contains("execution.contexts.verify:ctx.attachments.isolated_paths")
                 && finding.provenance().as_deref() == Some("repo contract")
+        }));
+    }
+
+    #[test]
+    fn doctor_warns_for_legacy_node_runtime_tool_split_contracts() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  node: "22"
+tools:
+  pnpm: "11"
+tasks:
+  test:
+    run: pnpm test
+"#,
+        )
+        .unwrap();
+
+        let mut findings = Vec::new();
+        super::diagnose_contract_advisories(
+            &contract,
+            &mut findings,
+            crate::runner::ExecutionOverrides::default(),
+            None,
+        );
+
+        assert!(findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Warn
+                && finding.summary
+                    == "Node contract uses split ownership (`runtimes.node` + tools: pnpm)"
+                && finding.why.contains("split Node ownership")
+                && finding.next.contains("toolchains.node")
         }));
     }
 

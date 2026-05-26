@@ -28,7 +28,7 @@ use serde_json::Value as JsonValue;
 
 use crate::detector::{
     DetectCheck, DetectCheckKind, DetectCheckSeverity, DetectContract, DetectProject, DetectReport,
-    DetectTask, Inference,
+    DetectTask, DetectToolchainSpec, Inference,
 };
 use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentBoundaryProvenanceConfig, AgentConfig,
@@ -167,11 +167,11 @@ impl StarterPack {
         match self {
             Self::Node => StarterPackCatalogEntry {
                 pack: self,
-                summary: "Conventional Node starter with pnpm-based setup, dev, and test tasks.",
-                when: "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path uses pnpm, and you can override it with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
-                toolchains: &[],
-                runtimes: &["node"],
-                tools: &["pnpm"],
+                summary: "Conventional Node starter with toolchain-owned Node and package-manager-driven setup, dev, and test tasks.",
+                when: "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path keeps Node ownership under `toolchains.node` and uses pnpm via Corepack, and you can override the package manager with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
+                toolchains: &["node"],
+                runtimes: &[],
+                tools: &[],
                 checks: &["node-installed"],
                 tasks: &["setup", "dev", "test"],
                 options: NODE_PACK_OPTIONS,
@@ -214,9 +214,9 @@ impl StarterPack {
                 pack: self,
                 summary: "Conventional Rust starter with Cargo fetch, build, and test tasks.",
                 when: "Use this for Cargo-managed Rust repos that should start from the standard fetch/build/test flow without relying on detector-led init.",
-                toolchains: &[],
-                runtimes: &["rust"],
-                tools: &["cargo"],
+                toolchains: &["rust"],
+                runtimes: &[],
+                tools: &[],
                 checks: &["rust-installed"],
                 tasks: &["setup", "build", "test"],
                 options: NO_PACK_OPTIONS,
@@ -314,20 +314,27 @@ impl NodePackageManager {
         Self::Pnpm
     }
 
-    fn tool(self) -> Option<(&'static str, &'static str)> {
+    fn standalone_tool(self) -> Option<(&'static str, &'static str)> {
         match self {
             Self::Npm => Some(("npm", "*")),
-            Self::Pnpm => Some(("pnpm", "10")),
-            Self::Yarn => Some(("yarn", "4")),
+            Self::Pnpm | Self::Yarn => None,
             Self::Bun => Some(("bun", "1.2")),
+        }
+    }
+
+    fn toolchain_package_manager(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::Npm | Self::Bun => None,
+            Self::Pnpm => Some(("pnpm", "11")),
+            Self::Yarn => Some(("yarn", "4")),
         }
     }
 
     fn setup_command(self) -> &'static str {
         match self {
             Self::Npm => "npm install",
-            Self::Pnpm => "pnpm install",
-            Self::Yarn => "yarn install",
+            Self::Pnpm => "corepack pnpm install",
+            Self::Yarn => "corepack yarn install",
             Self::Bun => "bun install",
         }
     }
@@ -335,8 +342,8 @@ impl NodePackageManager {
     fn dev_command(self) -> &'static str {
         match self {
             Self::Npm => "npm run dev",
-            Self::Pnpm => "pnpm dev",
-            Self::Yarn => "yarn dev",
+            Self::Pnpm => "corepack pnpm dev",
+            Self::Yarn => "corepack yarn dev",
             Self::Bun => "bun run dev",
         }
     }
@@ -344,8 +351,8 @@ impl NodePackageManager {
     fn test_command(self) -> &'static str {
         match self {
             Self::Npm => "npm test",
-            Self::Pnpm => "pnpm test",
-            Self::Yarn => "yarn test",
+            Self::Pnpm => "corepack pnpm test",
+            Self::Yarn => "corepack yarn test",
             Self::Bun => "bun run test",
         }
     }
@@ -2002,10 +2009,20 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             let package_manager = config
                 .selected_node_package_manager()
                 .expect("node pack should always resolve a package manager");
-            contract
-                .runtimes
-                .insert(String::from("node"), String::from("22"));
-            if let Some((tool, version)) = package_manager.tool() {
+            let mut package_managers = BTreeMap::new();
+            if let Some((name, version)) = package_manager.toolchain_package_manager() {
+                package_managers.insert(String::from(name), String::from(version));
+            }
+            contract.toolchains.insert(
+                String::from("node"),
+                DetectToolchainSpec {
+                    provider: crate::schema::ToolchainProvider::Corepack,
+                    version: String::from("22"),
+                    package_managers,
+                    fulfillment: None,
+                },
+            );
+            if let Some((tool, version)) = package_manager.standalone_tool() {
                 contract
                     .tools
                     .insert(String::from(tool), String::from(version));
@@ -2122,12 +2139,15 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             );
         }
         StarterPack::Rust => {
-            contract
-                .runtimes
-                .insert(String::from("rust"), String::from("1.85"));
-            contract
-                .tools
-                .insert(String::from("cargo"), String::from("*"));
+            contract.toolchains.insert(
+                String::from("rust"),
+                DetectToolchainSpec {
+                    provider: crate::schema::ToolchainProvider::Rustup,
+                    version: String::from("1.85"),
+                    package_managers: BTreeMap::new(),
+                    fulfillment: None,
+                },
+            );
             contract.checks.push(DetectCheck {
                 name: String::from("rust-installed"),
                 kind: DetectCheckKind::Precondition,
@@ -2247,9 +2267,10 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             let uses_wrapper = root.join("mvnw").exists();
             contract.toolchains.insert(
                 String::from("java"),
-                crate::detector::DetectToolchainSpec {
+                DetectToolchainSpec {
                     provider: crate::schema::ToolchainProvider::Sdkman,
                     version: String::from("22"),
+                    package_managers: BTreeMap::new(),
                     fulfillment: None,
                 },
             );
@@ -2307,9 +2328,10 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             let uses_wrapper = root.join("gradlew").exists();
             contract.toolchains.insert(
                 String::from("java"),
-                crate::detector::DetectToolchainSpec {
+                DetectToolchainSpec {
                     provider: crate::schema::ToolchainProvider::Sdkman,
                     version: String::from("22"),
+                    package_managers: BTreeMap::new(),
                     fulfillment: None,
                 },
             );

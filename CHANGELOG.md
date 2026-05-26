@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- hardened `ota init` starter-pack ownership to match shipped toolchain contracts and avoid
+  generator-led drift: Node pack now seeds `toolchains.node` (Corepack-owned Node, default pnpm
+  package-manager ownership, and Corepack-prefixed pnpm/yarn task commands) instead of split
+  `runtimes.node` + top-level package-manager tools, and Rust pack now seeds `toolchains.rust`
+  (`provider: rustup`) instead of split `runtimes.rust` + `tools.cargo`
+- added a non-blocking contract advisory for legacy manual Node split ownership
+  (`runtimes.node` + standalone `tools.pnpm`/`tools.yarn` without `toolchains.node`), including
+  validate/doctor guidance to migrate onto `toolchains.node` Corepack ownership
 - extended agent-safe `effects` advisories (`effects.network`, `effects.network_kind`,
   `effects.external_state`) across the full reachable task closure, so a safe task now reports
   dependency-path network/external-state blast radius instead of only direct task-node effects
