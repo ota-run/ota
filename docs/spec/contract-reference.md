@@ -1351,6 +1351,7 @@ Fields:
 - `effects`: optional structured side-effect metadata for the task body
 - `requirements`: optional task-scoped prerequisite surface for this executable path
 - `execution`: optional mode-aware execution branches for one task intent
+- `when`: optional execution-guard conditions for the selected task node
 - `runtime`: optional long-running workload shape for endpoint-bearing tasks
 - `variants`: optional list of conditional task executions
 - `requires_services`: optional list of service names that must be ready before the task body runs
@@ -1398,6 +1399,17 @@ Task-effect rules:
 - `modes.<mode>.launch`: optional structured launch override for that mode
 - `modes.<mode>.runtime`: optional runtime/listener override for that mode
 
+`when` fields:
+
+- `checks`: optional list of check names that must pass before this task node executes
+
+`when` rules:
+
+- `when.checks` gates the selected task node only; dependency ordering and service requirements are still declared separately
+- allowed condition-check kinds are `precondition` (with `run`), `file`, and `changed_files`
+- probe-driven preconditions are not valid condition checks for `when.checks`
+- condition checks run before dependency/service startup for the selected task node; if any condition fails, ota skips the task deterministically
+
 `execution` mode rules:
 
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
@@ -1427,7 +1439,7 @@ Task-effect rules:
 `action` fields:
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
-  `ensure_file`, or `ensure_directory`
+  `ensure_file`, `ensure_directory`, or `ensure_bundle`
 - `action.kind: copy_if_missing`
   - `action.from`: required repo-relative source file
   - `action.to`: required repo-relative destination file
@@ -1449,6 +1461,14 @@ Task-effect rules:
   - `action.random.encoding`: optional `hex` or `base64` (default `hex`)
 - `action.kind: ensure_directory`
   - `action.path`: required repo-relative directory path to create when missing
+- `action.kind: ensure_bundle`
+  - `action.steps`: required ordered list of deterministic bootstrap steps
+  - each `action.steps[]` entry uses one of:
+    - `kind: copy_if_missing`
+    - `kind: ensure_env_file`
+    - `kind: ensure_file`
+    - `kind: ensure_directory`
+  - each step uses the same fields and validation rules as the corresponding top-level action kind
 
 Use `action.kind: copy_if_missing` for setup steps like creating `.env.local` from
 `.env.example` without depending on POSIX `test` / `cp` or PowerShell conditionals. The action is
@@ -1465,6 +1485,11 @@ secret token file) without shell glue. It creates `action.path` once from one ex
 Use `action.kind: ensure_directory` when setup needs a deterministic repo-local directory without
 shell glue. It creates `action.path` when missing, no-ops when it already exists as a directory,
 and fails if the path already exists as a non-directory.
+
+Use `action.kind: ensure_bundle` when setup needs multiple deterministic bootstrap mutations in one
+task (for example env file seeding plus secret file creation plus cache directory creation) without
+shell orchestration. Ota executes steps in order, preserves the same idempotent semantics as each
+step kind, and keeps validation/error reporting inside the contract surface.
 
 `requirements` fields:
 

@@ -201,8 +201,16 @@ Current shape:
       "introduced_in": "1.6.16"
     },
     {
+      "id": "tasks.action.ensure_bundle",
+      "introduced_in": "1.6.17"
+    },
+    {
       "id": "checks.changed_files",
       "introduced_in": "1.6.16"
+    },
+    {
+      "id": "tasks.when.checks",
+      "introduced_in": "1.6.17"
     },
     {
       "id": "services.readiness.compose_health",

@@ -17722,7 +17722,21 @@ tasks:
         );
         assert!(
             capabilities.iter().any(|capability| {
+                capability["id"] == "tasks.action.ensure_bundle"
+                    && capability["introduced_in"].as_str().is_some()
+            }),
+            "{json}"
+        );
+        assert!(
+            capabilities.iter().any(|capability| {
                 capability["id"] == "tasks.runtime.readiness.signal_probes"
+                    && capability["introduced_in"].as_str().is_some()
+            }),
+            "{json}"
+        );
+        assert!(
+            capabilities.iter().any(|capability| {
+                capability["id"] == "tasks.when.checks"
                     && capability["introduced_in"].as_str().is_some()
             }),
             "{json}"

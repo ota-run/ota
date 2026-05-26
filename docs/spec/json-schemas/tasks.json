@@ -251,6 +251,10 @@
                 "type": "array",
                 "items": { "type": "string" }
               },
+              "when_checks": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
               "after_success": {
                 "type": "array",
                 "items": { "type": "string" }
@@ -374,6 +378,10 @@
                       "items": { "type": "string" }
                     },
                     "requires_services": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "when_checks": {
                       "type": "array",
                       "items": { "type": "string" }
                     },

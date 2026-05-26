@@ -2922,6 +2922,8 @@ pub struct TaskSummary<'a> {
     pub selected_variant_os: Option<&'a str>,
     pub depends_on: Vec<String>,
     pub requires_services: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub when_checks: Vec<String>,
     pub after_success: Vec<String>,
     pub after_failure: Vec<String>,
     pub after_always: Vec<String>,
@@ -2998,6 +3000,7 @@ impl<'a> TaskSummary<'a> {
             selected_variant_os: resolved_execution.os,
             depends_on: task.depends_on.clone(),
             requires_services: task.requires_services.clone(),
+            when_checks: task.when.checks.clone(),
             after_success: task.after_success.clone(),
             after_failure: task.after_failure.clone(),
             after_always: task.after_always.clone(),
@@ -3185,6 +3188,11 @@ fn summarize_task_action<'a>(
             from: None,
             to: Some(spec.path.as_str()),
         }),
+        crate::schema::TaskActionSpec::EnsureBundle(_) => Some(TaskActionSummary {
+            kind: "ensure_bundle",
+            from: None,
+            to: None,
+        }),
     }
 }
 
@@ -3248,6 +3256,11 @@ pub fn summarize_task_action_owned(
             kind: "ensure_directory",
             from: None,
             to: Some(spec.path.clone()),
+        }),
+        crate::schema::TaskActionSpec::EnsureBundle(_) => Some(WorkspaceTaskActionSummary {
+            kind: "ensure_bundle",
+            from: None,
+            to: None,
         }),
     }
 }
