@@ -24983,6 +24983,7 @@ tasks:
         address_view: &str,
         include_host_projection: bool,
     ) -> String {
+        let target = format!("sandbox-{task_name}");
         let readiness = match readiness_kind {
             "tcp" => String::from("      readiness:\n        kind: tcp\n        listener: http\n"),
             "http" => String::from(
@@ -25012,12 +25013,12 @@ extensions:
       activation)
         python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 &
         printf '%s\n' "$!" > "${{PWD}}/backend-provider.pid"
-        printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+        printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"","stderr":"","target":"{target}"}},"errors":[]}}'
         ;;
       activation_probe)
         sh -lc "$OTA_BACKEND_PROVIDER_COMMAND" >/dev/null 2>&1
         status=$?
-        printf '{{"ok":true,"result":{{"exit_code":%s,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}' "$status"
+        printf '{{"ok":true,"result":{{"exit_code":%s,"stdout":"","stderr":"","target":"{target}"}},"errors":[]}}' "$status"
         ;;
       activation_cleanup)
         if [ -f "${{PWD}}/backend-provider.pid" ]; then
@@ -25027,7 +25028,7 @@ extensions:
         for pid in $(lsof -ti TCP:{port} -sTCP:LISTEN 2>/dev/null || true); do
           kill "$pid" 2>/dev/null || true
         done
-        printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"cleaned","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
+        printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"cleaned","stderr":"","target":"{target}"}},"errors":[]}}'
         ;;
       *)
         printf '{{"ok":false,"errors":["unexpected command context"]}}'
@@ -25043,7 +25044,7 @@ execution:
       backend: remote
       remote:
         provider: backend-demo
-        target: sandbox-dev
+        target: {target}
   shared_backends:
     workbench:
       scope: remote
@@ -25083,6 +25084,7 @@ tasks:
             readiness = readiness,
             host_projection = host_projection,
             address_view = address_view,
+            target = target,
         )
     }
 
@@ -30064,7 +30066,7 @@ tasks:
   quickstart:
     launch:
       kind: command
-      exe: sh
+      exe: bash
       args:
         - -c
         - printf hello && printf error >&2
