@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.17
+
 - scoped selected task/workflow requirement resolution so non-native paths (container/remote) no
   longer inherit host-global `tools` fallback when no scoped tool requirements are declared; global
   tool fallback remains for native selected paths, preventing host-only tools from leaking into
