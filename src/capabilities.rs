@@ -83,8 +83,16 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.16",
     },
     ContractCapabilitySpec {
+        id: "tasks.action.ensure_bundle",
+        introduced_in: "1.6.17",
+    },
+    ContractCapabilitySpec {
         id: "checks.changed_files",
         introduced_in: "1.6.16",
+    },
+    ContractCapabilitySpec {
+        id: "tasks.when.checks",
+        introduced_in: "1.6.17",
     },
     ContractCapabilitySpec {
         id: "services.readiness.compose_health",
@@ -317,7 +325,9 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         "tasks.action.ensure_env_file" => tasks_action_ensure_env_file_present(document),
         "tasks.action.ensure_file" => tasks_action_ensure_file_present(document),
         "tasks.action.ensure_directory" => tasks_action_ensure_directory_present(document),
+        "tasks.action.ensure_bundle" => tasks_action_ensure_bundle_present(document),
         "checks.changed_files" => checks_changed_files_present(document),
+        "tasks.when.checks" => tasks_when_checks_present(document),
         "services.readiness.compose_health" => services_readiness_compose_health_present(document),
         "tasks.runtime.readiness.signal_probes" => {
             tasks_runtime_readiness_signal_probes_present(document)
@@ -384,10 +394,17 @@ fn capability_present_in_contract(
                 Some(crate::schema::TaskActionSpec::EnsureDirectory(_))
             )
         }),
+        "tasks.action.ensure_bundle" => contract.tasks.values().any(|task| {
+            matches!(
+                task.action.as_ref(),
+                Some(crate::schema::TaskActionSpec::EnsureBundle(_))
+            )
+        }),
         "checks.changed_files" => contract
             .checks
             .iter()
             .any(|check| check.kind == crate::schema::CheckKind::ChangedFiles),
+        "tasks.when.checks" => contract.tasks.values().any(|task| !task.when.is_empty()),
         "services.readiness.compose_health" => contract.services.values().any(|service| {
             service.readiness.as_ref().is_some_and(|readiness| {
                 matches!(
@@ -576,6 +593,22 @@ fn tasks_action_ensure_directory_present(document: &Value) -> bool {
     })
 }
 
+fn tasks_action_ensure_bundle_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(|task| {
+        mapping_child(task, "action")
+            .and_then(Value::as_mapping)
+            .and_then(|action| {
+                action
+                    .get(Value::String(String::from("kind")))
+                    .and_then(Value::as_str)
+            })
+            == Some("ensure_bundle")
+    })
+}
+
 fn checks_changed_files_present(document: &Value) -> bool {
     let Some(checks) = mapping_child(document, "checks").and_then(Value::as_sequence) else {
         return false;
@@ -583,6 +616,15 @@ fn checks_changed_files_present(document: &Value) -> bool {
     checks
         .iter()
         .any(|check| mapping_child(check, "kind").and_then(Value::as_str) == Some("changed_files"))
+}
+
+fn tasks_when_checks_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks
+        .values()
+        .any(|task| document_has_path(task, &["when", "checks"]))
 }
 
 fn services_readiness_compose_health_present(document: &Value) -> bool {
@@ -677,6 +719,9 @@ tasks:
     action:
       kind: ensure_directory
       path: .cache/dev
+    when:
+      checks:
+        - web-changed
     runtime:
       kind: service
       readiness:
@@ -705,6 +750,15 @@ tasks:
       network_kind: dependency_hydration
       external_state:
         - docker
+  bootstrap:bundle:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_directory
+          path: .cache/setup
+        - kind: ensure_file
+          path: config/token.txt
+          value: dev-token
 readiness:
   probes:
     backend-worker:
@@ -761,7 +815,9 @@ native_prerequisites:
                 "tasks.action.ensure_env_file",
                 "tasks.action.ensure_file",
                 "tasks.action.ensure_directory",
+                "tasks.action.ensure_bundle",
                 "checks.changed_files",
+                "tasks.when.checks",
                 "services.readiness.compose_health",
                 "tasks.runtime.readiness.signal_probes",
                 "agent.posture",
@@ -812,6 +868,9 @@ tasks:
     action:
       kind: ensure_directory
       path: .cache/dev
+    when:
+      checks:
+        - web-changed
     runtime:
       kind: service
       readiness:
@@ -833,6 +892,15 @@ tasks:
               port:
                 mode: fixed
                 value: 3000
+  bootstrap:bundle:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_directory
+          path: .cache/setup
+        - kind: ensure_file
+          path: config/token.txt
+          value: dev-token
 readiness:
   probes:
     backend-worker:
@@ -877,7 +945,9 @@ services:
                 "tasks.action.ensure_env_file",
                 "tasks.action.ensure_file",
                 "tasks.action.ensure_directory",
+                "tasks.action.ensure_bundle",
                 "checks.changed_files",
+                "tasks.when.checks",
                 "services.readiness.compose_health",
                 "tasks.runtime.readiness.signal_probes",
                 "agent.posture",

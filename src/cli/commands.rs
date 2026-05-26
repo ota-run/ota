@@ -9243,6 +9243,7 @@ fn build_assist_add_task_proposal(
         internal: internal.unwrap_or(matches!(kind, AssistTaskKindArg::Setup)),
         variants: Vec::new(),
         execution: None,
+        when: crate::schema::TaskExecutionWhenSpec::default(),
     };
     if execution_kind == "run" {
         task.run = Some(execution_body.clone());
@@ -33541,6 +33542,15 @@ fn render_tasks_text(
         ));
         output.push_str(&format!(
             "\n  {} {}",
+            paint_key("When Checks:"),
+            if task.when_checks.is_empty() {
+                String::from("-")
+            } else {
+                task.when_checks.join(",")
+            }
+        ));
+        output.push_str(&format!(
+            "\n  {} {}",
             paint_key("After Success:"),
             render_task_relationships(&task.after_success)
         ));
@@ -42526,6 +42536,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
+            when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
             after_always: Vec::new(),
@@ -42593,6 +42604,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
+            when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
             after_always: Vec::new(),
@@ -42664,6 +42676,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: vec![String::from("postgres")],
+            when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
             after_always: Vec::new(),
@@ -42739,6 +42752,7 @@ tasks:
             selected_variant_os: None,
             depends_on: Vec::new(),
             requires_services: Vec::new(),
+            when_checks: Vec::new(),
             after_success: Vec::new(),
             after_failure: Vec::new(),
             after_always: Vec::new(),
@@ -43075,6 +43089,7 @@ workflows:
                 selected_variant_os: None,
                 depends_on: Vec::new(),
                 requires_services: Vec::new(),
+                when_checks: Vec::new(),
                 after_success: Vec::new(),
                 after_failure: Vec::new(),
                 after_always: Vec::new(),

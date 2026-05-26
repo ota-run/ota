@@ -1214,6 +1214,10 @@ ota run build --skip-deps
 ```
 
 - resolves task dependencies before execution
+- when `tasks.<name>.when.checks` is declared, ota evaluates those checks before dependency/service
+  startup and skips the task when any condition check fails or times out
+- `when.checks` supports declared `precondition` (with `run`), `file`, and `changed_files` checks;
+  probe-driven checks are not valid execution conditions
 - `--skip-deps` suppresses that dependency execution for the requested task only; required service acquisition, hooks, and the selected task body still run
 - if the task body exits successfully, runs `after_success` hooks in declared order
 - if the task body exits with a failure, runs `after_failure` hooks in declared order

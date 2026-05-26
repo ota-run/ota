@@ -2262,6 +2262,7 @@ fn validate_tasks(
                 errors,
             );
         }
+        validate_task_condition_references(contract, name, task, errors);
         validate_task_requirement_references(contract, name, task, errors);
     }
 
@@ -2637,6 +2638,144 @@ fn validate_task_action(
             validate_repo_relative_file_action_path(
                 task_name,
                 "action.path",
+                spec.path.as_str(),
+                errors,
+            );
+        }
+        crate::schema::TaskActionSpec::EnsureBundle(spec) => {
+            if spec.steps.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` must declare at least one entry in `action.steps`"
+                )));
+            }
+            for (index, step) in spec.steps.iter().enumerate() {
+                validate_task_ensure_bundle_step(task_name, index, step, errors);
+            }
+        }
+    }
+}
+
+fn validate_task_ensure_bundle_step(
+    task_name: &str,
+    index: usize,
+    step: &crate::schema::TaskEnsureBundleStepSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let prefix = format!("action.steps[{index}]");
+    match step {
+        crate::schema::TaskEnsureBundleStepSpec::CopyIfMissing(copy) => {
+            validate_repo_relative_file_action_path(
+                task_name,
+                format!("{prefix}.from").as_str(),
+                copy.from.as_str(),
+                errors,
+            );
+            validate_repo_relative_file_action_path(
+                task_name,
+                format!("{prefix}.to").as_str(),
+                copy.to.as_str(),
+                errors,
+            );
+            if copy.from.trim() == copy.to.trim() && !copy.from.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` must not copy a file onto itself"
+                )));
+            }
+        }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureEnvFile(spec) => {
+            validate_repo_relative_file_action_path(
+                task_name,
+                format!("{prefix}.path").as_str(),
+                spec.path.as_str(),
+                errors,
+            );
+            if let Some(template) = spec.template.as_deref() {
+                validate_repo_relative_file_action_path(
+                    task_name,
+                    format!("{prefix}.template").as_str(),
+                    template,
+                    errors,
+                );
+            }
+            if spec.vars.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) must declare at least one entry in `{prefix}.vars`"
+                )));
+            }
+            for (key, value_spec) in &spec.vars {
+                if !is_valid_env_key_name(key.as_str()) {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) has invalid env key `{key}` in `{prefix}.vars`; use shell-safe env key tokens like `DATABASE_URL`"
+                    )));
+                }
+                let has_value = value_spec.value.is_some();
+                let has_random = value_spec.random.is_some();
+                if has_value == has_random {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` must declare exactly one of `value` or `random`"
+                    )));
+                    continue;
+                }
+                if let Some(value) = value_spec.value.as_deref()
+                    && value.contains('\n')
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` must not include newline characters in `value`"
+                    )));
+                }
+                if let Some(random) = value_spec.random.as_ref()
+                    && !(1..=1024).contains(&random.bytes)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` random bytes must be between 1 and 1024"
+                    )));
+                }
+            }
+        }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureFile(spec) => {
+            validate_repo_relative_file_action_path(
+                task_name,
+                format!("{prefix}.path").as_str(),
+                spec.path.as_str(),
+                errors,
+            );
+            if let Some(template) = spec.template.as_deref() {
+                validate_repo_relative_file_action_path(
+                    task_name,
+                    format!("{prefix}.template").as_str(),
+                    template,
+                    errors,
+                );
+            }
+            let has_template = spec.template.is_some();
+            let has_value = spec.value.is_some();
+            let has_random = spec.random.is_some();
+            let selected =
+                usize::from(has_template) + usize::from(has_value) + usize::from(has_random);
+            if selected != 1 {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_file`) must declare exactly one of `template`, `value`, or `random`"
+                )));
+            }
+            if let Some(value) = spec.value.as_deref()
+                && value.is_empty()
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_file`) must not declare an empty `value`"
+                )));
+            }
+            if let Some(random) = spec.random.as_ref()
+                && !(1..=1024).contains(&random.bytes)
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_file`) random bytes must be between 1 and 1024"
+                )));
+            }
+        }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureDirectory(spec) => {
+            validate_repo_relative_file_action_path(
+                task_name,
+                format!("{prefix}.path").as_str(),
                 spec.path.as_str(),
                 errors,
             );
@@ -6333,6 +6472,73 @@ fn validate_task_requirement_references(
     }
 }
 
+fn validate_task_condition_references(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    for check_name in &task.when.checks {
+        if check_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` must not declare an empty `when.checks` entry"
+            )));
+            continue;
+        }
+        validate_task_condition_check_reference(
+            contract,
+            check_name,
+            &format!("task `{task_name}`"),
+            errors,
+        );
+    }
+}
+
+fn validate_task_condition_check_reference(
+    contract: &Contract,
+    check_name: &str,
+    context_label: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(check) = contract
+        .checks
+        .iter()
+        .find(|check| check.name == check_name)
+    else {
+        errors.push(ValidationError::new(format!(
+            "{context_label} references unknown check `{check_name}` in `when.checks`"
+        )));
+        return;
+    };
+
+    if !matches!(
+        check.kind,
+        CheckKind::Precondition | CheckKind::File | CheckKind::ChangedFiles
+    ) {
+        errors.push(ValidationError::new(format!(
+            "{context_label} references unsupported check kind `{check_name}` in `when.checks`; only `precondition`, `file`, or `changed_files` checks are allowed"
+        )));
+        return;
+    }
+
+    if check.kind == CheckKind::Precondition
+        && check
+            .run
+            .as_deref()
+            .is_none_or(|command| command.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "{context_label} references check `{check_name}` in `when.checks`, but that precondition does not declare a runnable `run` command"
+        )));
+    }
+
+    if check.probe.is_some() {
+        errors.push(ValidationError::new(format!(
+            "{context_label} references check `{check_name}` in `when.checks`, but probe-driven checks are not supported for execution conditions"
+        )));
+    }
+}
+
 fn validate_task_native_requirement_activations(
     contract: &Contract,
     task_name: &str,
@@ -9483,6 +9689,69 @@ checks:
     }
 
     #[test]
+    fn validates_task_when_checks_with_supported_check_kinds() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: gate
+    kind: precondition
+    severity: error
+    run: test -f .env
+tasks:
+  test:
+    run: echo test
+    when:
+      checks:
+        - gate
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("task when.checks should validate");
+    }
+
+    #[test]
+    fn rejects_task_when_checks_with_probe_only_preconditions() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend:
+      kind: http
+      url: http://127.0.0.1:3000/health
+checks:
+  - name: gate
+    kind: precondition
+    severity: error
+    probe: backend
+tasks:
+  test:
+    run: echo test
+    when:
+      checks:
+        - gate
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("probe-only preconditions should be rejected for when.checks")
+            .to_string();
+        assert!(
+            rendered.contains("probe-driven checks are not supported for execution conditions"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn validates_file_checks_and_copy_if_missing_actions() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -9636,6 +9905,68 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("ensure_directory action should validate");
+    }
+
+    #[test]
+    fn validates_ensure_bundle_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:bootstrap:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_directory
+          path: .cache/dev
+        - kind: ensure_file
+          path: secrets/token.txt
+          random:
+            bytes: 32
+            encoding: hex
+        - kind: ensure_env_file
+          path: .env.local
+          vars:
+            APP_SECRET:
+              random:
+                bytes: 32
+                encoding: base64
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ensure_bundle action should validate");
+    }
+
+    #[test]
+    fn rejects_invalid_ensure_bundle_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:bootstrap:
+    action:
+      kind: ensure_bundle
+      steps: []
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid ensure_bundle action should fail")
+            .to_string();
+        assert!(
+            rendered.contains(
+                "task `setup:bootstrap` action `ensure_bundle` must declare at least one entry in `action.steps`"
+            ),
+            "{rendered}"
+        );
     }
 
     #[test]

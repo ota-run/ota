@@ -49,6 +49,17 @@
   (`--safe`, `--unsafe`, `--via native|container`) including valid combined `--use` flows
 - added a v9.1 pressure-test gap ledger documenting closed platform gaps, remaining maturity work,
   and acceptance evidence expectations for new gap intake
+- added first-class task execution conditions with `tasks.<name>.when.checks`, so `ota run`
+  now evaluates declared precondition/file/changed_files checks before dependency/service startup
+  and skips that task deterministically when the condition lane does not pass
+- surfaced task execution conditions in `ota tasks` output as `When Checks` and updated the
+  published `tasks.json` schema with `when_checks[]` for machine-readable parity
+- added contract-capability/minimum-version detection for `tasks.when.checks`, so older binaries
+  now render an explicit unsupported-feature upgrade hint instead of a generic parse failure
+- added first-class multi-step bootstrap orchestration with `action.kind: ensure_bundle`, so one
+  task can execute ordered deterministic setup actions (`copy_if_missing`, `ensure_env_file`,
+  `ensure_file`, `ensure_directory`) without shell glue; validation, run-path idempotence, and
+  capability/minimum-version detection now include `tasks.action.ensure_bundle`
 
 ## 1.6.17
 

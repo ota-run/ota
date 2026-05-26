@@ -2984,6 +2984,8 @@ pub struct TaskSpec {
     pub variants: Vec<TaskVariantSpec>,
     #[serde(default)]
     pub execution: Option<TaskModeExecutionSpec>,
+    #[serde(default)]
+    pub when: TaskExecutionWhenSpec,
 }
 
 impl TaskSpec {
@@ -3375,6 +3377,19 @@ impl TaskSpec {
     }
 }
 
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskExecutionWhenSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<String>,
+}
+
+impl TaskExecutionWhenSpec {
+    pub fn is_empty(&self) -> bool {
+        self.checks.is_empty()
+    }
+}
+
 #[derive(Debug, Default, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskModeExecutionSpec {
@@ -3560,6 +3575,7 @@ pub enum TaskActionSpec {
     EnsureEnvFile(TaskEnsureEnvFileActionSpec),
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
+    EnsureBundle(TaskEnsureBundleActionSpec),
 }
 
 impl TaskActionSpec {
@@ -3569,6 +3585,7 @@ impl TaskActionSpec {
             Self::EnsureEnvFile(_) => "ensure_env_file",
             Self::EnsureFile(_) => "ensure_file",
             Self::EnsureDirectory(_) => "ensure_directory",
+            Self::EnsureBundle(_) => "ensure_bundle",
         }
     }
 
@@ -3602,6 +3619,12 @@ impl TaskActionSpec {
             }
             Self::EnsureDirectory(action) => {
                 format!("ensure directory `{}` exists", action.path)
+            }
+            Self::EnsureBundle(action) => {
+                format!(
+                    "ensure bootstrap bundle with {} step(s)",
+                    action.steps.len()
+                )
             }
         }
     }
@@ -3640,6 +3663,22 @@ pub struct TaskEnsureFileActionSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskEnsureDirectoryActionSpec {
     pub path: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEnsureBundleActionSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<TaskEnsureBundleStepSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskEnsureBundleStepSpec {
+    CopyIfMissing(TaskCopyIfMissingActionSpec),
+    EnsureEnvFile(TaskEnsureEnvFileActionSpec),
+    EnsureFile(TaskEnsureFileActionSpec),
+    EnsureDirectory(TaskEnsureDirectoryActionSpec),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

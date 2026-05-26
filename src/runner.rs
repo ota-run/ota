@@ -62,16 +62,16 @@ use crate::provisioning::{
     apply_provisioning_request_with_target,
 };
 use crate::schema::{
-    Backend, ContainerBackend, Contract, EnvRequirement, EnvSourceKind, ExecutionContext,
-    ExecutionSharedBackendEnvironment, ExecutionSharedBackendFulfillment, ExtensionKind, Lifecycle,
-    NativePrerequisiteActivationKind, NativePrerequisiteActivationShell,
-    NativePrerequisiteActivationSpec, ReadinessProbeTargetKind, RemoteBackend, RuntimeRequirement,
-    TaskModeBranchSpec, TaskRuntimeHostPortMode, TaskRuntimeKind, TaskRuntimeProtocol,
-    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView, TaskTargetSpec,
-    ToolRequirement, ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
-    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
-    task_target_env_name,
+    Backend, CheckKind, CheckSpec, ContainerBackend, Contract, EnvRequirement, EnvSourceKind,
+    ExecutionContext, ExecutionSharedBackendEnvironment, ExecutionSharedBackendFulfillment,
+    ExtensionKind, FileCheckExpectation, Lifecycle, NativePrerequisiteActivationKind,
+    NativePrerequisiteActivationShell, NativePrerequisiteActivationSpec, ReadinessProbeTargetKind,
+    RemoteBackend, RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode,
+    TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind,
+    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetAddressView, TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode,
+    ToolchainProvider, ToolchainSpec, format_memory_size_bytes, parse_memory_size_bytes,
+    parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_contract};
@@ -5373,6 +5373,29 @@ fn execute_task_with_hooks(
     )?;
     let backend_kind = resolved_execution_backend_kind(&backend);
     let requested_relation = matches!(relation, TaskExecutionRelation::Requested);
+
+    if let Some(skip_note) = should_skip_task_for_conditions(contract, task_name, task, working_dir)
+    {
+        state.task_steps.push(ExecutedTaskStep {
+            name: task_name.to_string(),
+            exit_code: 0,
+            relation: relation.clone(),
+            generation,
+            execution_note: Some(skip_note.clone()),
+        });
+        state.task_step_target_resolutions.push(Vec::new());
+        state.task_step_backend_fulfillments.push(None);
+        state.task_step_shared_local_backends.push(None);
+        if requested_relation {
+            state.execution_note = Some(skip_note);
+        }
+        state.completed.insert(task_name.to_string(), 0);
+        state
+            .completed_by_generation
+            .insert((task_name.to_string(), generation), 0);
+        return Ok(0);
+    }
+
     let mut input_resolution = resolve_task_inputs(
         contract,
         contract_path,
@@ -5772,6 +5795,221 @@ fn execute_task_with_hooks(
         .completed_by_generation
         .insert((task_name.to_string(), generation), final_exit_code);
     Ok(final_exit_code)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskConditionStatus {
+    Passed,
+    Failed,
+    TimedOut,
+}
+
+fn should_skip_task_for_conditions(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    working_dir: &Path,
+) -> Option<String> {
+    if task.when.checks.is_empty() {
+        return None;
+    }
+
+    let mut failed = Vec::new();
+    let mut timed_out = Vec::new();
+
+    for check_name in &task.when.checks {
+        let Some(check) = contract
+            .checks
+            .iter()
+            .find(|check| check.name == *check_name)
+        else {
+            continue;
+        };
+        match evaluate_task_condition_check(check, working_dir) {
+            TaskConditionStatus::Passed => {}
+            TaskConditionStatus::Failed => failed.push(check_name.clone()),
+            TaskConditionStatus::TimedOut => timed_out.push(check_name.clone()),
+        }
+    }
+
+    if failed.is_empty() && timed_out.is_empty() {
+        return None;
+    }
+
+    let mut reasons = Vec::new();
+    if !failed.is_empty() {
+        reasons.push(format!("failed checks: {}", failed.join(", ")));
+    }
+    if !timed_out.is_empty() {
+        reasons.push(format!("timed out checks: {}", timed_out.join(", ")));
+    }
+    Some(format!(
+        "task `{task_name}` skipped by `when.checks` ({})",
+        reasons.join("; ")
+    ))
+}
+
+fn evaluate_task_condition_check(check: &CheckSpec, working_dir: &Path) -> TaskConditionStatus {
+    match check.kind {
+        CheckKind::ChangedFiles => run_task_condition_changed_files_check(check, working_dir),
+        CheckKind::File => run_task_condition_file_check(check, working_dir),
+        CheckKind::Precondition => run_task_condition_command_check(check, working_dir),
+        CheckKind::Health => TaskConditionStatus::Failed,
+    }
+}
+
+fn run_task_condition_command_check(check: &CheckSpec, working_dir: &Path) -> TaskConditionStatus {
+    let Some(command) = check
+        .run
+        .as_deref()
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+    else {
+        return TaskConditionStatus::Failed;
+    };
+
+    let mut child = match shell_command(command)
+        .current_dir(working_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return TaskConditionStatus::Failed,
+    };
+
+    let wait_status = match check.timeout {
+        Some(timeout_ms) => {
+            let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break Ok(Some(status)),
+                    Ok(None) if Instant::now() >= deadline => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break Ok(None);
+                    }
+                    Ok(None) => thread::sleep(Duration::from_millis(25)),
+                    Err(_) => break Err(()),
+                }
+            }
+        }
+        None => child.wait().map(Some).map_err(|_| ()),
+    };
+
+    let Ok(wait_status) = wait_status else {
+        return TaskConditionStatus::Failed;
+    };
+    if wait_status.is_none() {
+        return TaskConditionStatus::TimedOut;
+    }
+
+    if wait_status.is_some_and(|status| status.success()) {
+        TaskConditionStatus::Passed
+    } else {
+        TaskConditionStatus::Failed
+    }
+}
+
+fn run_task_condition_file_check(check: &CheckSpec, working_dir: &Path) -> TaskConditionStatus {
+    let Some(path) = check
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    else {
+        return TaskConditionStatus::Failed;
+    };
+    let target = working_dir.join(path);
+    let expectation = check.expect.unwrap_or(FileCheckExpectation::Exists);
+    let passed = match expectation {
+        FileCheckExpectation::Exists => target.exists(),
+        FileCheckExpectation::File => target.is_file(),
+        FileCheckExpectation::Directory => target.is_dir(),
+        FileCheckExpectation::Missing => !target.exists(),
+    };
+    if passed {
+        TaskConditionStatus::Passed
+    } else {
+        TaskConditionStatus::Failed
+    }
+}
+
+fn run_task_condition_changed_files_check(
+    check: &CheckSpec,
+    working_dir: &Path,
+) -> TaskConditionStatus {
+    let Some(changed_files) = check.changed_files.as_ref() else {
+        return TaskConditionStatus::Failed;
+    };
+    if changed_files.paths.is_empty() {
+        return TaskConditionStatus::Failed;
+    }
+
+    let mut diff = Command::new("git");
+    diff.arg("-C")
+        .arg(working_dir)
+        .arg("diff")
+        .arg("--name-only");
+    if let Some(base_ref) = changed_files
+        .base_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let head_ref = changed_files
+            .head_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("HEAD");
+        diff.arg(format!("{base_ref}..{head_ref}"));
+    } else {
+        diff.arg("HEAD");
+    }
+    diff.arg("--");
+    for matcher in &changed_files.paths {
+        diff.arg(matcher);
+    }
+    let diff_output = match diff.output() {
+        Ok(output) => output,
+        Err(_) => return TaskConditionStatus::Failed,
+    };
+    if !diff_output.status.success() {
+        return TaskConditionStatus::Failed;
+    }
+    if !String::from_utf8_lossy(&diff_output.stdout)
+        .trim()
+        .is_empty()
+    {
+        return TaskConditionStatus::Passed;
+    }
+
+    if changed_files.include_untracked {
+        let mut untracked = Command::new("git");
+        untracked
+            .arg("-C")
+            .arg(working_dir)
+            .arg("ls-files")
+            .arg("--others")
+            .arg("--exclude-standard")
+            .arg("--");
+        for matcher in &changed_files.paths {
+            untracked.arg(matcher);
+        }
+        let output = match untracked.output() {
+            Ok(output) => output,
+            Err(_) => return TaskConditionStatus::Failed,
+        };
+        if !output.status.success() {
+            return TaskConditionStatus::Failed;
+        }
+        if !String::from_utf8_lossy(&output.stdout).trim().is_empty() {
+            return TaskConditionStatus::Passed;
+        }
+    }
+
+    TaskConditionStatus::Failed
 }
 
 fn ensure_task_required_services(
@@ -6375,6 +6613,88 @@ fn execute_native_file_action_task(
             execute_ensure_file_action(task_name, spec, working_dir)
         }
         crate::schema::TaskActionSpec::EnsureDirectory(spec) => {
+            execute_ensure_directory_action(task_name, spec, working_dir)
+        }
+        crate::schema::TaskActionSpec::EnsureBundle(spec) => {
+            execute_ensure_bundle_action(task_name, spec, working_dir)
+        }
+    }
+}
+
+fn execute_ensure_bundle_action(
+    task_name: &str,
+    spec: &crate::schema::TaskEnsureBundleActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    if spec.steps.is_empty() {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: String::from(
+                "action `ensure_bundle` must declare at least one entry in `action.steps`",
+            ),
+        });
+    }
+    let mut stdout = String::new();
+    for step in &spec.steps {
+        let step_output = execute_ensure_bundle_step(task_name, step, working_dir)?;
+        stdout.push_str(step_output.stdout.as_str());
+    }
+    Ok(file_action_output(stdout))
+}
+
+fn execute_ensure_bundle_step(
+    task_name: &str,
+    step: &crate::schema::TaskEnsureBundleStepSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    match step {
+        crate::schema::TaskEnsureBundleStepSpec::CopyIfMissing(copy) => {
+            let from = working_dir.join(copy.from.trim());
+            let to = working_dir.join(copy.to.trim());
+            if to.exists() {
+                return Ok(file_action_output(format!(
+                    "`{}` already exists; no copy needed\n",
+                    copy.to.trim()
+                )));
+            }
+            if !from.is_file() {
+                return Err(RunError::FileActionFailed {
+                    task: task_name.to_string(),
+                    message: format!("source `{}` is not a file", copy.from.trim()),
+                });
+            }
+            if let Some(parent) = to.parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent).map_err(|source| RunError::FileActionFailed {
+                    task: task_name.to_string(),
+                    message: format!(
+                        "could not create parent directory for `{}`: {source}",
+                        copy.to.trim()
+                    ),
+                })?;
+            }
+            std::fs::copy(&from, &to).map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not copy `{}` to `{}`: {source}",
+                    copy.from.trim(),
+                    copy.to.trim()
+                ),
+            })?;
+            Ok(file_action_output(format!(
+                "copied `{}` to `{}`\n",
+                copy.from.trim(),
+                copy.to.trim()
+            )))
+        }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureEnvFile(spec) => {
+            execute_ensure_env_file_action(task_name, spec, working_dir)
+        }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureFile(spec) => {
+            execute_ensure_file_action(task_name, spec, working_dir)
+        }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureDirectory(spec) => {
             execute_ensure_directory_action(task_name, spec, working_dir)
         }
     }
@@ -34086,6 +34406,83 @@ tasks:
     }
 
     #[test]
+    fn task_when_checks_skip_task_when_condition_fails() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: marker-present
+    kind: file
+    severity: error
+    path: marker.txt
+    expect: exists
+tasks:
+  build:
+    when:
+      checks:
+        - marker-present
+    action:
+      kind: ensure_file
+      path: ran.txt
+      value: executed
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "build")
+            .expect("task run should succeed when condition skips");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(
+            !fixture.dir.path().join("ran.txt").exists(),
+            "task action should not run when condition fails"
+        );
+        let note = outcome
+            .execution_note
+            .as_deref()
+            .expect("skip should surface an execution note");
+        assert!(note.contains("skipped by `when.checks`"), "{note}");
+    }
+
+    #[test]
+    fn task_when_checks_allow_task_when_condition_passes() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: marker-missing
+    kind: file
+    severity: error
+    path: marker.txt
+    expect: missing
+tasks:
+  build:
+    when:
+      checks:
+        - marker-missing
+    action:
+      kind: ensure_file
+      path: ran.txt
+      value: executed
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "build")
+            .expect("task run should succeed");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(
+            fixture.dir.path().join("ran.txt").exists(),
+            "task action should run when condition passes"
+        );
+    }
+
+    #[test]
     fn reruns_after_success_tasks_even_if_completed_as_dependencies() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -44729,6 +45126,88 @@ tasks:
             second
                 .stdout
                 .contains("`.cache/dev` already exists; no directory create needed"),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_bundle_action_runs_all_steps_idempotently() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:bootstrap:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_directory
+          path: .cache/dev
+        - kind: ensure_file
+          path: secrets/token.txt
+          value: dev-token
+        - kind: ensure_env_file
+          path: .env.local
+          vars:
+            API_URL:
+              value: http://127.0.0.1:3000
+"#,
+        );
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:bootstrap")
+            .expect("ensure bundle action should run");
+        assert_eq!(first.exit_code, 0);
+        assert!(fixture.dir.path().join(".cache/dev").is_dir());
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("secrets/token.txt")).unwrap(),
+            "dev-token"
+        );
+        let env_content = fs::read_to_string(fixture.dir.path().join(".env.local")).unwrap();
+        assert!(
+            env_content.contains("API_URL=http://127.0.0.1:3000\n"),
+            "{env_content}"
+        );
+        assert!(
+            first.stdout.contains("ensured directory `.cache/dev`"),
+            "{}",
+            first.stdout
+        );
+        assert!(
+            first.stdout.contains("ensured `secrets/token.txt`"),
+            "{}",
+            first.stdout
+        );
+        assert!(
+            first
+                .stdout
+                .contains("ensured `.env.local` (created), appended 1 env key(s)"),
+            "{}",
+            first.stdout
+        );
+
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:bootstrap")
+            .expect("re-running ensure bundle action should stay idempotent");
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second
+                .stdout
+                .contains("`.cache/dev` already exists; no directory create needed"),
+            "{}",
+            second.stdout
+        );
+        assert!(
+            second
+                .stdout
+                .contains("`secrets/token.txt` already exists; no write needed"),
+            "{}",
+            second.stdout
+        );
+        assert!(
+            second
+                .stdout
+                .contains("ensured `.env.local`, appended 0 env key(s)"),
             "{}",
             second.stdout
         );
