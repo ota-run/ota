@@ -12197,25 +12197,88 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
 fn listed_task_summaries<'a>(
     contract: &'a Contract,
     include_internal: bool,
+    filters: &TasksListFilters,
 ) -> Vec<TaskSummary<'a>> {
-    let mut tasks = contract
-        .tasks
-        .iter()
-        .filter(|(_, task)| include_internal || !task.internal)
-        .map(|(name, task)| TaskSummary::from_spec(name, task, current_os(), contract))
-        .collect::<Vec<_>>();
-
-    if !include_internal {
-        let visible_task_names = tasks
-            .iter()
-            .map(|task| task.name.to_string())
-            .collect::<BTreeSet<_>>();
-        for task in &mut tasks {
-            task.retain_visible_task_relationships(&visible_task_names);
+    let mut tasks = Vec::new();
+    for (name, task) in &contract.tasks {
+        if !include_internal && task.internal {
+            continue;
         }
+        if !task_matches_tasks_filters(contract, name, task, filters) {
+            continue;
+        }
+        tasks.push(TaskSummary::from_spec(name, task, current_os(), contract));
+    }
+
+    let visible_task_names = tasks
+        .iter()
+        .map(|task| task.name.to_string())
+        .collect::<BTreeSet<_>>();
+    for task in &mut tasks {
+        task.retain_visible_task_relationships(&visible_task_names);
     }
 
     tasks
+}
+
+#[derive(Clone, Copy)]
+enum TasksSafetyFilter {
+    Safe,
+    Unsafe,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TasksListFilters {
+    safety: Option<TasksSafetyFilter>,
+    via_backend: Option<crate::schema::Backend>,
+}
+
+fn task_is_effectively_safe(
+    contract: &Contract,
+    task_name: &str,
+    task: &crate::schema::TaskSpec,
+) -> bool {
+    task.safe_for_agent
+        || contract
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent.safe_tasks.iter().any(|name| name == task_name))
+}
+
+fn task_supports_backend(
+    contract: &Contract,
+    task: &crate::schema::TaskSpec,
+    backend: crate::schema::Backend,
+) -> bool {
+    if task.workflow_backend(contract.execution.as_ref()) == backend {
+        return true;
+    }
+
+    task.mode_execution_branch(backend).is_some()
+}
+
+fn task_matches_tasks_filters(
+    contract: &Contract,
+    task_name: &str,
+    task: &crate::schema::TaskSpec,
+    filters: &TasksListFilters,
+) -> bool {
+    if let Some(safety) = filters.safety {
+        let is_safe = task_is_effectively_safe(contract, task_name, task);
+        match safety {
+            TasksSafetyFilter::Safe if !is_safe => return false,
+            TasksSafetyFilter::Unsafe if is_safe => return false,
+            _ => {}
+        }
+    }
+
+    if let Some(backend) = filters.via_backend
+        && !task_supports_backend(contract, task, backend)
+    {
+        return false;
+    }
+
+    true
 }
 
 fn listed_agent_summary<'a>(
@@ -12244,9 +12307,23 @@ pub fn tasks(
     workflow_name: Option<&str>,
     use_cmd: bool,
     all: bool,
+    safe: bool,
+    unsafe_tasks: bool,
+    via_backend: Option<crate::schema::Backend>,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    if safe && unsafe_tasks {
+        return finalize_debug(
+            CommandOutput::failure_with_code(
+                String::from("`--safe` and `--unsafe` cannot be used together"),
+                2,
+            ),
+            debug,
+            vec![String::from("DEBUG command=tasks")],
+        );
+    }
+
     if let Some(duplicate) = duplicate_member(members) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -12285,6 +12362,30 @@ pub fn tasks(
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
+    if safe {
+        debug_lines.push(String::from("DEBUG filter.safety=safe"));
+    }
+    if unsafe_tasks {
+        debug_lines.push(String::from("DEBUG filter.safety=unsafe"));
+    }
+    if let Some(backend) = via_backend {
+        let backend_label = match backend {
+            crate::schema::Backend::Native => "native",
+            crate::schema::Backend::Container => "container",
+            crate::schema::Backend::Remote => "remote",
+        };
+        debug_lines.push(format!("DEBUG filter.via_backend={backend_label}"));
+    }
+    let filters = TasksListFilters {
+        safety: if safe {
+            Some(TasksSafetyFilter::Safe)
+        } else if unsafe_tasks {
+            Some(TasksSafetyFilter::Unsafe)
+        } else {
+            None
+        },
+        via_backend,
+    };
 
     if is_org_policy_pack_path(&resolved_path) {
         return finalize_debug(
@@ -12310,7 +12411,7 @@ pub fn tasks(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
-                let task_summaries = listed_task_summaries(&target.contract, all);
+                let task_summaries = listed_task_summaries(&target.contract, all, &filters);
                 let agent_summary = listed_agent_summary(&target.contract, all, &task_summaries);
                 let workflow_summary = match resolve_selected_workflow_summary(
                     &target.contract,
@@ -12390,7 +12491,8 @@ pub fn tasks(
                                         );
                                     }
                                 };
-                            let member_tasks = listed_task_summaries(&member_target.contract, all);
+                            let member_tasks =
+                                listed_task_summaries(&member_target.contract, all, &filters);
                             let member_agent =
                                 listed_agent_summary(&member_target.contract, all, &member_tasks);
                             let member_workflow = match resolve_selected_workflow_summary(
@@ -12507,7 +12609,7 @@ pub fn tasks(
                                 );
                             }
                         };
-                    let tasks = listed_task_summaries(&target.contract, all);
+                    let tasks = listed_task_summaries(&target.contract, all, &filters);
                     let agent = listed_agent_summary(&target.contract, all, &tasks);
                     let workflow = match resolve_selected_workflow_summary(
                         &target.contract,
@@ -33330,16 +33432,8 @@ fn render_tasks_text(
     }
 
     for task in tasks {
-        let command_preview = task
-            .run
-            .map(str::to_string)
-            .or_else(|| {
-                task.script
-                    .map(|script| script.lines().next().unwrap_or(script).trim().to_string())
-            })
-            .or_else(|| task.launch.as_ref().map(render_task_launch_preview))
-            .or_else(|| task.action.as_ref().map(render_task_action_text))
-            .unwrap_or_else(|| String::from("-"));
+        let command_preview = render_task_command_preview(task);
+        let mode_commands = render_task_mode_commands(task);
 
         output.push_str(&format!("\n\n{} {}", list_bullet(), paint(task.name, "1")));
         output.push_str(&format!(
@@ -33360,6 +33454,12 @@ fn render_tasks_text(
             paint_key("Use:"),
             paint_code(&format!("ota run {}", task.name))
         ));
+        if !mode_commands.is_empty() {
+            output.push_str(&format!("\n  {}", paint_key("Modes:")));
+            for command in mode_commands {
+                output.push_str(&format!("\n    {command}"));
+            }
+        }
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Command Preview:"),
@@ -33510,6 +33610,44 @@ fn render_task_launch_preview(launch: &crate::output::TaskLaunchSummary<'_>) -> 
     }
 }
 
+fn render_task_command_preview(task: &TaskSummary<'_>) -> String {
+    task.run
+        .map(str::to_string)
+        .or_else(|| {
+            task.script
+                .map(|script| script.lines().next().unwrap_or(script).trim().to_string())
+        })
+        .or_else(|| task.launch.as_ref().map(render_task_launch_preview))
+        .or_else(|| task.action.as_ref().map(render_task_action_text))
+        .unwrap_or_else(|| String::from("-"))
+}
+
+fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
+    let Some(default_mode) = task.default_mode else {
+        return Vec::new();
+    };
+    if task.modes.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut commands = vec![format!(
+        "default: `{}`",
+        paint_code(&format!("ota run {}", task.name))
+    )];
+
+    commands.extend(
+        task.modes
+            .iter()
+            .filter(|mode| mode.mode != default_mode)
+            .map(|mode| {
+                let command = format!("ota run {} --mode {}", task.name, mode.mode);
+                format!("{}: `{}`", mode.mode, paint_code(&command))
+            }),
+    );
+
+    commands
+}
+
 fn render_task_launch_text(launch: &crate::output::TaskLaunchSummary<'_>) -> String {
     match launch.kind {
         "command" => render_task_launch_preview(launch),
@@ -33643,6 +33781,13 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             paint_key("Command:"),
             paint_code(&usage)
         ));
+        let mode_commands = render_task_mode_commands(task);
+        if !mode_commands.is_empty() {
+            output.push_str(&format!("\n  {}", paint_key("Modes:")));
+            for command in mode_commands {
+                output.push_str(&format!("\n    {command}"));
+            }
+        }
         if let Some(launch) = task.launch.as_ref() {
             output.push_str(&format!(
                 "\n  {} {}",

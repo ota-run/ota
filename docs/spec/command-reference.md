@@ -255,6 +255,10 @@ List tasks from a validated contract.
 ota tasks [PATH]
 ota tasks --json [PATH]
 ota tasks --all [PATH]
+ota tasks --safe [PATH]
+ota tasks --unsafe [PATH]
+ota tasks --via native [PATH]
+ota tasks --via container [PATH]
 ota tasks --member api [PATH]
 ota tasks --member api --member web --json [PATH]
 ```
@@ -279,6 +283,9 @@ Current behavior:
 - includes an `agent` summary when the contract declares one
 - includes variant summaries when variants are declared
 - `--use` keeps the usage line but also shows `description` and `notes` when present
+- `--safe` and `--unsafe` are mutually exclusive filters over the effective safe set
+  (`safe_for_agent: true` plus `agent.safe_tasks`)
+- `--via <native|container>` filters to tasks runnable through the selected backend lane
 - `--all` includes orchestration tasks marked `internal: true`; those entries carry `internal: true` in JSON output
 
 Text output:
@@ -292,6 +299,9 @@ Text output:
 - each task may include `env`, `inputs`, `effects`, and `requires_services`
 - each task may include `Description` and `Notes`, where `Notes` can describe purpose and usage
 - each task includes a short execution preview
+- each task keeps one canonical `Use: ota run <task>` command
+- when a task has multiple execution modes, text output adds a compact `Modes:` block with
+  mode-specific `ota run <task> --mode <mode>` commands
 
 JSON output:
 

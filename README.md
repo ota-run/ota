@@ -603,6 +603,15 @@ Use `ota tasks --use` to see the exact runnable task commands for the current co
 ota tasks --use
 ```
 
+Use task-surface filters when you need a narrower view:
+
+```bash
+ota tasks --safe
+ota tasks --unsafe
+ota tasks --via native
+ota tasks --via container
+```
+
 ## Hosted validation and service provisioning
 
 In CI, the runner still owns the job. ota owns the repo contract and can provision declared

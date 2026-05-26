@@ -111,6 +111,15 @@ enum Commands {
         /// Print compact runnable usage lines for each task.
         #[arg(long = "use", action = ArgAction::SetTrue)]
         use_cmd: bool,
+        /// Show only agent-safe tasks.
+        #[arg(long, action = ArgAction::SetTrue)]
+        safe: bool,
+        /// Show only non-agent-safe tasks.
+        #[arg(long = "unsafe", action = ArgAction::SetTrue)]
+        unsafe_tasks: bool,
+        /// Show only tasks runnable via the selected backend lane.
+        #[arg(long, value_enum)]
+        via: Option<TasksViaBackend>,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
@@ -1094,6 +1103,12 @@ enum AssistReadinessStyleArg {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum TasksViaBackend {
+    Native,
+    Container,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 enum AssistServiceManagerArg {
     Compose,
     Host,
@@ -1741,9 +1756,29 @@ struct CompletionTaskInputAggregate {
 }
 
 fn maybe_handle_shell_completion(args: &[OsString]) -> Option<CommandOutput> {
+    if std::env::var_os("COMPLETE").is_none() {
+        return None;
+    }
+
+    const COMPLETION_STACK_BYTES: usize = 32 * 1024 * 1024;
+    let completion_args = args.to_vec();
     let current_dir = std::env::current_dir().ok();
+    let handle = std::thread::Builder::new()
+        .name(String::from("ota-shell-completion"))
+        .stack_size(COMPLETION_STACK_BYTES)
+        .spawn(move || completion_output_for_request(completion_args, current_dir))
+        .expect("spawn ota shell completion thread");
+    handle
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+fn completion_output_for_request(
+    args: Vec<OsString>,
+    current_dir: Option<PathBuf>,
+) -> Option<CommandOutput> {
     let _guard = CompletionRequestGuard::set(CompletionRequest {
-        words: completion_request_words_from_process_args(args),
+        words: completion_request_words_from_process_args(&args),
     });
 
     match CompleteEnv::with_factory(completion_command)
@@ -1942,6 +1977,7 @@ fn repo_command_value_span(flag: &str) -> Option<usize> {
         "--member",
         "--task",
         "--mode",
+        "--via",
         "--backend",
         "--host-port",
         "--memory",
@@ -1955,6 +1991,8 @@ fn repo_command_value_span(flag: &str) -> Option<usize> {
         "--json",
         "--all",
         "--use",
+        "--safe",
+        "--unsafe",
         "--write",
         "--stream",
         "--log",
@@ -2921,6 +2959,28 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
+
+    #[cfg(test)]
+    {
+        const TEST_CLI_STACK_BYTES: usize = 32 * 1024 * 1024;
+        let handle = std::thread::Builder::new()
+            .name(String::from("ota-cli-test-run"))
+            .stack_size(TEST_CLI_STACK_BYTES)
+            .spawn(move || run_with_inner(args))
+            .expect("spawn ota cli test run thread");
+        return handle
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+    }
+
+    #[cfg(not(test))]
+    {
+        run_with_inner(args)
+    }
+}
+
+fn run_with_inner(args: Vec<OsString>) -> CommandOutput {
     static RUN_WITH_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     let _run_guard = RUN_WITH_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
@@ -2960,7 +3020,6 @@ where
     commands::set_plain_mode(true);
     commands::take_failure_locus();
 
-    let args = args.into_iter().map(Into::into).collect::<Vec<OsString>>();
     if let Some(output) = maybe_handle_shell_completion(&args) {
         return output;
     }
@@ -4438,6 +4497,9 @@ fn dispatch(cli: Cli) -> CommandOutput {
             json,
             all,
             use_cmd,
+            safe,
+            unsafe_tasks,
+            via,
             member,
             workflow,
             path,
@@ -4448,6 +4510,12 @@ fn dispatch(cli: Cli) -> CommandOutput {
             workflow.as_deref(),
             use_cmd,
             all,
+            safe,
+            unsafe_tasks,
+            via.map(|value| match value {
+                TasksViaBackend::Native => crate::schema::Backend::Native,
+                TasksViaBackend::Container => crate::schema::Backend::Container,
+            }),
             format_from_json(json),
             debug,
         ),
@@ -6281,14 +6349,33 @@ mod tests {
         words: &[&str],
         arg_index: usize,
     ) -> Result<Vec<String>, std::io::Error> {
-        let mut command = completion_command();
-        let current_dir = std::env::current_dir().ok();
-        let args = words
+        const TEST_COMPLETION_STACK_BYTES: usize = 32 * 1024 * 1024;
+        let completion_words = words
             .iter()
-            .map(|word| OsString::from(*word))
+            .map(|word| (*word).to_string())
             .collect::<Vec<_>>();
-        clap_complete::engine::complete(&mut command, args, arg_index, current_dir.as_deref())
-            .map(completion_values)
+        let handle = std::thread::Builder::new()
+            .name(String::from("ota-test-shell-completion"))
+            .stack_size(TEST_COMPLETION_STACK_BYTES)
+            .spawn(move || {
+                let mut command = completion_command();
+                let current_dir = std::env::current_dir().ok();
+                let args = completion_words
+                    .iter()
+                    .map(|word| OsString::from(word.as_str()))
+                    .collect::<Vec<_>>();
+                clap_complete::engine::complete(
+                    &mut command,
+                    args,
+                    arg_index,
+                    current_dir.as_deref(),
+                )
+                .map(completion_values)
+            })
+            .expect("spawn shell completion test thread");
+        handle
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
 
     #[cfg(unix)]
@@ -16788,6 +16875,9 @@ tasks:
                     json: true,
                     all: false,
                     use_cmd: false,
+                    safe: false,
+                    unsafe_tasks: false,
+                    via: None,
                     member: Vec::new(),
                     workflow: None,
                     path: None,
@@ -18749,6 +18839,219 @@ tasks:
         assert!(stdout.contains("Command: `ota run typecheck`"));
         assert!(stdout.contains("verification.\n\n✦ start"));
         assert!(!stdout.contains("Command Preview:"));
+    }
+
+    #[test]
+    fn tasks_safe_and_unsafe_filters_use_effective_safe_set() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: echo build
+  lint:
+    run: echo lint
+  test:
+    run: echo test
+    safe_for_agent: true
+agent:
+  safe_tasks:
+    - build
+"#,
+        );
+
+        let safe = run_with(["ota", "tasks", "--safe", "--json", fixture.path()]);
+        assert_eq!(safe.exit_code, 0);
+        let safe_json: Value = serde_json::from_str(&safe.stdout).unwrap();
+        let safe_names: Vec<&str> = safe_json["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|task| task["name"].as_str())
+            .collect();
+        assert_eq!(safe_names, vec!["build", "test"]);
+
+        let unsafe_output = run_with(["ota", "tasks", "--unsafe", "--json", fixture.path()]);
+        assert_eq!(unsafe_output.exit_code, 0);
+        let unsafe_json: Value = serde_json::from_str(&unsafe_output.stdout).unwrap();
+        let unsafe_names: Vec<&str> = unsafe_json["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|task| task["name"].as_str())
+            .collect();
+        assert_eq!(unsafe_names, vec!["lint"]);
+    }
+
+    #[test]
+    fn tasks_safe_and_unsafe_flags_are_mutually_exclusive() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: echo build
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "tasks",
+            "--safe",
+            "--unsafe",
+            "--json",
+            fixture.path(),
+        ]);
+        assert_eq!(output.exit_code, 2);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("`--safe` and `--unsafe` cannot be used together"));
+    }
+
+    #[test]
+    fn tasks_safe_and_unsafe_filters_work_with_use_output() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  safe_task:
+    run: echo safe
+    safe_for_agent: true
+  unsafe_task:
+    run: echo unsafe
+"#,
+        );
+
+        let safe_output = run_with(["ota", "tasks", "--safe", "--use", fixture.path()]);
+        assert_eq!(safe_output.exit_code, 0);
+        let safe_text = strip_ansi(&safe_output.stdout);
+        assert!(safe_text.contains("✦ safe_task"));
+        assert!(!safe_text.contains("✦ unsafe_task"));
+
+        let unsafe_output = run_with(["ota", "tasks", "--unsafe", "--use", fixture.path()]);
+        assert_eq!(unsafe_output.exit_code, 0);
+        let unsafe_text = strip_ansi(&unsafe_output.stdout);
+        assert!(unsafe_text.contains("✦ unsafe_task"));
+        assert!(!unsafe_text.contains("✦ safe_task"));
+    }
+
+    #[test]
+    fn tasks_via_filter_matches_backend_support() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  host_only:
+    context: host
+    run: echo host
+  container_only:
+    context: app
+    run: echo container
+  dual_mode:
+    context: host
+    run: echo host
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          run: echo native
+        container:
+          context: app
+          run: echo container
+"#,
+        );
+
+        let native = run_with(["ota", "tasks", "--via", "native", "--json", fixture.path()]);
+        assert_eq!(native.exit_code, 0);
+        let native_json: Value = serde_json::from_str(&native.stdout).unwrap();
+        let native_names: Vec<&str> = native_json["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|task| task["name"].as_str())
+            .collect();
+        assert_eq!(native_names, vec!["dual_mode", "host_only"]);
+
+        let container = run_with([
+            "ota",
+            "tasks",
+            "--via",
+            "container",
+            "--json",
+            fixture.path(),
+        ]);
+        assert_eq!(container.exit_code, 0);
+        let container_json: Value = serde_json::from_str(&container.stdout).unwrap();
+        let container_names: Vec<&str> = container_json["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|task| task["name"].as_str())
+            .collect();
+        assert_eq!(container_names, vec!["container_only", "dual_mode"]);
+    }
+
+    #[test]
+    fn tasks_use_shows_modes_block_for_multi_mode_tasks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  typecheck:
+    context: host
+    run: npm run typecheck
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          run: npm run typecheck
+        container:
+          context: app
+          run: npm run typecheck
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--use", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Command: `ota run typecheck`"), "{stdout}");
+        assert!(stdout.contains("Modes:"), "{stdout}");
+        assert!(stdout.contains("default: `ota run typecheck`"), "{stdout}");
+        assert!(
+            stdout.contains("container: `ota run typecheck --mode container`"),
+            "{stdout}"
+        );
     }
 
     #[test]
