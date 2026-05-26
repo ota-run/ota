@@ -5681,56 +5681,61 @@ fn contains_semver_triplet(value: &str) -> bool {
 }
 
 fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
-    let Some(agent) = contract.agent.as_ref() else {
-        return contract
-            .tasks
-            .iter()
-            .filter(|(_, task)| task.safe_for_agent)
-            .flat_map(|(task_name, task)| {
-                task_effect_advisories_for_safe_task(task_name.as_str(), task).into_iter()
-            })
-            .collect();
-    };
-
     let safe_task_names = contract
         .tasks
         .iter()
         .filter_map(|(task_name, task)| task.safe_for_agent.then_some(task_name.clone()))
-        .chain(agent.safe_tasks.iter().cloned())
+        .chain(
+            contract
+                .agent
+                .as_ref()
+                .into_iter()
+                .flat_map(|agent| agent.safe_tasks.iter().cloned()),
+        )
         .collect::<BTreeSet<_>>();
 
-    safe_task_names
-        .into_iter()
-        .filter_map(|task_name| {
-            contract
-                .tasks
-                .get(task_name.as_str())
-                .map(|task| (task_name, task))
-        })
-        .flat_map(|(task_name, task)| {
-            task_effect_advisories_for_safe_task(task_name.as_str(), task).into_iter()
-        })
-        .collect()
-}
-
-fn task_effect_advisories_for_safe_task(task_name: &str, task: &TaskSpec) -> Vec<ContractAdvisory> {
     let mut advisories = Vec::new();
-    if let Some(network_kind) = task.effects.effective_network_kind() {
-        advisories.push(ContractAdvisory::AgentSafeTaskNetwork(
-            AgentSafeTaskNetworkAdvisory {
-                task_name: task_name.to_string(),
-                network_kind,
-            },
-        ));
+    for safe_task_name in safe_task_names {
+        if !contract.tasks.contains_key(safe_task_name.as_str()) {
+            continue;
+        }
+
+        let mut effective_network_kind = None;
+        let mut external_state = BTreeSet::new();
+
+        for task_name in collect_reachable_task_names(safe_task_name.as_str(), &contract.tasks) {
+            let Some(task) = contract.tasks.get(task_name) else {
+                continue;
+            };
+            if let Some(network_kind) = task.effects.effective_network_kind() {
+                effective_network_kind = Some(match (effective_network_kind, network_kind) {
+                    (Some(TaskNetworkEffectKind::Broad), _) => TaskNetworkEffectKind::Broad,
+                    (_, TaskNetworkEffectKind::Broad) => TaskNetworkEffectKind::Broad,
+                    _ => TaskNetworkEffectKind::DependencyHydration,
+                });
+            }
+            external_state.extend(task.effects.external_state.iter().cloned());
+        }
+
+        if let Some(network_kind) = effective_network_kind {
+            advisories.push(ContractAdvisory::AgentSafeTaskNetwork(
+                AgentSafeTaskNetworkAdvisory {
+                    task_name: safe_task_name.clone(),
+                    network_kind,
+                },
+            ));
+        }
+
+        if !external_state.is_empty() {
+            advisories.push(ContractAdvisory::AgentSafeTaskExternalState(
+                AgentSafeTaskExternalStateAdvisory {
+                    task_name: safe_task_name,
+                    systems: external_state.into_iter().collect(),
+                },
+            ));
+        }
     }
-    if !task.effects.external_state.is_empty() {
-        advisories.push(ContractAdvisory::AgentSafeTaskExternalState(
-            AgentSafeTaskExternalStateAdvisory {
-                task_name: task_name.to_string(),
-                systems: task.effects.external_state.clone(),
-            },
-        ));
-    }
+
     advisories
 }
 
@@ -19974,6 +19979,77 @@ tasks:
             advisory,
             ContractAdvisory::AgentSafeTaskExternalState(value)
                 if value.task_name == "setup" && value.systems == vec![String::from("docker")]
+        )));
+    }
+
+    #[test]
+    fn collects_agent_safe_task_effect_advisories_from_dependency_closure() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  verify:
+    run: pnpm test
+    safe_for_agent: true
+    depends_on: [setup]
+  setup:
+    run: pnpm install
+    effects:
+      network: true
+      network_kind: dependency_hydration
+      external_state:
+        - docker
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskNetwork(value)
+                if value.task_name == "verify"
+                    && value.network_kind == TaskNetworkEffectKind::DependencyHydration
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskExternalState(value)
+                if value.task_name == "verify" && value.systems == vec![String::from("docker")]
+        )));
+    }
+
+    #[test]
+    fn safe_task_network_advisory_prefers_broad_when_dependency_is_broad() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  verify:
+    run: pnpm test
+    safe_for_agent: true
+    depends_on: [setup]
+    effects:
+      network: true
+      network_kind: dependency_hydration
+  setup:
+    run: pnpm install
+    effects:
+      network: true
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskNetwork(value)
+                if value.task_name == "verify"
+                    && value.network_kind == TaskNetworkEffectKind::Broad
         )));
     }
 

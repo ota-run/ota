@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- extended agent-safe `effects` advisories (`effects.network`, `effects.network_kind`,
+  `effects.external_state`) across the full reachable task closure, so a safe task now reports
+  dependency-path network/external-state blast radius instead of only direct task-node effects
+
 ## 1.6.17
 
 - scoped selected task/workflow requirement resolution so non-native paths (container/remote) no
