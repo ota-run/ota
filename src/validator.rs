@@ -36,8 +36,8 @@ use crate::schema::{
     AgentPosture, Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
     ExtensionKind, Lifecycle, RuntimeRequirement, ServiceProducerSpec, ServiceSpec,
-    TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
-    TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
+    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolchainFulfillmentMode,
     ToolchainSpec, parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
@@ -4915,6 +4915,7 @@ pub enum ContractAdvisory {
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
     SensitiveWriteException(SensitiveWriteExceptionAdvisory),
+    AgentBootstrapUnpinned(AgentBootstrapUnpinnedAdvisory),
     AgentSafeTaskNetwork(AgentSafeTaskNetworkAdvisory),
     AgentSafeTaskExternalState(AgentSafeTaskExternalStateAdvisory),
 }
@@ -4957,8 +4958,14 @@ pub struct SensitiveWriteExceptionAdvisory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentBootstrapUnpinnedAdvisory {
+    pub field: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentSafeTaskNetworkAdvisory {
     pub task_name: String,
+    pub network_kind: TaskNetworkEffectKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5001,10 +5008,12 @@ impl ContractAdvisory {
                 "`agent.exceptions.sensitive_writes` includes unnecessary path `{}`",
                 advisory.path
             ),
-            ContractAdvisory::AgentSafeTaskNetwork(advisory) => format!(
-                "agent-safe task `{}` requires network access",
-                advisory.task_name
-            ),
+            ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
+                format!("`{}` should pin the ota release version", advisory.field)
+            }
+            ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
+                format!("{}", agent_safe_network_summary(advisory))
+            }
             ContractAdvisory::AgentSafeTaskExternalState(advisory) => format!(
                 "agent-safe task `{}` mutates external state: {}",
                 advisory.task_name,
@@ -5032,10 +5041,13 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => advisory.reason.clone(),
             ContractAdvisory::SensitiveWriteException(advisory) => advisory.reason.clone(),
-            ContractAdvisory::AgentSafeTaskNetwork(advisory) => format!(
-                "task `{}` is declared agent-safe but also declares `effects.network: true`, so unattended execution still depends on registry, API, or remote service reachability",
-                advisory.task_name
+            ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
+                "`{}` installs ota from a moving target without an explicit version pin",
+                advisory.field
             ),
+            ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
+                format!("{}", agent_safe_network_why(advisory))
+            }
             ContractAdvisory::AgentSafeTaskExternalState(advisory) => format!(
                 "task `{}` is declared agent-safe but mutates out-of-repo state (`{}`), so repo write boundaries alone do not bound its blast radius",
                 advisory.task_name,
@@ -5053,6 +5065,7 @@ impl ContractAdvisory {
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
+            | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
@@ -5067,6 +5080,7 @@ impl ContractAdvisory {
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
+            | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
@@ -5082,6 +5096,7 @@ impl ContractAdvisory {
             ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
+            | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
@@ -5111,16 +5126,58 @@ impl ContractAdvisory {
                 "remove `{}` from `agent.exceptions.sensitive_writes`, or move it to `agent.protected_paths` / tighten `agent.writable_paths` if this path should stay guarded",
                 advisory.path
             ),
-            ContractAdvisory::AgentSafeTaskNetwork(advisory) => format!(
-                "keep `effects.network: true` explicit for `{}`, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended networked execution is not acceptable",
-                advisory.task_name
+            ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
+                "set `{}` to an explicit versioned install command, for example by pinning `OTA_VERSION=vX.Y.Z` (or a `--version`/`-Version` flag) to keep agent bootstrap deterministic",
+                advisory.field
             ),
+            ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
+                format!("{}", agent_safe_network_next(advisory))
+            }
             ContractAdvisory::AgentSafeTaskExternalState(advisory) => format!(
                 "keep `effects.external_state` explicit for `{}`, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended mutation of `{}` is not acceptable",
                 advisory.task_name,
                 advisory.systems.join(", ")
             ),
         }
+    }
+}
+
+fn agent_safe_network_summary(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
+    match advisory.network_kind {
+        TaskNetworkEffectKind::DependencyHydration => format!(
+            "agent-safe task `{}` performs network dependency hydration",
+            advisory.task_name
+        ),
+        TaskNetworkEffectKind::Broad => format!(
+            "agent-safe task `{}` requires network access",
+            advisory.task_name
+        ),
+    }
+}
+
+fn agent_safe_network_why(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
+    match advisory.network_kind {
+        TaskNetworkEffectKind::DependencyHydration => format!(
+            "task `{}` is declared agent-safe and performs dependency hydration over the network (for example lockfile-backed package-manager fetches); this is narrower than arbitrary remote mutation but still depends on registry/service reachability outside repo write boundaries",
+            advisory.task_name
+        ),
+        TaskNetworkEffectKind::Broad => format!(
+            "task `{}` is declared agent-safe but also declares `effects.network: true`, so unattended execution still depends on registry, API, or remote service reachability",
+            advisory.task_name
+        ),
+    }
+}
+
+fn agent_safe_network_next(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
+    match advisory.network_kind {
+        TaskNetworkEffectKind::DependencyHydration => format!(
+            "keep `effects.network: true` with `effects.network_kind: dependency_hydration` explicit for `{}`, and keep lockfile/provenance discipline strict on this task path",
+            advisory.task_name
+        ),
+        TaskNetworkEffectKind::Broad => format!(
+            "keep `effects.network: true` explicit for `{}`, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended networked execution is not acceptable",
+            advisory.task_name
+        ),
     }
 }
 
@@ -5148,6 +5205,7 @@ pub fn collect_contract_advisories(contract: &Contract) -> Vec<ContractAdvisory>
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
     advisories.extend(collect_sensitive_write_exception_advisories(contract));
+    advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
     advisories.extend(collect_agent_safe_task_effect_advisories(contract));
     advisories
 }
@@ -5517,6 +5575,111 @@ fn collect_sensitive_write_exception_advisories(contract: &Contract) -> Vec<Cont
     advisories
 }
 
+fn collect_agent_bootstrap_unpinned_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let Some(agent) = contract.agent.as_ref() else {
+        return Vec::new();
+    };
+    let Some(bootstrap) = agent.bootstrap.as_ref() else {
+        return Vec::new();
+    };
+    let Some(ota) = bootstrap.ota.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut advisories = Vec::new();
+    if let Some(command) = ota.sh.as_deref().map(str::trim)
+        && !command.is_empty()
+        && !ota_bootstrap_command_has_version_pin(command)
+    {
+        advisories.push(ContractAdvisory::AgentBootstrapUnpinned(
+            AgentBootstrapUnpinnedAdvisory {
+                field: String::from("agent.bootstrap.ota.sh"),
+            },
+        ));
+    }
+    if let Some(command) = ota.powershell.as_deref().map(str::trim)
+        && !command.is_empty()
+        && !ota_bootstrap_command_has_version_pin(command)
+    {
+        advisories.push(ContractAdvisory::AgentBootstrapUnpinned(
+            AgentBootstrapUnpinnedAdvisory {
+                field: String::from("agent.bootstrap.ota.powershell"),
+            },
+        ));
+    }
+    advisories
+}
+
+fn ota_bootstrap_command_has_version_pin(command: &str) -> bool {
+    let normalized = command.trim();
+    if normalized.is_empty() {
+        return false;
+    }
+
+    let lowercase = normalized.to_ascii_lowercase();
+    let has_version_marker = [
+        "ota_version=",
+        "ota_version =",
+        "$env:ota_version=",
+        "$env:ota_version =",
+        "--version",
+        "-version",
+    ]
+    .iter()
+    .any(|marker| lowercase.contains(marker));
+    has_version_marker && contains_semver_triplet(normalized)
+}
+
+fn contains_semver_triplet(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let mut cursor = index;
+        if bytes[cursor] == b'v' || bytes[cursor] == b'V' {
+            cursor += 1;
+            if cursor >= bytes.len() || !bytes[cursor].is_ascii_digit() {
+                index += 1;
+                continue;
+            }
+        }
+
+        let mut saw_major = false;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+            cursor += 1;
+            saw_major = true;
+        }
+        if !saw_major || cursor >= bytes.len() || bytes[cursor] != b'.' {
+            index += 1;
+            continue;
+        }
+        cursor += 1;
+
+        let mut saw_minor = false;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+            cursor += 1;
+            saw_minor = true;
+        }
+        if !saw_minor || cursor >= bytes.len() || bytes[cursor] != b'.' {
+            index += 1;
+            continue;
+        }
+        cursor += 1;
+
+        let mut saw_patch = false;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+            cursor += 1;
+            saw_patch = true;
+        }
+        if saw_patch {
+            return true;
+        }
+
+        index += 1;
+    }
+
+    false
+}
+
 fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
     let Some(agent) = contract.agent.as_ref() else {
         return contract
@@ -5552,10 +5715,11 @@ fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<Contrac
 
 fn task_effect_advisories_for_safe_task(task_name: &str, task: &TaskSpec) -> Vec<ContractAdvisory> {
     let mut advisories = Vec::new();
-    if task.effects.network {
+    if let Some(network_kind) = task.effects.effective_network_kind() {
         advisories.push(ContractAdvisory::AgentSafeTaskNetwork(
             AgentSafeTaskNetworkAdvisory {
                 task_name: task_name.to_string(),
+                network_kind,
             },
         ));
     }
@@ -6450,10 +6614,9 @@ fn validate_services(
                                 )));
                             }
                         }
-                        let compose_manager = service
-                            .manager
-                            .as_ref()
-                            .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Compose);
+                        let compose_manager = service.manager.as_ref().is_some_and(|manager| {
+                            manager.kind == crate::schema::ServiceManagerKind::Compose
+                        });
                         if !compose_manager {
                             errors.push(ValidationError::new(format!(
                                 "service `{name}` structured compose health readiness requires `manager.kind: compose`"
@@ -8076,6 +8239,12 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
 }
 
 fn validate_task_effects(task_name: &str, task: &TaskSpec, errors: &mut Vec<ValidationError>) {
+    if task.effects.network_kind.is_some() && !task.effects.network {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` effect `network_kind` requires `effects.network: true`"
+        )));
+    }
+
     let mut normalized_writes = BTreeSet::new();
     for write_path in &task.effects.writes {
         let trimmed = write_path.trim();
@@ -8310,6 +8479,7 @@ mod tests {
     use std::path::Path;
 
     use crate::parser::parse_contract_str;
+    use crate::schema::TaskNetworkEffectKind;
     use tempfile::TempDir;
 
     use super::{
@@ -19742,6 +19912,37 @@ tasks:
     }
 
     #[test]
+    fn rejects_task_network_kind_without_network_effect() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    effects:
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("network_kind without network=true should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error
+                .contains("task `setup` effect `network_kind` requires `effects.network: true`",)),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
     fn collects_agent_safe_task_effect_advisories_for_network_and_external_state() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -19755,6 +19956,7 @@ tasks:
     safe_for_agent: true
     effects:
       network: true
+      network_kind: dependency_hydration
       external_state:
         - docker
 "#,
@@ -19764,13 +19966,76 @@ tasks:
         let advisories = collect_contract_advisories(&contract);
         assert!(advisories.iter().any(|advisory| matches!(
             advisory,
-            ContractAdvisory::AgentSafeTaskNetwork(value) if value.task_name == "setup"
+            ContractAdvisory::AgentSafeTaskNetwork(value)
+                if value.task_name == "setup"
+                    && value.network_kind == TaskNetworkEffectKind::DependencyHydration
         )));
         assert!(advisories.iter().any(|advisory| matches!(
             advisory,
             ContractAdvisory::AgentSafeTaskExternalState(value)
                 if value.task_name == "setup" && value.systems == vec![String::from("docker")]
         )));
+    }
+
+    #[test]
+    fn collects_agent_bootstrap_unpinned_advisories() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  bootstrap:
+    ota:
+      sh: curl -fsSL https://dist.ota.run/install.sh | sh
+      powershell: irm https://dist.ota.run/install.ps1 | iex
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentBootstrapUnpinned(value)
+                if value.field == "agent.bootstrap.ota.sh"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentBootstrapUnpinned(value)
+                if value.field == "agent.bootstrap.ota.powershell"
+        )));
+    }
+
+    #[test]
+    fn skips_agent_bootstrap_unpinned_advisory_when_version_is_pinned() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  bootstrap:
+    ota:
+      sh: curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=v1.6.16 sh
+      powershell: $env:OTA_VERSION='v1.6.16'; irm https://dist.ota.run/install.ps1 | iex
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(
+            !advisories
+                .iter()
+                .any(|advisory| matches!(advisory, ContractAdvisory::AgentBootstrapUnpinned(_)))
+        );
     }
 
     #[test]

@@ -334,6 +334,42 @@ impl Contract {
         self.task_closure_required_toolchain_names([task_name.to_string()])
     }
 
+    pub fn task_closure_required_service_names(
+        &self,
+        roots: impl IntoIterator<Item = String>,
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        for task_name in self.task_dependency_closure_names(roots) {
+            let Some(task) = self.tasks.get(task_name.as_str()) else {
+                continue;
+            };
+            for service_name in &task.requires_services {
+                if !names.iter().any(|existing| existing == service_name) {
+                    names.push(service_name.clone());
+                }
+            }
+        }
+        names
+    }
+
+    pub fn selected_workflow_required_service_names(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Vec<String> {
+        let mut names = self
+            .selected_workflow(workflow_name)
+            .map(|(_, workflow)| workflow.services.required.clone())
+            .unwrap_or_default();
+        for service_name in self.task_closure_required_service_names(
+            self.selected_workflow_task_closure_names(workflow_name),
+        ) {
+            if !names.iter().any(|existing| existing == &service_name) {
+                names.push(service_name);
+            }
+        }
+        names
+    }
+
     fn collect_task_dependency_closure(
         &self,
         name: &str,
@@ -2861,13 +2897,41 @@ pub struct TaskEffectsSpec {
     pub writes: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub network: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_kind: Option<TaskNetworkEffectKind>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_state: Vec<String>,
 }
 
 impl TaskEffectsSpec {
     pub fn is_empty(&self) -> bool {
-        self.writes.is_empty() && !self.network && self.external_state.is_empty()
+        self.writes.is_empty()
+            && !self.network
+            && self.network_kind.is_none()
+            && self.external_state.is_empty()
+    }
+
+    pub fn effective_network_kind(&self) -> Option<TaskNetworkEffectKind> {
+        if !self.network {
+            return None;
+        }
+        Some(self.network_kind.unwrap_or(TaskNetworkEffectKind::Broad))
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskNetworkEffectKind {
+    Broad,
+    DependencyHydration,
+}
+
+impl TaskNetworkEffectKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Broad => "broad",
+            Self::DependencyHydration => "dependency_hydration",
+        }
     }
 }
 
@@ -5076,6 +5140,48 @@ workflows:
         assert_eq!(
             contract.selected_workflow_task_closure_names(Some("app")),
             vec![String::from("setup:env:local"), String::from("setup")]
+        );
+    }
+
+    #[test]
+    fn selected_workflow_required_services_include_transitive_task_services() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-services
+tasks:
+  setup:
+    run: pnpm install
+    requires_services:
+      - postgres
+  dev:
+    run: pnpm dev
+    depends_on:
+      - setup
+    requires_services:
+      - redis
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    services:
+      required:
+        - docker
+        - redis
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.selected_workflow_required_service_names(Some("app")),
+            vec![
+                String::from("docker"),
+                String::from("redis"),
+                String::from("postgres"),
+            ]
         );
     }
 

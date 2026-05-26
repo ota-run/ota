@@ -144,8 +144,7 @@ use crate::runner::{
 use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
     ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessKind,
-    ServiceReadinessSpec,
-    TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
+    ServiceReadinessSpec, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
     TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode,
     TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
     TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
@@ -1277,12 +1276,28 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::AgentBootstrapUnpinned(value) => format!(
+            "{} field `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.field,
+            paint_key("Risk:"),
+            render_validate_warning_detail("unpinned ota bootstrap command"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::AgentSafeTaskNetwork(value) => format!(
             "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
             value.task_name,
             paint_key("Risk:"),
-            render_validate_warning_detail("network access"),
+            render_validate_warning_detail(match value.network_kind {
+                crate::schema::TaskNetworkEffectKind::DependencyHydration => {
+                    "network dependency hydration"
+                }
+                crate::schema::TaskNetworkEffectKind::Broad => "network access",
+            }),
             paint_key("Why:"),
             render_validate_warning_detail(&advisory.why()),
             paint_key("Next:"),
@@ -10250,23 +10265,21 @@ fn build_assist_service_proposal(
 
     let endpoint_inputs_present = endpoint.is_some() || address.is_some() || port.is_some();
     let endpoint_name = if compose_health_style && !endpoint_inputs_present {
-        existing
-            .as_ref()
-            .and_then(|service| {
-                service
-                    .readiness
-                    .as_ref()
-                    .and_then(|readiness| readiness.from.clone())
-                    .or_else(|| {
-                        if service.endpoints.contains_key("host") {
-                            Some(String::from("host"))
-                        } else if service.endpoints.len() == 1 {
-                            service.endpoints.keys().next().cloned()
-                        } else {
-                            None
-                        }
-                    })
-            })
+        existing.as_ref().and_then(|service| {
+            service
+                .readiness
+                .as_ref()
+                .and_then(|readiness| readiness.from.clone())
+                .or_else(|| {
+                    if service.endpoints.contains_key("host") {
+                        Some(String::from("host"))
+                    } else if service.endpoints.len() == 1 {
+                        service.endpoints.keys().next().cloned()
+                    } else {
+                        None
+                    }
+                })
+        })
     } else {
         Some(resolve_assist_service_endpoint_name(
             existing.as_ref(),
@@ -10333,7 +10346,10 @@ fn build_assist_service_proposal(
     };
 
     let readiness = match style {
-        Some(style) => Some(build_assist_service_readiness(endpoint_name.as_deref(), style)),
+        Some(style) => Some(build_assist_service_readiness(
+            endpoint_name.as_deref(),
+            style,
+        )),
         None => existing
             .as_ref()
             .and_then(|service| service.readiness.clone()),
@@ -10351,9 +10367,11 @@ fn build_assist_service_proposal(
         file: compose_file_value.clone(),
         service: compose_service_value.clone(),
     });
-    if let (Some(endpoint_name), Some(address), Some(port)) =
-        (endpoint_name.as_ref(), endpoint_address.as_ref(), endpoint_port)
-    {
+    if let (Some(endpoint_name), Some(address), Some(port)) = (
+        endpoint_name.as_ref(),
+        endpoint_address.as_ref(),
+        endpoint_port,
+    ) {
         after.endpoints.insert(
             endpoint_name.clone(),
             crate::schema::ServiceEndpointSpec {
@@ -10943,9 +10961,7 @@ fn build_assist_readiness_proposal(
                 } else {
                     vec![
                         format!("service `{name}` already declares endpoint `{endpoint_from}`"),
-                        format!(
-                            "structured readiness should anchor to endpoint `{endpoint_from}`"
-                        ),
+                        format!("structured readiness should anchor to endpoint `{endpoint_from}`"),
                     ]
                 },
                 change_path: format!("services.{name}.readiness"),
@@ -10964,7 +10980,10 @@ fn resolve_assist_style_for_task(
     listener_name: &str,
     requested_style: Option<AssistReadinessStyleArg>,
 ) -> Result<AssistReadinessStyleArg, (String, String)> {
-    if matches!(requested_style, Some(AssistReadinessStyleArg::ComposeHealth)) {
+    if matches!(
+        requested_style,
+        Some(AssistReadinessStyleArg::ComposeHealth)
+    ) {
         return Err((
             String::from("`--style compose-health` is only valid for `--service` targets"),
             String::from("rerun with `--task` and `--style tcp|http|spring-http`"),
@@ -33460,7 +33479,11 @@ fn render_task_effects_text(effects: &crate::output::TaskEffectsSummary) -> Stri
         parts.push(format!("writes={}", effects.writes.join(",")));
     }
     if effects.network {
-        parts.push(String::from("network=true"));
+        if let Some(kind) = effects.network_kind {
+            parts.push(format!("network={}", kind.as_str()));
+        } else {
+            parts.push(String::from("network=true"));
+        }
     }
     if !effects.external_state.is_empty() {
         parts.push(format!(
@@ -42548,6 +42571,7 @@ tasks:
             effects: crate::output::TaskEffectsSummary {
                 writes: vec![String::from("node_modules")],
                 network: true,
+                network_kind: Some(crate::schema::TaskNetworkEffectKind::DependencyHydration),
                 external_state: vec![String::from("docker"), String::from("postgres")],
             },
             selected_variant_os: None,
@@ -42566,7 +42590,7 @@ tasks:
 
         assert!(
             rendered.contains(
-                "Effects: writes=node_modules; network=true; external_state=docker,postgres"
+                "Effects: writes=node_modules; network=dependency_hydration; external_state=docker,postgres"
             ),
             "{rendered}"
         );
@@ -42624,6 +42648,50 @@ workflows:
             vec![String::from("http://127.0.0.1:3000/app")]
         );
         assert_eq!(workflow.expose_surfaces, vec![String::from("backend")]);
+    }
+
+    #[test]
+    fn workflow_summary_includes_transitive_task_required_services() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    requires_services:
+      - postgres
+  app:
+    run: pnpm dev
+    depends_on:
+      - setup
+    requires_services:
+      - redis
+workflows:
+  default: app
+  app:
+    run:
+      task: app
+    services:
+      required:
+        - docker
+"#,
+        )
+        .unwrap();
+
+        let workflow =
+            crate::output::WorkflowSummary::from_contract_selected(&contract, Some("app"))
+                .expect("workflow summary should exist");
+        assert_eq!(
+            workflow.required_services,
+            vec![
+                String::from("docker"),
+                String::from("postgres"),
+                String::from("redis"),
+            ]
+        );
     }
 
     #[test]
@@ -42921,6 +42989,7 @@ workflows:
                     effects: crate::output::TaskEffectsSummary {
                         writes: vec![String::from("node_modules")],
                         network: true,
+                        network_kind: None,
                         external_state: vec![String::from("docker")],
                     },
                     depends_on: Vec::new(),
@@ -50845,6 +50914,32 @@ tasks:
         assert!(warnings.iter().any(|warning| {
             warning.contains("task `build` mutates managed isolated path `.next`")
                 && warning.contains("execution.contexts.verify:ctx.attachments.isolated_paths")
+        }));
+    }
+
+    #[test]
+    fn collect_validate_warnings_reports_unpinned_agent_bootstrap_commands() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  bootstrap:
+    ota:
+      sh: curl -fsSL https://dist.ota.run/install.sh | sh
+"#,
+        )
+        .unwrap();
+
+        let warnings = collect_validate_warnings(&contract);
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("agent.bootstrap.ota.sh")
+                && warning.contains("moving target without an explicit version pin")
         }));
     }
 

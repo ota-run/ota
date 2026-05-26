@@ -1363,6 +1363,8 @@ Fields:
 - `writes`: optional list of normalized relative paths the task body is expected to mutate
 - `network`: optional boolean; set `true` when the task requires network access or reaches out to
   remote services during execution
+- `network_kind`: optional network lane classifier (`broad` or `dependency_hydration`) for
+  networked task paths
 - `external_state`: optional list of lowercase tokens naming out-of-repo state the task mutates,
   such as `docker` or `postgres`
 
@@ -1371,8 +1373,12 @@ Task-effect rules:
 - use `effects.writes` for durable repo paths the task mutates directly
 - use `effects.network: true` when the task depends on networked fetches or remote calls and that
   dependency should stay explicit for CI and agent execution
+- use `effects.network_kind: dependency_hydration` for lockfile-backed package-manager hydration
+  lanes; keep `effects.network_kind: broad` (or omit `network_kind`) for wider API/remote-call
+  execution
 - use `effects.external_state` when the task mutates state outside the repo filesystem, such as
   Docker resources, databases, or hosted services
+- `effects.network_kind` requires `effects.network: true`
 - keep entries relative, normalized, and free of `..` segments
 - keep `effects.external_state` entries as lowercase tokens so the side-effect surface stays
   machine-readable instead of turning into prose
@@ -2509,8 +2515,8 @@ agent:
   bootstrap:
     ota:
       note: Only install ota if it is missing and installation is approved.
-      sh: curl -fsSL https://dist.ota.run/install.sh | sh
-      powershell: irm https://dist.ota.run/install.ps1 | iex
+      sh: curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=v1.6.16 sh
+      powershell: $env:OTA_VERSION='v1.6.16'; irm https://dist.ota.run/install.ps1 | iex
   notes: Keep agent edits narrow and add regressions for behavioral changes.
 ```
 
@@ -2534,6 +2540,8 @@ Current validation rules:
 - `inferred_boundary.provenance.protected_paths` entries must not be empty when present
 - `inferred_boundary` must include at least one provenance entry when present
 - `bootstrap.ota` must include at least one install command when present
+- unpinned `bootstrap.ota.sh` / `bootstrap.ota.powershell` commands now warn during `ota validate`
+  so repo agent bootstrap stays deterministic across release drift
 
 Current implementation treats this as contract surface and validation input. It is not yet a full agent runtime layer.
 

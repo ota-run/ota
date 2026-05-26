@@ -63,6 +63,10 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.15",
     },
     ContractCapabilitySpec {
+        id: "tasks.effects.network_kind",
+        introduced_in: "1.6.16",
+    },
+    ContractCapabilitySpec {
         id: "tasks.effects.external_state",
         introduced_in: "1.6.15",
     },
@@ -308,6 +312,7 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         }
         "tasks.effects.writes" => tasks_effects_writes_present(document),
         "tasks.effects.network" => tasks_effects_network_present(document),
+        "tasks.effects.network_kind" => tasks_effects_network_kind_present(document),
         "tasks.effects.external_state" => tasks_effects_external_state_present(document),
         "tasks.action.ensure_env_file" => tasks_action_ensure_env_file_present(document),
         "tasks.action.ensure_file" => tasks_action_ensure_file_present(document),
@@ -353,6 +358,10 @@ fn capability_present_in_contract(
             .values()
             .any(|task| !task.effects.writes.is_empty()),
         "tasks.effects.network" => contract.tasks.values().any(|task| task.effects.network),
+        "tasks.effects.network_kind" => contract
+            .tasks
+            .values()
+            .any(|task| task.effects.network_kind.is_some()),
         "tasks.effects.external_state" => contract
             .tasks
             .values()
@@ -450,6 +459,13 @@ fn tasks_effects_network_present(document: &Value) -> bool {
     tasks.values().any(task_effects_network_present)
 }
 
+fn tasks_effects_network_kind_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(task_effects_network_kind_present)
+}
+
 fn tasks_effects_external_state_present(document: &Value) -> bool {
     let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
         return false;
@@ -489,6 +505,10 @@ fn task_effects_writes_present(task: &Value) -> bool {
 
 fn task_effects_network_present(task: &Value) -> bool {
     document_has_path(task, &["effects", "network"])
+}
+
+fn task_effects_network_kind_present(task: &Value) -> bool {
+    document_has_path(task, &["effects", "network_kind"])
 }
 
 fn task_effects_external_state_present(task: &Value) -> bool {
@@ -643,6 +663,9 @@ tasks:
       vars:
         DATABASE_URL:
           value: postgres://localhost/dev
+    effects:
+      network: true
+      network_kind: dependency_hydration
   bootstrap:token:
     action:
       kind: ensure_file
@@ -679,6 +702,7 @@ tasks:
       writes:
         - node_modules
       network: true
+      network_kind: dependency_hydration
       external_state:
         - docker
 readiness:
@@ -732,6 +756,7 @@ native_prerequisites:
                 "metadata.ota.minimum_version",
                 "tasks.effects.writes",
                 "tasks.effects.network",
+                "tasks.effects.network_kind",
                 "tasks.effects.external_state",
                 "tasks.action.ensure_env_file",
                 "tasks.action.ensure_file",
@@ -773,6 +798,9 @@ tasks:
       vars:
         DATABASE_URL:
           value: postgres://localhost/dev
+    effects:
+      network: true
+      network_kind: dependency_hydration
   bootstrap:token:
     action:
       kind: ensure_file
@@ -844,6 +872,8 @@ services:
             vec![
                 "toolchains",
                 "execution.contexts.only_on",
+                "tasks.effects.network",
+                "tasks.effects.network_kind",
                 "tasks.action.ensure_env_file",
                 "tasks.action.ensure_file",
                 "tasks.action.ensure_directory",
