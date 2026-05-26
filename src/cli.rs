@@ -35850,11 +35850,7 @@ policies:
             )
         };
         write_fake_command(&bin_dir, "apt-get", &apt_body);
-        let path = if cfg!(windows) {
-            prepend_path(&bin_dir)
-        } else {
-            bin_dir.as_os_str().to_os_string()
-        };
+        let path = bin_dir.as_os_str().to_os_string();
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
@@ -35920,11 +35916,7 @@ project:
         if !cfg!(windows) {
             write_fake_command(&bin_dir, "sh", "#!/bin/sh\nexec /bin/sh \"$@\"\n");
         }
-        let path = if cfg!(windows) {
-            prepend_path(&bin_dir)
-        } else {
-            bin_dir.as_os_str().to_os_string()
-        };
+        let path = bin_dir.as_os_str().to_os_string();
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
