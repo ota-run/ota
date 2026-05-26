@@ -164,6 +164,9 @@
           "items": { "type": "string" }
         },
         "network": { "type": "boolean" },
+        "network_kind": {
+          "enum": ["broad", "dependency_hydration"]
+        },
         "external_state": {
           "type": "array",
           "items": { "type": "string" }

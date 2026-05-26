@@ -34,6 +34,12 @@
   gates: task-path tool names no longer require duplicate top-level `tools.<name>` declarations
   just to validate, while toolchain-owned names still require explicit
   `tasks.<name>.requirements.toolchains` scoping to keep ownership deterministic
+- refined task network side-effect semantics with optional
+  `tasks.<name>.effects.network_kind: dependency_hydration|broad`: lockfile-backed package-manager
+  hydration can now be declared as a narrower network lane than generic API/remote-call execution,
+  validator now requires `effects.network: true` when `network_kind` is declared, doctor/agent
+  advisories now render that distinction explicitly, and task/workspace JSON schemas now include
+  `network_kind`
 - tightened `ota run --dry-run` context semantics so preview text now shows both
   `Task Context` and `Execution Context` explicitly (with `Contract -> Resolved Context`), and
   JSON now includes additive `requested_context` and `selected_context` fields for machine-stable
@@ -100,6 +106,12 @@
   the new core `ota json validate` command surface
 - added workflow guard checks that fail CI if deprecated `RefResolver` usage reappears in
   `.github/workflows`
+- added `ota validate` warning coverage for unpinned `agent.bootstrap.ota.sh` /
+  `agent.bootstrap.ota.powershell` commands so agent bootstrap install paths keep explicit ota
+  version pins instead of drifting with latest installer releases
+- expanded workflow service summaries to include transitive task `requires_services` in addition to
+  `workflows.<name>.services.required`, so `ota tasks --workflow ...` reports the full service
+  footprint used by prepare/setup/run task closures
 
 ## 1.6.16
 

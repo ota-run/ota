@@ -336,6 +336,8 @@ Text output:
 - each workflow is rendered in the same flat scan-friendly layout as `ota tasks`
 - each workflow includes workflow-native command hints such as `Use: ota up --workflow <name>`
   and `Proof: ota proof runtime --workflow <name>`
+- workflow `services` summaries include both `workflows.<name>.services.required` and transitive
+  task-level `requires_services` from the selected prepare/setup/run dependency closure
 - each workflow may include `intent`, `description`, `notes`, `prepare`, `setup`, `run`, `services`,
   `run_launch`, `readiness_checks`, `readiness_probes`, `readiness_surfaces`,
   `signal_readiness_checks`, `signal_readiness_probes`, `signal_readiness_surfaces`, `exposes`,

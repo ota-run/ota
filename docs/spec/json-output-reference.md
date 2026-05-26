@@ -181,6 +181,10 @@ Current shape:
       "introduced_in": "1.6.15"
     },
     {
+      "id": "tasks.effects.network_kind",
+      "introduced_in": "1.6.16"
+    },
+    {
       "id": "tasks.effects.external_state",
       "introduced_in": "1.6.15"
     },
@@ -1446,8 +1450,8 @@ Success:
     "bootstrap": {
       "ota": {
         "note": "Only install ota if it is missing and installation is approved.",
-        "sh": "curl -fsSL https://dist.ota.run/install.sh | sh",
-        "powershell": "irm https://dist.ota.run/install.ps1 | iex"
+        "sh": "curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=v1.6.16 sh",
+        "powershell": "$env:OTA_VERSION='v1.6.16'; irm https://dist.ota.run/install.ps1 | iex"
       }
     }
   },
@@ -1527,7 +1531,8 @@ Root monorepo summary output can also include grouped member results:
 ```
 
 Each task may also include additive `effects` when the contract declares durable writes
-(`writes`), a connectivity dependency (`network`), or out-of-repo mutation (`external_state`).
+(`writes`), a connectivity dependency (`network`), an optional network lane classification
+(`network_kind`), or out-of-repo mutation (`external_state`).
 When the repo declares `workflows`, `ota tasks --json` includes an additive top-level `workflow`
 object for the default workflow, and member summaries may include the same additive field.
 
@@ -1609,6 +1614,8 @@ Notes:
   - `default`
 - `exposes` contains resolved URL strings; `expose_surfaces` preserves the named surface refs that
   produced them
+- `required_services` includes both workflow-declared `services.required` and transitive task-level
+  `requires_services` from the selected workflow task closure
 - `run_task_launch` preserves the selected run task's structured launch source when that workflow
   path runs through `launch` instead of shell `run` or `script`
 - when the target is a monorepo root and members are requested, success may include additive
@@ -1654,8 +1661,8 @@ Failure:
     "bootstrap": {
       "ota": {
         "note": "Only install ota if it is missing and installation is approved.",
-        "sh": "curl -fsSL https://dist.ota.run/install.sh | sh",
-        "powershell": "irm https://dist.ota.run/install.ps1 | iex"
+        "sh": "curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=v1.6.16 sh",
+        "powershell": "$env:OTA_VERSION='v1.6.16'; irm https://dist.ota.run/install.ps1 | iex"
       }
     }
   },

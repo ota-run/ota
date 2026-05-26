@@ -2663,7 +2663,8 @@ impl<'a> WorkflowSummary<'a> {
                     task.resolved_execution_for_backend(backend, current_os())
                 })
                 .and_then(|execution| summarize_task_launch(execution.launch())),
-            required_services: workflow.services.required.clone(),
+            required_services: contract
+                .selected_workflow_required_service_names(Some(workflow_name)),
             readiness_checks: workflow.readiness.checks.clone(),
             readiness_probes: workflow.readiness.probes.clone(),
             readiness_surfaces: workflow.readiness.surfaces.clone(),
@@ -2939,6 +2940,8 @@ pub struct TaskEffectsSummary {
     pub writes: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub network: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_kind: Option<crate::schema::TaskNetworkEffectKind>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub external_state: Vec<String>,
 }
@@ -2948,12 +2951,16 @@ impl TaskEffectsSummary {
         Self {
             writes: spec.writes.clone(),
             network: spec.network,
+            network_kind: spec.network_kind,
             external_state: spec.external_state.clone(),
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.writes.is_empty() && !self.network && self.external_state.is_empty()
+        self.writes.is_empty()
+            && !self.network
+            && self.network_kind.is_none()
+            && self.external_state.is_empty()
     }
 }
 

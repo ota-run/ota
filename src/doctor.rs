@@ -70,8 +70,8 @@ use crate::runner::{
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     NativePrerequisiteActivationShell, ReadinessProbeSpec, RequirementSurface, RuntimeRequirement,
-    ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, ToolRequirement,
+    ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec, TaskNetworkEffectKind,
+    ToolAcquisitionProvider, ToolAcquisitionSpec, ToolRequirement,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{
@@ -3347,6 +3347,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::SensitiveWriteException(advisory) => {
                 ContractAdvisory::SensitiveWriteException(advisory)
             }
+            ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
+                ContractAdvisory::AgentBootstrapUnpinned(advisory)
+            }
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
                 if !selected_task_names.is_empty()
                     && !selected_task_names.contains(advisory.task_name.as_str())
@@ -3411,12 +3414,24 @@ fn diagnose_contract_advisories(
                 why: ContractAdvisory::SensitiveWriteException(advisory.clone()).why(),
                 next: ContractAdvisory::SensitiveWriteException(advisory).next(),
             },
+            ContractAdvisory::AgentBootstrapUnpinned(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!("`{}` should pin the ota release version", advisory.field),
+                why: ContractAdvisory::AgentBootstrapUnpinned(advisory.clone()).why(),
+                next: ContractAdvisory::AgentBootstrapUnpinned(advisory).next(),
+            },
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => Finding {
                 severity: FindingSeverity::Warn,
-                summary: format!(
-                    "Agent-safe task `{}` requires network access",
-                    advisory.task_name
-                ),
+                summary: match advisory.network_kind {
+                    TaskNetworkEffectKind::DependencyHydration => format!(
+                        "Agent-safe task `{}` performs network dependency hydration",
+                        advisory.task_name
+                    ),
+                    TaskNetworkEffectKind::Broad => format!(
+                        "Agent-safe task `{}` requires network access",
+                        advisory.task_name
+                    ),
+                },
                 why: ContractAdvisory::AgentSafeTaskNetwork(advisory.clone()).why(),
                 next: ContractAdvisory::AgentSafeTaskNetwork(advisory).next(),
             },
@@ -3444,7 +3459,8 @@ fn diagnose_selected_task_effects(
         return;
     }
 
-    let mut network_tasks = Vec::new();
+    let mut broad_network_tasks = Vec::new();
+    let mut hydration_network_tasks = Vec::new();
     let mut external_state_tasks = Vec::new();
     let mut external_state_systems = BTreeSet::new();
 
@@ -3452,8 +3468,13 @@ fn diagnose_selected_task_effects(
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
-        if task.effects.network {
-            network_tasks.push(task_name.clone());
+        if let Some(kind) = task.effects.effective_network_kind() {
+            match kind {
+                TaskNetworkEffectKind::Broad => broad_network_tasks.push(task_name.clone()),
+                TaskNetworkEffectKind::DependencyHydration => {
+                    hydration_network_tasks.push(task_name.clone())
+                }
+            }
         }
         if !task.effects.external_state.is_empty() {
             external_state_tasks.push(task_name.clone());
@@ -3463,18 +3484,34 @@ fn diagnose_selected_task_effects(
         }
     }
 
-    if !network_tasks.is_empty() {
+    if !broad_network_tasks.is_empty() {
         findings.push(Finding {
             severity: FindingSeverity::Info,
             summary: format!(
                 "Selected task path requires network access: {}",
-                network_tasks.join(", ")
+                broad_network_tasks.join(", ")
             ),
             why: String::from(
                 "the selected task path includes tasks with `effects.network: true`, so readiness may still depend on registry, API, or remote service reachability even when repo write boundaries are otherwise narrow",
             ),
             next: String::from(
                 "treat the selected path as network-dependent in CI and agent execution, and keep `effects.network: true` explicit on those tasks",
+            ),
+        });
+    }
+
+    if !hydration_network_tasks.is_empty() {
+        findings.push(Finding {
+            severity: FindingSeverity::Info,
+            summary: format!(
+                "Selected task path performs network dependency hydration: {}",
+                hydration_network_tasks.join(", ")
+            ),
+            why: String::from(
+                "the selected task path includes tasks with `effects.network_kind: dependency_hydration`; this is a narrower network lane (for example lockfile-backed package-manager fetches), but still depends on registry reachability",
+            ),
+            next: String::from(
+                "keep lockfiles and package-manager provenance strict for these tasks, and keep `effects.network_kind: dependency_hydration` explicit on that path",
             ),
         });
     }
@@ -4678,9 +4715,9 @@ fn run_service_readiness(
                         }
                     }
                 }
-                crate::schema::ServiceReadinessKind::ComposeHealth => unreachable!(
-                    "compose health readiness is handled before endpoint projection"
-                ),
+                crate::schema::ServiceReadinessKind::ComposeHealth => {
+                    unreachable!("compose health readiness is handled before endpoint projection")
+                }
             }
         } else {
             let command = structured_service_readiness_command(readiness, endpoint, kind);
@@ -10669,6 +10706,40 @@ tasks:
     }
 
     #[test]
+    fn doctor_labels_agent_safe_dependency_hydration_narrowly() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    safe_for_agent: true
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let mut findings = Vec::new();
+        super::diagnose_contract_advisories(
+            &contract,
+            &mut findings,
+            crate::runner::ExecutionOverrides::default(),
+            None,
+        );
+
+        assert!(findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Warn
+                && finding.summary
+                    == "Agent-safe task `setup` performs network dependency hydration"
+        }));
+    }
+
+    #[test]
     fn doctor_scopes_agent_safe_task_effect_advisories_to_selected_workflow() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -10751,6 +10822,37 @@ workflows:
         assert!(report.findings.iter().any(|finding| {
             finding.severity == FindingSeverity::Warn
                 && finding.summary == "Selected task path mutates external state: docker"
+        }));
+    }
+
+    #[test]
+    fn doctor_surfaces_selected_task_path_dependency_hydration_effects() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install --frozen-lockfile
+    effects:
+      network: true
+      network_kind: dependency_hydration
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(report.findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Info
+                && finding.summary
+                    == "Selected task path performs network dependency hydration: setup"
         }));
     }
 
