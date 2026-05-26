@@ -29,8 +29,10 @@
 - hardened `ota init` starter-pack ownership to match shipped toolchain contracts and avoid
   generator-led drift: Node pack now seeds `toolchains.node` (Corepack-owned Node, default pnpm
   package-manager ownership, and Corepack-prefixed pnpm/yarn task commands) instead of split
-  `runtimes.node` + top-level package-manager tools, and Rust pack now seeds `toolchains.rust`
-  (`provider: rustup`) instead of split `runtimes.rust` + `tools.cargo`
+  `runtimes.node` + top-level package-manager tools, Rust pack now seeds `toolchains.rust`
+  (`provider: rustup`) instead of split `runtimes.rust` + `tools.cargo`, and Python pack now
+  seeds `toolchains.python` (`provider: uv`) with uv-native setup/test commands instead of the
+  legacy requirements.txt starter shape
 - added a non-blocking contract advisory for legacy manual Node split ownership
   (`runtimes.node` + standalone `tools.pnpm`/`tools.yarn` without `toolchains.node`), including
   validate/doctor guidance to migrate onto `toolchains.node` Corepack ownership
