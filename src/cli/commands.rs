@@ -33847,15 +33847,6 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
         paint_key("Proof:"),
         paint_code(&format!("ota proof runtime --workflow {}", workflow.name))
     ));
-    if let Some(notes) = workflow.notes
-        && !notes.trim().is_empty()
-    {
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Notes:"),
-            render_multiline_field(notes)
-        ));
-    }
     if let Some(prepare_task) = workflow.prepare_task {
         output.push_str(&format!(
             "\n  {} `{}`",
@@ -33947,6 +33938,15 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
             workflow.signal_readiness_surfaces.join(",")
         }
     ));
+    if let Some(notes) = workflow.notes
+        && !notes.trim().is_empty()
+    {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Notes:"),
+            render_multiline_field(notes)
+        ));
+    }
     if !workflow.exposes.is_empty() || !workflow.expose_surfaces.is_empty() {
         output.push_str(&format!("\n  {}", paint_key("Exposes:")));
         if !workflow.expose_entries.is_empty() {
@@ -42692,6 +42692,12 @@ tasks:
         assert!(
             rendered.contains("Exposes:\n    ● http://127.0.0.1:5678 (surface: backend)"),
             "{rendered}"
+        );
+        let notes_index = rendered.find("Notes:").expect("missing notes section");
+        let exposes_index = rendered.find("Exposes:").expect("missing exposes section");
+        assert!(
+            notes_index < exposes_index,
+            "expected Notes to render before Exposes\n{rendered}"
         );
     }
 
