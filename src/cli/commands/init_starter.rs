@@ -183,16 +183,16 @@ impl StarterPack {
             },
             Self::Python => StarterPackCatalogEntry {
                 pack: self,
-                summary: "Conventional Python starter with requirements-based setup and pytest.",
-                when: "Use this for Python repos that install from requirements.txt. The default path uses pytest, and you can switch to `python -m unittest` with `--test-runner unittest` when that is the repo's conventional test entrypoint.",
-                toolchains: &[],
-                runtimes: &["python"],
-                tools: &[],
+                summary: "Conventional Python starter with uv-managed toolchain ownership and uv-native setup/test tasks.",
+                when: "Use this for Python repos that should start from toolchain-owned Python (`toolchains.python`) and uv-managed task execution. The default test path uses `uv run pytest`, and you can switch to `uv run python -m unittest` with `--test-runner unittest` when that is the repo's conventional test entrypoint.",
+                toolchains: &["python"],
+                runtimes: &[],
+                tools: &["uv"],
                 checks: &["python-installed"],
                 tasks: &["setup", "test"],
                 options: PYTHON_PACK_OPTIONS,
                 does_not_infer: &[
-                    "pyproject-, poetry-, uv-, or pipenv-specific dependency flows beyond the seeded requirements-based starter",
+                    "repo-specific pyproject dependency groups, lock strategy, or uv workspace layout beyond the seeded `uv sync` + test loop",
                     "repo-specific test layout beyond the selected `pytest` or `unittest` entrypoint",
                 ],
             },
@@ -379,8 +379,8 @@ impl PythonTestRunner {
 
     fn test_command(self) -> &'static str {
         match self {
-            Self::Pytest => "pytest",
-            Self::Unittest => "python -m unittest",
+            Self::Pytest => "uv run pytest",
+            Self::Unittest => "uv run python -m unittest",
         }
     }
 
@@ -2064,9 +2064,16 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             let test_runner = config
                 .selected_python_test_runner()
                 .expect("python pack should always resolve a test runner");
-            contract
-                .runtimes
-                .insert(String::from("python"), String::from("3.12"));
+            contract.toolchains.insert(
+                String::from("python"),
+                DetectToolchainSpec {
+                    provider: crate::schema::ToolchainProvider::Uv,
+                    version: String::from("3.12"),
+                    package_managers: BTreeMap::new(),
+                    fulfillment: None,
+                },
+            );
+            contract.tools.insert(String::from("uv"), String::from("*"));
             contract.checks.push(DetectCheck {
                 name: String::from("python-installed"),
                 kind: DetectCheckKind::Precondition,
@@ -2079,10 +2086,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 String::from("setup"),
                 pack_task(
                     "setup",
-                    "python -m pip install -r requirements.txt",
-                    Some(String::from(
-                        "Install Python dependencies from requirements.txt.",
-                    )),
+                    "uv sync",
+                    Some(String::from("Install and sync dependencies with uv.")),
                 ),
             );
             contract.tasks.insert(

@@ -24730,6 +24730,9 @@ name = "fastapi"
             .expect("python pack");
         assert_eq!(python["options"][0]["flag"], "--test-runner");
         assert_eq!(python["options"][0]["default"], "pytest");
+        assert_eq!(python["seeds"]["toolchains"][0], "python");
+        assert_eq!(python["seeds"]["runtimes"], json!([]));
+        assert_eq!(python["seeds"]["tools"][0], "uv");
         let rust = packs
             .iter()
             .find(|entry| entry["name"] == "rust")
@@ -24973,11 +24976,13 @@ name = "fastapi"
         assert_eq!(json["pack"], "python");
         assert!(json["pack_options"].is_null());
         assert_eq!(json["inferred"], json!([]));
-        assert_eq!(json["config"]["runtimes"]["python"], "3.12");
+        assert_eq!(json["config"]["toolchains"]["python"]["provider"], "uv");
+        assert_eq!(json["config"]["toolchains"]["python"]["version"], "3.12");
+        assert_eq!(json["config"]["tools"]["uv"], "*");
         assert_eq!(json["config"]["checks"][0]["name"], "python-installed");
         assert_eq!(
             json["config"]["tasks"]["setup"]["description"],
-            "Install Python dependencies from requirements.txt."
+            "Install and sync dependencies with uv."
         );
         assert_eq!(
             json["config"]["tasks"]["test"]["description"],
@@ -25039,7 +25044,10 @@ name = "fastapi"
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["pack"], "python");
         assert_eq!(json["pack_options"]["test_runner"], "unittest");
-        assert_eq!(json["config"]["tasks"]["test"]["run"], "python -m unittest");
+        assert_eq!(
+            json["config"]["tasks"]["test"]["run"],
+            "uv run python -m unittest"
+        );
         assert_eq!(
             json["config"]["tasks"]["test"]["description"],
             "Run the default Python unittest suite."
@@ -25124,7 +25132,7 @@ name = "fastapi"
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["pack"], "python");
-        assert_eq!(json["config"]["runtimes"]["python"], "3.12");
+        assert_eq!(json["config"]["toolchains"]["python"]["version"], "3.12");
         assert_eq!(
             json["pack_advisory"]["selected_pack"],
             serde_json::json!("python")
@@ -25214,7 +25222,7 @@ name = "fastapi"
         assert_eq!(json["ok"], true);
         assert_eq!(json["pack"], "python");
         assert!(json["pack_advisory"].is_null());
-        assert_eq!(json["config"]["runtimes"]["python"], "3.12");
+        assert_eq!(json["config"]["toolchains"]["python"]["version"], "3.12");
     }
 
     #[test]
