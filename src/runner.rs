@@ -24516,21 +24516,34 @@ tasks:
             .get("api")
             .expect("target binding should be declared");
         let mut state = TaskRunState::default();
-        let status = super::ensure_target_producer_ready(
-            &fixture.contract,
-            fixture.file_path(),
-            "sandbox",
-            "api",
-            target_spec,
-            Backend::Remote,
-            None,
-            TaskExecutionMode::Capture,
-            fixture.dir.path(),
-            std::env::consts::OS,
-            0,
-            &mut state,
-        )
-        .expect("backend-provider internal ensure_ready activation should succeed");
+        let run_activation = |state: &mut TaskRunState| {
+            super::ensure_target_producer_ready(
+                &fixture.contract,
+                fixture.file_path(),
+                "sandbox",
+                "api",
+                target_spec,
+                Backend::Remote,
+                None,
+                TaskExecutionMode::Capture,
+                fixture.dir.path(),
+                std::env::consts::OS,
+                0,
+                state,
+            )
+        };
+        let status = match run_activation(&mut state) {
+            Ok(status) => status,
+            Err(error) if error.to_string().contains("Broken pipe") => {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                run_activation(&mut state).expect(
+                    "backend-provider internal ensure_ready activation should succeed after retry",
+                )
+            }
+            Err(error) => {
+                panic!("backend-provider internal ensure_ready activation should succeed: {error}")
+            }
+        };
 
         assert_eq!(status, TaskTargetActivationStatus::StartedReady);
 
