@@ -21663,11 +21663,7 @@ runtimes:
             "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf 'v22.0.0\\n'\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
-        let path = if cfg!(windows) {
-            prepend_path(&bin_dir)
-        } else {
-            bin_dir.as_os_str().to_os_string()
-        };
+        let path = bin_dir.as_os_str().to_os_string();
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
@@ -35126,11 +35122,7 @@ tasks:
             "#!/bin/sh\necho 'PowerShell 7.4.3'\n"
         };
         write_fake_command(&bin_dir, "pwsh", pwsh_body);
-        let path = if cfg!(windows) {
-            prepend_path(&bin_dir)
-        } else {
-            bin_dir.as_os_str().to_os_string()
-        };
+        let path = bin_dir.as_os_str().to_os_string();
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
@@ -35780,11 +35772,7 @@ policies:
             )
         };
         write_fake_command(&bin_dir, "apt-get", &apt_body);
-        let path = if cfg!(windows) {
-            prepend_path(&bin_dir)
-        } else {
-            bin_dir.as_os_str().to_os_string()
-        };
+        let path = bin_dir.as_os_str().to_os_string();
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
