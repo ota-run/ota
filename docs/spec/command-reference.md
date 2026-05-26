@@ -261,6 +261,8 @@ ota tasks --via native [PATH]
 ota tasks --via container [PATH]
 ota tasks --member api [PATH]
 ota tasks --member api --member web --json [PATH]
+ota tasks --safe --use [PATH]
+ota tasks --unsafe --use [PATH]
 ```
 
 Current behavior:
@@ -302,6 +304,17 @@ Text output:
 - each task keeps one canonical `Use: ota run <task>` command
 - when a task has multiple execution modes, text output adds a compact `Modes:` block with
   mode-specific `ota run <task> --mode <mode>` commands
+- `Modes:` is rendered near the end of the task block (after notes) so mode variants stay visible
+  without displacing the canonical default run line
+
+Common operator lanes:
+
+- `ota tasks --safe`: show only effective agent-safe tasks
+- `ota tasks --unsafe`: show only non-safe tasks
+- `ota tasks --safe --use`: show safe tasks plus canonical run commands
+- `ota tasks --unsafe --use`: show non-safe tasks plus canonical run commands
+- `ota tasks --via native`: filter to tasks runnable through native execution
+- `ota tasks --via container`: filter to tasks runnable through container execution
 
 JSON output:
 

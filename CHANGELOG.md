@@ -33,7 +33,12 @@
   and `--via native|container`; safety filtering uses the effective safe set
   (`safe_for_agent: true` plus `agent.safe_tasks`)
 - refined `ota tasks --use` / `ota tasks` text output to keep one canonical run command per task
-  and add a compact `Modes` block only for true multi-mode tasks
+  and add a compact `Modes` block only for true multi-mode tasks; mode variants now render near the
+  end of each task block (after notes) so the default run lane stays primary
+- added explicit command-reference and quickstart guidance for `ota tasks` filtering lanes
+  (`--safe`, `--unsafe`, `--via native|container`) including valid combined `--use` flows
+- added a v9.1 pressure-test gap ledger documenting closed platform gaps, remaining maturity work,
+  and acceptance evidence expectations for new gap intake
 
 ## 1.6.17
 

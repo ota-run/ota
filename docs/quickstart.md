@@ -65,6 +65,18 @@ If you are not sure which task to run next, use:
 ota tasks --use
 ```
 
+If you need a tighter task lane:
+
+```bash
+ota tasks --safe --use
+ota tasks --unsafe --use
+ota tasks --via native
+ota tasks --via container
+```
+
+Use `--safe`/`--unsafe` to split by effective agent-safe status, and `--via` to filter by execution
+backend lane.
+
 If you want repo-local agent guidance from the same contract after the core loop is working, use:
 
 ```bash
@@ -112,6 +124,12 @@ ota agents --write
 ```
 
 `ota explain`, `ota tasks`, and `ota run <task>` stay useful once the contract exists. If the contract declares an `agent` section, `ota doctor --json` and `ota explain --json` surface the same safe-task, verification, and writable-path hints that humans can review in `ota.yaml`.
+
+For full contract authoring guidance, use:
+
+- [spec/contract-reference.md](spec/contract-reference.md) for `agent`, `effects`, `bootstrap`, and
+  workflow fields
+- [spec/command-reference.md](spec/command-reference.md) for command output semantics and filtering
 
 ## One Repo Rollout Story
 

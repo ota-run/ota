@@ -1355,7 +1355,7 @@ Fields:
 - `variants`: optional list of conditional task executions
 - `requires_services`: optional list of service names that must be ready before the task body runs
 - `depends_on`: optional list of task names
-- `safe_for_agent`: optional boolean
+- `safe_for_agent`: optional boolean (`false` when omitted)
 - `internal`: optional boolean; marks orchestration plumbing tasks that stay in the graph but are hidden from default `ota tasks` discovery surfaces
 
 `effects` fields:
@@ -2564,6 +2564,7 @@ Agent semantics:
 - `entrypoint` is the first task an AI agent should use to get oriented in the repo
 - `default_task` is the normal verification task to run when no more specific task is needed
 - `safe_tasks` are the tasks an AI agent can run without broad risk
+- `safe_for_agent: false` is just the default; omit it unless explicit `true` improves readability
 - task `effects.writes` makes the expected durable writes explicit so agent-safe task claims can be checked structurally
 - task `effects.network` makes connectivity dependence explicit for agent-safe and CI-visible task review
 - task `effects.external_state` marks out-of-repo mutation such as Docker, database, or hosted-service state
@@ -2593,6 +2594,13 @@ Agent semantics:
 - `bootstrap.ota.sh` and `bootstrap.ota.powershell` should give the approved shell and PowerShell install commands
 - `notes` is free-form repo guidance for humans and AI agents
 - `ota detect --merge` and `ota detect --rewrite` refuse to write protected paths declared by the existing contract
+
+Authoring ergonomics:
+
+- readiness slice (default): keep `posture: readiness_strict`, keep lockfiles/env/config/topology/CI/contract under `protected_paths`, and leave `exceptions.sensitive_writes` empty
+- contract-authoring slice: allow writable `ota.yaml` intentionally and acknowledge it with `exceptions.sensitive_writes: [ota.yaml]`
+- infra-authoring slice: allow writable CI/topology files intentionally and acknowledge only those specific sensitive paths
+- use `bootstrap.ota` only when you want agents to self-install ota if missing; keep install commands pinned and keep the note explicit about when install is allowed
 
 ## `metadata`
 
