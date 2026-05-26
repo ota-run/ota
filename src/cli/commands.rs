@@ -58416,17 +58416,18 @@ policies:
         let fixture = TempDir::new().expect("temp dir");
         let marker = fixture.path().join("ota-native-activated");
         let marker_display = marker.display();
+        let marker_pwsh = marker_display.to_string().replace('\'', "''");
         let (platform_name, activation_block, setup_run, required_tool) =
             match super::current_requirement_platform() {
                 "windows" => (
                     "windows",
                     format!(
-                        "activation:\n          kind: command\n          shell: cmd\n          run: echo 1>\"{}\"",
-                        marker_display
+                        "activation:\n          kind: command\n          shell: pwsh\n          run: Set-Content -LiteralPath '{}' -Value '1'",
+                        marker_pwsh
                     ),
                     format!(
-                        "cmd /d /s /c \"if not exist \\\"{}\\\" exit /b 1\"",
-                        marker_display
+                        "pwsh -NoProfile -NonInteractive -Command \"if (-not (Test-Path -LiteralPath '{}')) {{ exit 1 }}\"",
+                        marker_pwsh
                     ),
                     "cargo",
                 ),
