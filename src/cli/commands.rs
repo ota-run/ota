@@ -1254,6 +1254,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::LegacyNodeRuntimeToolSplit(value) => format!(
+            "{} runtime `node` + tools `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.package_managers.join(", "),
+            paint_key("Risk:"),
+            render_validate_warning_detail("split Node/package-manager ownership"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::SensitiveAgentWritablePath(value) => format!(
             "{} path `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -51091,6 +51102,33 @@ agent:
         assert!(warnings.iter().any(|warning| {
             warning.contains("agent.bootstrap.ota.sh")
                 && warning.contains("moving target without an explicit version pin")
+        }));
+    }
+
+    #[test]
+    fn collect_validate_warnings_reports_legacy_node_runtime_tool_split() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  node: "22"
+tools:
+  pnpm: "11"
+tasks:
+  test:
+    run: pnpm test
+"#,
+        )
+        .unwrap();
+
+        let warnings = collect_validate_warnings(&contract);
+        assert!(warnings.iter().any(|warning| {
+            warning.contains("split ownership")
+                && warning.contains("runtimes.node")
+                && warning.contains("toolchains.node")
         }));
     }
 

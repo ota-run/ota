@@ -2850,8 +2850,8 @@ contract:
   "packs": [
     {
       "name": "node",
-      "summary": "Conventional Node starter with pnpm-based setup, dev, and test tasks.",
-      "when": "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path uses pnpm, and you can override it with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
+      "summary": "Conventional Node starter with toolchain-owned Node and package-manager-driven setup, dev, and test tasks.",
+      "when": "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path keeps Node ownership under `toolchains.node` and uses pnpm via Corepack, and you can override the package manager with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
       "command": "ota init --pack node",
       "next": "ota init --pack node --dry-run .",
       "does_not_infer": [
@@ -2867,8 +2867,9 @@ contract:
         }
       ],
       "seeds": {
-        "runtimes": ["node"],
-        "tools": ["pnpm"],
+        "toolchains": ["node"],
+        "runtimes": [],
+        "tools": [],
         "checks": ["node-installed"],
         "tasks": ["setup", "dev", "test"]
       }

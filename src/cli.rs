@@ -24734,7 +24734,9 @@ name = "fastapi"
             .iter()
             .find(|entry| entry["name"] == "rust")
             .expect("rust pack");
-        assert_eq!(rust["seeds"]["tools"][0], "cargo");
+        assert_eq!(rust["seeds"]["toolchains"][0], "rust");
+        assert_eq!(rust["seeds"]["runtimes"], json!([]));
+        assert_eq!(rust["seeds"]["tools"], json!([]));
         assert_eq!(
             rust["does_not_infer"][0],
             "workspace members, feature flags, or custom cargo aliases beyond the standard fetch/build/test loop"
@@ -24823,10 +24825,13 @@ name = "fastapi"
         assert!(
             stdout.contains("Policy: explicit pack mode seeds a conventional starter contract")
         );
-        assert!(stdout.contains("node: '22'"));
-        assert!(stdout.contains("pnpm: '10'"));
+        assert!(stdout.contains("toolchains:"));
+        assert!(stdout.contains("provider: corepack"));
+        assert!(stdout.contains("version: '22'"));
+        assert!(stdout.contains("package_managers:"));
+        assert!(stdout.contains("pnpm: '11'"));
         assert!(stdout.contains("name: node-installed"));
-        assert!(stdout.contains("run: pnpm dev"));
+        assert!(stdout.contains("run: corepack pnpm dev"));
         assert!(stdout.contains("run: pytest") == false);
     }
 
@@ -24850,10 +24855,11 @@ name = "fastapi"
         );
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("project:"));
-        assert!(written.contains("runtimes:"));
-        assert!(written.contains("node: '22'"));
-        assert!(written.contains("tools:"));
-        assert!(written.contains("pnpm: '10'"));
+        assert!(written.contains("toolchains:"));
+        assert!(written.contains("provider: corepack"));
+        assert!(written.contains("version: '22'"));
+        assert!(written.contains("package_managers:"));
+        assert!(written.contains("pnpm: '11'"));
         assert!(written.contains("checks:"));
         assert!(written.contains("name: node-installed"));
         assert!(written.contains("kind: precondition"));
@@ -24861,13 +24867,13 @@ name = "fastapi"
         assert!(written.contains("run: node --version"));
         assert!(written.contains("setup:"));
         assert!(written.contains("description: Install repo dependencies."));
-        assert!(written.contains("run: pnpm install"));
+        assert!(written.contains("run: corepack pnpm install"));
         assert!(written.contains("dev:"));
         assert!(written.contains("description: Start the local development loop."));
-        assert!(written.contains("run: pnpm dev"));
+        assert!(written.contains("run: corepack pnpm dev"));
         assert!(written.contains("test:"));
         assert!(written.contains("description: Run the default automated test command."));
-        assert!(written.contains("run: pnpm test"));
+        assert!(written.contains("run: corepack pnpm test"));
     }
 
     #[test]
@@ -25387,8 +25393,10 @@ requires-python = ">=3.12"
         assert_eq!(json["ok"], true);
         assert_eq!(json["mode"], "pack");
         assert_eq!(json["pack"], "rust");
-        assert_eq!(json["config"]["runtimes"]["rust"], "1.85");
-        assert_eq!(json["config"]["tools"]["cargo"], "*");
+        assert_eq!(json["config"]["toolchains"]["rust"]["provider"], "rustup");
+        assert_eq!(json["config"]["toolchains"]["rust"]["version"], "1.85");
+        assert!(json["config"]["runtimes"].is_null());
+        assert!(json["config"]["tools"].is_null());
         assert_eq!(json["config"]["checks"][0]["name"], "rust-installed");
         assert_eq!(
             json["config"]["tasks"]["build"]["description"],

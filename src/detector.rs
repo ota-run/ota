@@ -217,6 +217,8 @@ pub struct DetectContract {
 pub struct DetectToolchainSpec {
     pub provider: ToolchainProvider,
     pub version: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub package_managers: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fulfillment: Option<ToolchainFulfillmentMode>,
 }
@@ -396,6 +398,7 @@ impl DetectReport {
                     .or_insert_with(|| DetectToolchainSpec {
                         provider: ToolchainProvider::Sdkman,
                         version: String::new(),
+                        package_managers: BTreeMap::new(),
                         fulfillment: None,
                     });
                 match field_name {
@@ -4222,6 +4225,7 @@ fn synthesize_sdkman_java_toolchain(
         DetectToolchainSpec {
             provider: ToolchainProvider::Sdkman,
             version: java_version.clone(),
+            package_managers: BTreeMap::new(),
             fulfillment: None,
         },
     );
@@ -4275,6 +4279,7 @@ fn synthesize_uv_python_toolchain(
         DetectToolchainSpec {
             provider: ToolchainProvider::Uv,
             version: python_version.clone(),
+            package_managers: BTreeMap::new(),
             fulfillment: None,
         },
     );

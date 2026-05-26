@@ -4913,6 +4913,7 @@ pub enum ContractAdvisory {
     DependsOnBoundary(DependsOnBoundaryAdvisory),
     LikelyUnusedAttachment(AttachmentUseAdvisory),
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
+    LegacyNodeRuntimeToolSplit(LegacyNodeRuntimeToolSplitAdvisory),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
     SensitiveWriteException(SensitiveWriteExceptionAdvisory),
     AgentBootstrapUnpinned(AgentBootstrapUnpinnedAdvisory),
@@ -4942,6 +4943,12 @@ pub struct ManagedIsolatedPathMutationAdvisory {
     pub task_name: String,
     pub context_name: String,
     pub isolated_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyNodeRuntimeToolSplitAdvisory {
+    pub runtime_version: String,
+    pub package_managers: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5000,6 +5007,10 @@ impl ContractAdvisory {
                 "task `{}` mutates managed isolated path `{}`",
                 advisory.task_name, advisory.isolated_path
             ),
+            ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory) => format!(
+                "Node contract uses split ownership (`runtimes.node` + tools: {}) instead of `toolchains.node`",
+                advisory.package_managers.join(", ")
+            ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
                 "`agent.writable_paths` includes sensitive {} `{}`",
                 advisory.category, advisory.path
@@ -5039,6 +5050,10 @@ impl ContractAdvisory {
                 "task `{}` appears to mutate `{}`, which is declared under `execution.contexts.{}.attachments.isolated_paths`",
                 advisory.task_name, advisory.isolated_path, advisory.context_name
             ),
+            ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory) => format!(
+                "split Node ownership keeps package-manager activation/tool ownership detached from runtime ownership; this increases onboarding drift and makes missing-tool remediation less deterministic than a `toolchains.node` contract (current runtime: `{}`)",
+                advisory.runtime_version
+            ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => advisory.reason.clone(),
             ContractAdvisory::SensitiveWriteException(advisory) => advisory.reason.clone(),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
@@ -5063,6 +5078,7 @@ impl ContractAdvisory {
             )),
             ContractAdvisory::LikelyUnusedAttachment(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
+            | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -5078,6 +5094,7 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::LikelyUnusedAttachment(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
+            | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -5094,6 +5111,7 @@ impl ContractAdvisory {
                 advisory.tool, advisory.effective_path
             )),
             ContractAdvisory::MutatesManagedIsolatedPath(_)
+            | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -5118,6 +5136,16 @@ impl ContractAdvisory {
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => format!(
                 "remove manual cleanup of `{}` from task `{}` and let the tool manage that isolated attachment inside context `{}`",
                 advisory.isolated_path, advisory.task_name, advisory.context_name
+            ),
+            ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory) => format!(
+                "migrate to `toolchains.node` ownership: remove `runtimes.node`, add `toolchains.node.provider: corepack` with `toolchains.node.version: {}`, and move {} under `toolchains.node.package_managers`",
+                advisory.runtime_version,
+                advisory
+                    .package_managers
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 format!("{}", sensitive_agent_writable_path_next(advisory))
@@ -5203,11 +5231,45 @@ pub fn collect_contract_advisories(contract: &Contract) -> Vec<ContractAdvisory>
     advisories.extend(collect_depends_on_boundary_advisories(contract));
     advisories.extend(collect_attachment_use_advisories(contract));
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
+    advisories.extend(collect_legacy_node_runtime_tool_split_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
     advisories.extend(collect_sensitive_write_exception_advisories(contract));
     advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
     advisories.extend(collect_agent_safe_task_effect_advisories(contract));
     advisories
+}
+
+fn collect_legacy_node_runtime_tool_split_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    if contract.toolchains.contains_key("node") {
+        return Vec::new();
+    }
+    let Some(runtime_requirement) = contract.runtimes.get("node") else {
+        return Vec::new();
+    };
+
+    let mut package_managers = Vec::new();
+    for name in ["pnpm", "yarn"] {
+        let Some(requirement) = contract.tools.get(name) else {
+            continue;
+        };
+        if requirement.acquisition().is_some_and(|acquisition| {
+            acquisition.provider == crate::schema::ToolAcquisitionProvider::Corepack
+        }) {
+            continue;
+        }
+        package_managers.push(String::from(name));
+    }
+
+    if package_managers.is_empty() {
+        return Vec::new();
+    }
+
+    vec![ContractAdvisory::LegacyNodeRuntimeToolSplit(
+        LegacyNodeRuntimeToolSplitAdvisory {
+            runtime_version: runtime_requirement.version().to_string(),
+            package_managers,
+        },
+    )]
 }
 
 fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
@@ -20111,6 +20173,64 @@ agent:
             !advisories
                 .iter()
                 .any(|advisory| matches!(advisory, ContractAdvisory::AgentBootstrapUnpinned(_)))
+        );
+    }
+
+    #[test]
+    fn collects_legacy_node_runtime_tool_split_advisory_for_plain_pnpm_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  node: "22"
+tools:
+  pnpm: "11"
+tasks:
+  test:
+    run: pnpm test
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LegacyNodeRuntimeToolSplit(value)
+                if value.runtime_version == "22"
+                    && value.package_managers == vec![String::from("pnpm")]
+        )));
+    }
+
+    #[test]
+    fn skips_legacy_node_runtime_tool_split_advisory_when_corepack_toolchain_is_declared() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "11"
+tasks:
+  test:
+    run: corepack pnpm test
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(
+            !advisories.iter().any(|advisory| matches!(
+                advisory,
+                ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
+            ))
         );
     }
 
