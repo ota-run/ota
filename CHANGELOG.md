@@ -29,6 +29,11 @@
 - extended agent-safe `effects` advisories (`effects.network`, `effects.network_kind`,
   `effects.external_state`) across the full reachable task closure, so a safe task now reports
   dependency-path network/external-state blast radius instead of only direct task-node effects
+- added `ota tasks` safety and backend-lane filters: `--safe`, `--unsafe` (mutually exclusive),
+  and `--via native|container`; safety filtering uses the effective safe set
+  (`safe_for_agent: true` plus `agent.safe_tasks`)
+- refined `ota tasks --use` / `ota tasks` text output to keep one canonical run command per task
+  and add a compact `Modes` block only for true multi-mode tasks
 
 ## 1.6.17
 
