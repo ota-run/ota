@@ -6019,7 +6019,7 @@ mod tests {
     #[cfg(unix)]
     use std::time::Instant;
 
-    use clap::{CommandFactory, Parser};
+    use clap::Parser;
     use serde_json::{Value, json};
     use serde_yaml::Value as YamlValue;
     use tempfile::TempDir;
@@ -6358,6 +6358,12 @@ mod tests {
             .name(String::from("ota-test-shell-completion"))
             .stack_size(TEST_COMPLETION_STACK_BYTES)
             .spawn(move || {
+                let _completion = CompletionRequestGuard::set(CompletionRequest {
+                    words: completion_words
+                        .iter()
+                        .map(|word| OsString::from(word.as_str()))
+                        .collect(),
+                });
                 let mut command = completion_command();
                 let current_dir = std::env::current_dir().ok();
                 let args = completion_words
@@ -19052,6 +19058,14 @@ tasks:
             stdout.contains("container: `ota run typecheck --mode container`"),
             "{stdout}"
         );
+        let mode_branches_idx = stdout
+            .find("Mode Branches:")
+            .expect("mode branches line present");
+        let modes_idx = stdout.find("Modes:").expect("modes line present");
+        assert!(
+            modes_idx > mode_branches_idx,
+            "expected Modes block after Mode Branches"
+        );
     }
 
     #[test]
@@ -20959,7 +20973,7 @@ policies:
 
     #[test]
     fn policy_init_parses_init_subcommand() {
-        let cli = Cli::parse_from([
+        let cli = try_parse_cli_on_test_stack(&[
             "ota",
             "policy",
             "init",
@@ -20968,7 +20982,8 @@ policies:
             "--dry-run",
             "--json",
             ".",
-        ]);
+        ])
+        .expect("policy init should parse");
         let command = cli.command;
 
         match &command {
@@ -20993,7 +21008,8 @@ policies:
 
     #[test]
     fn policy_review_parses_review_subcommand() {
-        let cli = Cli::parse_from(["ota", "policy", "review", "--json", "./ota.yaml"]);
+        let cli = try_parse_cli_on_test_stack(&["ota", "policy", "review", "--json", "./ota.yaml"])
+            .expect("policy review should parse");
         let command = cli.command;
 
         match &command {
@@ -21016,7 +21032,7 @@ policies:
 
     #[test]
     fn proof_runtime_parses_workflow_and_mode_flags() {
-        let cli = Cli::parse_from([
+        let cli = try_parse_cli_on_test_stack(&[
             "ota",
             "proof",
             "runtime",
@@ -21025,7 +21041,8 @@ policies:
             "--container",
             "--persistent",
             "./ota.yaml",
-        ]);
+        ])
+        .expect("proof runtime selectors should parse");
         let command = cli.command;
 
         match &command {
@@ -21064,7 +21081,9 @@ policies:
 
     #[test]
     fn run_shortcut_flags_parse_as_mode_and_lifecycle_overrides() {
-        let cli = Cli::parse_from(["ota", "run", "dev", "--native", "--persistent", "."]);
+        let cli =
+            try_parse_cli_on_test_stack(&["ota", "run", "dev", "--native", "--persistent", "."])
+                .expect("run selector flags should parse");
         match cli.command {
             Commands::Run {
                 task,
@@ -21172,15 +21191,38 @@ policies:
         assert_eq!(super::run_command_value_span("--skip-deps"), Some(1));
     }
 
+    fn try_parse_cli_on_test_stack(args: &[&str]) -> Result<Cli, clap::Error> {
+        const TEST_PARSE_STACK_BYTES: usize = 32 * 1024 * 1024;
+        let argv = args
+            .iter()
+            .map(|value| OsString::from(*value))
+            .collect::<Vec<_>>();
+        let handle = std::thread::Builder::new()
+            .name(String::from("ota-cli-parse-test"))
+            .stack_size(TEST_PARSE_STACK_BYTES)
+            .spawn(move || Cli::try_parse_from(argv))
+            .expect("spawn ota cli parse test thread");
+        handle
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+
     #[test]
     fn run_shortcut_mode_flags_conflict() {
-        let parsed = Cli::try_parse_from(["ota", "run", "dev", "--native", "--container"]);
+        let parsed = try_parse_cli_on_test_stack(&["ota", "run", "dev", "--native", "--container"]);
         assert!(parsed.is_err());
     }
 
     #[test]
     fn doctor_selector_flags_parse_as_backend_and_lifecycle_overrides() {
-        let cli = Cli::parse_from(["ota", "doctor", "--container", "--persistent", "./ota.yaml"]);
+        let cli = try_parse_cli_on_test_stack(&[
+            "ota",
+            "doctor",
+            "--container",
+            "--persistent",
+            "./ota.yaml",
+        ])
+        .expect("doctor selector flags should parse");
         match cli.command {
             Commands::Doctor {
                 backend,
@@ -21208,7 +21250,8 @@ policies:
 
     #[test]
     fn receipt_selector_flags_parse_as_backend_and_lifecycle_overrides() {
-        let cli = Cli::parse_from(["ota", "receipt", "--remote", "--ephemeral", "."]);
+        let cli = try_parse_cli_on_test_stack(&["ota", "receipt", "--remote", "--ephemeral", "."])
+            .expect("receipt selector flags should parse");
         match cli.command {
             Commands::Receipt {
                 backend,
@@ -32692,28 +32735,32 @@ tasks:
 
     #[test]
     fn completion_command_shell_argument_exposes_supported_shell_values() {
-        let command = completion_command();
-        let completion = command
-            .get_subcommands()
-            .find(|subcommand| subcommand.get_name() == "completion")
-            .expect("completion subcommand should exist");
-        let shell = completion
-            .get_arguments()
-            .find(|arg| arg.get_id().as_str() == "shell")
-            .expect("completion shell argument should exist");
-        let values = shell
-            .get_possible_values()
-            .into_iter()
-            .map(|value| value.get_name().to_string())
-            .collect::<Vec<_>>();
+        for shell in [
+            "bash",
+            "zsh",
+            "fish",
+            "powershell",
+            "pwsh",
+            "elvish",
+            "check",
+        ] {
+            let result = run_with(["ota", "completion", shell]);
+            assert!(
+                result.exit_code == 0,
+                "expected shell `{shell}` to parse for `ota completion`"
+            );
+        }
 
-        assert!(values.contains(&String::from("bash")));
-        assert!(values.contains(&String::from("zsh")));
-        assert!(values.contains(&String::from("fish")));
-        assert!(values.contains(&String::from("powershell")));
-        assert!(values.contains(&String::from("pwsh")));
-        assert!(values.contains(&String::from("elvish")));
-        assert!(values.contains(&String::from("check")));
+        let invalid = run_with(["ota", "completion", "invalid-shell"]);
+        assert!(
+            invalid.exit_code != 0,
+            "unexpectedly accepted invalid completion shell value"
+        );
+        assert!(
+            invalid.stderr.as_deref().is_some_and(|stderr| stderr
+                .contains("[possible values: bash, zsh, fish, powershell, pwsh, elvish, check]")),
+            "invalid completion shell should expose clap possible values for the shell argument"
+        );
     }
 
     #[test]
@@ -44024,10 +44071,12 @@ repos:
 
     #[test]
     fn root_help_emphasizes_first_run_flow() {
-        let mut command = Cli::command();
-        let mut rendered = Vec::new();
-        command.write_long_help(&mut rendered).unwrap();
-        let stdout = String::from_utf8(rendered).unwrap();
+        let output = run_with(["ota", "--help"]);
+        assert_eq!(output.exit_code, 0);
+        let stdout = output
+            .stderr
+            .as_deref()
+            .expect("help output should render to stderr");
 
         assert!(stdout.contains("ota doctor"));
         assert!(stdout.contains("ota detect --dry-run ."));

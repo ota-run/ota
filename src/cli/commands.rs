@@ -33454,12 +33454,6 @@ fn render_tasks_text(
             paint_key("Use:"),
             paint_code(&format!("ota run {}", task.name))
         ));
-        if !mode_commands.is_empty() {
-            output.push_str(&format!("\n  {}", paint_key("Modes:")));
-            for command in mode_commands {
-                output.push_str(&format!("\n    {command}"));
-            }
-        }
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Command Preview:"),
@@ -33555,6 +33549,12 @@ fn render_tasks_text(
                 paint_key("Notes:"),
                 render_multiline_field(notes)
             ));
+        }
+        if !mode_commands.is_empty() {
+            output.push_str(&format!("\n  {}", paint_key("Modes:")));
+            for command in mode_commands {
+                output.push_str(&format!("\n    {command}"));
+            }
         }
     }
 
@@ -33782,12 +33782,6 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             paint_code(&usage)
         ));
         let mode_commands = render_task_mode_commands(task);
-        if !mode_commands.is_empty() {
-            output.push_str(&format!("\n  {}", paint_key("Modes:")));
-            for command in mode_commands {
-                output.push_str(&format!("\n    {command}"));
-            }
-        }
         if let Some(launch) = task.launch.as_ref() {
             output.push_str(&format!(
                 "\n  {} {}",
@@ -33816,6 +33810,12 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
                 paint_key("Notes:"),
                 render_multiline_field(notes)
             ));
+        }
+        if !mode_commands.is_empty() {
+            output.push_str(&format!("\n  {}", paint_key("Modes:")));
+            for command in mode_commands {
+                output.push_str(&format!("\n    {command}"));
+            }
         }
     }
     output

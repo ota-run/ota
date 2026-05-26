@@ -33,6 +33,7 @@ Source direction:
 - [Command reference](../../spec/command-reference.md)
 - [Semantic diff and explain](../../spec/semantic-diff-and-explain.md)
 - [Up preview](../../spec/up-preview.md)
+- [Pressure-test gap ledger](pressure-test-gap-ledger.md)
 
 V9.1 theme:
 
