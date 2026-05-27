@@ -18976,6 +18976,15 @@ execution:
       container:
         image: ghcr.io/ota/test:latest
 tasks:
+  container_default_with_native_fallback:
+    context: host
+    run: echo host-fallback
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          run: echo container
   host_only:
     context: host
     run: echo host
@@ -19006,7 +19015,14 @@ tasks:
             .iter()
             .filter_map(|task| task["name"].as_str())
             .collect();
-        assert_eq!(native_names, vec!["dual_mode", "host_only"]);
+        assert_eq!(
+            native_names,
+            vec![
+                "container_default_with_native_fallback",
+                "dual_mode",
+                "host_only"
+            ]
+        );
 
         let container = run_with([
             "ota",
@@ -19024,7 +19040,14 @@ tasks:
             .iter()
             .filter_map(|task| task["name"].as_str())
             .collect();
-        assert_eq!(container_names, vec!["container_only", "dual_mode"]);
+        assert_eq!(
+            container_names,
+            vec![
+                "container_default_with_native_fallback",
+                "container_only",
+                "dual_mode"
+            ]
+        );
     }
 
     #[test]
@@ -19077,6 +19100,52 @@ tasks:
         assert!(
             modes_idx > mode_branches_idx,
             "expected Modes block after Mode Branches"
+        );
+    }
+
+    #[test]
+    fn tasks_use_shows_native_override_when_default_mode_is_container() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  start:
+    context: host
+    run: npm run dev
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          run: npm run dev
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--use", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Command: `ota run start`"), "{stdout}");
+        assert!(stdout.contains("Modes:"), "{stdout}");
+        assert!(stdout.contains("default: `ota run start`"), "{stdout}");
+        assert!(
+            stdout.contains("native: `ota run start --mode native`"),
+            "{stdout}"
+        );
+        assert!(
+            !stdout.contains("container: `ota run start --mode container`"),
+            "{stdout}"
         );
     }
 

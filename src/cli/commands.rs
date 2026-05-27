@@ -12266,7 +12266,16 @@ fn task_supports_backend(
         return true;
     }
 
-    task.mode_execution_branch(backend).is_some()
+    if task.mode_execution_branch(backend).is_some() {
+        return true;
+    }
+
+    backend == crate::schema::Backend::Native
+        && task.mode_default_backend() == Some(crate::schema::Backend::Container)
+        && task
+            .mode_execution_branch(crate::schema::Backend::Native)
+            .is_none()
+        && task.resolved_execution(current_os()).is_some()
 }
 
 fn task_matches_tasks_filters(
@@ -33647,7 +33656,29 @@ fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
     let Some(default_mode) = task.default_mode else {
         return Vec::new();
     };
-    if task.modes.len() < 2 {
+
+    let mut override_modes = task
+        .modes
+        .iter()
+        .map(|mode| mode.mode)
+        .filter(|mode| *mode != default_mode)
+        .collect::<Vec<_>>();
+
+    if default_mode == "container"
+        && !override_modes.iter().any(|mode| *mode == "native")
+        && task.supports_native_mode_override
+    {
+        override_modes.push("native");
+    }
+
+    override_modes.sort_by_key(|mode| match *mode {
+        "native" => 0,
+        "container" => 1,
+        "remote" => 2,
+        _ => 3,
+    });
+    override_modes.dedup();
+    if override_modes.is_empty() {
         return Vec::new();
     }
 
@@ -33656,15 +33687,10 @@ fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
         paint_code(&format!("ota run {}", task.name))
     )];
 
-    commands.extend(
-        task.modes
-            .iter()
-            .filter(|mode| mode.mode != default_mode)
-            .map(|mode| {
-                let command = format!("ota run {} --mode {}", task.name, mode.mode);
-                format!("{}: `{}`", mode.mode, paint_code(&command))
-            }),
-    );
+    commands.extend(override_modes.into_iter().map(|mode| {
+        let command = format!("ota run {} --mode {}", task.name, mode);
+        format!("{mode}: `{}`", paint_code(&command))
+    }));
 
     commands
 }
@@ -42544,6 +42570,7 @@ tasks:
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
+            supports_native_mode_override: false,
         };
 
         let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
@@ -42612,6 +42639,7 @@ tasks:
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
+            supports_native_mode_override: false,
         };
 
         let rendered = strip_ansi_codes(&render_tasks_use_text(".", &[task]));
@@ -42684,6 +42712,7 @@ tasks:
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
+            supports_native_mode_override: false,
         };
 
         let rendered = strip_ansi_codes(&render_tasks_text(".", Some(&workflow), None, &[task]));
@@ -42760,6 +42789,7 @@ tasks:
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
+            supports_native_mode_override: false,
         };
 
         let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
@@ -43097,6 +43127,7 @@ workflows:
                 internal: false,
                 variants: Vec::new(),
                 modes: Vec::new(),
+                supports_native_mode_override: false,
             },
             runtime: None,
             targets: Vec::new(),
