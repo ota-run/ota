@@ -196,7 +196,7 @@ Required.
 ```yaml
 project:
   name: ota
-  description: Open repo readiness
+  description: Execution governance for humans and AI agents
   type: cli
 ```
 
