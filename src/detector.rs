@@ -34,7 +34,9 @@ use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, TaskActionSpec,
     ToolchainFulfillmentMode, ToolchainProvider,
 };
-use crate::toolchains::{JAVA_TOOLCHAIN_NAME, PYTHON_TOOLCHAIN_NAME, toolchain_repo_signals};
+use crate::toolchains::{
+    COREPACK_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME, PYTHON_TOOLCHAIN_NAME, toolchain_repo_signals,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -412,6 +414,15 @@ impl DetectReport {
                         };
                     }
                     "version" => toolchain.version = inference.value.clone(),
+                    package_manager if package_manager.starts_with("package_managers.") => {
+                        if let Some(package_manager) =
+                            package_manager.strip_prefix("package_managers.")
+                        {
+                            toolchain
+                                .package_managers
+                                .insert(package_manager.to_string(), inference.value.clone());
+                        }
+                    }
                     "fulfillment" => {
                         toolchain.fulfillment = match inference.value.as_str() {
                             "run" => Some(ToolchainFulfillmentMode::Run),
@@ -666,11 +677,16 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
         .and_then(|engines| engines.get("node"))
         .and_then(JsonValue::as_str)
     {
+        let confidence = if package_manager_name.is_some() {
+            Confidence::High
+        } else {
+            Confidence::Medium
+        };
         builder.set_runtime(
             "node".to_string(),
             node.to_string(),
             "package.json#engines.node".to_string(),
-            Confidence::Medium,
+            confidence,
         );
     }
 
@@ -3347,13 +3363,13 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
             service_name.to_string(),
             format!("docker compose up -d {service_name}"),
             format!("{file_name}#services.{service_name}"),
-            Confidence::Medium,
+            Confidence::High,
         );
         builder.set_service_stop(
             service_name.to_string(),
             format!("docker compose stop {service_name}"),
             format!("{file_name}#services.{service_name}"),
-            Confidence::Medium,
+            Confidence::High,
         );
 
         if let Some(command) = services
@@ -3364,7 +3380,7 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
                 service_name.to_string(),
                 command,
                 format!("{file_name}#services.{service_name}.healthcheck.test"),
-                Confidence::Medium,
+                Confidence::High,
             );
         }
     }
@@ -4082,7 +4098,7 @@ impl DetectBuilder {
             if internal {
                 self.set_task_internal(name.clone(), source.clone(), confidence);
             }
-            if is_verifier_task_name(&name) {
+            if is_agent_safe_verifier_task_name(&name) {
                 self.set_task_safe_for_agent(name, source, confidence);
             }
         }
@@ -4193,8 +4209,85 @@ fn synthesize_detected_toolchain_inferences(
     contract: &mut DetectContract,
     inferences: &mut BTreeMap<String, Inference>,
 ) {
+    synthesize_corepack_node_toolchain(contract, inferences);
     synthesize_sdkman_java_toolchain(root, contract, inferences);
     synthesize_uv_python_toolchain(root, contract, inferences);
+}
+
+fn synthesize_corepack_node_toolchain(
+    contract: &mut DetectContract,
+    inferences: &mut BTreeMap<String, Inference>,
+) {
+    let Some(node_version) = contract.runtimes.get(COREPACK_TOOLCHAIN_NAME).cloned() else {
+        return;
+    };
+    let Some((package_manager, package_manager_version)) = contract
+        .tools
+        .iter()
+        .find(|(name, version)| matches!(name.as_str(), "pnpm" | "yarn") && version.as_str() != "*")
+        .map(|(name, version)| (name.clone(), version.clone()))
+    else {
+        return;
+    };
+
+    let runtime_inference = inferences.get("runtimes.node");
+    let tool_field = format!("tools.{package_manager}");
+    let tool_inference = inferences.get(&tool_field);
+    let confidence = runtime_inference
+        .map(|inference| inference.confidence)
+        .zip(tool_inference.map(|inference| inference.confidence))
+        .map(|(runtime, tool)| runtime.min(tool))
+        .unwrap_or(Confidence::High);
+    let version_source = runtime_inference
+        .map(|inference| inference.source.clone())
+        .unwrap_or_else(|| String::from("ota.detect#toolchains.node.version"));
+    let package_manager_source = tool_inference
+        .map(|inference| inference.source.clone())
+        .unwrap_or_else(|| String::from("ota.detect#toolchains.node.package_managers"));
+
+    contract.runtimes.remove(COREPACK_TOOLCHAIN_NAME);
+    contract.tools.remove(&package_manager);
+    inferences.remove("runtimes.node");
+    inferences.remove(&tool_field);
+    contract.toolchains.insert(
+        String::from(COREPACK_TOOLCHAIN_NAME),
+        DetectToolchainSpec {
+            provider: ToolchainProvider::Corepack,
+            version: node_version.clone(),
+            package_managers: BTreeMap::from([(
+                package_manager.clone(),
+                package_manager_version.clone(),
+            )]),
+            fulfillment: None,
+        },
+    );
+    inferences.insert(
+        String::from("toolchains.node.provider"),
+        Inference::new(
+            String::from("toolchains.node.provider"),
+            String::from("corepack"),
+            String::from("ota.detect#toolchains.node.provider"),
+            confidence,
+        ),
+    );
+    inferences.insert(
+        String::from("toolchains.node.version"),
+        Inference::new(
+            String::from("toolchains.node.version"),
+            node_version,
+            version_source,
+            confidence,
+        ),
+    );
+    inferences.insert(
+        format!("toolchains.node.package_managers.{package_manager}"),
+        Inference::new(
+            format!("toolchains.node.package_managers.{package_manager}"),
+            package_manager_version,
+            package_manager_source,
+            confidence,
+        ),
+    );
 }
 
 fn synthesize_sdkman_java_toolchain(
@@ -4304,6 +4397,17 @@ fn synthesize_uv_python_toolchain(
 }
 
 fn normalize_detected_toolchains(_root: &Path, contract: &mut DetectContract) {
+    if let Some(toolchain) = contract.toolchains.get(COREPACK_TOOLCHAIN_NAME) {
+        contract.runtimes.remove(COREPACK_TOOLCHAIN_NAME);
+        for package_manager in toolchain
+            .package_managers
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+        {
+            contract.tools.remove(&package_manager);
+        }
+    }
     if contract.toolchains.contains_key(JAVA_TOOLCHAIN_NAME) {
         contract.runtimes.remove(JAVA_TOOLCHAIN_NAME);
     }
@@ -4366,7 +4470,7 @@ fn inference_agent_safe_for_field(field: &str, value: &str) -> Option<InferenceA
             InferenceAgentSafe::No
         });
     }
-    if is_verifier_task_name(task_name) {
+    if is_agent_safe_verifier_task_name(task_name) {
         return Some(InferenceAgentSafe::Yes);
     }
     Some(InferenceAgentSafe::Unknown)
@@ -4377,7 +4481,7 @@ fn inference_agent_signal_for_field(field: &str, value: &str) -> Option<Inferenc
     if field.ends_with(".safe_for_agent") && value == "true" {
         return Some(InferenceAgentSignal::VerificationCandidate);
     }
-    if is_verifier_task_name(task_name) {
+    if is_agent_safe_verifier_task_name(task_name) {
         return Some(InferenceAgentSignal::VerificationCandidate);
     }
     if task_name.eq_ignore_ascii_case("setup") {
@@ -4655,6 +4759,17 @@ fn is_verifier_task_name(name: &str) -> bool {
         })
 }
 
+fn is_agent_safe_verifier_task_name(name: &str) -> bool {
+    is_verifier_task_name(name) && !is_long_running_task_name(name)
+}
+
+fn is_long_running_task_name(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    normalized
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| matches!(token, "watch" | "dev" | "serve"))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -4682,14 +4797,19 @@ mod tests {
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report.contract.runtimes.get("node"),
-            Some(&"22".to_string())
+            report
+                .contract
+                .toolchains
+                .get("node")
+                .map(|toolchain| toolchain.version.as_str()),
+            Some("22")
         );
+        assert!(!report.contract.runtimes.contains_key("node"));
         assert_eq!(
             report
                 .inferences
                 .iter()
-                .find(|inference| inference.field == "runtimes.node")
+                .find(|inference| inference.field == "toolchains.node.version")
                 .unwrap()
                 .confidence,
             Confidence::High
@@ -4702,6 +4822,48 @@ mod tests {
                 .map(|task| task.run.as_str()),
             Some("pnpm dev")
         );
+    }
+
+    #[test]
+    fn package_json_engines_node_is_high_confidence_with_package_manager() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-app",
+  "engines": { "node": ">=22" },
+  "packageManager": "pnpm@10.27.0",
+  "scripts": { "test": "vitest run" }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "toolchains.node.version"
+                && inference.value == ">=22"
+                && inference.source == "package.json#engines.node"
+                && inference.confidence == Confidence::High
+        }));
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "toolchains.node.package_managers.pnpm"
+                && inference.value == "10.27.0"
+                && inference.source == "package.json#packageManager"
+                && inference.confidence == Confidence::High
+        }));
+        let contract = report.high_confidence_contract();
+        assert_eq!(
+            contract.toolchains.get("node").map(|toolchain| {
+                (
+                    toolchain.provider,
+                    toolchain.version.as_str(),
+                    toolchain.package_managers.get("pnpm").map(String::as_str),
+                )
+            }),
+            Some((ToolchainProvider::Corepack, ">=22", Some("10.27.0")))
+        );
+        assert!(!contract.runtimes.contains_key("node"));
+        assert!(!contract.tools.contains_key("pnpm"));
     }
 
     #[test]
@@ -6543,7 +6705,7 @@ channel = "1.85.0"
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "services.web.start"
                 && inference.source == "docker-compose.yml#services.web"
-                && inference.confidence == Confidence::Medium
+                && inference.confidence == Confidence::High
         }));
     }
 
@@ -6573,8 +6735,49 @@ channel = "1.85.0"
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "services.db.healthcheck"
                 && inference.source == "docker-compose.yml#services.db.healthcheck.test"
-                && inference.confidence == Confidence::Medium
+                && inference.confidence == Confidence::High
         }));
+    }
+
+    #[test]
+    fn watch_verifier_tasks_are_not_inferred_safe_for_agent() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-app",
+  "packageManager": "yarn@4.11.0",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| task.safe_for_agent),
+            Some(true)
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test:watch")
+                .map(|task| task.safe_for_agent),
+            Some(false)
+        );
+        assert!(
+            !report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "tasks.test:watch.safe_for_agent")
+        );
     }
 
     #[test]
@@ -6629,7 +6832,7 @@ channel = "1.85.0"
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "services.db.start"
                 && inference.source == "compose.yaml#services.db"
-                && inference.confidence == Confidence::Medium
+                && inference.confidence == Confidence::High
         }));
     }
 
@@ -6657,7 +6860,7 @@ channel = "1.85.0"
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "services.cache.stop"
                 && inference.source == "compose.yml#services.cache"
-                && inference.confidence == Confidence::Medium
+                && inference.confidence == Confidence::High
         }));
     }
 
@@ -6687,7 +6890,7 @@ channel = "1.85.0"
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "services.db.healthcheck"
                 && inference.source == "docker-compose.yaml#services.db.healthcheck.test"
-                && inference.confidence == Confidence::Medium
+                && inference.confidence == Confidence::High
         }));
     }
 
@@ -6717,7 +6920,7 @@ channel = "1.85.0"
         assert!(report.inferences.iter().any(|inference| {
             inference.field == "services.db.healthcheck"
                 && inference.source == "compose.yaml#services.db.healthcheck.test"
-                && inference.confidence == Confidence::Medium
+                && inference.confidence == Confidence::High
         }));
     }
 
@@ -6978,7 +7181,13 @@ name = "ota-api"
                 .map(|project| project.name.as_str()),
             Some("ota-app")
         );
-        assert_eq!(contract.tools.get("pnpm"), Some(&"10.2.0".to_string()));
+        assert_eq!(
+            contract
+                .toolchains
+                .get("node")
+                .and_then(|toolchain| toolchain.package_managers.get("pnpm")),
+            Some(&"10.2.0".to_string())
+        );
         assert_eq!(
             contract.tasks.get("dev").map(|task| task.run.as_str()),
             Some("pnpm dev")
@@ -6990,7 +7199,13 @@ name = "ota-api"
                 .and_then(|task| task.notes.as_deref()),
             Some("Run `ota run dev` to execute this task.\n")
         );
-        assert!(!contract.runtimes.contains_key("node"));
+        assert_eq!(
+            contract
+                .toolchains
+                .get("node")
+                .map(|toolchain| toolchain.version.as_str()),
+            Some("20")
+        );
     }
 
     #[test]

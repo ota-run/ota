@@ -66,10 +66,16 @@ ota detect --merge [PATH]
 The first merge scope should stay narrow and detect-owned:
 
 - `project.name`
+- `toolchains.*.{provider,version,fulfillment}`
+- `toolchains.*.package_managers.*`
 - `runtimes.*`
 - `tools.*`
 - `services.*.{provider,start,stop,healthcheck}`
 - `tasks.*.run`
+
+`package.json#engines.node` is detect-owned as `toolchains.node.version` only when it is paired
+with versioned Corepack package-manager ownership such as `package.json#packageManager:
+pnpm@...` or `yarn@...`; otherwise it remains preview-only until a stronger repo signal exists.
 
 Do not merge:
 

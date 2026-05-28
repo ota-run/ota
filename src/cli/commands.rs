@@ -32680,6 +32680,12 @@ fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange
     let segments = change.field.split('.').collect::<Vec<_>>();
     match segments.as_slice() {
         ["project", "name"] => set_string_field(root, &segments, &change.detected),
+        ["toolchains", _, "provider"]
+        | ["toolchains", _, "version"]
+        | ["toolchains", _, "fulfillment"]
+        | ["toolchains", _, "package_managers", _] => {
+            set_string_field(root, &segments, &change.detected)
+        }
         ["runtimes", _] | ["tools", _] => set_string_field(root, &segments, &change.detected),
         ["env", "sources", _, "kind"] | ["env", "sources", _, "path"] => {
             set_env_source_string_field(root, &segments, &change.detected)
@@ -32723,6 +32729,11 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
     for (name, toolchain) in &contract.toolchains {
         fields.push(format!("toolchains.{name}.provider"));
         fields.push(format!("toolchains.{name}.version"));
+        for package_manager in toolchain.package_managers.keys() {
+            fields.push(format!(
+                "toolchains.{name}.package_managers.{package_manager}"
+            ));
+        }
         if toolchain.fulfillment.is_some() {
             fields.push(format!("toolchains.{name}.fulfillment"));
         }
@@ -32890,6 +32901,15 @@ fn init_contract_provenance(
             format!("toolchains.{name}.version"),
             starter_contract_source,
         );
+        for package_manager in toolchain.package_managers.keys() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                &detected_fields,
+                format!("toolchains.{name}.package_managers.{package_manager}"),
+                starter_contract_source,
+            );
+        }
         if toolchain.fulfillment.is_some() {
             push_init_field_provenance(
                 &mut provenance,

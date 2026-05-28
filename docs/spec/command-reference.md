@@ -2360,8 +2360,8 @@ Current detect sources:
 For Docker Compose service inference, ota currently derives:
 
 - `provider` at high confidence
-- `start` / `stop` at medium confidence
-- declared `healthcheck.test` at medium confidence
+- `start` / `stop` at high confidence
+- declared `healthcheck.test` at high confidence
 
 Dry-run behavior:
 
@@ -2387,6 +2387,12 @@ Current write behavior:
 
 - `ota detect --write` writes using only `high` confidence fields
 - `ota detect --write` remains conservative even when `ota init` can write a valid starter
+- versioned `pnpm`/`yarn` package-manager-backed `package.json#engines.node` is high confidence
+  for detect write, merge, rewrite, ownership metadata, and drift comparison, and is written as
+  canonical `toolchains.node` Corepack ownership so a detected Node contract does not silently omit
+  the runtime or generate legacy split ownership
+- Docker Compose service `start`, `stop`, and declared `healthcheck.test` commands are high
+  confidence and can be written with the inferred service block
 - detect preview, exact starter preview, and detect write now keep the same derived starter `agent` block that init uses, while detect-owned field metadata remains scoped to actually inferred fields and writable-path inference can include broader common directories plus bounded custom source roots
 - validates the generated contract before writing
 - refuses to overwrite an existing `ota.yaml`
@@ -2454,8 +2460,11 @@ Current precedence is conservative:
 - when confidence is equal, more repo-specific runtime sources win before generic version-manager aggregation
 - when confidence is equal for project names, `package.json` wins over conflicting Python or Go manifest names
 - when confidence is equal for package-manager tools, `package.json#packageManager` wins over conflicting `.tool-versions` values
+- when `package.json#packageManager` is present for versioned `pnpm` or `yarn`,
+  `package.json#engines.node` is treated as high-confidence `toolchains.node` runtime truth;
+  without a package manager signal, it stays conservative
 - when `package.json#packageManager` is absent, known repo-local Node package-manager markers such as workspace files and lockfiles can determine the tool and task command prefix conservatively
-- verifier-style inferred tasks (for example `test`, `lint`, `typecheck`, `check`, `verify`, `fmt`) are marked with `safe_for_agent: true`; other inferred tasks stay unsafe-by-default
+- verifier-style inferred tasks (for example `test`, `lint`, `typecheck`, `check`, `verify`, `fmt`) are marked with `safe_for_agent: true`; watch/dev/serve variants stay unsafe-by-default because they are usually long-running; other inferred tasks stay unsafe-by-default
 - `Pipfile` can contribute `python` runtime inference and `pipenv` tool inference conservatively
 - `uv.lock` can contribute `uv` tool inference conservatively
 - `requirements.txt` can contribute `pip` tool inference conservatively
