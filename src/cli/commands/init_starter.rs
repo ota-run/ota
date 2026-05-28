@@ -1377,10 +1377,14 @@ fn starter_agent_is_protected_control_extension(extension: &str) -> bool {
 fn starter_agent_stack_companion_protected_paths(contract: &DetectContract) -> Vec<&'static str> {
     let mut paths = Vec::new();
 
-    if ["npm", "pnpm", "yarn", "bun"]
+    let has_node_package_manager = ["npm", "pnpm", "yarn", "bun"]
         .iter()
         .any(|tool| contract.tools.contains_key(*tool))
-    {
+        || contract
+            .toolchains
+            .get("node")
+            .is_some_and(|toolchain| !toolchain.package_managers.is_empty());
+    if has_node_package_manager {
         paths.extend([
             "package-lock.json",
             "pnpm-lock.yaml",

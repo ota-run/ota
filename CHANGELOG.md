@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- matured detector-led contract writes from real pressure-test repos: `package.json#engines.node`
+  plus versioned `pnpm`/`yarn` package-manager ownership now writes, merges, rewrites, and tracks
+  drift through the canonical `toolchains.node` Corepack shape instead of legacy split
+  `runtimes.node` + standalone package manager tools, Docker Compose service
+  `start`/`stop`/`healthcheck` commands are written with their service declarations, and
+  watch/dev/serve verifier scripts are no longer inferred as agent-safe tasks
+- improved Node mismatch remediation so `ota doctor` prefers the provider actually found on the
+  probed executable path (`mise`, `asdf`, `volta`, `nodenv`, or `pyenv`) before falling back to
+  repo file hints such as `.nvmrc`; this keeps `Next:` guidance aligned with the tool the host is
+  really using
 - hardened `ota init` starter-pack ownership to match shipped toolchain contracts and avoid
   generator-led drift: Node pack now seeds `toolchains.node` (Corepack-owned Node, default pnpm
   package-manager ownership, and Corepack-prefixed pnpm/yarn task commands) instead of split

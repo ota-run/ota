@@ -6,10 +6,13 @@ Existing contract comparison:
 ✦  project.name: would update `existing` -> `ota-web`
     Owner: manual
     Source: package.json#name [high]
-✦  runtimes.node: would add `22`
+✦  toolchains.node.provider: would add `corepack`
+    Owner: detected
+    Source: ota.detect#toolchains.node.provider [high]
+✦  toolchains.node.version: would add `22`
     Owner: detected
     Source: .nvmrc [high]
-✦  tools.pnpm: would add `10.1.0`
+✦  toolchains.node.package_managers.pnpm: would add `10.1.0`
     Owner: detected
     Source: package.json#packageManager [high]
 ✦  tasks.dev.run: would add `pnpm dev`
@@ -20,10 +23,12 @@ Contract
 version: 1
 project:
   name: ota-web
-runtimes:
-  node: '22'
-tools:
-  pnpm: 10.1.0
+toolchains:
+  node:
+    provider: corepack
+    version: '22'
+    package_managers:
+      pnpm: 10.1.0
 tasks:
   dev:
     description: Start the local development loop.
@@ -39,13 +44,6 @@ Annotations:
   Signal: config
   Confidence: high
 
-✦ Field: runtimes.node
-  Type: runtime
-  Value: 22
-  Source: .nvmrc
-  Signal: file
-  Confidence: high
-
 ✦ Field: tasks.dev.run
   Type: task
   Value: pnpm dev
@@ -54,11 +52,25 @@ Annotations:
   Agent Safe: unknown
   Confidence: high
 
-✦ Field: tools.pnpm
-  Type: tool
+✦ Field: toolchains.node.package_managers.pnpm
+  Type: field
   Value: 10.1.0
   Source: package.json#packageManager
   Signal: config
+  Confidence: high
+
+✦ Field: toolchains.node.provider
+  Type: field
+  Value: corepack
+  Source: ota.detect#toolchains.node.provider
+  Signal: config
+  Confidence: high
+
+✦ Field: toolchains.node.version
+  Type: field
+  Value: 22
+  Source: .nvmrc
+  Signal: file
   Confidence: high
 
 Agent boundary

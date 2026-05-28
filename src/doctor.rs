@@ -6588,6 +6588,29 @@ fn provider_hint_remediation_without_toolchains(
     }
 }
 
+fn provider_hint_from_probe_path(path: &Path) -> Option<&'static str> {
+    for component in path.components() {
+        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+        let value = value.trim_start_matches('.');
+        if value == "mise" || value == "mise.exe" {
+            return Some("mise");
+        }
+        if value == "asdf" || value == "asdf.exe" {
+            return Some("asdf");
+        }
+        if value == "volta" {
+            return Some("volta");
+        }
+        if value == "nodenv" {
+            return Some("nodenv");
+        }
+        if value == "pyenv" {
+            return Some("pyenv");
+        }
+    }
+    None
+}
+
 fn unsupported_toolchain_fallback_tools(
     requirement_surface: &RequirementSurface,
     names: &[&str],
@@ -7337,6 +7360,19 @@ fn diagnose_command_version(
             })
         })
         .unwrap_or_default();
+    let mismatch_remediation = version_probe
+        .as_ref()
+        .and_then(|probe| probe.resolved_path.as_deref())
+        .and_then(provider_hint_from_probe_path)
+        .and_then(|hint| {
+            provider_hint_remediation_without_toolchains(
+                target_kind,
+                display_name,
+                requirement,
+                Some(hint),
+            )
+        })
+        .or(exact_remediation);
     findings.push(Finding {
         severity: if required {
             FindingSeverity::Error
@@ -7384,7 +7420,7 @@ fn diagnose_command_version(
                         "update `{display_name}` in the selected remote backend so it satisfies `{requirement}`, then rerun `{rerun_doctor}`"
                     )
                 }),
-            _ => exact_remediation
+            _ => mismatch_remediation
                 .map(|command| format!("run `{command}` and rerun `{rerun_doctor}`"))
                 .unwrap_or_else(|| {
                     format!(

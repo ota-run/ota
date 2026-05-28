@@ -30363,7 +30363,8 @@ checks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("project:"));
         assert!(stdout.contains("name: ota-web"));
-        assert!(stdout.contains("runtimes.node"));
+        assert!(stdout.contains("toolchains.node.version"));
+        assert!(stdout.contains("toolchains.node.package_managers.pnpm"));
         assert!(stdout.contains("tasks.dev.run"));
     }
 
@@ -30818,10 +30819,14 @@ project:
         assert!(stdout.contains("ota validate"));
         assert!(stdout.contains("ota detect --merge --dry-run"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("provider: corepack"));
+        assert!(written.contains("version: '22'"));
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("field_ownership:"));
-        assert!(written.contains("tools.pnpm: merged"));
+        assert!(written.contains("toolchains.node.provider: merged"));
+        assert!(written.contains("toolchains.node.version: merged"));
+        assert!(written.contains("toolchains.node.package_managers.pnpm: merged"));
         assert!(written.contains("tasks.dev.run: merged"));
         assert!(written.contains("name: existing"));
         assert!(!written.contains("name: ota-web"));
@@ -30885,7 +30890,11 @@ project:
             "detect",
             "--merge",
             "--apply",
-            "tools.pnpm",
+            "toolchains.node.provider",
+            "--apply",
+            "toolchains.node.version",
+            "--apply",
+            "toolchains.node.package_managers.pnpm",
             "--apply",
             "tasks.dev.run",
             fixture.path(),
@@ -30896,9 +30905,10 @@ project:
         assert!(stdout.contains("MERGED"));
         assert!(stdout.contains("Applied selected high-confidence changes:"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("provider: corepack"));
+        assert!(written.contains("version: '22'"));
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
-        assert!(!written.contains("node: 22"));
         assert!(!written.contains("name: ota-web"));
     }
 
@@ -31330,9 +31340,11 @@ tasks:
   "name": "ota-web",
   "engines": { "node": "20" },
   "packageManager": "pnpm@10.1.0",
-  "scripts": { "dev": "vite" }
+  "scripts": { "dev": "vite", "typecheck": "tsc --noEmit" }
 }"#,
         );
+        fixture.write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
+        fs::create_dir_all(fixture.dir.path().join("src")).unwrap();
 
         let output = run_with(["ota", "detect", "--write", fixture.path()]);
 
@@ -31345,18 +31357,58 @@ tasks:
         assert!(stdout.contains("run `ota tasks --use"));
         assert!(stdout.contains("run `ota doctor"));
         assert!(stdout.contains("run `ota up --dry-run"));
-        assert!(stdout.contains("runtimes.node"));
+        assert!(!stdout.contains("runtimes.node"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
+        assert!(written.contains("version: '20'"));
         assert!(written.contains("pnpm: 10.1.0"));
+        assert!(written.contains("toolchains:"));
+        assert!(written.contains("provider: corepack"));
+        assert!(written.contains("package_managers:"));
         assert!(written.contains("description: Start the local development loop."));
         assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("field_ownership:"));
         assert!(written.contains("project.name: merged"));
-        assert!(written.contains("tools.pnpm: merged"));
+        assert!(written.contains("toolchains.node.version: merged"));
+        assert!(written.contains("toolchains.node.package_managers.pnpm: merged"));
         assert!(written.contains("tasks.dev.description: merged"));
         assert!(written.contains("tasks.dev.run: merged"));
-        assert!(!written.contains("node:"));
+        assert!(written.contains("protected_paths:"));
+        assert!(written.contains("- pnpm-lock.yaml"));
+        assert!(!written.contains("runtimes:"));
+        assert!(!written.contains("tools:"));
+    }
+
+    #[test]
+    fn detect_write_includes_compose_service_commands() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web"
+}"#,
+        );
+        fixture.write(
+            "docker-compose.yml",
+            r#"services:
+  postgres:
+    image: postgres:16
+"#,
+        );
+
+        let output = run_with(["ota", "detect", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("provider: docker-compose"), "{written}");
+        assert!(
+            written.contains("start: docker compose up -d postgres"),
+            "{written}"
+        );
+        assert!(
+            written.contains("stop: docker compose stop postgres"),
+            "{written}"
+        );
     }
 
     #[test]
@@ -31801,6 +31853,39 @@ tasks:
         assert_eq!(test_safe, Some(true));
         assert_eq!(typecheck_safe, Some(true));
         assert!(!build_safe_present);
+    }
+
+    #[test]
+    fn detect_write_does_not_mark_watch_tasks_safe_for_agent() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "npm@10.9.2",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        let yaml: YamlValue = serde_yaml::from_str(&written).unwrap();
+        let tasks = yaml
+            .get("tasks")
+            .and_then(YamlValue::as_mapping)
+            .expect("tasks must exist");
+        let test_watch_safe_present = tasks
+            .get(YamlValue::String(String::from("test:watch")))
+            .and_then(YamlValue::as_mapping)
+            .and_then(|task| task.get(YamlValue::String(String::from("safe_for_agent"))))
+            .is_some();
+
+        assert!(!test_watch_safe_present);
     }
 
     #[test]
@@ -35522,6 +35607,46 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains("run `nodenv install 22` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_prefers_probe_provider_remediation_for_node_mismatch() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: mise-demo
+runtimes:
+  node: "22"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(".nvmrc", "22\n");
+
+        let shim_dir = fixture.dir.path().join(".mise").join("shims");
+        fs::create_dir_all(&shim_dir).expect("create shim dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&shim_dir, "node", node_body);
+        let path = prepend_path(&shim_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            stdout.contains("run `mise install node@22` and rerun `ota doctor`"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("nvm install 22"), "{stdout}");
     }
 
     #[test]
