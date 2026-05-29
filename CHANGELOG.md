@@ -61,6 +61,9 @@
   same structured task-first layout (`task ... is blocked`, plus `Where`, `Field`, bulletized
   `Why`, and ordered `Next`), including backend-aware rerun guidance for container and remote
   lanes
+- fixed `ota run` version-mismatch `Next` rendering to split combined `... and rerun ...`
+  guidance into separate ordered actions (`run <install>`, `run ota doctor`, `run ota run ...`)
+  for clearer task-first remediation flow
 - fixed container-image probe wording so run/doctor errors consistently say "inside the configured
   container image" when a required runtime or tool is missing or cannot be probed in the selected
   image

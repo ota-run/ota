@@ -37072,6 +37072,9 @@ fn finding_next_steps(next: &str) -> Vec<String> {
     if let Some((first, rerun)) = next.split_once(", then rerun ") {
         return vec![first.trim().to_string(), format!("rerun {}", rerun.trim())];
     }
+    if let Some((first, rerun)) = next.split_once(" and rerun ") {
+        return vec![first.trim().to_string(), format!("rerun {}", rerun.trim())];
+    }
     if let Some((first, alternative)) = next.split_once(", or ") {
         return vec![first.trim().to_string(), alternative.trim().to_string()];
     }
@@ -44784,9 +44787,11 @@ tasks:
         }
         assert!(
             stderr.contains("run `ota doctor` to confirm readiness")
+                || stderr.contains("run `ota doctor`")
                 || stderr.contains("rerun `ota doctor`"),
             "{stderr}"
         );
+        assert!(!stderr.contains("and rerun `ota doctor`"), "{stderr}");
         assert!(stderr.contains("run `ota run verify`"), "{stderr}");
         assert!(!stderr.contains("Task Failed"), "{stderr}");
     }
@@ -44830,6 +44835,26 @@ tasks:
             rendered.contains("run `ota run test:backend --mode container`"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn run_version_mismatch_formatter_splits_and_rerun_steps() {
+        let rendered = strip_ansi_codes(
+            &super::render_run_version_mismatch_precondition_text(
+                "./ota.yaml",
+                "verify",
+                None,
+                Backend::Native,
+                "Version mismatch for runtime: node",
+                "node resolved to `26.0.0` but the contract requires `22`; ota probed `/Users/bobai/.local/bin/mise` with `node --version`",
+                "run `mise install node@22` and rerun `ota doctor`",
+            )
+            .expect("formatted mismatch"),
+        );
+
+        assert!(rendered.contains("run `mise install node@22`"), "{rendered}");
+        assert!(rendered.contains("run `ota doctor`"), "{rendered}");
+        assert!(!rendered.contains("and rerun `ota doctor`"), "{rendered}");
     }
 
     #[test]
@@ -47209,6 +47234,21 @@ tasks:
                 String::from(
                     "run declared tasks with `ota run <task> --mode container` through the validated container path"
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn finding_next_steps_splits_and_rerun_into_two_steps() {
+        let next_steps = super::finding_next_steps(
+            "run `mise install node@22` and rerun `ota doctor`",
+        );
+
+        assert_eq!(
+            next_steps,
+            vec![
+                String::from("run `mise install node@22`"),
+                String::from("rerun `ota doctor`"),
             ]
         );
     }
