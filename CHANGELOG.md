@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added `--ready-timeout <DURATION>` to `ota proof runtime` so runtime-proof readiness waits are
+  explicitly bounded in CI and local automation (for example `90s`, `5m`, `1h`), aligned timeout
+  failures to the explicit `TIMEOUT` runtime-proof status, and normalized timeout-only JSON
+  classification to `failure_class: readiness_timeout`
 - added first-class file-aware container isolation mounts: file-like
   `attachments.isolated_paths` entries (for example `.pnp.cjs`) now mount through deterministic
   `.ota/state/isolated-file-mounts/*` bind files instead of invalid volume targets, while

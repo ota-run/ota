@@ -683,12 +683,15 @@ Notes:
 - `mode` is always `runtime-proof`
 - `workflow` is present when the proof targeted one explicit or effective workflow
 - `phase` stays machine-stable and uses the underlying proof phase keys such as `preconditions`,
-  `provisioning`, `activation`, `setup`, `run`, `services`, `post-up diagnosis`, and `cleanup`
+  `provisioning`, `activation`, `setup`, `run`, `services`, `post-up diagnosis`, `timeout`, and
+  `cleanup`
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
 - `artifacts` points at the captured canonical payloads; machine consumers should inspect those
   files directly when they need the full topology or doctor surface
 - cleanup failures are reported through top-level `error` and `next` without duplicating the doctor
   findings stream
+- timeout-only failures without a blocking primary doctor finding are normalized to
+  `failure_class: readiness_timeout`
 
 Success:
 
