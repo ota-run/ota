@@ -24850,6 +24850,14 @@ tasks:
             .expect("listener address should resolve")
             .port();
         drop(listener);
+        let readiness_token = format!(
+            "ota-backend-provider-{port}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
 
         let fixture = ContractFixture::new(
             format!(
@@ -24865,6 +24873,7 @@ extensions:
       printf '%s\n' "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" >> "$log_file"
       case "$OTA_BACKEND_PROVIDER_COMMAND_CONTEXT" in
         activation)
+          printf '%s\n' "{readiness_token}" > "${{PWD}}/readiness-token.txt"
           python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 &
           printf '%s\n' "$!" > "${{PWD}}/backend-provider.pid"
           printf '{{"ok":true,"result":{{"exit_code":0,"stdout":"","stderr":"","target":"sandbox-dev"}},"errors":[]}}'
@@ -24911,7 +24920,9 @@ tasks:
       readiness:
         kind: http
         listener: http
-        path: /
+        path: /readiness-token.txt
+        body:
+          contains: "{readiness_token}"
       listeners:
         http:
           protocol: http
