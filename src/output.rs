@@ -2934,6 +2934,8 @@ pub struct TaskSummary<'a> {
     pub variants: Vec<TaskVariantView<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub modes: Vec<TaskModeView<'a>>,
+    #[serde(skip_serializing)]
+    pub supports_native_mode_override: bool,
 }
 
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
@@ -3059,6 +3061,12 @@ impl<'a> TaskSummary<'a> {
                         .collect()
                 })
                 .unwrap_or_default(),
+            supports_native_mode_override: task.mode_default_backend()
+                == Some(crate::schema::Backend::Container)
+                && task
+                    .mode_execution_branch(crate::schema::Backend::Native)
+                    .is_none()
+                && task.resolved_execution(current_os).is_some(),
         }
     }
 

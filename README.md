@@ -1,5 +1,3 @@
-span
-
 <div align="center">
   <img src="docs/assets/ota-icon.svg" alt="ota logo" width="110" height="110" />
   <h1>ota</h1>
@@ -42,7 +40,7 @@ span
 
 ---
 
-## One explicit contract for repo readiness
+## One explicit contract for execution governance
 
 Most repos fail the same way:
 
@@ -53,8 +51,8 @@ Most repos fail the same way:
 - diagnosis starts after the repo already feels broken
 
 ota is not another task runner or package manager. It gives every repo one explicit contract for
-what it needs, how it is diagnosed, how it is prepared, and how tasks run, so humans and AI agents
-can answer why a repo is or is not runnable without guesswork.
+execution governance: what it needs, how it is diagnosed, how it is prepared, and how tasks run, so
+humans and AI agents can answer why a repo is or is not runnable without guesswork.
 
 ota fixes that by making readiness explicit and machine-readable:
 
@@ -99,6 +97,12 @@ Install the optional Ota skill after `ota` is installed:
 ```bash
 ota skills install --agent codex
 ota skills install --agent claude
+```
+
+The skill source lives in [ota-run/skills](https://github.com/ota-run/skills). It can also be installed through the `skills` CLI:
+
+```bash
+npx skills add ota-run/skills
 ```
 
 Windows Git Bash, MSYS, MinGW, or Cygwin:
@@ -379,13 +383,13 @@ ota consolidates that into one canonical contract:
 ota.yaml
 ```
 
-The goal is not hidden automation. The goal is deterministic, inspectable repo readiness.
+The goal is not hidden automation. The goal is deterministic, inspectable execution governance.
 
 ## Open Source and Governance
 
-ota is maintainer-led open infrastructure for repo readiness. The core CLI, contracts, JSON output,
-and docs are public under Apache 2.0, while roadmap stewardship and future enterprise offerings stay
-operated by Ota.
+ota is maintainer-led open infrastructure for execution governance. The core CLI, contracts, JSON
+output, and docs are public under Apache 2.0, while roadmap stewardship and future enterprise
+offerings stay operated by Ota.
 
 ota is open source, but it is not positioned as a community-governed codebase.
 

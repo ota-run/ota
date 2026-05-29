@@ -6100,10 +6100,27 @@ mod tests {
             .collect()
     }
 
+    fn skill_source_guard(temp: &TempDir) -> EnvVarGuard {
+        let source_dir = temp.path().join("skill-source");
+        fs::create_dir_all(source_dir.join("references")).unwrap();
+        fs::write(
+            source_dir.join("SKILL.md"),
+            "---\nname: ota\ndescription: Test Ota skill.\n---\n\n# Ota\n",
+        )
+        .unwrap();
+        fs::write(
+            source_dir.join("references").join("official-sources.md"),
+            "# Official Ota Sources\n\n- `https://github.com/ota-run/skills`\n",
+        )
+        .unwrap();
+        EnvVarGuard::set("OTA_SKILL_SOURCE_DIR", source_dir.into_os_string())
+    }
+
     #[test]
-    fn skills_install_codex_writes_embedded_ota_skill() {
+    fn skills_install_codex_writes_distributed_ota_skill() {
         let _env = env_mutex_lock();
         let temp = TempDir::new().unwrap();
+        let _skill_source = skill_source_guard(&temp);
         let _codex_home = EnvVarGuard::set(
             "CODEX_HOME",
             temp.path().join("codex-home").into_os_string(),
@@ -6127,6 +6144,7 @@ mod tests {
     fn skills_install_codex_defaults_to_user_codex_home() {
         let _env = env_mutex_lock();
         let temp = TempDir::new().unwrap();
+        let _skill_source = skill_source_guard(&temp);
         let _codex_home = EnvVarGuard::remove("CODEX_HOME");
         let _home = EnvVarGuard::set("HOME", temp.path().join("home").into_os_string());
 
@@ -6154,6 +6172,7 @@ mod tests {
     fn skills_install_claude_writes_user_claude_skill() {
         let _env = env_mutex_lock();
         let temp = TempDir::new().unwrap();
+        let _skill_source = skill_source_guard(&temp);
         let _home = EnvVarGuard::set("HOME", temp.path().join("home").into_os_string());
 
         let output = run_with(["ota", "skills", "install", "--agent", "claude"]);
@@ -6180,6 +6199,7 @@ mod tests {
     fn skills_install_replaces_existing_skill_tree() {
         let _env = env_mutex_lock();
         let temp = TempDir::new().unwrap();
+        let _skill_source = skill_source_guard(&temp);
         let _codex_home = EnvVarGuard::set(
             "CODEX_HOME",
             temp.path().join("codex-home").into_os_string(),
@@ -6218,6 +6238,7 @@ mod tests {
     fn skills_install_json_reports_target_path() {
         let _env = env_mutex_lock();
         let temp = TempDir::new().unwrap();
+        let _skill_source = skill_source_guard(&temp);
         let _codex_home = EnvVarGuard::set(
             "CODEX_HOME",
             temp.path().join("codex-home").into_os_string(),
@@ -16447,12 +16468,10 @@ policies:
             })
             .and_then(|finding| finding["next"].as_str())
             .unwrap();
-        let repo_path = compact_path(Path::new(fixture.path()), ".");
-
         assert!(provisioning_next.contains("ota policy review"));
-        assert!(compact_path_separator_style(provisioning_next).contains(&repo_path));
         assert!(bootstrap_next.contains("ota policy review"));
-        assert!(compact_path_separator_style(bootstrap_next).contains(&repo_path));
+        assert!(provisioning_next.contains("inspect the active policy source"));
+        assert!(bootstrap_next.contains("inspect the active policy source"));
     }
 
     #[test]
@@ -18976,6 +18995,15 @@ execution:
       container:
         image: ghcr.io/ota/test:latest
 tasks:
+  container_default_with_native_fallback:
+    context: host
+    run: echo host-fallback
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          run: echo container
   host_only:
     context: host
     run: echo host
@@ -19006,7 +19034,14 @@ tasks:
             .iter()
             .filter_map(|task| task["name"].as_str())
             .collect();
-        assert_eq!(native_names, vec!["dual_mode", "host_only"]);
+        assert_eq!(
+            native_names,
+            vec![
+                "container_default_with_native_fallback",
+                "dual_mode",
+                "host_only"
+            ]
+        );
 
         let container = run_with([
             "ota",
@@ -19024,7 +19059,14 @@ tasks:
             .iter()
             .filter_map(|task| task["name"].as_str())
             .collect();
-        assert_eq!(container_names, vec!["container_only", "dual_mode"]);
+        assert_eq!(
+            container_names,
+            vec![
+                "container_default_with_native_fallback",
+                "container_only",
+                "dual_mode"
+            ]
+        );
     }
 
     #[test]
@@ -19077,6 +19119,52 @@ tasks:
         assert!(
             modes_idx > mode_branches_idx,
             "expected Modes block after Mode Branches"
+        );
+    }
+
+    #[test]
+    fn tasks_use_shows_native_override_when_default_mode_is_container() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  start:
+    context: host
+    run: npm run dev
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          run: npm run dev
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--use", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Command: `ota run start`"), "{stdout}");
+        assert!(stdout.contains("Modes:"), "{stdout}");
+        assert!(stdout.contains("default: `ota run start`"), "{stdout}");
+        assert!(
+            stdout.contains("native: `ota run start --mode native`"),
+            "{stdout}"
+        );
+        assert!(
+            !stdout.contains("container: `ota run start --mode container`"),
+            "{stdout}"
         );
     }
 
@@ -30294,7 +30382,8 @@ checks:
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("project:"));
         assert!(stdout.contains("name: ota-web"));
-        assert!(stdout.contains("runtimes.node"));
+        assert!(stdout.contains("toolchains.node.version"));
+        assert!(stdout.contains("toolchains.node.package_managers.pnpm"));
         assert!(stdout.contains("tasks.dev.run"));
     }
 
@@ -30749,10 +30838,14 @@ project:
         assert!(stdout.contains("ota validate"));
         assert!(stdout.contains("ota detect --merge --dry-run"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("provider: corepack"));
+        assert!(written.contains("version: '22'"));
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("field_ownership:"));
-        assert!(written.contains("tools.pnpm: merged"));
+        assert!(written.contains("toolchains.node.provider: merged"));
+        assert!(written.contains("toolchains.node.version: merged"));
+        assert!(written.contains("toolchains.node.package_managers.pnpm: merged"));
         assert!(written.contains("tasks.dev.run: merged"));
         assert!(written.contains("name: existing"));
         assert!(!written.contains("name: ota-web"));
@@ -30816,7 +30909,11 @@ project:
             "detect",
             "--merge",
             "--apply",
-            "tools.pnpm",
+            "toolchains.node.provider",
+            "--apply",
+            "toolchains.node.version",
+            "--apply",
+            "toolchains.node.package_managers.pnpm",
             "--apply",
             "tasks.dev.run",
             fixture.path(),
@@ -30827,9 +30924,10 @@ project:
         assert!(stdout.contains("MERGED"));
         assert!(stdout.contains("Applied selected high-confidence changes:"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("provider: corepack"));
+        assert!(written.contains("version: '22'"));
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
-        assert!(!written.contains("node: 22"));
         assert!(!written.contains("name: ota-web"));
     }
 
@@ -31261,9 +31359,11 @@ tasks:
   "name": "ota-web",
   "engines": { "node": "20" },
   "packageManager": "pnpm@10.1.0",
-  "scripts": { "dev": "vite" }
+  "scripts": { "dev": "vite", "typecheck": "tsc --noEmit" }
 }"#,
         );
+        fixture.write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
+        fs::create_dir_all(fixture.dir.path().join("src")).unwrap();
 
         let output = run_with(["ota", "detect", "--write", fixture.path()]);
 
@@ -31276,18 +31376,58 @@ tasks:
         assert!(stdout.contains("run `ota tasks --use"));
         assert!(stdout.contains("run `ota doctor"));
         assert!(stdout.contains("run `ota up --dry-run"));
-        assert!(stdout.contains("runtimes.node"));
+        assert!(!stdout.contains("runtimes.node"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
+        assert!(written.contains("version: '20'"));
         assert!(written.contains("pnpm: 10.1.0"));
+        assert!(written.contains("toolchains:"));
+        assert!(written.contains("provider: corepack"));
+        assert!(written.contains("package_managers:"));
         assert!(written.contains("description: Start the local development loop."));
         assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("field_ownership:"));
         assert!(written.contains("project.name: merged"));
-        assert!(written.contains("tools.pnpm: merged"));
+        assert!(written.contains("toolchains.node.version: merged"));
+        assert!(written.contains("toolchains.node.package_managers.pnpm: merged"));
         assert!(written.contains("tasks.dev.description: merged"));
         assert!(written.contains("tasks.dev.run: merged"));
-        assert!(!written.contains("node:"));
+        assert!(written.contains("protected_paths:"));
+        assert!(written.contains("- pnpm-lock.yaml"));
+        assert!(!written.contains("runtimes:"));
+        assert!(!written.contains("tools:"));
+    }
+
+    #[test]
+    fn detect_write_includes_compose_service_commands() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web"
+}"#,
+        );
+        fixture.write(
+            "docker-compose.yml",
+            r#"services:
+  postgres:
+    image: postgres:16
+"#,
+        );
+
+        let output = run_with(["ota", "detect", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("provider: docker-compose"), "{written}");
+        assert!(
+            written.contains("start: docker compose up -d postgres"),
+            "{written}"
+        );
+        assert!(
+            written.contains("stop: docker compose stop postgres"),
+            "{written}"
+        );
     }
 
     #[test]
@@ -31732,6 +31872,39 @@ tasks:
         assert_eq!(test_safe, Some(true));
         assert_eq!(typecheck_safe, Some(true));
         assert!(!build_safe_present);
+    }
+
+    #[test]
+    fn detect_write_does_not_mark_watch_tasks_safe_for_agent() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "packageManager": "npm@10.9.2",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        let yaml: YamlValue = serde_yaml::from_str(&written).unwrap();
+        let tasks = yaml
+            .get("tasks")
+            .and_then(YamlValue::as_mapping)
+            .expect("tasks must exist");
+        let test_watch_safe_present = tasks
+            .get(YamlValue::String(String::from("test:watch")))
+            .and_then(YamlValue::as_mapping)
+            .and_then(|task| task.get(YamlValue::String(String::from("safe_for_agent"))))
+            .is_some();
+
+        assert!(!test_watch_safe_present);
     }
 
     #[test]
@@ -35453,6 +35626,46 @@ tasks:
 
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains("run `nodenv install 22` and rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_prefers_probe_provider_remediation_for_node_mismatch() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: mise-demo
+runtimes:
+  node: "22"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(".nvmrc", "22\n");
+
+        let shim_dir = fixture.dir.path().join(".mise").join("shims");
+        fs::create_dir_all(&shim_dir).expect("create shim dir");
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.14.1\r\n"
+        } else {
+            "#!/bin/sh\necho 'v24.14.1'\n"
+        };
+        write_fake_command(&shim_dir, "node", node_body);
+        let path = prepend_path(&shim_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            stdout.contains("run `mise install node@22` and rerun `ota doctor`"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("nvm install 22"), "{stdout}");
     }
 
     #[test]

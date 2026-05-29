@@ -26,6 +26,46 @@
 
 ## Unreleased
 
+- added first-class file-aware container isolation mounts: file-like
+  `attachments.isolated_paths` entries (for example `.pnp.cjs`) now mount through deterministic
+  `.ota/state/isolated-file-mounts/*` bind files instead of invalid volume targets, while
+  directory-like isolation paths continue using managed dependency-isolation volumes
+- kept Corepack-backed native task execution from running `corepack enable` when the selected task
+  already invokes `corepack ...` directly, and scoped Corepack activation to each direct task instead
+  of the full dependency closure
+- changed container Corepack command wrapping to always bootstrap shims for Corepack-owned tasks,
+  including commands that already start with `corepack ...`, so nested package-manager script
+  calls (for example scripts that invoke `pnpm` recursively) resolve reliably in container lanes
+- scoped container Corepack command wrapping to each direct task's own toolchain requirements,
+  preventing aggregate tasks from inheriting Corepack activation from already-run dependency tasks
+- set a writable default `HOME=/tmp` for non-root container runs launched with the host UID/GID,
+  preventing package managers such as Corepack from trying to write under `/.cache`
+- prepared managed dependency-isolation directory volumes for the selected host UID/GID before
+  container task startup, so package managers can write isolated paths such as `node_modules`
+  without falling back to root-owned workspace artifacts
+- made `ota run` block on selected precondition failures before starting the task process, matching
+  `ota run --dry-run` for container-image missing-tool blockers and runtime/tool version mismatch
+  blockers, and kept existing contract/env validation errors on their more specific diagnostic
+  paths
+- extended the same real-run precondition gate to version mismatch blockers, so `ota run` stops
+  before dependency tasks when the selected path requires a different runtime or tool version
+- fixed container-image probe wording so run/doctor errors consistently say "inside the configured
+  container image" when a required runtime or tool is missing or cannot be probed in the selected
+  image
+- tightened `ota policy review` text output for pure info-only success: approved version,
+  provisioning, and adapter-bootstrap policy surfaces now render as a compact `Surfaces /
+  Approved / Next` summary instead of the heavier diagnostic finding layout, while warnings and
+  errors keep the existing detailed review path
+- matured detector-led contract writes from real pressure-test repos: `package.json#engines.node`
+  plus versioned `pnpm`/`yarn` package-manager ownership now writes, merges, rewrites, and tracks
+  drift through the canonical `toolchains.node` Corepack shape instead of legacy split
+  `runtimes.node` + standalone package manager tools, Docker Compose service
+  `start`/`stop`/`healthcheck` commands are written with their service declarations, and
+  watch/dev/serve verifier scripts are no longer inferred as agent-safe tasks
+- improved Node mismatch remediation so `ota doctor` prefers the provider actually found on the
+  probed executable path (`mise`, `asdf`, `volta`, `nodenv`, or `pyenv`) before falling back to
+  repo file hints such as `.nvmrc`; this keeps `Next:` guidance aligned with the tool the host is
+  really using
 - hardened `ota init` starter-pack ownership to match shipped toolchain contracts and avoid
   generator-led drift: Node pack now seeds `toolchains.node` (Corepack-owned Node, default pnpm
   package-manager ownership, and Corepack-prefixed pnpm/yarn task commands) instead of split
@@ -60,6 +100,22 @@
   task can execute ordered deterministic setup actions (`copy_if_missing`, `ensure_env_file`,
   `ensure_file`, `ensure_directory`) without shell glue; validation, run-path idempotence, and
   capability/minimum-version detection now include `tasks.action.ensure_bundle`
+- fixed Corepack-backed container task execution so ephemeral and persistent container runs
+  activate `corepack enable` inside the real task shell instead of a throwaway preflight path;
+  this keeps bare repo-internal `pnpm`/`yarn` commands working after `corepack pnpm ...` /
+  `corepack yarn ...` entrypoints
+- switched container Corepack shim activation to a user-writable install directory
+  (`corepack enable --install-directory "$HOME/.local/bin"` plus PATH export) before task
+  execution, avoiding `/usr/local/bin` permission failures in non-root container runs
+- defaulted Docker/Podman task containers on Unix hosts to run as the host UID:GID (`--user`) for
+  Ota-managed container execution, reducing root-owned workspace artifact drift between container
+  and native lanes in mixed-mode pressure-test matrices
+- added one-shot container dependency-isolation recovery for permission-denied install failures:
+  when a container task fails with an isolated `node_modules`/`.pnpm-store` EACCES signature, Ota
+  now resets the selected context's dependency-isolation volumes and retries the task once
+- hardened `ota proof runtime` detached Unix service teardown by running detached proof runs in a
+  dedicated process group and signaling that full group on shutdown, reducing lingering native
+  listeners that can cause late bind conflicts across sequential proof lanes
 
 ## 1.6.17
 
@@ -491,14 +547,15 @@
   probes, `%3==-i` for provisioning probes), and added `./bin/node.cmd` → `./bin/node`
   normalization for the `explain_narrow_premium.txt` snapshot to handle the Windows
   `.cmd` extension on fake commands
-- added the first canonical `ota` skill under `skills/ota`, covering Ota-specific bootstrap,
-  contract authoring/review, doctor-first workflow guidance, Ota gap detection, and Studio
-  local/cloud boundary judgment, plus a bundled reference file with official install/docs/GitHub
-  sources for public-facing setup and examples
+- moved the first canonical `ota` skill source of truth to the dedicated `ota-run/skills`
+  distribution repository for `skills.sh` and public installation, while keeping `ota skills install`
+  as the CLI-managed install surface for Codex and Claude Code
+- added README and installation-doc references to `ota-run/skills`, including the
+  `npx skills add ota-run/skills` install path for users who install skills through `skills.sh`
 - added `ota skills install --agent codex|claude` as the canonical first-party skill lifecycle
-  surface; the installed binary embeds the Ota skill files, stages and validates the complete skill
-  tree before replacing an existing install, and the shell installer receipt now points users to the
-  CLI command instead of teaching installer-managed skill setup
+  surface; the CLI fetches the Ota skill from the distribution repository, stages and validates the
+  complete skill tree before replacing an existing install, and the shell installer receipt now
+  points users to the CLI command instead of teaching installer-managed skill setup
 - fixed the release gate path/render regressions from the recent path-normalization refactor:
   backticked URLs and commands are no longer rewritten as filesystem paths, and Windows native
   task execution now routes POSIX-style `script:` bodies through Git Bash even when the runner only
