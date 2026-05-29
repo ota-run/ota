@@ -21,7 +21,6 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Component, Path};
 
 use semver::Version;
@@ -233,7 +232,7 @@ fn validate_repo_workspace(contract: &Contract, errors: &mut Vec<ValidationError
 
 fn validate_execution(
     contract: &Contract,
-    contract_path: Option<&Path>,
+    _contract_path: Option<&Path>,
     errors: &mut Vec<ValidationError>,
 ) {
     let Some(execution) = &contract.execution else {
@@ -612,21 +611,6 @@ fn validate_execution(
                 errors.push(ValidationError::new(format!(
                     "`execution.contexts.{name}.attachments.isolated_paths` must not contain duplicate normalized paths"
                 )));
-            }
-            if let Some(contract_path) = contract_path {
-                let repo_root = contract_path.parent().unwrap_or_else(|| Path::new("."));
-                let candidate = repo_root.join(
-                    normalize_dependency_isolated_path(isolated_path)
-                        .expect("validated isolated path should normalize"),
-                );
-                if fs::metadata(&candidate)
-                    .map(|metadata| metadata.is_file())
-                    .unwrap_or(false)
-                {
-                    errors.push(ValidationError::new(format!(
-                        "`execution.contexts.{name}.attachments.isolated_paths` entry `{isolated_path}` points to an existing file; isolated paths are mounted as dependency volumes and must target directories"
-                    )));
-                }
             }
         }
 
@@ -13217,7 +13201,7 @@ tasks:
     }
 
     #[test]
-    fn rejects_existing_file_isolated_paths() {
+    fn allows_existing_file_isolated_paths_for_file_aware_container_mounts() {
         let fixture = TempDir::new().unwrap();
         fs::create_dir_all(fixture.path().join(".yarn")).unwrap();
         fs::write(fixture.path().join(".yarn/install-state.gz"), "state").unwrap();
@@ -13248,12 +13232,7 @@ tasks:
         )
         .unwrap();
 
-        let errors = validate_contract_with_path(&contract, Some(&contract_path)).unwrap_err();
-        assert!(errors.errors().iter().any(|error| {
-            error.to_string().contains(
-                "`execution.contexts.app.attachments.isolated_paths` entry `.yarn/install-state.gz` points to an existing file",
-            )
-        }));
+        validate_contract_with_path(&contract, Some(&contract_path)).unwrap();
     }
 
     #[test]

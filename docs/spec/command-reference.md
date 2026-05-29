@@ -2008,7 +2008,8 @@ ota skills install --agent codex --json
 
 Current behavior:
 
-- installs the first-party `ota` skill embedded in the Ota binary
+- installs the first-party `ota` skill from the `ota-run/skills` distribution repository
+- requires network access to fetch the current distribution copy
 - requires `--agent codex` or `--agent claude` so Ota writes to the correct tool-specific skill directory
 - writes Codex installs to `$CODEX_HOME/skills/ota` when `CODEX_HOME` is set, otherwise `~/.codex/skills/ota`
 - writes Claude Code installs to `~/.claude/skills/ota`

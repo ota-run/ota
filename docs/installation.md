@@ -85,6 +85,12 @@ Install the optional Ota skill for Claude Code:
 ota skills install --agent claude
 ```
 
+The skill source lives in [ota-run/skills](https://github.com/ota-run/skills). It can also be installed through the `skills` CLI:
+
+```bash
+npx skills add ota-run/skills
+```
+
 ## Windows (PowerShell)
 
 Install the latest release binary:
@@ -134,6 +140,12 @@ Install the optional Ota skill for Claude Code:
 
 ```powershell
 ota skills install --agent claude
+```
+
+The skill source lives in [ota-run/skills](https://github.com/ota-run/skills). It can also be installed through the `skills` CLI:
+
+```powershell
+npx skills add ota-run/skills
 ```
 
 ## Windows (Git Bash / MSYS / MinGW / Cygwin)

@@ -1486,6 +1486,7 @@ const OTA_CLEAN_INTERNAL_TASK_NAME: &str = "__ota_clean_internal__";
 const OTA_STATE_DIR: &str = "state";
 const OTA_OWNERSHIP_ID_FILE: &str = "ownership-id";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
+const OTA_ISOLATED_FILE_MOUNTS_DIR: &str = "isolated-file-mounts";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 const EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS: usize = 5;
 const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
@@ -1494,6 +1495,7 @@ static RUN_INTERRUPT_REQUESTED: AtomicBool = AtomicBool::new(false);
 static RUN_INTERRUPT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static RUN_INTERRUPT_HANDLER: Once = Once::new();
 static CLEAN_ENGINE_TIMEOUT_CACHE: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
+static CONTAINER_HOST_USER_SPEC_CACHE: OnceLock<Option<String>> = OnceLock::new();
 
 fn clean_engine_timeout_cache() -> &'static Mutex<BTreeMap<String, String>> {
     CLEAN_ENGINE_TIMEOUT_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -5442,6 +5444,7 @@ fn execute_task_with_hooks(
         contract,
         contract_path,
         task_name,
+        task,
         &backend,
         current_os,
         state,
@@ -5513,6 +5516,7 @@ fn execute_task_with_hooks(
         contract,
         contract_path,
         task_name,
+        task,
         &backend,
         mode.clone(),
         current_os,
@@ -7382,12 +7386,13 @@ fn maybe_fulfill_toolchains_on_run_path(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
+    task: &TaskSpec,
     backend: &ResolvedExecutionBackend,
     _mode: TaskExecutionMode,
     current_os: &str,
     state: &mut TaskRunState,
 ) -> Result<(), RunError> {
-    for toolchain_name in contract.task_required_toolchain_names(task_name) {
+    for toolchain_name in task.requirements.toolchains.iter().cloned() {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
@@ -7422,7 +7427,7 @@ fn maybe_fulfill_toolchains_on_run_path(
                 return Err(RunError::ToolchainFulfillmentFailed {
                     task: task_name.to_string(),
                     toolchain: toolchain_name,
-                    details: format!("`{command_display}` exited with code {}", output.exit_code),
+                    details: command_failure_detail(&command_display, &output),
                 });
             }
             executed_commands.push(command_display);
@@ -7441,6 +7446,7 @@ fn maybe_activate_corepack_shims_on_run_path(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
+    task: &TaskSpec,
     backend: &ResolvedExecutionBackend,
     current_os: &str,
     state: &mut TaskRunState,
@@ -7449,7 +7455,7 @@ fn maybe_activate_corepack_shims_on_run_path(
         return Ok(());
     }
 
-    for toolchain_name in contract.task_required_toolchain_names(task_name) {
+    for toolchain_name in task.requirements.toolchains.iter().cloned() {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
@@ -7458,6 +7464,10 @@ fn maybe_activate_corepack_shims_on_run_path(
         }
         let target_os = target_os_for_toolchain_backend(backend, current_os);
         if !toolchain.active_for_os(target_os) {
+            continue;
+        }
+        let backend_kind = resolved_execution_backend_kind(backend);
+        if task_invokes_corepack_directly(task, backend_kind, current_os) {
             continue;
         }
         let cache_key = format!(
@@ -7487,12 +7497,46 @@ fn maybe_activate_corepack_shims_on_run_path(
             return Err(RunError::ToolchainFulfillmentFailed {
                 task: task_name.to_string(),
                 toolchain: toolchain_name,
-                details: format!("`{command_display}` exited with code {}", output.exit_code),
+                details: command_failure_detail(&command_display, &output),
             });
         }
     }
 
     Ok(())
+}
+
+fn task_invokes_corepack_directly(task: &TaskSpec, backend: Backend, current_os: &str) -> bool {
+    let Some(execution) = task.resolved_execution_for_backend(backend, current_os) else {
+        return false;
+    };
+
+    if let Some(crate::schema::TaskLaunchSpec::Command(command)) = execution.launch() {
+        return command.exe == "corepack";
+    }
+
+    execution
+        .shell_body()
+        .map(shell_body_invokes_corepack_directly)
+        .unwrap_or(false)
+}
+
+fn shell_body_invokes_corepack_directly(command: &str) -> bool {
+    let trimmed = command.trim_start();
+    trimmed == "corepack"
+        || trimmed
+            .strip_prefix("corepack")
+            .and_then(|remaining| remaining.chars().next())
+            .is_some_and(char::is_whitespace)
+}
+
+fn command_failure_detail(command_display: &str, output: &TaskCommandOutput) -> String {
+    let mut detail = format!("`{command_display}` exited with code {}", output.exit_code);
+    let stderr = output.stderr.trim();
+    if !stderr.is_empty() {
+        let excerpt = stderr.lines().take(3).collect::<Vec<_>>().join("; ");
+        detail.push_str(&format!(": {excerpt}"));
+    }
+    detail
 }
 
 fn task_requires_corepack_activation(
@@ -7519,6 +7563,9 @@ fn wrap_container_command_for_corepack_activation(
     command: &str,
 ) -> String {
     if !task_requires_corepack_activation(contract, task_name, "linux") {
+        return command.to_string();
+    }
+    if shell_body_invokes_corepack_directly(command) {
         return command.to_string();
     }
 
@@ -17155,6 +17202,8 @@ fn execute_ephemeral_container_task_command(
         .arg(container_workspace_mount_arg(&workspace_mount_source))
         .arg("-w")
         .arg("/workspace");
+    append_container_host_user_arg(&mut create);
+    append_container_host_user_home_arg(&mut create, env_overrides);
     if let Some(network) = compose_networks.first() {
         create.arg("--network").arg(network);
     }
@@ -17622,6 +17671,8 @@ fn create_idle_ephemeral_container(
         .arg(container_workspace_mount_arg(&workspace_mount_source))
         .arg("-w")
         .arg("/workspace");
+    append_container_host_user_arg(&mut create);
+    append_container_host_user_home_arg(&mut create, env_overrides);
     if let Some(network) = compose_networks.first() {
         create.arg("--network").arg(network);
     }
@@ -18588,6 +18639,8 @@ fn create_persistent_container(
         args.push("--network".to_string());
         args.push(network.clone());
     }
+    append_container_host_user_vec(&mut args);
+    append_container_host_user_home_vec(&mut args);
     for (volume_name, container_path) in container_dependency_isolation_mounts(
         task_name,
         working_dir,
@@ -18642,6 +18695,75 @@ fn append_container_memory_vec(args: &mut Vec<String>, memory_bytes: Option<u64>
         args.push("--memory".to_string());
         args.push(memory_bytes.to_string());
     }
+}
+
+fn append_container_host_user_arg(command: &mut Command) {
+    if let Some(user_spec) = container_host_user_spec() {
+        command.arg("--user").arg(user_spec);
+    }
+}
+
+fn append_container_host_user_home_arg(
+    command: &mut Command,
+    env_overrides: &BTreeMap<String, String>,
+) {
+    if container_host_user_spec().is_some() && !env_overrides.contains_key("HOME") {
+        command.arg("--env").arg("HOME=/tmp");
+    }
+}
+
+fn append_container_host_user_vec(args: &mut Vec<String>) {
+    if let Some(user_spec) = container_host_user_spec() {
+        args.push("--user".to_string());
+        args.push(user_spec);
+    }
+}
+
+fn append_container_host_user_home_vec(args: &mut Vec<String>) {
+    if container_host_user_spec().is_some() {
+        args.push("--env".to_string());
+        args.push("HOME=/tmp".to_string());
+    }
+}
+
+fn container_host_user_spec() -> Option<String> {
+    CONTAINER_HOST_USER_SPEC_CACHE
+        .get_or_init(resolve_container_host_user_spec)
+        .clone()
+}
+
+#[cfg(not(unix))]
+fn resolve_container_host_user_spec() -> Option<String> {
+    None
+}
+
+#[cfg(unix)]
+fn resolve_container_host_user_spec() -> Option<String> {
+    let uid = shell_numeric_id("-u")?;
+    let gid = shell_numeric_id("-g")?;
+    if uid == "0" && gid == "0" {
+        return None;
+    }
+    Some(format!("{uid}:{gid}"))
+}
+
+#[cfg(unix)]
+fn shell_numeric_id(flag: &str) -> Option<String> {
+    let output = Command::new("id")
+        .arg(flag)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() || !trimmed.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    Some(trimmed.to_string())
 }
 
 fn append_container_git_safe_directory_args(
@@ -20433,6 +20555,22 @@ fn container_dependency_isolation_mounts(
     for path in isolated_paths {
         let normalized = crate::execution::normalize_dependency_isolated_path(path)
             .expect("validated dependency isolation path should be relative");
+        if dependency_isolation_path_is_file(working_dir, &normalized) {
+            let source = dependency_isolation_file_mount_source(
+                task_name,
+                working_dir,
+                context_name,
+                image,
+                engine,
+                &normalized,
+            )?;
+            record_repo_managed_engine(task_name, working_dir, engine)?;
+            mounts.push((
+                container_workspace_mount_source_display(source.as_path()),
+                format!("/workspace/{normalized}"),
+            ));
+            continue;
+        }
         let Some(volume_name) = container_dependency_isolation_volume_name(
             working_dir,
             context_name,
@@ -20464,6 +20602,7 @@ fn container_dependency_isolation_volume_names(
         .iter()
         .filter_map(|path| {
             crate::execution::normalize_dependency_isolated_path(path)
+                .filter(|normalized| !dependency_isolation_path_is_file(working_dir, normalized))
                 .and_then(|normalized| {
                     container_dependency_isolation_volume_name(
                         working_dir,
@@ -20476,6 +20615,92 @@ fn container_dependency_isolation_volume_names(
                 .map(|volume_name| volume_name.to_string())
         })
         .collect()
+}
+
+fn dependency_isolation_path_is_file(working_dir: &Path, normalized_path: &str) -> bool {
+    let candidate = working_dir.join(normalized_path);
+    if let Ok(metadata) = fs::metadata(&candidate) {
+        return metadata.is_file();
+    }
+
+    let file_name = Path::new(normalized_path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(normalized_path);
+    if matches!(
+        file_name,
+        ".env"
+            | ".env.local"
+            | ".env.development"
+            | ".env.production"
+            | ".pnp.cjs"
+            | ".pnp.loader.mjs"
+            | ".npmrc"
+            | ".yarnrc.yml"
+            | ".yarnrc.yaml"
+            | "install-state.gz"
+            | "package-lock.json"
+            | "pnpm-lock.yaml"
+            | "yarn.lock"
+    ) {
+        return true;
+    }
+
+    false
+}
+
+fn dependency_isolation_file_mount_source(
+    task_name: &str,
+    working_dir: &Path,
+    context_name: Option<&str>,
+    image: &str,
+    engine: &str,
+    normalized_path: &str,
+) -> Result<PathBuf, RunError> {
+    let mut hasher = DefaultHasher::new();
+    working_dir.display().to_string().hash(&mut hasher);
+    context_name.hash(&mut hasher);
+    image.hash(&mut hasher);
+    engine.hash(&mut hasher);
+    normalized_path.hash(&mut hasher);
+    let file_path = repo_ota_state_dir(working_dir)
+        .join(OTA_ISOLATED_FILE_MOUNTS_DIR)
+        .join(format!("{:x}", hasher.finish()));
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| {
+            RunError::DependencyIsolationOwnershipFailure {
+                task: task_name.to_string(),
+                action: String::from("create"),
+                path: parent.display().to_string(),
+                details: source.to_string(),
+            }
+        })?;
+    }
+
+    if !file_path.exists() {
+        let source_file = working_dir.join(normalized_path);
+        if source_file.is_file() {
+            fs::copy(&source_file, &file_path).map_err(|source| {
+                RunError::DependencyIsolationOwnershipFailure {
+                    task: task_name.to_string(),
+                    action: String::from("write"),
+                    path: file_path.display().to_string(),
+                    details: source.to_string(),
+                }
+            })?;
+        } else {
+            File::create(&file_path).map_err(|source| {
+                RunError::DependencyIsolationOwnershipFailure {
+                    task: task_name.to_string(),
+                    action: String::from("write"),
+                    path: file_path.display().to_string(),
+                    details: source.to_string(),
+                }
+            })?;
+        }
+    }
+
+    Ok(file_path)
 }
 
 fn ensure_dependency_isolation_volume(
@@ -40520,6 +40745,113 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn file_like_isolated_paths_use_host_file_mounts_not_named_volumes() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/test:latest
+      attachments:
+        isolated_paths:
+          - .pnp.cjs
+tasks:
+  build:
+    context: app
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let _ = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let mounts = fs::read_to_string(fixture.dir.path().join("docker-mounts.txt")).unwrap();
+        let file_mount = mounts
+            .lines()
+            .find(|line| line.ends_with(":/workspace/.pnp.cjs"))
+            .expect("file-like isolated mount should exist");
+        let mount_source = file_mount
+            .split_once(':')
+            .expect("mount should include source and target")
+            .0;
+        assert!(
+            mount_source.contains("/.ota/state/isolated-file-mounts/"),
+            "{mount_source}"
+        );
+        assert!(
+            Path::new(mount_source).is_file(),
+            "isolated mount source should be a file: {mount_source}"
+        );
+
+        let state_dir = bin_dir.join("docker-state");
+        let volume_files = fs::read_dir(&state_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("volume."))
+            .count();
+        assert_eq!(volume_files, 0);
+    }
+
+    #[test]
+    fn non_existing_dotted_isolated_paths_are_not_assumed_to_be_files() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: echo ready
+"#,
+        );
+
+        assert!(!super::dependency_isolation_path_is_file(
+            fixture.dir.path(),
+            "cache.v1"
+        ));
+        assert!(super::dependency_isolation_path_is_file(
+            fixture.dir.path(),
+            ".yarn/install-state.gz"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn container_runs_use_absolute_workspace_mounts_for_relative_contract_paths() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -44248,7 +44580,14 @@ case "$command" in
               /workspace)
                 ;;
               *)
-                mounts_json="${mounts_json},{\"Type\":\"volume\",\"Name\":\"$mount_source\",\"Source\":\"$state_dir/volume.$mount_source\",\"Destination\":\"$mount_destination\"}"
+                case "$mount_source" in
+                  /*)
+                    mounts_json="${mounts_json},{\"Type\":\"bind\",\"Source\":\"$mount_source\",\"Destination\":\"$mount_destination\"}"
+                    ;;
+                  *)
+                    mounts_json="${mounts_json},{\"Type\":\"volume\",\"Name\":\"$mount_source\",\"Source\":\"$state_dir/volume.$mount_source\",\"Destination\":\"$mount_destination\"}"
+                    ;;
+                esac
                 ;;
             esac
           done < "$state_dir/$name.mounts"
@@ -44430,6 +44769,9 @@ case "$command" in
           network="$2"
           shift 2
           ;;
+        --user)
+          shift 2
+          ;;
         -v)
           mount="$2"
           mounts="${mounts}${2}
@@ -44551,6 +44893,9 @@ case "$command" in
           ;;
         --network)
           network="$2"
+          shift 2
+          ;;
+        --user)
           shift 2
           ;;
         -v)
@@ -45319,6 +45664,7 @@ tasks:
             &fixture.contract,
             fixture.file_path(),
             "setup",
+            fixture.contract.tasks.get("setup").unwrap(),
             &backend,
             TaskExecutionMode::Capture,
             current_os(),
@@ -45347,6 +45693,7 @@ tasks:
             &fixture.contract,
             fixture.file_path(),
             "setup",
+            fixture.contract.tasks.get("setup").unwrap(),
             &backend,
             TaskExecutionMode::Capture,
             current_os(),
@@ -45447,7 +45794,7 @@ toolchains:
       pnpm: "10.24.0"
 tasks:
   setup:
-    run: corepack pnpm install
+    run: pnpm install
     requirements:
       toolchains:
         - node
@@ -45486,6 +45833,7 @@ tasks:
             &fixture.contract,
             fixture.file_path(),
             "setup",
+            fixture.contract.tasks.get("setup").unwrap(),
             &backend,
             current_os(),
             &mut state,
@@ -45495,6 +45843,7 @@ tasks:
             &fixture.contract,
             fixture.file_path(),
             "setup",
+            fixture.contract.tasks.get("setup").unwrap(),
             &backend,
             current_os(),
             &mut state,
@@ -45513,6 +45862,189 @@ tasks:
         let log = fs::read_to_string(&log_path).unwrap();
         let lines = log.lines().collect::<Vec<_>>();
         assert_eq!(lines, vec!["enable"], "{log}");
+    }
+
+    #[test]
+    fn run_path_corepack_activation_skips_explicit_corepack_command() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+tasks:
+  setup:
+    run: corepack pnpm install
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = fixture.dir.path().join("corepack.log");
+        let corepack_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho %*>>\"{}\"\r\nexit /b 0\r\n",
+                log_path.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+                log_path.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "corepack", &corepack_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let mut state = TaskRunState::default();
+        super::maybe_activate_corepack_shims_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            fixture.contract.tasks.get("setup").unwrap(),
+            &backend,
+            current_os(),
+            &mut state,
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!log_path.exists());
+    }
+
+    #[test]
+    fn run_path_corepack_activation_uses_direct_task_requirements_only() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+  verify:
+    run: "true"
+    depends_on:
+      - setup
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = fixture.dir.path().join("corepack.log");
+        let corepack_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho %*>>\"{}\"\r\nexit /b 0\r\n",
+                log_path.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+                log_path.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "corepack", &corepack_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let mut state = TaskRunState::default();
+        super::maybe_activate_corepack_shims_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "verify",
+            fixture.contract.tasks.get("verify").unwrap(),
+            &backend,
+            current_os(),
+            &mut state,
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!log_path.exists());
+    }
+
+    #[test]
+    fn container_corepack_wrapper_skips_explicit_corepack_command() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+tasks:
+  setup:
+    run: corepack pnpm install
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+
+        let wrapped = super::wrap_container_command_for_corepack_activation(
+            Some(&fixture.contract),
+            "setup",
+            "corepack pnpm install",
+        );
+
+        assert_eq!(wrapped, "corepack pnpm install");
     }
 
     #[cfg(unix)]

@@ -6100,10 +6100,27 @@ mod tests {
             .collect()
     }
 
+    fn skill_source_guard(temp: &TempDir) -> EnvVarGuard {
+        let source_dir = temp.path().join("skill-source");
+        fs::create_dir_all(source_dir.join("references")).unwrap();
+        fs::write(
+            source_dir.join("SKILL.md"),
+            "---\nname: ota\ndescription: Test Ota skill.\n---\n\n# Ota\n",
+        )
+        .unwrap();
+        fs::write(
+            source_dir.join("references").join("official-sources.md"),
+            "# Official Ota Sources\n\n- `https://github.com/ota-run/skills`\n",
+        )
+        .unwrap();
+        EnvVarGuard::set("OTA_SKILL_SOURCE_DIR", source_dir.into_os_string())
+    }
+
     #[test]
-    fn skills_install_codex_writes_embedded_ota_skill() {
+    fn skills_install_codex_writes_distributed_ota_skill() {
         let _env = env_mutex_lock();
         let temp = TempDir::new().unwrap();
+        let _skill_source = skill_source_guard(&temp);
         let _codex_home = EnvVarGuard::set(
             "CODEX_HOME",
             temp.path().join("codex-home").into_os_string(),
@@ -6127,6 +6144,7 @@ mod tests {
     fn skills_install_codex_defaults_to_user_codex_home() {
         let _env = env_mutex_lock();
         let temp = TempDir::new().unwrap();
+        let _skill_source = skill_source_guard(&temp);
         let _codex_home = EnvVarGuard::remove("CODEX_HOME");
         let _home = EnvVarGuard::set("HOME", temp.path().join("home").into_os_string());
 
@@ -6154,6 +6172,7 @@ mod tests {
     fn skills_install_claude_writes_user_claude_skill() {
         let _env = env_mutex_lock();
         let temp = TempDir::new().unwrap();
+        let _skill_source = skill_source_guard(&temp);
         let _home = EnvVarGuard::set("HOME", temp.path().join("home").into_os_string());
 
         let output = run_with(["ota", "skills", "install", "--agent", "claude"]);
@@ -6180,6 +6199,7 @@ mod tests {
     fn skills_install_replaces_existing_skill_tree() {
         let _env = env_mutex_lock();
         let temp = TempDir::new().unwrap();
+        let _skill_source = skill_source_guard(&temp);
         let _codex_home = EnvVarGuard::set(
             "CODEX_HOME",
             temp.path().join("codex-home").into_os_string(),
@@ -6218,6 +6238,7 @@ mod tests {
     fn skills_install_json_reports_target_path() {
         let _env = env_mutex_lock();
         let temp = TempDir::new().unwrap();
+        let _skill_source = skill_source_guard(&temp);
         let _codex_home = EnvVarGuard::set(
             "CODEX_HOME",
             temp.path().join("codex-home").into_os_string(),
