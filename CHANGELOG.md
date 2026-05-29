@@ -43,8 +43,9 @@
   container task startup, so package managers can write isolated paths such as `node_modules`
   without falling back to root-owned workspace artifacts
 - made `ota run` block on selected precondition failures before starting the task process, matching
-  `ota run --dry-run` for container-image missing-tool blockers, and kept existing contract/env
-  validation errors on their more specific diagnostic paths
+  `ota run --dry-run` for container-image missing-tool blockers and runtime/tool version mismatch
+  blockers, and kept existing contract/env validation errors on their more specific diagnostic
+  paths
 - extended the same real-run precondition gate to version mismatch blockers, so `ota run` stops
   before dependency tasks when the selected path requires a different runtime or tool version
 - fixed container-image probe wording so run/doctor errors consistently say "inside the configured

@@ -17297,7 +17297,7 @@ fn render_policy_review_overview_text(summary: &PolicyReviewSummary) -> String {
 }
 
 fn render_policy_review_context_text(policy_source: &str, policy_path: Option<&str>) -> String {
-    let mut stdout = String::from("\n");
+    let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Policy"));
     stdout.push_str(&format!(
         "\n{}",
@@ -44592,6 +44592,63 @@ tasks:
         assert!(!stderr.contains("Task Failed"), "{stderr}");
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn run_command_blocks_version_mismatch_before_dependency_processes() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let proof_file = repo.path().join("should-not-exist");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+runtimes:
+  node: "999.0.0"
+tasks:
+  setup:
+    run: sh -c 'touch "{}"'
+  verify:
+    run: "true"
+    depends_on:
+      - setup
+"#,
+                proof_file.display()
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_ne!(output.exit_code, 0);
+        assert!(
+            !proof_file.exists(),
+            "blocked version preconditions must stop dependency task processes"
+        );
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("Version mismatch for runtime: node")
+                || stderr.contains("Missing runtime: node"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("Task Failed"), "{stderr}");
+    }
+
     #[test]
     fn run_dry_run_preview_surfaces_unsupported_host_as_primary_blocker() {
         let _guard = crate::test_support::env_mutex_lock();
@@ -45583,6 +45640,7 @@ tasks:
         env::set_current_dir(cwd).unwrap();
 
         assert!(text.contains("POLICY REVIEW ./ota.yaml"));
+        assert!(text.contains("READY\n\nPolicy"));
         assert!(text.contains("Policy\n"));
         assert!(text.contains(" »  Source: repo policy"));
         assert!(text.contains(" »  Path: ./.ota/org-policy.yaml"));
@@ -62626,6 +62684,8 @@ fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
         || summary.starts_with("Missing runtime: ")
         || summary.starts_with("Tool probe failed: ")
         || summary.starts_with("Runtime probe failed: ")
+        || summary.starts_with("Version mismatch for tool: ")
+        || summary.starts_with("Version mismatch for runtime: ")
 }
 
 fn run_single_contract_target_streaming(
