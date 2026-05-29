@@ -7683,7 +7683,7 @@ fn wrap_container_command_for_corepack_activation(
     }
 
     format!(
-        "corepack enable --install-directory \"$HOME/.local/bin\" && export PATH=\"$HOME/.local/bin:$PATH\" && {command}"
+        "mkdir -p \"$HOME/.local/bin\" && corepack enable --install-directory \"$HOME/.local/bin\" && export PATH=\"$HOME/.local/bin:$PATH\" && {command}"
     )
 }
 
