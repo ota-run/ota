@@ -148,11 +148,7 @@ jobs:
           echo "Using cargo at $CARGO_PATH"
           command -v cargo
           "$CARGO_PATH" --version
-          if [ "${RUNNER_OS}" = "Linux" ]; then
-            ota run release-gate --backend container --stream
-          else
-            ota run release-gate --backend native --stream
-          fi
+          ota run release-gate --backend native --stream
 
       - name: Run release gate (Windows) - cargo version
         if: runner.os == 'Windows'
