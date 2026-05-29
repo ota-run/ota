@@ -213,9 +213,8 @@ const DEFAULT_POLICY_DIR: &str = ".ota";
 const DEFAULT_POLICY_FILE: &str = "org-policy.yaml";
 const DEFAULT_RECEIPT_BASELINE_FILE: &str = "repo-baseline.json";
 const OTA_SKILL_NAME: &str = "ota";
-const OTA_SKILL_MD: &str = include_str!("../../skills/ota/SKILL.md");
-const OTA_SKILL_OFFICIAL_SOURCES_MD: &str =
-    include_str!("../../skills/ota/references/official-sources.md");
+const OTA_SKILL_RAW_BASE_URL: &str =
+    "https://raw.githubusercontent.com/ota-run/skills/main/skills/ota";
 thread_local! {
     static PLAIN_MODE: Cell<bool> = const { Cell::new(false) };
     static CONCISE_MODE: Cell<bool> = const { Cell::new(false) };
@@ -15122,7 +15121,7 @@ pub fn skills_install(agent: &str, format: OutputFormat, debug: bool) -> Command
         }
     };
 
-    let output = match install_embedded_ota_skill(&target_dir) {
+    let output = match install_distributed_ota_skill(&target_dir) {
         Ok(()) => match format {
             OutputFormat::Text => {
                 CommandOutput::success(render_skills_install_text(agent, target_dir.as_path()))
@@ -15196,7 +15195,7 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn install_embedded_ota_skill(target_dir: &Path) -> Result<(), String> {
+fn install_distributed_ota_skill(target_dir: &Path) -> Result<(), String> {
     let parent = target_dir
         .parent()
         .ok_or_else(|| format!("invalid target path `{}`", target_dir.display()))?;
@@ -15210,13 +15209,13 @@ fn install_embedded_ota_skill(target_dir: &Path) -> Result<(), String> {
     let temp_dir = unique_sibling_path(parent, ".ota.tmp");
     let backup_dir = unique_sibling_path(parent, ".ota.backup");
 
-    write_embedded_skill_tree(&temp_dir).inspect_err(|_| {
+    write_distributed_skill_tree(&temp_dir).inspect_err(|_| {
         let _ = remove_path_all(&temp_dir);
     })?;
 
     if !skill_tree_is_complete(&temp_dir) {
         let _ = remove_path_all(&temp_dir);
-        return Err(String::from("embedded skill tree was incomplete"));
+        return Err(String::from("downloaded skill tree was incomplete"));
     }
 
     let had_existing = target_dir.exists() || target_dir.is_symlink();
@@ -15248,7 +15247,7 @@ fn install_embedded_ota_skill(target_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn write_embedded_skill_tree(temp_dir: &Path) -> Result<(), String> {
+fn write_distributed_skill_tree(temp_dir: &Path) -> Result<(), String> {
     let references_dir = temp_dir.join("references");
     fs::create_dir_all(&references_dir).map_err(|error| {
         format!(
@@ -15256,23 +15255,127 @@ fn write_embedded_skill_tree(temp_dir: &Path) -> Result<(), String> {
             references_dir.display()
         )
     })?;
-    fs::write(temp_dir.join("SKILL.md"), OTA_SKILL_MD).map_err(|error| {
-        format!(
-            "could not write staged skill file `{}`: {error}",
-            temp_dir.join("SKILL.md").display()
-        )
-    })?;
-    fs::write(
-        references_dir.join("official-sources.md"),
-        OTA_SKILL_OFFICIAL_SOURCES_MD,
-    )
-    .map_err(|error| {
-        format!(
-            "could not write staged skill reference `{}`: {error}",
-            references_dir.join("official-sources.md").display()
-        )
-    })?;
+
+    if let Some(source_dir) = env::var_os("OTA_SKILL_SOURCE_DIR") {
+        let source_dir = PathBuf::from(source_dir);
+        copy_skill_file(
+            source_dir.join("SKILL.md").as_path(),
+            temp_dir.join("SKILL.md").as_path(),
+        )?;
+        copy_skill_file(
+            source_dir
+                .join("references")
+                .join("official-sources.md")
+                .as_path(),
+            references_dir.join("official-sources.md").as_path(),
+        )?;
+        return Ok(());
+    }
+
+    download_skill_file("SKILL.md", temp_dir.join("SKILL.md").as_path())?;
+    download_skill_file(
+        "references/official-sources.md",
+        references_dir.join("official-sources.md").as_path(),
+    )?;
     Ok(())
+}
+
+fn copy_skill_file(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::copy(source, destination).map(|_| ()).map_err(|error| {
+        format!(
+            "could not copy skill file `{}` into `{}`: {error}",
+            source.display(),
+            destination.display()
+        )
+    })
+}
+
+fn skill_raw_base_url() -> String {
+    env::var("OTA_SKILL_BASE_URL").unwrap_or_else(|_| OTA_SKILL_RAW_BASE_URL.to_string())
+}
+
+fn download_skill_file(relative_path: &str, destination: &Path) -> Result<(), String> {
+    let url = format!(
+        "{}/{}",
+        skill_raw_base_url().trim_end_matches('/'),
+        relative_path
+    );
+    let curl_result = download_skill_file_with_curl(&url, destination);
+    if curl_result.is_ok() {
+        return Ok(());
+    }
+
+    if let Some(powershell_result) = download_skill_file_with_powershell(&url, destination) {
+        return powershell_result;
+    }
+
+    curl_result
+}
+
+fn download_skill_file_with_curl(url: &str, destination: &Path) -> Result<(), String> {
+    let output = Command::new("curl")
+        .args(["-fsSL", "--max-time", "10", "-o"])
+        .arg(destination)
+        .arg(url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+    match output {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => Err(format!(
+            "could not download `{url}` with curl: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(String::from("curl is not available on PATH"))
+        }
+        Err(error) => Err(format!("could not run curl for `{url}`: {error}")),
+    }
+}
+
+fn download_skill_file_with_powershell(
+    url: &str,
+    destination: &Path,
+) -> Option<Result<(), String>> {
+    let script = format!(
+        "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; Invoke-WebRequest -UseBasicParsing -Uri '{}' -OutFile '{}'",
+        powershell_single_quote(url),
+        powershell_single_quote(&destination.display().to_string())
+    );
+    for command_name in ["pwsh", "pwsh.exe", "powershell", "powershell.exe"] {
+        let output = Command::new(command_name)
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output();
+        match output {
+            Ok(output) if output.status.success() => return Some(Ok(())),
+            Ok(output) => {
+                return Some(Err(format!(
+                    "could not download `{url}` with {command_name}: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Some(Err(format!(
+                    "could not run {command_name} for `{url}`: {error}"
+                )));
+            }
+        }
+    }
+    None
+}
+
+fn powershell_single_quote(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 fn skill_tree_is_complete(path: &Path) -> bool {
@@ -32285,7 +32388,7 @@ fn strip_container_image_from_why(value: &str) -> (String, Option<String>) {
     let image_end = image_start + image_end_rel;
     let image = value[image_start..image_end].to_string();
     let stripped = format!(
-        "{}inside the configured{}",
+        "{}inside the configured container image{}",
         &value[..start],
         &value[image_end + 1..]
     );
@@ -44399,6 +44502,94 @@ tasks:
         assert!(stdout.contains("Mode: dry-run (no write)"), "{stdout}");
         assert!(stdout.contains("would execute"), "{stdout}");
         assert!(stdout.contains("no task processes started"), "{stdout}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_blocks_container_preconditions_before_task_processes() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "docker"),
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then exit 0; fi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'docker'\"*) exit 127 ;;\n  esac\nfi\necho unexpected docker invocation: \"$*\" >&2\nexit 1\n",
+        );
+        let proof_file = repo.path().join("should-not-exist");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+        engines:
+          - docker
+tasks:
+  ci:
+    context: app
+    run: sh -c 'touch "{}"'
+    requirements:
+      tools:
+        docker: "*"
+"#,
+                proof_file.display()
+            ),
+        )
+        .expect("write contract");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let output = super::run_command(
+            "ci",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_ne!(output.exit_code, 0);
+        assert!(
+            !proof_file.exists(),
+            "blocked preconditions must stop the task process"
+        );
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("Docker is missing from the configured container image")
+                || stderr.contains("Tool probe failed: docker"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("Task Failed"), "{stderr}");
     }
 
     #[test]
@@ -62324,6 +62515,15 @@ fn run_single_contract_target(
     persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
     let details_footer = task_use_details_footer(Some(&target.contract_path), member);
+    if let Some(failure) = run_selected_precondition_failure(
+        task_name,
+        overrides,
+        member,
+        &target.contract,
+        &target.contract_path,
+    ) {
+        return Err(failure);
+    }
     if stream_output {
         return run_single_contract_target_streaming(
             task_name,
@@ -62347,6 +62547,85 @@ fn run_single_contract_target(
         &details_footer,
         persist_logs,
     )
+}
+
+fn run_selected_precondition_failure(
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    member: Option<&str>,
+    contract: &Contract,
+    contract_path: &Path,
+) -> Option<RunCommandFailure> {
+    let task_name = canonical_declared_task_name(contract, task_name);
+    if resolve_execution_plan_for_task(contract, contract_path, task_name.as_str(), overrides)
+        .is_err()
+    {
+        return None;
+    }
+    let env_report = build_env_report(contract, contract_path, Some(task_name.as_str())).ok()?;
+    let preconditions_report =
+        run_preview_preconditions_report(contract, contract_path, task_name.as_str(), overrides);
+    let summary = run_preview_summary(
+        contract,
+        task_name.as_str(),
+        member,
+        &env_report,
+        &preconditions_report,
+    );
+    if !doctor_verdict_blocks_preview(summary.verdict) {
+        return None;
+    }
+    let primary_blocker = summary.primary_blocker?;
+    if !run_precondition_blocker_should_stop_execution(&primary_blocker.summary) {
+        return None;
+    }
+    let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+    let doctor_mode = doctor_mode_from_backend(Some(format_backend(effective.backend)))
+        .unwrap_or(DoctorMode::Native);
+    let lifecycle = effective.lifecycle;
+    let (display_why, display_next, container_image) = render_container_image_finding_text(
+        &primary_blocker.why,
+        &primary_blocker.next,
+        Some(doctor_mode),
+    );
+    let why_lines = finding_why_lines(
+        &primary_blocker.summary,
+        &display_why,
+        container_image.as_deref(),
+    );
+    let next_steps = rewrite_doctor_mode_command(&display_next, Some(doctor_mode), lifecycle)
+        .split("; ")
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
+    let message = render_field_error_with_tail(
+        "RUN",
+        &text_path_display,
+        &format!("tasks.{task_name}.requirements"),
+        &finding_diagnosis_text(
+            &primary_blocker.summary,
+            &display_why,
+            container_image.as_deref(),
+        ),
+        &why_lines,
+        &next_steps,
+        None,
+        None,
+    );
+
+    Some(RunCommandFailure {
+        message,
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })
+}
+
+fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
+    summary.starts_with("Missing tool: ")
+        || summary.starts_with("Missing runtime: ")
+        || summary.starts_with("Tool probe failed: ")
+        || summary.starts_with("Runtime probe failed: ")
 }
 
 fn run_single_contract_target_streaming(
@@ -67999,7 +68278,7 @@ fn spawn_up_detached_run_process(
     }
 
     #[cfg(unix)]
-    if keep_stdin_open {
+    {
         use std::os::unix::process::CommandExt as _;
         command.process_group(0);
     }
@@ -68447,11 +68726,16 @@ fn proof_runtime_process_exit_failure(
 }
 
 fn stop_proof_runtime_up_process(up_process: &mut std::process::Child) -> Result<(), String> {
+    #[cfg(unix)]
+    let _ = signal_process_group(up_process.id(), "TERM");
+
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match up_process.try_wait() {
             Ok(Some(_)) => return Ok(()),
             Ok(None) if Instant::now() >= deadline => {
+                #[cfg(unix)]
+                let _ = signal_process_group(up_process.id(), "KILL");
                 up_process.kill().map_err(|error| {
                     format!("could not stop runtime-proof `ota up` process: {error}")
                 })?;
@@ -68463,6 +68747,31 @@ fn stop_proof_runtime_up_process(up_process: &mut std::process::Child) -> Result
                 ));
             }
         }
+    }
+}
+
+#[cfg(unix)]
+fn signal_process_group(process_id: u32, signal: &str) -> Result<(), String> {
+    let output = Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(format!("-{process_id}"))
+        .output()
+        .map_err(|error| format!("could not signal runtime-proof process group: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.contains("No such process") {
+        return Ok(());
+    }
+    if stderr.is_empty() {
+        Err(format!(
+            "could not signal runtime-proof process group with `kill -{signal} -{process_id}`"
+        ))
+    } else {
+        Err(format!(
+            "could not signal runtime-proof process group with `kill -{signal} -{process_id}`: {stderr}"
+        ))
     }
 }
 

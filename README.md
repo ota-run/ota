@@ -99,6 +99,12 @@ ota skills install --agent codex
 ota skills install --agent claude
 ```
 
+The skill source lives in [ota-run/skills](https://github.com/ota-run/skills). It can also be installed through the `skills` CLI:
+
+```bash
+npx skills add ota-run/skills
+```
+
 Windows Git Bash, MSYS, MinGW, or Cygwin:
 
 ```bash
