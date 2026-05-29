@@ -801,6 +801,9 @@ enum ProofCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Override readiness wait budget for runtime proof behavior.
+        #[arg(long, value_name = "DURATION")]
+        ready_timeout: Option<String>,
         /// Override the execution mode for this proof.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
@@ -4589,6 +4592,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             command:
                 ProofCommands::Runtime {
                     json,
+                    ready_timeout,
                     backend,
                     native,
                     container,
@@ -4605,6 +4609,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             file.as_deref(),
             member.as_deref(),
             workflow.as_deref(),
+            ready_timeout.as_deref(),
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
@@ -16718,6 +16723,7 @@ tasks:
         assert!(super::command_supports_spinner(&super::Commands::Proof {
             command: super::ProofCommands::Runtime {
                 json: false,
+                ready_timeout: None,
                 backend: None,
                 native: false,
                 container: false,
@@ -16818,6 +16824,7 @@ tasks:
             super::command_spinner_label(&super::Commands::Proof {
                 command: super::ProofCommands::Runtime {
                     json: false,
+                    ready_timeout: None,
                     backend: None,
                     native: false,
                     container: false,
@@ -16964,6 +16971,7 @@ tasks:
                 super::Commands::Proof {
                     command: super::ProofCommands::Runtime {
                         json: true,
+                        ready_timeout: None,
                         backend: None,
                         native: false,
                         container: false,
@@ -21140,6 +21148,8 @@ policies:
             "app",
             "--container",
             "--persistent",
+            "--ready-timeout",
+            "5m",
             "./ota.yaml",
         ])
         .expect("proof runtime selectors should parse");
@@ -21150,6 +21160,7 @@ policies:
                 command:
                     super::ProofCommands::Runtime {
                         json: false,
+                        ready_timeout,
                         backend,
                         native,
                         container,
@@ -21163,6 +21174,7 @@ policies:
                     },
             } => {
                 assert!(backend.is_none());
+                assert_eq!(ready_timeout.as_deref(), Some("5m"));
                 assert!(!native);
                 assert!(*container);
                 assert!(!remote);
@@ -30246,6 +30258,37 @@ project:
         );
 
         let output = run_with(["ota", "up", "--ready-timeout", "soon", fixture.path()]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            strip_ansi(output.stderr.as_deref().unwrap()),
+            "`--ready-timeout soon` is invalid; expected values like `90s`, `5m`, or `1h`"
+        );
+    }
+
+    #[test]
+    fn proof_runtime_rejects_invalid_ready_timeout_value() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "proof",
+            "runtime",
+            "--ready-timeout",
+            "soon",
+            fixture.path(),
+        ]);
 
         assert_eq!(output.exit_code, 2);
         assert_eq!(

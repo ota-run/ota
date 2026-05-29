@@ -1823,10 +1823,29 @@ pub fn proof_runtime(
     file_override: Option<&Path>,
     member: Option<&str>,
     workflow_name: Option<&str>,
+    ready_timeout: Option<&str>,
     overrides: ExecutionOverrides,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    let ready_timeout = match ready_timeout {
+        Some(value) => match parse_readiness_duration_spec(value) {
+            Some(duration) => Some(duration),
+            None => {
+                return finalize_debug(
+                    CommandOutput::failure_with_code(
+                        format!(
+                            "`--ready-timeout {value}` is invalid; expected values like `90s`, `5m`, or `1h`"
+                        ),
+                        2,
+                    ),
+                    debug,
+                    vec![String::from("DEBUG command=proof runtime")],
+                );
+            }
+        },
+        None => None,
+    };
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
         Err(error) => {
@@ -1862,6 +1881,9 @@ pub fn proof_runtime(
     }
     if let Some(workflow_name) = workflow_name {
         debug_lines.push(format!("DEBUG workflow={workflow_name}"));
+    }
+    if let Some(timeout) = ready_timeout {
+        debug_lines.push(format!("DEBUG ready_timeout_secs={}", timeout.as_secs()));
     }
 
     if is_org_policy_pack_path(&resolved_path) {
@@ -1960,7 +1982,7 @@ pub fn proof_runtime(
                         overrides,
                         &mut up_process,
                         "ota up --stream",
-                        None,
+                        ready_timeout,
                     ) {
                         Ok(result) => result,
                         Err(error) => {
@@ -2056,18 +2078,26 @@ pub fn proof_runtime(
                     )),
                     (None, None, None) => None,
                 };
+                let timed_out = up_process_failure.is_some_and(|failure| {
+                    failure.contains("timed out while waiting for readiness")
+                });
                 let status = proof_runtime_status_word(
                     proof_summary.verdict,
                     proof_phase,
+                    timed_out,
                     cleanup_error.is_some(),
                 );
                 let json_phase = if cleanup_error.is_some() {
                     "cleanup"
+                } else if timed_out {
+                    "timeout"
                 } else {
                     proof_phase
                 };
                 let text_phase = if cleanup_error.is_some() {
                     "cleanup"
+                } else if timed_out {
+                    "timeout"
                 } else {
                     proof_runtime_phase_label(proof_phase)
                 };
@@ -42277,6 +42307,38 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_timeout_without_primary_blocker() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            None,
+            Some("timed out while waiting for readiness"),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("readiness_timeout"));
+    }
+
+    #[test]
+    fn proof_runtime_status_word_marks_timeouts_explicitly() {
+        assert_eq!(
+            super::proof_runtime_status_word(
+                DoctorVerdict::NotReady,
+                "service readiness",
+                true,
+                false,
+            ),
+            "TIMEOUT"
+        );
+    }
+
+    #[test]
     fn render_proof_runtime_text_prioritizes_primary_blocker_over_up_process_failure() {
         let _guard = cwd_mutex_lock();
         let contract_dir = TempDir::new().unwrap();
@@ -42320,7 +42382,7 @@ workflows:
             Some("default"),
             &contract_path,
             "service readiness",
-            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            super::proof_runtime_status_word(summary.verdict, "service readiness", false, false),
             &summary,
             Some("up process exited with code 1"),
             "topology.json",
@@ -42351,7 +42413,7 @@ workflows:
             Some("default"),
             Path::new("./ota.yaml"),
             "service readiness",
-            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            super::proof_runtime_status_word(summary.verdict, "service readiness", false, false),
             &summary,
             Some("up process exited with code 1"),
             "topology.json",
@@ -42524,7 +42586,7 @@ workflows:
             Some("default"),
             Path::new("./ota.yaml"),
             "service readiness",
-            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            super::proof_runtime_status_word(summary.verdict, "service readiness", false, false),
             &summary,
             Some("`ota up --stream` exited while waiting for readiness (exit code 1)"),
             "topology.json",
@@ -68997,6 +69059,11 @@ fn proof_runtime_failure_class(
     }
 
     let Some(primary) = proof_runtime_blocking_primary_blocker(summary) else {
+        if up_process_failure
+            .is_some_and(|failure| failure.contains("timed out while waiting for readiness"))
+        {
+            return Some(String::from("readiness_timeout"));
+        }
         if up_process_failure.is_some() {
             return Some(String::from("up_process_failure"));
         }
@@ -69056,10 +69123,14 @@ fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path
 fn proof_runtime_status_word(
     verdict: DoctorVerdict,
     phase: &str,
+    timed_out: bool,
     cleanup_failed: bool,
 ) -> &'static str {
     if cleanup_failed {
         return "BLOCKED";
+    }
+    if timed_out {
+        return "TIMEOUT";
     }
     match verdict {
         DoctorVerdict::Ready => "READY",
