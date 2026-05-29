@@ -44646,7 +44646,10 @@ tasks:
                 || stderr.contains("Missing runtime: node"),
             "{stderr}"
         );
-        assert!(stderr.contains("Field: tasks.verify.requirements"), "{stderr}");
+        assert!(
+            stderr.contains("Field: tasks.verify.requirements"),
+            "{stderr}"
+        );
         assert!(stderr.contains("task requires `node@999.0.0`"), "{stderr}");
         assert!(stderr.contains("resolved runtime is `node@"), "{stderr}");
         assert!(
@@ -62749,10 +62752,7 @@ fn render_run_runtime_mismatch_precondition_text(
     if !next_steps.iter().any(|step| step.contains("`ota doctor`")) {
         next_steps.push(String::from("run `ota doctor` to confirm readiness"));
     }
-    next_steps.push(format!(
-        "run `{}`",
-        repo_run_command(task_name, member)
-    ));
+    next_steps.push(format!("run `{}`", repo_run_command(task_name, member)));
 
     Some(structured_field_error_text(
         "RUN",
