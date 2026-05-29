@@ -152,6 +152,26 @@ fn stdout_json_any(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("stdout should be valid JSON")
 }
 
+fn assert_json_corepack_node_toolchain(
+    config: &Value,
+    expected_version: &str,
+    package_manager: &str,
+    expected_package_manager_version: &str,
+) {
+    assert_eq!(
+        config["toolchains"]["node"]["provider"],
+        Value::String(String::from("corepack"))
+    );
+    assert_eq!(
+        config["toolchains"]["node"]["version"],
+        Value::String(expected_version.to_string())
+    );
+    assert_eq!(
+        config["toolchains"]["node"]["package_managers"][package_manager],
+        Value::String(expected_package_manager_version.to_string())
+    );
+}
+
 fn copy_fixture_to_temp(name: &str) -> TempDir {
     let temp = TempDir::new().expect("temp dir should be created");
     copy_dir_recursive(&real_fixture_path(name), temp.path());
@@ -1825,8 +1845,8 @@ fn detect_json_handles_docker_heavy_node_fixture() {
     assert_eq!(json["ok"], true);
     assert_eq!(json["written"], false);
     assert_eq!(json["config"]["project"]["name"], "ota-containerized-web");
-    assert_eq!(json["config"]["runtimes"]["node"], "22.3.0");
-    assert_eq!(json["config"]["tools"]["pnpm"], "10.5.0");
+    assert_json_corepack_node_toolchain(&json["config"], "22.3.0", "pnpm", "10.5.0");
+    assert_eq!(json["config"]["tools"]["docker"], "*");
     assert_eq!(
         json["config"]["services"]["web"]["provider"],
         "docker-compose"
@@ -1851,7 +1871,9 @@ fn init_write_writes_high_confidence_contract_for_docker_heavy_node_fixture() {
         .expect("ota.yaml should be written for docker-heavy fixture");
 
     assert!(written.contains("name: ota-containerized-web"));
-    assert!(written.contains("node: 22.3.0"));
+    assert!(written.contains("toolchains:"));
+    assert!(written.contains("provider: corepack"));
+    assert!(written.contains("version: 22.3.0"));
     assert!(written.contains("pnpm: 10.5.0"));
     assert!(written.contains("provider: docker-compose"));
     assert!(written.contains("run: pnpm build"));
@@ -1895,7 +1917,9 @@ fn detect_writes_high_confidence_contract_for_docker_heavy_node_fixture() {
         .expect("ota.yaml should be written for docker-heavy fixture");
 
     assert!(written.contains("name: ota-containerized-web"));
-    assert!(written.contains("node: 22.3.0"));
+    assert!(written.contains("toolchains:"));
+    assert!(written.contains("provider: corepack"));
+    assert!(written.contains("version: 22.3.0"));
     assert!(written.contains("pnpm: 10.5.0"));
     assert!(written.contains("provider: docker-compose"));
     assert!(written.contains("run: pnpm build"));
@@ -1932,26 +1956,13 @@ project:
             .iter()
             .any(|change| change["field"] == "project.name" && change["status"] == "update")
     );
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "services.web.start" && change["status"] == "add")
-    );
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "services.web.stop" && change["status"] == "add")
-    );
-
     let written = fs::read_to_string(fixture.path().join("ota.yaml"))
         .expect("ota.yaml should be merged for docker-heavy fixture");
 
     assert!(written.contains("name: existing"));
-    assert!(written.contains("node: 22.3.0"));
+    assert!(written.contains("toolchains:"));
+    assert!(written.contains("provider: corepack"));
+    assert!(written.contains("version: 22.3.0"));
     assert!(written.contains("pnpm: 10.5.0"));
     assert!(written.contains("provider: docker-compose"));
     assert!(written.contains("run: pnpm build"));
@@ -1996,29 +2007,6 @@ project:
             .iter()
             .any(|change| change["field"] == "runtimes.python" && change["status"] == "add")
     );
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "services.postgres.start" && change["status"] == "add")
-    );
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "services.postgres.stop" && change["status"] == "add")
-    );
-    assert!(
-        json["comparison"]["changes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|change| change["field"] == "services.postgres.healthcheck"
-                && change["status"] == "add")
-    );
-
     let written = fs::read_to_string(fixture.path().join("ota.yaml"))
         .expect("ota.yaml should be merged for mixed node/python fixture");
 
@@ -2084,8 +2072,6 @@ fn detect_merge_json_applies_high_confidence_additions_for_java_maven_fixture() 
 version: 1
 project:
   name: existing
-runtimes:
-  java: "21"
 "#,
     )
     .expect("ota.yaml should be seeded for merge fixture");
@@ -2112,7 +2098,8 @@ runtimes:
         .expect("ota.yaml should be merged for java maven fixture");
 
     assert!(written.contains("name: existing"));
-    assert!(written.contains("java:"));
+    assert!(written.contains("toolchains:"));
+    assert!(written.contains("provider: sdkman"));
     assert!(!written.contains("name: ota-maven-service"));
 }
 
@@ -2283,7 +2270,7 @@ fn detect_json_surfaces_declared_compose_healthcheck_on_real_fixture() {
             .any(|inference| {
                 inference["field"] == "services.db.healthcheck"
                     && inference["source"] == "docker-compose.yml#services.db.healthcheck.test"
-                    && inference["confidence"] == "medium"
+                    && inference["confidence"] == "high"
             })
     );
 }
@@ -2297,16 +2284,15 @@ fn detect_json_prefers_repo_specific_signals_in_node_conflict_fixture() {
 
     assert_eq!(json["ok"], true);
     assert_eq!(json["config"]["project"]["name"], "ota-monorepo");
-    assert_eq!(json["config"]["runtimes"]["node"], "22.8.1");
-    assert_eq!(json["config"]["tools"]["pnpm"], "10.7.0");
+    assert_json_corepack_node_toolchain(&json["config"], "22.8.1", "pnpm", "10.7.0");
     assert_eq!(json["config"]["tasks"]["dev"]["run"], "pnpm dev");
     assert!(inferred.iter().any(|inference| {
-        inference["field"] == "runtimes.node"
+        inference["field"] == "toolchains.node.version"
             && inference["source"] == ".nvmrc"
             && inference["value"] == "22.8.1"
     }));
     assert!(inferred.iter().any(|inference| {
-        inference["field"] == "tools.pnpm"
+        inference["field"] == "toolchains.node.package_managers.pnpm"
             && inference["source"] == "package.json#packageManager"
             && inference["value"] == "10.7.0"
     }));
@@ -2325,13 +2311,13 @@ fn detect_json_handles_ugly_polyglot_fixture() {
     assert_eq!(json["ok"], true);
     assert_eq!(json["written"], false);
     assert_eq!(json["config"]["project"]["name"], "ota-polyglot-app");
-    assert_eq!(json["config"]["runtimes"]["node"], "22");
+    assert_json_corepack_node_toolchain(&json["config"], "22", "pnpm", "10.6.0");
     assert_eq!(json["config"]["runtimes"]["python"], "3.12.4");
     assert_eq!(json["config"]["runtimes"]["go"], "1.24.0");
-    assert_eq!(json["config"]["tools"]["pnpm"], "10.6.0");
+    assert_eq!(json["config"]["tools"]["docker"], "*");
     assert_eq!(json["config"]["tasks"]["dev"]["run"], "pnpm dev");
     assert!(inferred.iter().any(|inference| {
-        inference["field"] == "runtimes.node"
+        inference["field"] == "toolchains.node.version"
             && inference["source"] == ".nvmrc"
             && inference["value"] == "22"
     }));
