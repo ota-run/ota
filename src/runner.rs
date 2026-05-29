@@ -7678,9 +7678,6 @@ fn wrap_container_command_for_corepack_activation(
     if !task_requires_corepack_activation(contract, task_name, "linux") {
         return command.to_string();
     }
-    if shell_body_invokes_corepack_directly(command) {
-        return command.to_string();
-    }
 
     format!(
         "mkdir -p \"$HOME/.local/bin\" && corepack enable --install-directory \"$HOME/.local/bin\" && export PATH=\"$HOME/.local/bin:$PATH\" && {command}"
@@ -46301,7 +46298,7 @@ tasks:
     }
 
     #[test]
-    fn container_corepack_wrapper_skips_explicit_corepack_command() {
+    fn container_corepack_wrapper_bootstraps_explicit_corepack_command() {
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -46328,7 +46325,8 @@ tasks:
             "corepack pnpm install",
         );
 
-        assert_eq!(wrapped, "corepack pnpm install");
+        assert!(wrapped.contains("corepack enable --install-directory"));
+        assert!(wrapped.ends_with("corepack pnpm install"));
     }
 
     #[test]
