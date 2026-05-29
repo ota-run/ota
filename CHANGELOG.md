@@ -35,8 +35,13 @@
   of the full dependency closure
 - applied the same explicit-Corepack guard to container task execution, so commands such as
   `corepack yarn ...` run directly instead of being prefixed with `corepack enable &&`
+- scoped container Corepack command wrapping to each direct task's own toolchain requirements,
+  preventing aggregate tasks from inheriting Corepack activation from already-run dependency tasks
 - set a writable default `HOME=/tmp` for non-root container runs launched with the host UID/GID,
   preventing package managers such as Corepack from trying to write under `/.cache`
+- prepared managed dependency-isolation directory volumes for the selected host UID/GID before
+  container task startup, so package managers can write isolated paths such as `node_modules`
+  without falling back to root-owned workspace artifacts
 - made `ota run` block on selected precondition failures before starting the task process, matching
   `ota run --dry-run` for container-image missing-tool blockers, and kept existing contract/env
   validation errors on their more specific diagnostic paths

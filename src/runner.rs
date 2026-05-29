@@ -7549,7 +7549,16 @@ fn task_requires_corepack_activation(
     };
 
     contract
-        .task_required_toolchain_names(task_name)
+        .tasks
+        .get(task_name)
+        .map(|task| {
+            task.requirements
+                .toolchains
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
         .into_iter()
         .filter_map(|toolchain_name| contract.toolchains.get(toolchain_name.as_str()))
         .any(|toolchain| {
@@ -20582,7 +20591,15 @@ fn container_dependency_isolation_mounts(
         };
         let labels =
             dependency_isolation_volume_labels(repo_ownership_token, context_name, &normalized);
-        ensure_dependency_isolation_volume(task_name, engine, &volume_name, &labels)?;
+        ensure_dependency_isolation_volume(
+            task_name,
+            working_dir,
+            engine,
+            image,
+            &volume_name,
+            &labels,
+            &format!("/workspace/{normalized}"),
+        )?;
         record_repo_managed_engine(task_name, working_dir, engine)?;
         mounts.push((volume_name, format!("/workspace/{normalized}")));
     }
@@ -20705,14 +20722,24 @@ fn dependency_isolation_file_mount_source(
 
 fn ensure_dependency_isolation_volume(
     task_name: &str,
+    working_dir: &Path,
     engine: &str,
+    image: &str,
     volume_name: &str,
     labels: &[String],
+    container_path: &str,
 ) -> Result<(), RunError> {
     let inspect =
         container_command_output(engine, &["volume", "inspect", volume_name], None, task_name)?;
     if inspect.exit_code == 0 {
-        return Ok(());
+        return ensure_dependency_isolation_volume_owner(
+            task_name,
+            working_dir,
+            engine,
+            image,
+            volume_name,
+            container_path,
+        );
     }
 
     let mut args = vec!["volume".to_string(), "create".to_string()];
@@ -20724,7 +20751,14 @@ fn ensure_dependency_isolation_volume(
     let create_args = args.iter().map(String::as_str).collect::<Vec<_>>();
     let create = container_command_output(engine, &create_args, None, task_name)?;
     if create.exit_code == 0 {
-        return Ok(());
+        return ensure_dependency_isolation_volume_owner(
+            task_name,
+            working_dir,
+            engine,
+            image,
+            volume_name,
+            container_path,
+        );
     }
 
     Err(RunError::DependencyIsolationVolumeFailure {
@@ -20733,6 +20767,48 @@ fn ensure_dependency_isolation_volume(
         volume: volume_name.to_string(),
         engine: engine.to_string(),
         details: container_command_failure_details(engine, &create_args, &create),
+    })
+}
+
+fn ensure_dependency_isolation_volume_owner(
+    task_name: &str,
+    working_dir: &Path,
+    engine: &str,
+    image: &str,
+    volume_name: &str,
+    container_path: &str,
+) -> Result<(), RunError> {
+    let Some(user_spec) = container_host_user_spec() else {
+        return Ok(());
+    };
+    let command = format!(
+        "mkdir -p {path} && chown -R {user} {path}",
+        path = shell_quote(container_path),
+        user = shell_quote(&user_spec)
+    );
+    let mount_arg = format!("{volume_name}:{container_path}");
+    let args = [
+        "run",
+        "--rm",
+        "-v",
+        mount_arg.as_str(),
+        "--entrypoint",
+        "sh",
+        image,
+        "-lc",
+        command.as_str(),
+    ];
+    let output = container_command_output(engine, &args, Some(working_dir), task_name)?;
+    if output.exit_code == 0 {
+        return Ok(());
+    }
+
+    Err(RunError::DependencyIsolationVolumeFailure {
+        task: task_name.to_string(),
+        action: String::from("prepare writable ownership for"),
+        volume: volume_name.to_string(),
+        engine: engine.to_string(),
+        details: container_command_failure_details(engine, &args, &output),
     })
 }
 
@@ -40650,6 +40726,17 @@ tasks:
         let state_dir = bin_dir.join("docker-state");
         let volume_marker = state_dir.join(format!("volume.{volume_name}"));
         assert!(volume_marker.exists());
+        if super::container_host_user_spec().is_some() {
+            let volume_log = fs::read_to_string(state_dir.join("volume-log.txt")).unwrap();
+            assert!(
+                volume_log.contains("volume-prep"),
+                "dependency isolation volume should be ownership-prepared before task startup: {volume_log}"
+            );
+            assert!(
+                volume_log.contains(":/workspace/node_modules"),
+                "dependency isolation volume prep should target the container mount path: {volume_log}"
+            );
+        }
 
         let cleaned = clean_execution(&fixture.contract, fixture.file_path()).unwrap();
 
@@ -44970,6 +45057,10 @@ case "$command" in
     else
       : > "$state_dir/$name.publish"
     fi
+    if [ -z "$workspace_mount" ] && [ -n "$mounts" ]; then
+      printf "volume-prep %s" "$mounts" >> "$state_dir/volume-log.txt"
+      exit 0
+    fi
     printf "run-ephemeral\n" >> "$host_dir/docker-log.txt"
     cd "$host_dir" || exit 1
     if [ "$1" = "-c" ] || [ "$1" = "-lc" ]; then
@@ -46045,6 +46136,41 @@ tasks:
         );
 
         assert_eq!(wrapped, "corepack pnpm install");
+    }
+
+    #[test]
+    fn container_corepack_wrapper_uses_direct_task_requirements_only() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+tasks:
+  setup:
+    run: corepack pnpm install
+    requirements:
+      toolchains:
+        - node
+  verify:
+    run: "true"
+    depends_on:
+      - setup
+"#,
+        );
+
+        let wrapped = super::wrap_container_command_for_corepack_activation(
+            Some(&fixture.contract),
+            "verify",
+            "true",
+        );
+
+        assert_eq!(wrapped, "true");
     }
 
     #[cfg(unix)]
