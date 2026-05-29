@@ -6478,34 +6478,82 @@ fn execute_task_command(
                 compose_networks,
                 publications,
                 dependency_isolation_paths,
-            } => execute_container_task_command(
-                contract,
-                task_name,
-                runtime,
-                context_name.as_deref(),
-                shared_local_backend
+            } => {
+                let shared_backend_name = shared_local_backend
                     .as_ref()
-                    .map(|shared| shared.name.as_str()),
-                command,
-                working_dir,
-                env_overrides,
-                path_export,
-                secret_env_names,
-                image,
-                engine,
-                *lifecycle,
-                *memory_bytes,
-                compose_networks,
-                effective_execution_publications(
+                    .map(|shared| shared.name.as_str());
+                let effective_publications = effective_execution_publications(
                     *lifecycle,
                     shared_local_backend.as_ref(),
                     publications,
-                ),
-                dependency_isolation_paths,
-                deferred_backend_fulfillment,
-                host_port_override,
-                mode,
-            ),
+                );
+                let mut output = execute_container_task_command(
+                    contract,
+                    task_name,
+                    runtime,
+                    context_name.as_deref(),
+                    shared_backend_name,
+                    command,
+                    working_dir,
+                    env_overrides,
+                    path_export,
+                    secret_env_names,
+                    image,
+                    engine,
+                    *lifecycle,
+                    *memory_bytes,
+                    compose_networks,
+                    effective_publications,
+                    dependency_isolation_paths,
+                    deferred_backend_fulfillment,
+                    host_port_override,
+                    mode.clone(),
+                )?;
+
+                if should_retry_after_container_dependency_permission_failure(
+                    &output,
+                    dependency_isolation_paths,
+                ) && reset_container_dependency_isolation_state(
+                    task_name,
+                    working_dir,
+                    engine,
+                    image,
+                    context_name.as_deref(),
+                    dependency_isolation_paths,
+                )? {
+                    output = execute_container_task_command(
+                        contract,
+                        task_name,
+                        runtime,
+                        context_name.as_deref(),
+                        shared_backend_name,
+                        command,
+                        working_dir,
+                        env_overrides,
+                        path_export,
+                        secret_env_names,
+                        image,
+                        engine,
+                        *lifecycle,
+                        *memory_bytes,
+                        compose_networks,
+                        effective_publications,
+                        dependency_isolation_paths,
+                        deferred_backend_fulfillment,
+                        host_port_override,
+                        mode,
+                    )?;
+                    let recovery_note = String::from(
+                        "ota reset dependency-isolation container state after a permission failure and retried once",
+                    );
+                    output.execution_note = match output.execution_note.take() {
+                        Some(existing) => Some(format!("{recovery_note}; {existing}")),
+                        None => Some(recovery_note),
+                    };
+                }
+
+                Ok(output)
+            }
             ResolvedExecutionBackend::Remote {
                 shared_local_backend: _,
                 provider,
@@ -6550,6 +6598,62 @@ fn execute_task_command(
             task: task_name.to_string(),
         }),
     }
+}
+
+fn should_retry_after_container_dependency_permission_failure(
+    output: &TaskCommandOutput,
+    dependency_isolation_paths: &[String],
+) -> bool {
+    if output.exit_code == 0 || dependency_isolation_paths.is_empty() {
+        return false;
+    }
+    let combined = format!("{}\n{}", output.stdout, output.stderr).to_ascii_lowercase();
+    if !combined.contains("eacces") && !combined.contains("permission denied") {
+        return false;
+    }
+    combined.contains("/workspace/node_modules")
+        || combined.contains("/workspace/.pnpm-store")
+        || combined.contains("node_modules/.pnpm")
+}
+
+fn reset_container_dependency_isolation_state(
+    task_name: &str,
+    working_dir: &Path,
+    engine: &str,
+    image: &str,
+    context_name: Option<&str>,
+    dependency_isolation_paths: &[String],
+) -> Result<bool, RunError> {
+    if dependency_isolation_paths.is_empty() {
+        return Ok(false);
+    }
+    let repo_ownership_token = repo_ownership_token_for_working_dir(task_name, working_dir)?;
+    let volume_names = container_dependency_isolation_volume_names(
+        working_dir,
+        context_name,
+        image,
+        engine,
+        &repo_ownership_token,
+        dependency_isolation_paths,
+    );
+    if volume_names.is_empty() {
+        return Ok(false);
+    }
+
+    let volume_set = volume_names.into_iter().collect::<BTreeSet<_>>();
+    for container_name in
+        containers_attached_to_dependency_isolation_volumes(task_name, engine, &volume_set)?
+    {
+        let _ = remove_persistent_container_if_present(task_name, engine, &container_name)?;
+    }
+
+    let mut removed_any = false;
+    for volume_name in volume_set {
+        if remove_dependency_isolation_volume(task_name, engine, &volume_name)? {
+            removed_any = true;
+        }
+    }
+    Ok(removed_any)
 }
 
 fn requested_interrupt_cleanup_command(
@@ -46105,6 +46209,82 @@ tasks:
         }
 
         assert!(!log_path.exists());
+    }
+
+    #[test]
+    fn container_permission_failure_detection_matches_isolated_dependency_errors() {
+        let output = super::TaskCommandOutput {
+            exit_code: 243,
+            stdout: String::new(),
+            stderr: String::from(
+                "pnpm: EACCES: permission denied, unlink '/workspace/node_modules/.pnpm/node_modules/vite'",
+            ),
+            target: None,
+            runtime: None,
+            service_termination: None,
+            interrupted: false,
+            execution_note: None,
+        };
+        let dependency_paths = vec![String::from("node_modules"), String::from(".pnpm-store")];
+        assert!(
+            super::should_retry_after_container_dependency_permission_failure(
+                &output,
+                &dependency_paths
+            )
+        );
+    }
+
+    #[test]
+    fn container_permission_failure_detection_ignores_non_isolated_or_success_paths() {
+        let success = super::TaskCommandOutput {
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::from("permission denied"),
+            target: None,
+            runtime: None,
+            service_termination: None,
+            interrupted: false,
+            execution_note: None,
+        };
+        assert!(
+            !super::should_retry_after_container_dependency_permission_failure(
+                &success,
+                &[String::from("node_modules")]
+            )
+        );
+
+        let unrelated = super::TaskCommandOutput {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: String::from("EACCES: permission denied, unlink '/workspace/src/index.ts'"),
+            target: None,
+            runtime: None,
+            service_termination: None,
+            interrupted: false,
+            execution_note: None,
+        };
+        assert!(
+            !super::should_retry_after_container_dependency_permission_failure(
+                &unrelated,
+                &[String::from("node_modules")]
+            )
+        );
+
+        let no_isolation = super::TaskCommandOutput {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: String::from(
+                "EACCES: permission denied, unlink '/workspace/node_modules/.pnpm/node_modules/vite'",
+            ),
+            target: None,
+            runtime: None,
+            service_termination: None,
+            interrupted: false,
+            execution_note: None,
+        };
+        assert!(
+            !super::should_retry_after_container_dependency_permission_failure(&no_isolation, &[])
+        );
     }
 
     #[test]
