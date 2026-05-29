@@ -45,6 +45,8 @@
 - made `ota run` block on selected precondition failures before starting the task process, matching
   `ota run --dry-run` for container-image missing-tool blockers, and kept existing contract/env
   validation errors on their more specific diagnostic paths
+- extended the same real-run precondition gate to version mismatch blockers, so `ota run` stops
+  before dependency tasks when the selected path requires a different runtime or tool version
 - fixed container-image probe wording so run/doctor errors consistently say "inside the configured
   container image" when a required runtime or tool is missing or cannot be probed in the selected
   image
@@ -103,6 +105,9 @@
 - defaulted Docker/Podman task containers on Unix hosts to run as the host UID:GID (`--user`) for
   Ota-managed container execution, reducing root-owned workspace artifact drift between container
   and native lanes in mixed-mode pressure-test matrices
+- added one-shot container dependency-isolation recovery for permission-denied install failures:
+  when a container task fails with an isolated `node_modules`/`.pnpm-store` EACCES signature, Ota
+  now resets the selected context's dependency-isolation volumes and retries the task once
 - hardened `ota proof runtime` detached Unix service teardown by running detached proof runs in a
   dedicated process group and signaling that full group on shutdown, reducing lingering native
   listeners that can cause late bind conflicts across sequential proof lanes
