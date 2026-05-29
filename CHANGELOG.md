@@ -33,8 +33,9 @@
 - kept Corepack-backed native task execution from running `corepack enable` when the selected task
   already invokes `corepack ...` directly, and scoped Corepack activation to each direct task instead
   of the full dependency closure
-- applied the same explicit-Corepack guard to container task execution, so commands such as
-  `corepack yarn ...` run directly instead of being prefixed with `corepack enable &&`
+- changed container Corepack command wrapping to always bootstrap shims for Corepack-owned tasks,
+  including commands that already start with `corepack ...`, so nested package-manager script
+  calls (for example scripts that invoke `pnpm` recursively) resolve reliably in container lanes
 - scoped container Corepack command wrapping to each direct task's own toolchain requirements,
   preventing aggregate tasks from inheriting Corepack activation from already-run dependency tasks
 - set a writable default `HOME=/tmp` for non-root container runs launched with the host UID/GID,
