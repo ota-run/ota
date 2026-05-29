@@ -16447,12 +16447,10 @@ policies:
             })
             .and_then(|finding| finding["next"].as_str())
             .unwrap();
-        let repo_path = compact_path(Path::new(fixture.path()), ".");
-
         assert!(provisioning_next.contains("ota policy review"));
-        assert!(compact_path_separator_style(provisioning_next).contains(&repo_path));
         assert!(bootstrap_next.contains("ota policy review"));
-        assert!(compact_path_separator_style(bootstrap_next).contains(&repo_path));
+        assert!(provisioning_next.contains("inspect the active policy source"));
+        assert!(bootstrap_next.contains("inspect the active policy source"));
     }
 
     #[test]
