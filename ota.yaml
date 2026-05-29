@@ -331,6 +331,8 @@ agent:
     - README.md
     - scripts
     - tests
+    - CHANGELOG.md
+    - Cargo.toml
   protected_paths:
     - Cargo.lock
     - ota.yaml

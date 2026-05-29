@@ -7445,6 +7445,10 @@ fn maybe_activate_corepack_shims_on_run_path(
     current_os: &str,
     state: &mut TaskRunState,
 ) -> Result<(), RunError> {
+    if matches!(backend, ResolvedExecutionBackend::Container { .. }) {
+        return Ok(());
+    }
+
     for toolchain_name in contract.task_required_toolchain_names(task_name) {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
@@ -7489,6 +7493,36 @@ fn maybe_activate_corepack_shims_on_run_path(
     }
 
     Ok(())
+}
+
+fn task_requires_corepack_activation(
+    contract: Option<&Contract>,
+    task_name: &str,
+    target_os: &str,
+) -> bool {
+    let Some(contract) = contract else {
+        return false;
+    };
+
+    contract
+        .task_required_toolchain_names(task_name)
+        .into_iter()
+        .filter_map(|toolchain_name| contract.toolchains.get(toolchain_name.as_str()))
+        .any(|toolchain| {
+            toolchain.provider == ToolchainProvider::Corepack && toolchain.active_for_os(target_os)
+        })
+}
+
+fn wrap_container_command_for_corepack_activation(
+    contract: Option<&Contract>,
+    task_name: &str,
+    command: &str,
+) -> String {
+    if !task_requires_corepack_activation(contract, task_name, "linux") {
+        return command.to_string();
+    }
+
+    format!("corepack enable && {command}")
 }
 
 fn toolchain_fulfillment_cache_key(
@@ -15221,6 +15255,7 @@ fn execute_container_task_command(
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     let repo_ownership_token = repo_ownership_token_for_working_dir(task_name, working_dir)?;
+    let command = wrap_container_command_for_corepack_activation(contract, task_name, command);
     if let Some(issue) = probe_container_backend(engine, task_name)? {
         return Ok(TaskCommandOutput {
             exit_code: 1,
@@ -15273,7 +15308,7 @@ fn execute_container_task_command(
                         context_name,
                         shared_local_backend_name,
                         &repo_ownership_token,
-                        command,
+                        &command,
                         working_dir,
                         &resolved_env,
                         path_export,
@@ -15339,7 +15374,7 @@ fn execute_container_task_command(
                     context_name,
                     shared_local_backend_name,
                     &repo_ownership_token,
-                    command,
+                    &command,
                     working_dir,
                     &resolved_env,
                     path_export,
@@ -15464,7 +15499,7 @@ fn execute_container_task_command(
                 context_name,
                 shared_local_backend_name,
                 &repo_ownership_token,
-                command,
+                &command,
                 working_dir,
                 env_overrides,
                 path_export,
@@ -45478,6 +45513,63 @@ tasks:
         let log = fs::read_to_string(&log_path).unwrap();
         let lines = log.lines().collect::<Vec<_>>();
         assert_eq!(lines, vec!["enable"], "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn container_task_command_enables_corepack_in_ephemeral_shell() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:22-bookworm
+tasks:
+  test:
+    context: app
+    run: pnpm --version
+    requirements:
+      toolchains:
+        - node
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+"#,
+        );
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
+        let bin_dir = fixture.dir.path().join("bin");
+        write_fake_bin(&bin_dir, "pnpm", "#!/bin/sh\nexit 127\n");
+        let pnpm_path = bin_dir.join("pnpm");
+        let corepack_body = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\necho 10.24.0\nEOF\nchmod +x '{}'\nexit 0\nfi\nexit 1\n",
+            pnpm_path.display(),
+            pnpm_path.display()
+        );
+        write_fake_bin(&bin_dir, "corepack", &corepack_body);
+
+        let outcome = super::run_task_internal(
+            &fixture.contract,
+            fixture.file_path(),
+            "test",
+            &[],
+            ExecutionOverrides::default(),
+            None,
+            TaskExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        assert_eq!(outcome.stdout.trim(), "10.24.0");
     }
 
     fn write_fake_bin(dir: &Path, name: &str, body: &str) -> PathBuf {

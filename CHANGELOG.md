@@ -74,6 +74,10 @@
   task can execute ordered deterministic setup actions (`copy_if_missing`, `ensure_env_file`,
   `ensure_file`, `ensure_directory`) without shell glue; validation, run-path idempotence, and
   capability/minimum-version detection now include `tasks.action.ensure_bundle`
+- fixed Corepack-backed container task execution so ephemeral and persistent container runs
+  activate `corepack enable` inside the real task shell instead of a throwaway preflight path;
+  this keeps bare repo-internal `pnpm`/`yarn` commands working after `corepack pnpm ...` /
+  `corepack yarn ...` entrypoints
 
 ## 1.6.17
 
