@@ -28,6 +28,7 @@ use std::fs::{self, File};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -2081,14 +2082,19 @@ pub fn proof_runtime(
                 let timed_out = up_process_failure.is_some_and(|failure| {
                     failure.contains("timed out while waiting for readiness")
                 });
+                let interrupted = up_process_failure
+                    .is_some_and(|failure| failure.contains("runtime proof interrupted by signal"));
                 let status = proof_runtime_status_word(
                     proof_summary.verdict,
                     proof_phase,
                     timed_out,
+                    interrupted,
                     cleanup_error.is_some(),
                 );
                 let json_phase = if cleanup_error.is_some() {
                     "cleanup"
+                } else if interrupted {
+                    "interrupted"
                 } else if timed_out {
                     "timeout"
                 } else {
@@ -2096,6 +2102,8 @@ pub fn proof_runtime(
                 };
                 let text_phase = if cleanup_error.is_some() {
                     "cleanup"
+                } else if interrupted {
+                    "interrupted"
                 } else if timed_out {
                     "timeout"
                 } else {
@@ -42326,6 +42334,25 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_interrupted_without_primary_blocker() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            None,
+            Some("runtime proof interrupted by signal"),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("interrupted"));
+    }
+
+    #[test]
     fn proof_runtime_status_word_marks_timeouts_explicitly() {
         assert_eq!(
             super::proof_runtime_status_word(
@@ -42333,8 +42360,23 @@ workflows:
                 "service readiness",
                 true,
                 false,
+                false,
             ),
             "TIMEOUT"
+        );
+    }
+
+    #[test]
+    fn proof_runtime_status_word_marks_interrupts_explicitly() {
+        assert_eq!(
+            super::proof_runtime_status_word(
+                DoctorVerdict::NotReady,
+                "service readiness",
+                false,
+                true,
+                false,
+            ),
+            "INTERRUPTED"
         );
     }
 
@@ -42382,7 +42424,13 @@ workflows:
             Some("default"),
             &contract_path,
             "service readiness",
-            super::proof_runtime_status_word(summary.verdict, "service readiness", false, false),
+            super::proof_runtime_status_word(
+                summary.verdict,
+                "service readiness",
+                false,
+                false,
+                false,
+            ),
             &summary,
             Some("up process exited with code 1"),
             "topology.json",
@@ -42413,7 +42461,13 @@ workflows:
             Some("default"),
             Path::new("./ota.yaml"),
             "service readiness",
-            super::proof_runtime_status_word(summary.verdict, "service readiness", false, false),
+            super::proof_runtime_status_word(
+                summary.verdict,
+                "service readiness",
+                false,
+                false,
+                false,
+            ),
             &summary,
             Some("up process exited with code 1"),
             "topology.json",
@@ -42586,7 +42640,13 @@ workflows:
             Some("default"),
             Path::new("./ota.yaml"),
             "service readiness",
-            super::proof_runtime_status_word(summary.verdict, "service readiness", false, false),
+            super::proof_runtime_status_word(
+                summary.verdict,
+                "service readiness",
+                false,
+                false,
+                false,
+            ),
             &summary,
             Some("`ota up --stream` exited while waiting for readiness (exit code 1)"),
             "topology.json",
@@ -68658,6 +68718,28 @@ const PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET: u64 = 30;
 const PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS: u64 = 60;
 const PROOF_RUNTIME_SUCCESSFUL_SERVICE_EXIT_GRACE_SECS: u64 = 20;
 const PROOF_RUNTIME_EXIT_OBSERVATION_GRACE_MILLIS: u64 = 250;
+static PROOF_RUNTIME_INTERRUPT_FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+fn proof_runtime_interrupt_flag() -> Arc<AtomicBool> {
+    PROOF_RUNTIME_INTERRUPT_FLAG
+        .get_or_init(|| {
+            let interrupted = Arc::new(AtomicBool::new(false));
+            #[cfg(unix)]
+            {
+                use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+                for signal in [SIGINT, SIGTERM, SIGHUP, SIGQUIT] {
+                    let _ = signal_hook::flag::register(signal, Arc::clone(&interrupted));
+                }
+            }
+            #[cfg(windows)]
+            {
+                use signal_hook::consts::SIGINT;
+                let _ = signal_hook::flag::register(SIGINT, Arc::clone(&interrupted));
+            }
+            interrupted
+        })
+        .clone()
+}
 
 fn proof_runtime_wait_budget(readiness_strategy: &ProofRuntimeReadinessStrategy) -> Duration {
     let floor = Duration::from_secs(PROOF_RUNTIME_READINESS_WAIT_FLOOR_SECS);
@@ -68718,6 +68800,8 @@ fn wait_for_proof_runtime_readiness(
     process_label: &str,
     wait_budget_override: Option<Duration>,
 ) -> Result<(DoctorReport, &'static str, bool, Option<String>), String> {
+    let interrupted = proof_runtime_interrupt_flag();
+    interrupted.store(false, Ordering::Relaxed);
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
     let readiness_strategy =
         proof_runtime_readiness_strategy(contract, contract_path, workflow_name, overrides);
@@ -68911,6 +68995,16 @@ fn wait_for_proof_runtime_readiness(
         };
 
         let now = Instant::now();
+        if interrupted.load(Ordering::Relaxed) {
+            return Ok((
+                finalize_report(latest_report),
+                "service readiness",
+                false,
+                deferred_service_run_exit_failure
+                    .take()
+                    .or_else(|| Some(String::from("runtime proof interrupted by signal"))),
+            ));
+        }
         let timed_out = now >= deadline
             || service_exit_grace_deadline.is_some_and(|grace_deadline| now >= grace_deadline);
         if timed_out {
@@ -69058,6 +69152,12 @@ fn proof_runtime_failure_class(
         return Some(String::from("cleanup_failure"));
     }
 
+    if up_process_failure
+        .is_some_and(|failure| failure.contains("runtime proof interrupted by signal"))
+    {
+        return Some(String::from("interrupted"));
+    }
+
     let Some(primary) = proof_runtime_blocking_primary_blocker(summary) else {
         if up_process_failure
             .is_some_and(|failure| failure.contains("timed out while waiting for readiness"))
@@ -69124,10 +69224,14 @@ fn proof_runtime_status_word(
     verdict: DoctorVerdict,
     phase: &str,
     timed_out: bool,
+    interrupted: bool,
     cleanup_failed: bool,
 ) -> &'static str {
     if cleanup_failed {
         return "BLOCKED";
+    }
+    if interrupted {
+        return "INTERRUPTED";
     }
     if timed_out {
         return "TIMEOUT";

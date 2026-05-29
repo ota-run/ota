@@ -30,6 +30,10 @@
   explicitly bounded in CI and local automation (for example `90s`, `5m`, `1h`), aligned timeout
   failures to the explicit `TIMEOUT` runtime-proof status, and normalized timeout-only JSON
   classification to `failure_class: readiness_timeout`
+- hardened `ota proof runtime` interruption semantics for CI and automation cancellation paths:
+  runtime proof now captures termination signals and emits deterministic interruption output
+  (`INTERRUPTED` status in text, `phase: interrupted` and `failure_class: interrupted` in JSON)
+  instead of an opaque cancellation result
 - added first-class file-aware container isolation mounts: file-like
   `attachments.isolated_paths` entries (for example `.pnp.cjs`) now mount through deterministic
   `.ota/state/isolated-file-mounts/*` bind files instead of invalid volume targets, while

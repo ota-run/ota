@@ -605,6 +605,8 @@ Text output:
 - blocked output keeps the shared `NOT READY` / `BLOCKED` status language, shows the failing proof
   phase, and surfaces one primary `Why` / `Next` lane without duplicating the full doctor report
 - timeout output uses `TIMEOUT` and phase `timeout` when runtime-proof wait budget is exhausted
+- interruption output uses `INTERRUPTED` and phase `interrupted` when runtime proof is terminated
+  by a signal (for example CI cancellation)
 
 JSON output:
 
