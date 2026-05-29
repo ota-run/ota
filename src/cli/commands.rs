@@ -44772,8 +44772,16 @@ tasks:
             stderr.contains("Field: tasks.verify.requirements"),
             "{stderr}"
         );
-        assert!(stderr.contains("task requires `node@999.0.0`"), "{stderr}");
-        assert!(stderr.contains("resolved runtime is `node@"), "{stderr}");
+        let missing_runtime = stderr.contains("Missing runtime: node");
+        if missing_runtime {
+            assert!(
+                stderr.contains("install node and make it available on PATH"),
+                "{stderr}"
+            );
+        } else {
+            assert!(stderr.contains("task requires `node@999.0.0`"), "{stderr}");
+            assert!(stderr.contains("resolved runtime is `node@"), "{stderr}");
+        }
         assert!(
             stderr.contains("run `ota doctor` to confirm readiness")
                 || stderr.contains("rerun `ota doctor`"),
