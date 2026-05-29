@@ -24,7 +24,7 @@
 
 # ota Philosophy
 
-ota is being built as open infrastructure for repo readiness.
+ota is being built as open infrastructure for execution governance.
 
 It should read like public infrastructure, not a private workflow wrapper. The contract, commands, and trust model need to be legible to maintainers, contributors, CI systems, and agents.
 

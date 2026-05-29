@@ -104,7 +104,7 @@ pub fn validate_contract_with_path(
     validate_project(contract, &mut errors);
     validate_ota_minimum_version(contract, &mut errors);
     validate_repo_workspace(contract, &mut errors);
-    validate_execution(contract, &mut errors);
+    validate_execution(contract, contract_path, &mut errors);
     validate_extensions(contract, &mut errors);
     validate_named_versions("runtime", &contract.runtimes, &mut errors, |value| {
         value.version()
@@ -230,7 +230,11 @@ fn validate_repo_workspace(contract: &Contract, errors: &mut Vec<ValidationError
     }
 }
 
-fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
+fn validate_execution(
+    contract: &Contract,
+    _contract_path: Option<&Path>,
+    errors: &mut Vec<ValidationError>,
+) {
     let Some(execution) = &contract.execution else {
         return;
     };
@@ -13194,6 +13198,41 @@ tasks:
                 "`execution.contexts.app.attachments.isolated_paths` must not contain duplicate normalized paths",
             )
         }));
+    }
+
+    #[test]
+    fn allows_existing_file_isolated_paths_for_file_aware_container_mounts() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join(".yarn")).unwrap();
+        fs::write(fixture.path().join(".yarn/install-state.gz"), "state").unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+      attachments:
+        isolated_paths:
+          - node_modules
+          - .yarn/install-state.gz
+tasks:
+  setup:
+    context: app
+    run: echo ready
+"#,
+        )
+        .unwrap();
+
+        validate_contract_with_path(&contract, Some(&contract_path)).unwrap();
     }
 
     #[test]

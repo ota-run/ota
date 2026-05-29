@@ -27,7 +27,7 @@ use serde_yaml::{Mapping, Value as YamlValue};
 use crate::detector::{Inference, detect_repo};
 use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
-use crate::schema::Contract;
+use crate::schema::{Contract, ToolchainFulfillmentMode, ToolchainProvider};
 
 const DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP: &str = "repo_contract";
 const DETECT_COMPARISON_REPO_SIGNALS_OWNERSHIP: &str = "repo_signals";
@@ -251,6 +251,57 @@ pub(crate) fn collect_detect_changes(
         );
     }
 
+    for (name, toolchain) in &detected.toolchains {
+        let existing_toolchain = match existing.toolchains.get(name) {
+            Some(existing_toolchain) if !existing_toolchain.active_for_os(current_os()) => continue,
+            value => value,
+        };
+        let provider = toolchain_provider_name(toolchain.provider);
+        push_detect_change(
+            &mut changes,
+            existing,
+            &inference_index,
+            &format!("toolchains.{name}.provider"),
+            existing_toolchain.map(|value| toolchain_provider_name(value.provider)),
+            Some(provider),
+        );
+        push_detect_change(
+            &mut changes,
+            existing,
+            &inference_index,
+            &format!("toolchains.{name}.version"),
+            existing_toolchain.map(|value| value.version_for_os(current_os())),
+            Some(toolchain.version.as_str()),
+        );
+        for (package_manager, version) in &toolchain.package_managers {
+            push_detect_change(
+                &mut changes,
+                existing,
+                &inference_index,
+                &format!("toolchains.{name}.package_managers.{package_manager}"),
+                existing_toolchain.and_then(|value| {
+                    value
+                        .package_managers
+                        .get(package_manager)
+                        .map(String::as_str)
+                }),
+                Some(version.as_str()),
+            );
+        }
+        if let Some(fulfillment) = toolchain.fulfillment {
+            push_detect_change(
+                &mut changes,
+                existing,
+                &inference_index,
+                &format!("toolchains.{name}.fulfillment"),
+                existing_toolchain
+                    .and_then(|value| value.fulfillment)
+                    .map(toolchain_fulfillment_name),
+                Some(toolchain_fulfillment_name(fulfillment)),
+            );
+        }
+    }
+
     let mut next_env_source_add_index = existing.env.sources.len();
     for (detected_index, source) in detected.env.sources.iter().enumerate() {
         if existing.env.sources.iter().any(|existing_source| {
@@ -450,6 +501,49 @@ pub(crate) fn collect_detect_removals(
         }
     }
 
+    for (name, toolchain) in &existing.toolchains {
+        if !toolchain.active_for_os(current_os()) {
+            continue;
+        }
+        let detected_toolchain = detected.toolchains.get(name);
+        if detected_toolchain.is_none() {
+            push_detect_removal(
+                &mut removals,
+                existing,
+                format!("toolchains.{name}.provider"),
+                toolchain_provider_name(toolchain.provider).to_string(),
+            );
+            push_detect_removal(
+                &mut removals,
+                existing,
+                format!("toolchains.{name}.version"),
+                toolchain.version_for_os(current_os()).to_string(),
+            );
+        }
+        for (package_manager, version) in &toolchain.package_managers {
+            if !detected_toolchain
+                .is_some_and(|value| value.package_managers.contains_key(package_manager))
+            {
+                push_detect_removal(
+                    &mut removals,
+                    existing,
+                    format!("toolchains.{name}.package_managers.{package_manager}"),
+                    version.to_string(),
+                );
+            }
+        }
+        if let Some(fulfillment) = toolchain.fulfillment
+            && !detected_toolchain.is_some_and(|value| value.fulfillment.is_some())
+        {
+            push_detect_removal(
+                &mut removals,
+                existing,
+                format!("toolchains.{name}.fulfillment"),
+                toolchain_fulfillment_name(fulfillment).to_string(),
+            );
+        }
+    }
+
     for (index, source) in existing.env.sources.iter().enumerate() {
         if !detected.env.sources.iter().any(|detected_source| {
             detected_source.kind == source.kind && detected_source.path == source.path
@@ -560,6 +654,22 @@ pub(crate) fn collect_detect_removals(
     removals
 }
 
+fn toolchain_provider_name(provider: ToolchainProvider) -> &'static str {
+    match provider {
+        ToolchainProvider::Rustup => "rustup",
+        ToolchainProvider::Corepack => "corepack",
+        ToolchainProvider::Sdkman => "sdkman",
+        ToolchainProvider::Uv => "uv",
+    }
+}
+
+fn toolchain_fulfillment_name(fulfillment: ToolchainFulfillmentMode) -> &'static str {
+    match fulfillment {
+        ToolchainFulfillmentMode::None => "none",
+        ToolchainFulfillmentMode::Run => "run",
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn current_os() -> &'static str {
     "windows"
@@ -642,10 +752,11 @@ fn push_detect_change_with_inference(
 mod tests {
     use super::*;
     use crate::detector::{
-        Confidence, DetectContract, DetectProject, DetectService, DetectTask, Inference,
+        Confidence, DetectContract, DetectProject, DetectService, DetectTask, DetectToolchainSpec,
+        Inference,
     };
     use crate::parser::parse_contract_str;
-    use crate::schema::{EnvSource, EnvSourceKind};
+    use crate::schema::{EnvSource, EnvSourceKind, ToolchainProvider};
     use std::collections::BTreeMap;
     use std::path::Path;
 
@@ -771,6 +882,138 @@ metadata:
         assert_eq!(drift.len(), 2);
         assert_eq!(drift[0].field, "tools.cargo");
         assert_eq!(drift[1].field, "tasks.setup.run");
+    }
+
+    #[test]
+    fn collect_detect_changes_surfaces_toolchain_package_manager_fields() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            toolchains: BTreeMap::from([(
+                String::from("node"),
+                DetectToolchainSpec {
+                    provider: ToolchainProvider::Corepack,
+                    version: String::from("22"),
+                    package_managers: BTreeMap::from([(
+                        String::from("pnpm"),
+                        String::from("10.27.0"),
+                    )]),
+                    fulfillment: None,
+                },
+            )]),
+            ..DetectContract::default()
+        };
+        let inferences = vec![
+            Inference::new(
+                String::from("toolchains.node.provider"),
+                String::from("corepack"),
+                String::from("ota.detect#toolchains.node.provider"),
+                Confidence::High,
+            ),
+            Inference::new(
+                String::from("toolchains.node.version"),
+                String::from("22"),
+                String::from(".nvmrc"),
+                Confidence::High,
+            ),
+            Inference::new(
+                String::from("toolchains.node.package_managers.pnpm"),
+                String::from("10.27.0"),
+                String::from("package.json#packageManager"),
+                Confidence::High,
+            ),
+        ];
+
+        let changes = collect_detect_changes(&existing, &detected, &inferences);
+        let fields = changes
+            .iter()
+            .map(|change| change.field.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            fields,
+            vec![
+                "toolchains.node.provider",
+                "toolchains.node.version",
+                "toolchains.node.package_managers.pnpm",
+            ]
+        );
+        assert!(changes.iter().all(|change| change.status == "add"));
+        assert!(
+            changes
+                .iter()
+                .all(|change| change.owner_kind.as_deref() == Some("detected"))
+        );
+        assert_eq!(
+            changes[2].source.as_deref(),
+            Some("package.json#packageManager")
+        );
+    }
+
+    #[test]
+    fn collect_detect_drift_removals_tracks_ota_managed_toolchain_fields() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10.27.0"
+metadata:
+  ota:
+    detect:
+      field_ownership:
+        toolchains.node.provider: merged
+        toolchains.node.version: merged
+        toolchains.node.package_managers.pnpm: merged
+"#,
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            ..DetectContract::default()
+        };
+
+        let drift = collect_detect_drift_removals(&existing, &detected);
+        let fields = drift
+            .iter()
+            .map(|removal| removal.field.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            fields,
+            vec![
+                "toolchains.node.provider",
+                "toolchains.node.version",
+                "toolchains.node.package_managers.pnpm",
+            ]
+        );
+        assert!(
+            drift
+                .iter()
+                .all(|removal| removal.owner_kind.as_deref() == Some("merged"))
+        );
     }
 
     #[test]

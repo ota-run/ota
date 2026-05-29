@@ -213,9 +213,8 @@ const DEFAULT_POLICY_DIR: &str = ".ota";
 const DEFAULT_POLICY_FILE: &str = "org-policy.yaml";
 const DEFAULT_RECEIPT_BASELINE_FILE: &str = "repo-baseline.json";
 const OTA_SKILL_NAME: &str = "ota";
-const OTA_SKILL_MD: &str = include_str!("../../skills/ota/SKILL.md");
-const OTA_SKILL_OFFICIAL_SOURCES_MD: &str =
-    include_str!("../../skills/ota/references/official-sources.md");
+const OTA_SKILL_RAW_BASE_URL: &str =
+    "https://raw.githubusercontent.com/ota-run/skills/main/skills/ota";
 thread_local! {
     static PLAIN_MODE: Cell<bool> = const { Cell::new(false) };
     static CONCISE_MODE: Cell<bool> = const { Cell::new(false) };
@@ -12266,7 +12265,16 @@ fn task_supports_backend(
         return true;
     }
 
-    task.mode_execution_branch(backend).is_some()
+    if task.mode_execution_branch(backend).is_some() {
+        return true;
+    }
+
+    backend == crate::schema::Backend::Native
+        && task.mode_default_backend() == Some(crate::schema::Backend::Container)
+        && task
+            .mode_execution_branch(crate::schema::Backend::Native)
+            .is_none()
+        && task.resolved_execution(current_os()).is_some()
 }
 
 fn task_matches_tasks_filters(
@@ -15113,7 +15121,7 @@ pub fn skills_install(agent: &str, format: OutputFormat, debug: bool) -> Command
         }
     };
 
-    let output = match install_embedded_ota_skill(&target_dir) {
+    let output = match install_distributed_ota_skill(&target_dir) {
         Ok(()) => match format {
             OutputFormat::Text => {
                 CommandOutput::success(render_skills_install_text(agent, target_dir.as_path()))
@@ -15187,7 +15195,7 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn install_embedded_ota_skill(target_dir: &Path) -> Result<(), String> {
+fn install_distributed_ota_skill(target_dir: &Path) -> Result<(), String> {
     let parent = target_dir
         .parent()
         .ok_or_else(|| format!("invalid target path `{}`", target_dir.display()))?;
@@ -15201,13 +15209,13 @@ fn install_embedded_ota_skill(target_dir: &Path) -> Result<(), String> {
     let temp_dir = unique_sibling_path(parent, ".ota.tmp");
     let backup_dir = unique_sibling_path(parent, ".ota.backup");
 
-    write_embedded_skill_tree(&temp_dir).inspect_err(|_| {
+    write_distributed_skill_tree(&temp_dir).inspect_err(|_| {
         let _ = remove_path_all(&temp_dir);
     })?;
 
     if !skill_tree_is_complete(&temp_dir) {
         let _ = remove_path_all(&temp_dir);
-        return Err(String::from("embedded skill tree was incomplete"));
+        return Err(String::from("downloaded skill tree was incomplete"));
     }
 
     let had_existing = target_dir.exists() || target_dir.is_symlink();
@@ -15239,7 +15247,7 @@ fn install_embedded_ota_skill(target_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn write_embedded_skill_tree(temp_dir: &Path) -> Result<(), String> {
+fn write_distributed_skill_tree(temp_dir: &Path) -> Result<(), String> {
     let references_dir = temp_dir.join("references");
     fs::create_dir_all(&references_dir).map_err(|error| {
         format!(
@@ -15247,23 +15255,127 @@ fn write_embedded_skill_tree(temp_dir: &Path) -> Result<(), String> {
             references_dir.display()
         )
     })?;
-    fs::write(temp_dir.join("SKILL.md"), OTA_SKILL_MD).map_err(|error| {
-        format!(
-            "could not write staged skill file `{}`: {error}",
-            temp_dir.join("SKILL.md").display()
-        )
-    })?;
-    fs::write(
-        references_dir.join("official-sources.md"),
-        OTA_SKILL_OFFICIAL_SOURCES_MD,
-    )
-    .map_err(|error| {
-        format!(
-            "could not write staged skill reference `{}`: {error}",
-            references_dir.join("official-sources.md").display()
-        )
-    })?;
+
+    if let Some(source_dir) = env::var_os("OTA_SKILL_SOURCE_DIR") {
+        let source_dir = PathBuf::from(source_dir);
+        copy_skill_file(
+            source_dir.join("SKILL.md").as_path(),
+            temp_dir.join("SKILL.md").as_path(),
+        )?;
+        copy_skill_file(
+            source_dir
+                .join("references")
+                .join("official-sources.md")
+                .as_path(),
+            references_dir.join("official-sources.md").as_path(),
+        )?;
+        return Ok(());
+    }
+
+    download_skill_file("SKILL.md", temp_dir.join("SKILL.md").as_path())?;
+    download_skill_file(
+        "references/official-sources.md",
+        references_dir.join("official-sources.md").as_path(),
+    )?;
     Ok(())
+}
+
+fn copy_skill_file(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::copy(source, destination).map(|_| ()).map_err(|error| {
+        format!(
+            "could not copy skill file `{}` into `{}`: {error}",
+            source.display(),
+            destination.display()
+        )
+    })
+}
+
+fn skill_raw_base_url() -> String {
+    env::var("OTA_SKILL_BASE_URL").unwrap_or_else(|_| OTA_SKILL_RAW_BASE_URL.to_string())
+}
+
+fn download_skill_file(relative_path: &str, destination: &Path) -> Result<(), String> {
+    let url = format!(
+        "{}/{}",
+        skill_raw_base_url().trim_end_matches('/'),
+        relative_path
+    );
+    let curl_result = download_skill_file_with_curl(&url, destination);
+    if curl_result.is_ok() {
+        return Ok(());
+    }
+
+    if let Some(powershell_result) = download_skill_file_with_powershell(&url, destination) {
+        return powershell_result;
+    }
+
+    curl_result
+}
+
+fn download_skill_file_with_curl(url: &str, destination: &Path) -> Result<(), String> {
+    let output = Command::new("curl")
+        .args(["-fsSL", "--max-time", "10", "-o"])
+        .arg(destination)
+        .arg(url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+    match output {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => Err(format!(
+            "could not download `{url}` with curl: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Err(String::from("curl is not available on PATH"))
+        }
+        Err(error) => Err(format!("could not run curl for `{url}`: {error}")),
+    }
+}
+
+fn download_skill_file_with_powershell(
+    url: &str,
+    destination: &Path,
+) -> Option<Result<(), String>> {
+    let script = format!(
+        "$ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Stop'; Invoke-WebRequest -UseBasicParsing -Uri '{}' -OutFile '{}'",
+        powershell_single_quote(url),
+        powershell_single_quote(&destination.display().to_string())
+    );
+    for command_name in ["pwsh", "pwsh.exe", "powershell", "powershell.exe"] {
+        let output = Command::new(command_name)
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output();
+        match output {
+            Ok(output) if output.status.success() => return Some(Ok(())),
+            Ok(output) => {
+                return Some(Err(format!(
+                    "could not download `{url}` with {command_name}: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Some(Err(format!(
+                    "could not run {command_name} for `{url}`: {error}"
+                )));
+            }
+        }
+    }
+    None
+}
+
+fn powershell_single_quote(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 fn skill_tree_is_complete(path: &Path) -> bool {
@@ -16951,9 +17063,9 @@ fn render_policy_review_text(
     }
 
     let summary = policy_review_summary(report);
-    stdout.push_str(&render_policy_review_overview_text(&summary));
 
     if report.findings.is_empty() {
+        stdout.push_str(&render_policy_review_overview_text(&summary));
         stdout.push_str("\n\n");
         stdout.push_str(&paint(
             "No policy boundary conflicts detected.",
@@ -16966,11 +17078,22 @@ fn render_policy_review_text(
         return stdout;
     }
 
+    let default_policy_path = policy_path.unwrap_or("./.ota/org-policy.yaml");
+    if let Some(blocks) = compact_policy_review_blocks(report, default_policy_path) {
+        stdout.push_str(&render_compact_policy_review_blocks(
+            &blocks,
+            default_policy_path,
+        ));
+        return stdout;
+    }
+
+    stdout.push_str(&render_policy_review_overview_text(&summary));
+
     for group in group_doctor_findings(report.findings.iter()) {
         if matches!(group.kind, DoctorFindingGroupKind::PolicySurface) && group.findings.len() > 1 {
             stdout.push_str(&render_policy_review_policy_surface_group(
                 &group,
-                policy_path.unwrap_or("./.ota/org-policy.yaml"),
+                default_policy_path,
             ));
             continue;
         }
@@ -16981,7 +17104,7 @@ fn render_policy_review_text(
             let why_lines = finding_why_lines(&finding.summary, &finding.why, None);
             let next_steps = finding_next_steps(&policy_review_next_text(
                 &finding.summary,
-                policy_path.unwrap_or("./.ota/org-policy.yaml"),
+                default_policy_path,
                 &finding.next,
             ));
             let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
@@ -17013,6 +17136,118 @@ fn render_policy_review_text(
         stdout.push_str(&render_grouped_doctor_findings(&group, None, None));
     }
 
+    stdout
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CompactPolicyReviewKind {
+    Version,
+    Provisioning,
+    Bootstrap,
+}
+
+struct CompactPolicyReviewBlock {
+    surface: &'static str,
+    approved: &'static str,
+    details: Vec<String>,
+    next: String,
+}
+
+fn compact_policy_review_blocks(
+    report: &DoctorReport,
+    policy_path: &str,
+) -> Option<Vec<CompactPolicyReviewBlock>> {
+    if !report.ok || report.findings.is_empty() {
+        return None;
+    }
+
+    let mut blocks: BTreeMap<CompactPolicyReviewKind, CompactPolicyReviewBlock> = BTreeMap::new();
+
+    for finding in &report.findings {
+        if finding.severity != FindingSeverity::Info {
+            return None;
+        }
+
+        let (kind, surface, approved) = match finding.summary.as_str() {
+            "Policy-backed version rules are declared" => (
+                CompactPolicyReviewKind::Version,
+                "approved version policy",
+                "repo version rules",
+            ),
+            "Policy-backed provisioning sources are declared" => (
+                CompactPolicyReviewKind::Provisioning,
+                "approved provisioning sources",
+                "provisioning for declared prerequisites",
+            ),
+            "Adapter bootstrap sources are declared" => (
+                CompactPolicyReviewKind::Bootstrap,
+                "approved adapter bootstrap",
+                "bootstrap for missing adapters",
+            ),
+            _ => return None,
+        };
+
+        let entry = blocks
+            .entry(kind)
+            .or_insert_with(|| CompactPolicyReviewBlock {
+                surface,
+                approved,
+                details: Vec::new(),
+                next: policy_review_next_text(&finding.summary, policy_path, &finding.next),
+            });
+
+        let mut detail_lines = finding_why_lines(&finding.summary, &finding.why, None);
+        if detail_lines.len() <= 1 {
+            return None;
+        }
+        detail_lines.remove(0);
+        for detail in detail_lines {
+            if !entry.details.contains(&detail) {
+                entry.details.push(detail);
+            }
+        }
+    }
+
+    Some(blocks.into_values().collect())
+}
+
+fn render_compact_policy_review_blocks(
+    blocks: &[CompactPolicyReviewBlock],
+    policy_path: &str,
+) -> String {
+    let mut stdout = String::new();
+    stdout.push_str(&format!(
+        "\n\n{} {}",
+        info_bullet(),
+        paint_section_title("Surfaces")
+    ));
+    for block in blocks {
+        stdout.push_str(&format!("\n  {} {}", next_bullet(), block.surface));
+    }
+
+    stdout.push_str(&format!(
+        "\n\n{} {}",
+        info_bullet(),
+        paint_section_title("Approved")
+    ));
+    for block in blocks {
+        stdout.push_str(&format!("\n  {} {}", next_bullet(), block.approved));
+        for detail in &block.details {
+            stdout.push_str(&format!("\n    - {}", detail));
+        }
+    }
+
+    let mut next_steps = Vec::new();
+    for block in blocks {
+        if !next_steps.contains(&block.next) {
+            next_steps.push(block.next.clone());
+        }
+    }
+    let update_policy_step = format!("update `{policy_path}` to change them");
+    if !next_steps.contains(&update_policy_step) {
+        next_steps.push(update_policy_step);
+    }
+    stdout.push_str(&format_next_timeline(&next_steps));
     stdout
 }
 
@@ -17062,7 +17297,7 @@ fn render_policy_review_overview_text(summary: &PolicyReviewSummary) -> String {
 }
 
 fn render_policy_review_context_text(policy_source: &str, policy_path: Option<&str>) -> String {
-    let mut stdout = String::from("\n");
+    let mut stdout = String::from("\n\n");
     stdout.push_str(&paint_section_title("Policy"));
     stdout.push_str(&format!(
         "\n{}",
@@ -17091,6 +17326,22 @@ fn policy_review_findings(findings: &[Finding], policy_path: &str) -> Vec<Findin
         .cloned()
         .map(|mut finding| {
             finding.next = policy_review_next_text(&finding.summary, policy_path, &finding.next);
+            finding
+        })
+        .collect()
+}
+
+fn retarget_policy_review_followups_for_repo(
+    findings: &[Finding],
+    repo_path: &Path,
+) -> Vec<Finding> {
+    findings
+        .iter()
+        .cloned()
+        .map(|mut finding| {
+            if finding.next.contains("`ota policy review`") {
+                finding.next = rewrite_repo_scoped_command_targets(&finding.next, repo_path);
+            }
             finding
         })
         .collect()
@@ -20960,6 +21211,7 @@ pub fn receipt(
                 render_repo_receipt(
                     &text_path_display,
                     &path_display,
+                    &target.contract_path,
                     &RepoReceiptReport {
                         receipt,
                         findings,
@@ -32136,7 +32388,7 @@ fn strip_container_image_from_why(value: &str) -> (String, Option<String>) {
     let image_end = image_start + image_end_rel;
     let image = value[image_start..image_end].to_string();
     let stripped = format!(
-        "{}inside the configured{}",
+        "{}inside the configured container image{}",
         &value[..start],
         &value[image_end + 1..]
     );
@@ -32671,6 +32923,12 @@ fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange
     let segments = change.field.split('.').collect::<Vec<_>>();
     match segments.as_slice() {
         ["project", "name"] => set_string_field(root, &segments, &change.detected),
+        ["toolchains", _, "provider"]
+        | ["toolchains", _, "version"]
+        | ["toolchains", _, "fulfillment"]
+        | ["toolchains", _, "package_managers", _] => {
+            set_string_field(root, &segments, &change.detected)
+        }
         ["runtimes", _] | ["tools", _] => set_string_field(root, &segments, &change.detected),
         ["env", "sources", _, "kind"] | ["env", "sources", _, "path"] => {
             set_env_source_string_field(root, &segments, &change.detected)
@@ -32714,6 +32972,11 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
     for (name, toolchain) in &contract.toolchains {
         fields.push(format!("toolchains.{name}.provider"));
         fields.push(format!("toolchains.{name}.version"));
+        for package_manager in toolchain.package_managers.keys() {
+            fields.push(format!(
+                "toolchains.{name}.package_managers.{package_manager}"
+            ));
+        }
         if toolchain.fulfillment.is_some() {
             fields.push(format!("toolchains.{name}.fulfillment"));
         }
@@ -32881,6 +33144,15 @@ fn init_contract_provenance(
             format!("toolchains.{name}.version"),
             starter_contract_source,
         );
+        for package_manager in toolchain.package_managers.keys() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                &detected_fields,
+                format!("toolchains.{name}.package_managers.{package_manager}"),
+                starter_contract_source,
+            );
+        }
         if toolchain.fulfillment.is_some() {
             push_init_field_provenance(
                 &mut provenance,
@@ -33647,7 +33919,29 @@ fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
     let Some(default_mode) = task.default_mode else {
         return Vec::new();
     };
-    if task.modes.len() < 2 {
+
+    let mut override_modes = task
+        .modes
+        .iter()
+        .map(|mode| mode.mode)
+        .filter(|mode| *mode != default_mode)
+        .collect::<Vec<_>>();
+
+    if default_mode == "container"
+        && !override_modes.iter().any(|mode| *mode == "native")
+        && task.supports_native_mode_override
+    {
+        override_modes.push("native");
+    }
+
+    override_modes.sort_by_key(|mode| match *mode {
+        "native" => 0,
+        "container" => 1,
+        "remote" => 2,
+        _ => 3,
+    });
+    override_modes.dedup();
+    if override_modes.is_empty() {
         return Vec::new();
     }
 
@@ -33656,15 +33950,10 @@ fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
         paint_code(&format!("ota run {}", task.name))
     )];
 
-    commands.extend(
-        task.modes
-            .iter()
-            .filter(|mode| mode.mode != default_mode)
-            .map(|mode| {
-                let command = format!("ota run {} --mode {}", task.name, mode.mode);
-                format!("{}: `{}`", mode.mode, paint_code(&command))
-            }),
-    );
+    commands.extend(override_modes.into_iter().map(|mode| {
+        let command = format!("ota run {} --mode {}", task.name, mode);
+        format!("{mode}: `{}`", paint_code(&command))
+    }));
 
     commands
 }
@@ -42544,6 +42833,7 @@ tasks:
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
+            supports_native_mode_override: false,
         };
 
         let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
@@ -42612,6 +42902,7 @@ tasks:
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
+            supports_native_mode_override: false,
         };
 
         let rendered = strip_ansi_codes(&render_tasks_use_text(".", &[task]));
@@ -42684,6 +42975,7 @@ tasks:
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
+            supports_native_mode_override: false,
         };
 
         let rendered = strip_ansi_codes(&render_tasks_text(".", Some(&workflow), None, &[task]));
@@ -42760,6 +43052,7 @@ tasks:
             internal: false,
             variants: Vec::new(),
             modes: Vec::new(),
+            supports_native_mode_override: false,
         };
 
         let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
@@ -43097,6 +43390,7 @@ workflows:
                 internal: false,
                 variants: Vec::new(),
                 modes: Vec::new(),
+                supports_native_mode_override: false,
             },
             runtime: None,
             targets: Vec::new(),
@@ -44210,6 +44504,159 @@ tasks:
         assert!(stdout.contains("no task processes started"), "{stdout}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn run_command_blocks_container_preconditions_before_task_processes() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "docker"),
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then exit 0; fi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'docker'\"*) exit 127 ;;\n  esac\nfi\necho unexpected docker invocation: \"$*\" >&2\nexit 1\n",
+        );
+        let proof_file = repo.path().join("should-not-exist");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+        engines:
+          - docker
+tasks:
+  ci:
+    context: app
+    run: sh -c 'touch "{}"'
+    requirements:
+      tools:
+        docker: "*"
+"#,
+                proof_file.display()
+            ),
+        )
+        .expect("write contract");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let output = super::run_command(
+            "ci",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_ne!(output.exit_code, 0);
+        assert!(
+            !proof_file.exists(),
+            "blocked preconditions must stop the task process"
+        );
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("Docker is missing from the configured container image")
+                || stderr.contains("Tool probe failed: docker"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("Task Failed"), "{stderr}");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn run_command_blocks_version_mismatch_before_dependency_processes() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let proof_file = repo.path().join("should-not-exist");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+runtimes:
+  node: "999.0.0"
+tasks:
+  setup:
+    run: sh -c 'touch "{}"'
+  verify:
+    run: "true"
+    depends_on:
+      - setup
+"#,
+                proof_file.display()
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_ne!(output.exit_code, 0);
+        assert!(
+            !proof_file.exists(),
+            "blocked version preconditions must stop dependency task processes"
+        );
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(
+            stderr.contains("task `verify` is blocked (runtime mismatch: node)")
+                || stderr.contains("Missing runtime: node"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("Field: tasks.verify.requirements"), "{stderr}");
+        assert!(stderr.contains("task requires `node@999.0.0`"), "{stderr}");
+        assert!(stderr.contains("resolved runtime is `node@"), "{stderr}");
+        assert!(
+            stderr.contains("run `ota doctor` to confirm readiness"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("run `ota run verify`"), "{stderr}");
+        assert!(!stderr.contains("Task Failed"), "{stderr}");
+    }
+
     #[test]
     fn run_dry_run_preview_surfaces_unsupported_host_as_primary_blocker() {
         let _guard = crate::test_support::env_mutex_lock();
@@ -45201,6 +45648,7 @@ tasks:
         env::set_current_dir(cwd).unwrap();
 
         assert!(text.contains("POLICY REVIEW ./ota.yaml"));
+        assert!(text.contains("READY\n\nPolicy"));
         assert!(text.contains("Policy\n"));
         assert!(text.contains(" »  Source: repo policy"));
         assert!(text.contains(" »  Path: ./.ota/org-policy.yaml"));
@@ -45981,10 +46429,13 @@ tasks:
         assert!(text.contains("Policy"));
         assert!(text.contains(" »  Source: repo policy"));
         assert!(text.contains(" »  Path: ./.ota/org-policy.yaml"));
-        assert!(text.contains("◉ INFO  Approved version policy is configured (2)"));
-        assert!(text.contains("Why:\n  » `.ota/org-policy.yaml` approves repo version rules"));
-        assert!(text.contains("  » runtime `java` (versions `>=21`)"));
-        assert!(text.contains("  » tool `node` (versions `24.14.1`)"));
+        assert!(!text.contains("Overview"));
+        assert!(text.contains("Surfaces"));
+        assert!(text.contains("Approved"));
+        assert!(text.contains("  » approved version policy"));
+        assert!(text.contains("  » repo version rules"));
+        assert!(text.contains("    - runtime `java` (versions `>=21`)"));
+        assert!(text.contains("    - tool `node` (versions `24.14.1`)"));
         assert!(text.contains("keep repo-declared versions inside these approved ranges"));
         assert!(text.contains("`./.ota/org-policy.yaml`"));
     }
@@ -46035,22 +46486,61 @@ tasks:
             &report,
         ));
 
-        assert!(
-            text.contains("◉ INFO  Approved provisioning and bootstrap surfaces are configured")
-        );
+        assert!(!text.contains("Overview"));
+        assert!(text.contains("Surfaces"));
+        assert!(text.contains("Approved"));
+        assert!(text.contains("  » approved provisioning sources"));
+        assert!(text.contains("  » approved adapter bootstrap"));
+        assert!(text.contains("  » provisioning for declared prerequisites"));
+        assert!(text.contains("  » bootstrap for missing adapters"));
+        assert!(text.contains("    - curl via `brew (versions 8.7.1)`"));
+        assert!(text.contains("    - brew via `brew-bootstrap`"));
         assert!(text.contains(
-            "Why:\n  » `./.ota/org-policy.yaml` approves provisioning sources for declared prerequisites"
+            "use these approved sources when repo prerequisites need a governed install path"
         ));
         assert!(text.contains(
-            "  » `./.ota/org-policy.yaml` approves bootstrap sources for missing adapter binaries"
+            "use these approved bootstrap sources when missing adapters need a governed install path"
         ));
-        assert!(text.contains("Details:"));
-        assert!(text.contains("  » Approved provisioning sources are configured"));
-        assert!(text.contains("  » Approved adapter bootstrap is configured"));
-        assert!(text.contains(
-            "Next: use these approved sources when repo prerequisites or adapters need a governed install path, or update"
-        ));
+        assert!(text.contains("update `./.ota/org-policy.yaml` to change them"));
         assert!(text.contains("`./.ota/org-policy.yaml`"));
+    }
+
+    #[test]
+    fn policy_review_falls_back_to_detailed_layout_when_policy_detail_parsing_is_weak() {
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed provisioning sources are declared"),
+                why: String::from("approved provisioning is configured"),
+                next: String::from(
+                    "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
+                ),
+            }],
+        };
+        let loaded = super::LoadedOrgPolicyPack {
+            pack: OrgPolicyPack {
+                policies: PolicyRules::default(),
+            },
+            path: std::path::PathBuf::from("./.ota/org-policy.yaml"),
+            source: PolicyPackSource::RepoPolicy,
+        };
+
+        let text = strip_ansi_codes(&super::render_policy_review_text(
+            "./ota.yaml",
+            "repo policy",
+            Some("./.ota/org-policy.yaml"),
+            Some(&loaded),
+            &report,
+        ));
+
+        assert!(text.contains("Overview"));
+        assert!(text.contains("◉ INFO  Approved provisioning sources are configured"));
+        assert!(!text.contains("Surfaces"));
+        assert!(!text.contains("Approved\n  » provisioning for declared prerequisites"));
     }
 
     #[test]
@@ -62091,6 +62581,15 @@ fn run_single_contract_target(
     persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
     let details_footer = task_use_details_footer(Some(&target.contract_path), member);
+    if let Some(failure) = run_selected_precondition_failure(
+        task_name,
+        overrides,
+        member,
+        &target.contract,
+        &target.contract_path,
+    ) {
+        return Err(failure);
+    }
     if stream_output {
         return run_single_contract_target_streaming(
             task_name,
@@ -62114,6 +62613,178 @@ fn run_single_contract_target(
         &details_footer,
         persist_logs,
     )
+}
+
+fn run_selected_precondition_failure(
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    member: Option<&str>,
+    contract: &Contract,
+    contract_path: &Path,
+) -> Option<RunCommandFailure> {
+    let task_name = canonical_declared_task_name(contract, task_name);
+    if resolve_execution_plan_for_task(contract, contract_path, task_name.as_str(), overrides)
+        .is_err()
+    {
+        return None;
+    }
+    let env_report = build_env_report(contract, contract_path, Some(task_name.as_str())).ok()?;
+    let preconditions_report =
+        run_preview_preconditions_report(contract, contract_path, task_name.as_str(), overrides);
+    let summary = run_preview_summary(
+        contract,
+        task_name.as_str(),
+        member,
+        &env_report,
+        &preconditions_report,
+    );
+    if !doctor_verdict_blocks_preview(summary.verdict) {
+        return None;
+    }
+    let primary_blocker = summary.primary_blocker?;
+    if !run_precondition_blocker_should_stop_execution(&primary_blocker.summary) {
+        return None;
+    }
+    let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+    let doctor_mode = doctor_mode_from_backend(Some(format_backend(effective.backend)))
+        .unwrap_or(DoctorMode::Native);
+    let lifecycle = effective.lifecycle;
+    let (display_why, display_next, container_image) = render_container_image_finding_text(
+        &primary_blocker.why,
+        &primary_blocker.next,
+        Some(doctor_mode),
+    );
+    let why_lines = finding_why_lines(
+        &primary_blocker.summary,
+        &display_why,
+        container_image.as_deref(),
+    );
+    let rewritten_next = rewrite_doctor_mode_command(&display_next, Some(doctor_mode), lifecycle);
+    let next_steps = rewritten_next
+        .split("; ")
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
+
+    if let Some(message) = render_run_runtime_mismatch_precondition_text(
+        &text_path_display,
+        task_name.as_str(),
+        member,
+        &primary_blocker.summary,
+        &display_why,
+        &rewritten_next,
+    ) {
+        return Some(RunCommandFailure {
+            message,
+            summary: None,
+            exit_code: 1,
+            receipt: None,
+        });
+    }
+
+    let message = render_field_error_with_tail(
+        "RUN",
+        &text_path_display,
+        &format!("tasks.{task_name}.requirements"),
+        &finding_diagnosis_text(
+            &primary_blocker.summary,
+            &display_why,
+            container_image.as_deref(),
+        ),
+        &why_lines,
+        &next_steps,
+        None,
+        None,
+    );
+
+    Some(RunCommandFailure {
+        message,
+        summary: None,
+        exit_code: 1,
+        receipt: None,
+    })
+}
+
+fn render_run_runtime_mismatch_precondition_text(
+    where_value: &str,
+    task_name: &str,
+    member: Option<&str>,
+    summary: &str,
+    why: &str,
+    next: &str,
+) -> Option<String> {
+    let runtime_name = summary
+        .strip_prefix("Version mismatch for runtime: ")
+        .map(strip_finding_context_suffix)?;
+
+    let required = extract_backticked_value_after(why, "but the contract requires `");
+    let actual = extract_backticked_value_after(why, "resolved to `");
+    let probe_path = extract_backticked_value_after(why, "ota probed `");
+    let probe_command = extract_backticked_value_after(why, " with `");
+
+    let mut why_lines = Vec::new();
+    if let Some(required) = required.as_deref() {
+        why_lines.push(format!("task requires `{runtime_name}@{required}`"));
+    }
+    if let Some(actual) = actual.as_deref() {
+        why_lines.push(format!("resolved runtime is `{runtime_name}@{actual}`"));
+    }
+    if let Some(path) = probe_path.as_deref() {
+        if let Some(command) = probe_command.as_deref() {
+            why_lines.push(format!("detected via `{path}` (`{command}`)"));
+        } else {
+            why_lines.push(format!("detected via `{path}`"));
+        }
+    }
+    if why_lines.is_empty() {
+        why_lines.push(why.to_string());
+    }
+
+    let mut next_steps = Vec::new();
+    if let Some(command) = parse_leading_run_command(next) {
+        next_steps.push(format!("run `{command}`"));
+    } else {
+        next_steps.extend(finding_next_steps(next));
+    }
+    if !next_steps.iter().any(|step| step.contains("`ota doctor`")) {
+        next_steps.push(String::from("run `ota doctor` to confirm readiness"));
+    }
+    next_steps.push(format!(
+        "run `{}`",
+        repo_run_command(task_name, member)
+    ));
+
+    Some(structured_field_error_text(
+        "RUN",
+        where_value,
+        &format!("tasks.{task_name}.requirements"),
+        &format!("task `{task_name}` is blocked (runtime mismatch: {runtime_name})"),
+        &why_lines,
+        &next_steps,
+    ))
+}
+
+fn extract_backticked_value_after(value: &str, marker: &str) -> Option<String> {
+    let rest = value.split_once(marker)?.1;
+    let end = rest.find('`')?;
+    let token = rest[..end].trim();
+    (!token.is_empty()).then(|| token.to_string())
+}
+
+fn parse_leading_run_command(next: &str) -> Option<String> {
+    let rest = next.strip_prefix("run `")?;
+    let (command, _) = rest.split_once('`')?;
+    let command = command.trim();
+    (!command.is_empty()).then(|| command.to_string())
+}
+
+fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
+    summary.starts_with("Missing tool: ")
+        || summary.starts_with("Missing runtime: ")
+        || summary.starts_with("Tool probe failed: ")
+        || summary.starts_with("Runtime probe failed: ")
+        || summary.starts_with("Version mismatch for tool: ")
+        || summary.starts_with("Version mismatch for runtime: ")
 }
 
 fn run_single_contract_target_streaming(
@@ -67766,7 +68437,7 @@ fn spawn_up_detached_run_process(
     }
 
     #[cfg(unix)]
-    if keep_stdin_open {
+    {
         use std::os::unix::process::CommandExt as _;
         command.process_group(0);
     }
@@ -68214,11 +68885,16 @@ fn proof_runtime_process_exit_failure(
 }
 
 fn stop_proof_runtime_up_process(up_process: &mut std::process::Child) -> Result<(), String> {
+    #[cfg(unix)]
+    let _ = signal_process_group(up_process.id(), "TERM");
+
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match up_process.try_wait() {
             Ok(Some(_)) => return Ok(()),
             Ok(None) if Instant::now() >= deadline => {
+                #[cfg(unix)]
+                let _ = signal_process_group(up_process.id(), "KILL");
                 up_process.kill().map_err(|error| {
                     format!("could not stop runtime-proof `ota up` process: {error}")
                 })?;
@@ -68230,6 +68906,31 @@ fn stop_proof_runtime_up_process(up_process: &mut std::process::Child) -> Result
                 ));
             }
         }
+    }
+}
+
+#[cfg(unix)]
+fn signal_process_group(process_id: u32, signal: &str) -> Result<(), String> {
+    let output = Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(format!("-{process_id}"))
+        .output()
+        .map_err(|error| format!("could not signal runtime-proof process group: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.contains("No such process") {
+        return Ok(());
+    }
+    if stderr.is_empty() {
+        Err(format!(
+            "could not signal runtime-proof process group with `kill -{signal} -{process_id}`"
+        ))
+    } else {
+        Err(format!(
+            "could not signal runtime-proof process group with `kill -{signal} -{process_id}`: {stderr}"
+        ))
     }
 }
 
@@ -71821,6 +72522,7 @@ fn provisioning_phase_execution_context(
 fn render_repo_receipt(
     text_path: &str,
     json_path: &str,
+    contract_path: &Path,
     report: &RepoReceiptReport,
     format: OutputFormat,
 ) -> CommandOutput {
@@ -71870,6 +72572,8 @@ fn render_repo_receipt(
                     .archive_path
                     .as_ref()
                     .map(|path| receipt_storage_path_display(path));
+                let findings =
+                    retarget_policy_review_followups_for_repo(&report.findings, contract_path);
                 let payload = ReceiptSuccess {
                     ok: report.receipt.ok,
                     path: json_path,
@@ -71878,7 +72582,7 @@ fn render_repo_receipt(
                     receipt: report.receipt.clone(),
                     archive_path: archive_path.as_deref(),
                     promoted_baseline: report.promoted_baseline.clone(),
-                    findings: &report.findings,
+                    findings: &findings,
                 };
                 to_json(&payload)
             },
