@@ -29,3 +29,5 @@ target
 
 # Ota local runtime artifacts
 .ota/receipts/
+
+.ota/proof/*
