@@ -44642,10 +44642,18 @@ tasks:
         );
         let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
         assert!(
-            stderr.contains("Version mismatch for runtime: node")
+            stderr.contains("task `verify` is blocked (runtime mismatch: node)")
                 || stderr.contains("Missing runtime: node"),
             "{stderr}"
         );
+        assert!(stderr.contains("Field: tasks.verify.requirements"), "{stderr}");
+        assert!(stderr.contains("task requires `node@999.0.0`"), "{stderr}");
+        assert!(stderr.contains("resolved runtime is `node@"), "{stderr}");
+        assert!(
+            stderr.contains("run `ota doctor` to confirm readiness"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("run `ota run verify`"), "{stderr}");
         assert!(!stderr.contains("Task Failed"), "{stderr}");
     }
 
@@ -62651,11 +62659,29 @@ fn run_selected_precondition_failure(
         &display_why,
         container_image.as_deref(),
     );
-    let next_steps = rewrite_doctor_mode_command(&display_next, Some(doctor_mode), lifecycle)
+    let rewritten_next = rewrite_doctor_mode_command(&display_next, Some(doctor_mode), lifecycle);
+    let next_steps = rewritten_next
         .split("; ")
         .map(str::to_string)
         .collect::<Vec<_>>();
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
+
+    if let Some(message) = render_run_runtime_mismatch_precondition_text(
+        &text_path_display,
+        task_name.as_str(),
+        member,
+        &primary_blocker.summary,
+        &display_why,
+        &rewritten_next,
+    ) {
+        return Some(RunCommandFailure {
+            message,
+            summary: None,
+            exit_code: 1,
+            receipt: None,
+        });
+    }
+
     let message = render_field_error_with_tail(
         "RUN",
         &text_path_display,
@@ -62677,6 +62703,79 @@ fn run_selected_precondition_failure(
         exit_code: 1,
         receipt: None,
     })
+}
+
+fn render_run_runtime_mismatch_precondition_text(
+    where_value: &str,
+    task_name: &str,
+    member: Option<&str>,
+    summary: &str,
+    why: &str,
+    next: &str,
+) -> Option<String> {
+    let runtime_name = summary
+        .strip_prefix("Version mismatch for runtime: ")
+        .map(strip_finding_context_suffix)?;
+
+    let required = extract_backticked_value_after(why, "but the contract requires `");
+    let actual = extract_backticked_value_after(why, "resolved to `");
+    let probe_path = extract_backticked_value_after(why, "ota probed `");
+    let probe_command = extract_backticked_value_after(why, " with `");
+
+    let mut why_lines = Vec::new();
+    if let Some(required) = required.as_deref() {
+        why_lines.push(format!("task requires `{runtime_name}@{required}`"));
+    }
+    if let Some(actual) = actual.as_deref() {
+        why_lines.push(format!("resolved runtime is `{runtime_name}@{actual}`"));
+    }
+    if let Some(path) = probe_path.as_deref() {
+        if let Some(command) = probe_command.as_deref() {
+            why_lines.push(format!("detected via `{path}` (`{command}`)"));
+        } else {
+            why_lines.push(format!("detected via `{path}`"));
+        }
+    }
+    if why_lines.is_empty() {
+        why_lines.push(why.to_string());
+    }
+
+    let mut next_steps = Vec::new();
+    if let Some(command) = parse_leading_run_command(next) {
+        next_steps.push(format!("run `{command}`"));
+    } else {
+        next_steps.extend(finding_next_steps(next));
+    }
+    if !next_steps.iter().any(|step| step.contains("`ota doctor`")) {
+        next_steps.push(String::from("run `ota doctor` to confirm readiness"));
+    }
+    next_steps.push(format!(
+        "run `{}`",
+        repo_run_command(task_name, member)
+    ));
+
+    Some(structured_field_error_text(
+        "RUN",
+        where_value,
+        &format!("tasks.{task_name}.requirements"),
+        &format!("task `{task_name}` is blocked (runtime mismatch: {runtime_name})"),
+        &why_lines,
+        &next_steps,
+    ))
+}
+
+fn extract_backticked_value_after(value: &str, marker: &str) -> Option<String> {
+    let rest = value.split_once(marker)?.1;
+    let end = rest.find('`')?;
+    let token = rest[..end].trim();
+    (!token.is_empty()).then(|| token.to_string())
+}
+
+fn parse_leading_run_command(next: &str) -> Option<String> {
+    let rest = next.strip_prefix("run `")?;
+    let (command, _) = rest.split_once('`')?;
+    let command = command.trim();
+    (!command.is_empty()).then(|| command.to_string())
 }
 
 fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
