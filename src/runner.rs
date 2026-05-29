@@ -7682,7 +7682,9 @@ fn wrap_container_command_for_corepack_activation(
         return command.to_string();
     }
 
-    format!("corepack enable && {command}")
+    format!(
+        "corepack enable --install-directory \"$HOME/.local/bin\" && export PATH=\"$HOME/.local/bin:$PATH\" && {command}"
+    )
 }
 
 fn toolchain_fulfillment_cache_key(

@@ -103,6 +103,9 @@
   activate `corepack enable` inside the real task shell instead of a throwaway preflight path;
   this keeps bare repo-internal `pnpm`/`yarn` commands working after `corepack pnpm ...` /
   `corepack yarn ...` entrypoints
+- switched container Corepack shim activation to a user-writable install directory
+  (`corepack enable --install-directory "$HOME/.local/bin"` plus PATH export) before task
+  execution, avoiding `/usr/local/bin` permission failures in non-root container runs
 - defaulted Docker/Podman task containers on Unix hosts to run as the host UID:GID (`--user`) for
   Ota-managed container execution, reducing root-owned workspace artifact drift between container
   and native lanes in mixed-mode pressure-test matrices
