@@ -57,6 +57,10 @@
   paths
 - extended the same real-run precondition gate to version mismatch blockers, so `ota run` stops
   before dependency tasks when the selected path requires a different runtime or tool version
+- unified `ota run` precondition version-mismatch output across runtime/tool blockers with the
+  same structured task-first layout (`task ... is blocked`, plus `Where`, `Field`, bulletized
+  `Why`, and ordered `Next`), including backend-aware rerun guidance for container and remote
+  lanes
 - fixed container-image probe wording so run/doctor errors consistently say "inside the configured
   container image" when a required runtime or tool is missing or cannot be probed in the selected
   image
