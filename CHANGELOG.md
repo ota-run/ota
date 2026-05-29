@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- rejected container `attachments.isolated_paths` entries that point to existing repo files, so
+  Docker-backed runs fail during contract validation instead of surfacing a low-level directory/file
+  mount error from the container runtime
 - tightened `ota policy review` text output for pure info-only success: approved version,
   provisioning, and adapter-bootstrap policy surfaces now render as a compact `Surfaces /
   Approved / Next` summary instead of the heavier diagnostic finding layout, while warnings and

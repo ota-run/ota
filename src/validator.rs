@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Component, Path};
 
 use semver::Version;
@@ -104,7 +105,7 @@ pub fn validate_contract_with_path(
     validate_project(contract, &mut errors);
     validate_ota_minimum_version(contract, &mut errors);
     validate_repo_workspace(contract, &mut errors);
-    validate_execution(contract, &mut errors);
+    validate_execution(contract, contract_path, &mut errors);
     validate_extensions(contract, &mut errors);
     validate_named_versions("runtime", &contract.runtimes, &mut errors, |value| {
         value.version()
@@ -230,7 +231,11 @@ fn validate_repo_workspace(contract: &Contract, errors: &mut Vec<ValidationError
     }
 }
 
-fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
+fn validate_execution(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+    errors: &mut Vec<ValidationError>,
+) {
     let Some(execution) = &contract.execution else {
         return;
     };
@@ -607,6 +612,21 @@ fn validate_execution(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 errors.push(ValidationError::new(format!(
                     "`execution.contexts.{name}.attachments.isolated_paths` must not contain duplicate normalized paths"
                 )));
+            }
+            if let Some(contract_path) = contract_path {
+                let repo_root = contract_path.parent().unwrap_or_else(|| Path::new("."));
+                let candidate = repo_root.join(
+                    normalize_dependency_isolated_path(isolated_path)
+                        .expect("validated isolated path should normalize"),
+                );
+                if fs::metadata(&candidate)
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.contexts.{name}.attachments.isolated_paths` entry `{isolated_path}` points to an existing file; isolated paths are mounted as dependency volumes and must target directories"
+                    )));
+                }
             }
         }
 
@@ -13192,6 +13212,46 @@ tasks:
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
                 "`execution.contexts.app.attachments.isolated_paths` must not contain duplicate normalized paths",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_existing_file_isolated_paths() {
+        let fixture = TempDir::new().unwrap();
+        fs::create_dir_all(fixture.path().join(".yarn")).unwrap();
+        fs::write(fixture.path().join(".yarn/install-state.gz"), "state").unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+      attachments:
+        isolated_paths:
+          - node_modules
+          - .yarn/install-state.gz
+tasks:
+  setup:
+    context: app
+    run: echo ready
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract_with_path(&contract, Some(&contract_path)).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`execution.contexts.app.attachments.isolated_paths` entry `.yarn/install-state.gz` points to an existing file",
             )
         }));
     }
