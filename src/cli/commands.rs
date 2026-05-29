@@ -44792,6 +44792,47 @@ tasks:
     }
 
     #[test]
+    fn run_version_mismatch_formatter_uses_unified_container_tool_layout() {
+        let rendered = strip_ansi_codes(
+            &super::render_run_version_mismatch_precondition_text(
+                "./ota.yaml",
+                "test:backend",
+                None,
+                Backend::Container,
+                "Version mismatch for tool: poetry",
+                "poetry resolved to `2.4.1` inside the configured container image but the contract requires `>=2.3.4,<2.4.0`",
+                "update `execution.backends.container.image` so `poetry` satisfies `>=2.3.4,<2.4.0`, then rerun `ota doctor --mode container --lifecycle ephemeral`",
+            )
+            .expect("formatted mismatch"),
+        );
+
+        assert!(
+            rendered.contains("task `test:backend` is blocked (container tool mismatch: poetry)"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Field: tasks.test:backend.requirements"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("task requires `poetry@>=2.3.4,<2.4.0`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("resolved tool is `poetry@2.4.1` in the configured container image"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("run `ota doctor --mode container --lifecycle ephemeral`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("run `ota run test:backend --mode container`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_dry_run_preview_surfaces_unsupported_host_as_primary_blocker() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
@@ -62800,10 +62841,11 @@ fn run_selected_precondition_failure(
         .collect::<Vec<_>>();
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
 
-    if let Some(message) = render_run_runtime_mismatch_precondition_text(
+    if let Some(message) = render_run_version_mismatch_precondition_text(
         &text_path_display,
         task_name.as_str(),
         member,
+        effective.backend,
         &primary_blocker.summary,
         &display_why,
         &rewritten_next,
@@ -62839,17 +62881,31 @@ fn run_selected_precondition_failure(
     })
 }
 
-fn render_run_runtime_mismatch_precondition_text(
+fn render_run_version_mismatch_precondition_text(
     where_value: &str,
     task_name: &str,
     member: Option<&str>,
+    backend: Backend,
     summary: &str,
     why: &str,
     next: &str,
 ) -> Option<String> {
-    let runtime_name = summary
-        .strip_prefix("Version mismatch for runtime: ")
-        .map(strip_finding_context_suffix)?;
+    let (target_kind, subject_name) =
+        if let Some(name) = summary.strip_prefix("Version mismatch for runtime: ") {
+            ("runtime", strip_finding_context_suffix(name))
+        } else if let Some(name) = summary.strip_prefix("Version mismatch for tool: ") {
+            ("tool", strip_finding_context_suffix(name))
+        } else {
+            return None;
+        };
+
+    let mismatch_scope = if finding_targets_container_image(why) {
+        Some("container")
+    } else if finding_targets_remote_backend(why) {
+        Some("remote")
+    } else {
+        None
+    };
 
     let required = extract_backticked_value_after(why, "but the contract requires `");
     let actual = extract_backticked_value_after(why, "resolved to `");
@@ -62858,10 +62914,17 @@ fn render_run_runtime_mismatch_precondition_text(
 
     let mut why_lines = Vec::new();
     if let Some(required) = required.as_deref() {
-        why_lines.push(format!("task requires `{runtime_name}@{required}`"));
+        why_lines.push(format!("task requires `{subject_name}@{required}`"));
     }
     if let Some(actual) = actual.as_deref() {
-        why_lines.push(format!("resolved runtime is `{runtime_name}@{actual}`"));
+        let location_suffix = match mismatch_scope {
+            Some("container") => " in the configured container image",
+            Some("remote") => " through the selected remote backend",
+            _ => "",
+        };
+        why_lines.push(format!(
+            "resolved {target_kind} is `{subject_name}@{actual}`{location_suffix}"
+        ));
     }
     if let Some(path) = probe_path.as_deref() {
         if let Some(command) = probe_command.as_deref() {
@@ -62874,22 +62937,32 @@ fn render_run_runtime_mismatch_precondition_text(
         why_lines.push(why.to_string());
     }
 
-    let mut next_steps = Vec::new();
-    if let Some(command) = parse_leading_run_command(next) {
-        next_steps.push(format!("run `{command}`"));
-    } else {
-        next_steps.extend(finding_next_steps(next));
-    }
+    let mut next_steps = finding_next_steps(next)
+        .into_iter()
+        .map(|step| normalize_run_blocker_next_step(&step))
+        .collect::<Vec<_>>();
     if !next_steps.iter().any(|step| step.contains("`ota doctor`")) {
         next_steps.push(String::from("run `ota doctor` to confirm readiness"));
     }
-    next_steps.push(format!("run `{}`", repo_run_command(task_name, member)));
+    let rerun_command = format!(
+        "run `{}`",
+        repo_run_command_for_backend(task_name, member, backend)
+    );
+    if !next_steps.iter().any(|step| step == &rerun_command) {
+        next_steps.push(rerun_command);
+    }
+
+    let mismatch_summary = if let Some(scope) = mismatch_scope {
+        format!("{scope} {target_kind} mismatch: {subject_name}")
+    } else {
+        format!("{target_kind} mismatch: {subject_name}")
+    };
 
     Some(structured_field_error_text(
         "RUN",
         where_value,
         &format!("tasks.{task_name}.requirements"),
-        &format!("task `{task_name}` is blocked (runtime mismatch: {runtime_name})"),
+        &format!("task `{task_name}` is blocked ({mismatch_summary})"),
         &why_lines,
         &next_steps,
     ))
@@ -62902,11 +62975,11 @@ fn extract_backticked_value_after(value: &str, marker: &str) -> Option<String> {
     (!token.is_empty()).then(|| token.to_string())
 }
 
-fn parse_leading_run_command(next: &str) -> Option<String> {
-    let rest = next.strip_prefix("run `")?;
-    let (command, _) = rest.split_once('`')?;
-    let command = command.trim();
-    (!command.is_empty()).then(|| command.to_string())
+fn normalize_run_blocker_next_step(step: &str) -> String {
+    step
+        .strip_prefix("rerun `")
+        .map(|rest| format!("run `{rest}"))
+        .unwrap_or_else(|| step.to_string())
 }
 
 fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
@@ -64739,6 +64812,19 @@ fn repo_run_stream_command_for_backend(
         Backend::Native => {}
     }
     command.push_str(" --stream");
+    command
+}
+
+fn repo_run_command_for_backend(task_name: &str, member: Option<&str>, backend: Backend) -> String {
+    let mut command = match member {
+        Some(member) => format!("ota run --member {member} {task_name}"),
+        None => format!("ota run {task_name}"),
+    };
+    match backend {
+        Backend::Container => command.push_str(" --mode container"),
+        Backend::Remote => command.push_str(" --mode remote"),
+        Backend::Native => {}
+    }
     command
 }
 
