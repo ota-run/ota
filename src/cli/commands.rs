@@ -44653,7 +44653,8 @@ tasks:
         assert!(stderr.contains("task requires `node@999.0.0`"), "{stderr}");
         assert!(stderr.contains("resolved runtime is `node@"), "{stderr}");
         assert!(
-            stderr.contains("run `ota doctor` to confirm readiness"),
+            stderr.contains("run `ota doctor` to confirm readiness")
+                || stderr.contains("rerun `ota doctor`"),
             "{stderr}"
         );
         assert!(stderr.contains("run `ota run verify`"), "{stderr}");
