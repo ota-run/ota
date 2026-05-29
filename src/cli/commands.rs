@@ -16960,9 +16960,9 @@ fn render_policy_review_text(
     }
 
     let summary = policy_review_summary(report);
-    stdout.push_str(&render_policy_review_overview_text(&summary));
 
     if report.findings.is_empty() {
+        stdout.push_str(&render_policy_review_overview_text(&summary));
         stdout.push_str("\n\n");
         stdout.push_str(&paint(
             "No policy boundary conflicts detected.",
@@ -16975,11 +16975,22 @@ fn render_policy_review_text(
         return stdout;
     }
 
+    let default_policy_path = policy_path.unwrap_or("./.ota/org-policy.yaml");
+    if let Some(blocks) = compact_policy_review_blocks(report, default_policy_path) {
+        stdout.push_str(&render_compact_policy_review_blocks(
+            &blocks,
+            default_policy_path,
+        ));
+        return stdout;
+    }
+
+    stdout.push_str(&render_policy_review_overview_text(&summary));
+
     for group in group_doctor_findings(report.findings.iter()) {
         if matches!(group.kind, DoctorFindingGroupKind::PolicySurface) && group.findings.len() > 1 {
             stdout.push_str(&render_policy_review_policy_surface_group(
                 &group,
-                policy_path.unwrap_or("./.ota/org-policy.yaml"),
+                default_policy_path,
             ));
             continue;
         }
@@ -16990,7 +17001,7 @@ fn render_policy_review_text(
             let why_lines = finding_why_lines(&finding.summary, &finding.why, None);
             let next_steps = finding_next_steps(&policy_review_next_text(
                 &finding.summary,
-                policy_path.unwrap_or("./.ota/org-policy.yaml"),
+                default_policy_path,
                 &finding.next,
             ));
             let source_line = policy_finding_source(&finding.summary, &finding.why).map(|value| {
@@ -17022,6 +17033,118 @@ fn render_policy_review_text(
         stdout.push_str(&render_grouped_doctor_findings(&group, None, None));
     }
 
+    stdout
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CompactPolicyReviewKind {
+    Version,
+    Provisioning,
+    Bootstrap,
+}
+
+struct CompactPolicyReviewBlock {
+    surface: &'static str,
+    approved: &'static str,
+    details: Vec<String>,
+    next: String,
+}
+
+fn compact_policy_review_blocks(
+    report: &DoctorReport,
+    policy_path: &str,
+) -> Option<Vec<CompactPolicyReviewBlock>> {
+    if !report.ok || report.findings.is_empty() {
+        return None;
+    }
+
+    let mut blocks: BTreeMap<CompactPolicyReviewKind, CompactPolicyReviewBlock> = BTreeMap::new();
+
+    for finding in &report.findings {
+        if finding.severity != FindingSeverity::Info {
+            return None;
+        }
+
+        let (kind, surface, approved) = match finding.summary.as_str() {
+            "Policy-backed version rules are declared" => (
+                CompactPolicyReviewKind::Version,
+                "approved version policy",
+                "repo version rules",
+            ),
+            "Policy-backed provisioning sources are declared" => (
+                CompactPolicyReviewKind::Provisioning,
+                "approved provisioning sources",
+                "provisioning for declared prerequisites",
+            ),
+            "Adapter bootstrap sources are declared" => (
+                CompactPolicyReviewKind::Bootstrap,
+                "approved adapter bootstrap",
+                "bootstrap for missing adapters",
+            ),
+            _ => return None,
+        };
+
+        let entry = blocks
+            .entry(kind)
+            .or_insert_with(|| CompactPolicyReviewBlock {
+                surface,
+                approved,
+                details: Vec::new(),
+                next: policy_review_next_text(&finding.summary, policy_path, &finding.next),
+            });
+
+        let mut detail_lines = finding_why_lines(&finding.summary, &finding.why, None);
+        if detail_lines.len() <= 1 {
+            return None;
+        }
+        detail_lines.remove(0);
+        for detail in detail_lines {
+            if !entry.details.contains(&detail) {
+                entry.details.push(detail);
+            }
+        }
+    }
+
+    Some(blocks.into_values().collect())
+}
+
+fn render_compact_policy_review_blocks(
+    blocks: &[CompactPolicyReviewBlock],
+    policy_path: &str,
+) -> String {
+    let mut stdout = String::new();
+    stdout.push_str(&format!(
+        "\n\n{} {}",
+        info_bullet(),
+        paint_section_title("Surfaces")
+    ));
+    for block in blocks {
+        stdout.push_str(&format!("\n  {} {}", next_bullet(), block.surface));
+    }
+
+    stdout.push_str(&format!(
+        "\n\n{} {}",
+        info_bullet(),
+        paint_section_title("Approved")
+    ));
+    for block in blocks {
+        stdout.push_str(&format!("\n  {} {}", next_bullet(), block.approved));
+        for detail in &block.details {
+            stdout.push_str(&format!("\n    - {}", detail));
+        }
+    }
+
+    let mut next_steps = Vec::new();
+    for block in blocks {
+        if !next_steps.contains(&block.next) {
+            next_steps.push(block.next.clone());
+        }
+    }
+    let update_policy_step = format!("update `{policy_path}` to change them");
+    if !next_steps.contains(&update_policy_step) {
+        next_steps.push(update_policy_step);
+    }
+    stdout.push_str(&format_next_timeline(&next_steps));
     stdout
 }
 
@@ -17100,6 +17223,22 @@ fn policy_review_findings(findings: &[Finding], policy_path: &str) -> Vec<Findin
         .cloned()
         .map(|mut finding| {
             finding.next = policy_review_next_text(&finding.summary, policy_path, &finding.next);
+            finding
+        })
+        .collect()
+}
+
+fn retarget_policy_review_followups_for_repo(
+    findings: &[Finding],
+    repo_path: &Path,
+) -> Vec<Finding> {
+    findings
+        .iter()
+        .cloned()
+        .map(|mut finding| {
+            if finding.next.contains("`ota policy review`") {
+                finding.next = rewrite_repo_scoped_command_targets(&finding.next, repo_path);
+            }
             finding
         })
         .collect()
@@ -20969,6 +21108,7 @@ pub fn receipt(
                 render_repo_receipt(
                     &text_path_display,
                     &path_display,
+                    &target.contract_path,
                     &RepoReceiptReport {
                         receipt,
                         findings,
@@ -46032,10 +46172,13 @@ tasks:
         assert!(text.contains("Policy"));
         assert!(text.contains(" »  Source: repo policy"));
         assert!(text.contains(" »  Path: ./.ota/org-policy.yaml"));
-        assert!(text.contains("◉ INFO  Approved version policy is configured (2)"));
-        assert!(text.contains("Why:\n  » `.ota/org-policy.yaml` approves repo version rules"));
-        assert!(text.contains("  » runtime `java` (versions `>=21`)"));
-        assert!(text.contains("  » tool `node` (versions `24.14.1`)"));
+        assert!(!text.contains("Overview"));
+        assert!(text.contains("Surfaces"));
+        assert!(text.contains("Approved"));
+        assert!(text.contains("  » approved version policy"));
+        assert!(text.contains("  » repo version rules"));
+        assert!(text.contains("    - runtime `java` (versions `>=21`)"));
+        assert!(text.contains("    - tool `node` (versions `24.14.1`)"));
         assert!(text.contains("keep repo-declared versions inside these approved ranges"));
         assert!(text.contains("`./.ota/org-policy.yaml`"));
     }
@@ -46086,22 +46229,61 @@ tasks:
             &report,
         ));
 
-        assert!(
-            text.contains("◉ INFO  Approved provisioning and bootstrap surfaces are configured")
-        );
+        assert!(!text.contains("Overview"));
+        assert!(text.contains("Surfaces"));
+        assert!(text.contains("Approved"));
+        assert!(text.contains("  » approved provisioning sources"));
+        assert!(text.contains("  » approved adapter bootstrap"));
+        assert!(text.contains("  » provisioning for declared prerequisites"));
+        assert!(text.contains("  » bootstrap for missing adapters"));
+        assert!(text.contains("    - curl via `brew (versions 8.7.1)`"));
+        assert!(text.contains("    - brew via `brew-bootstrap`"));
         assert!(text.contains(
-            "Why:\n  » `./.ota/org-policy.yaml` approves provisioning sources for declared prerequisites"
+            "use these approved sources when repo prerequisites need a governed install path"
         ));
         assert!(text.contains(
-            "  » `./.ota/org-policy.yaml` approves bootstrap sources for missing adapter binaries"
+            "use these approved bootstrap sources when missing adapters need a governed install path"
         ));
-        assert!(text.contains("Details:"));
-        assert!(text.contains("  » Approved provisioning sources are configured"));
-        assert!(text.contains("  » Approved adapter bootstrap is configured"));
-        assert!(text.contains(
-            "Next: use these approved sources when repo prerequisites or adapters need a governed install path, or update"
-        ));
+        assert!(text.contains("update `./.ota/org-policy.yaml` to change them"));
         assert!(text.contains("`./.ota/org-policy.yaml`"));
+    }
+
+    #[test]
+    fn policy_review_falls_back_to_detailed_layout_when_policy_detail_parsing_is_weak() {
+        let report = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                severity: FindingSeverity::Info,
+                summary: String::from("Policy-backed provisioning sources are declared"),
+                why: String::from("approved provisioning is configured"),
+                next: String::from(
+                    "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
+                ),
+            }],
+        };
+        let loaded = super::LoadedOrgPolicyPack {
+            pack: OrgPolicyPack {
+                policies: PolicyRules::default(),
+            },
+            path: std::path::PathBuf::from("./.ota/org-policy.yaml"),
+            source: PolicyPackSource::RepoPolicy,
+        };
+
+        let text = strip_ansi_codes(&super::render_policy_review_text(
+            "./ota.yaml",
+            "repo policy",
+            Some("./.ota/org-policy.yaml"),
+            Some(&loaded),
+            &report,
+        ));
+
+        assert!(text.contains("Overview"));
+        assert!(text.contains("◉ INFO  Approved provisioning sources are configured"));
+        assert!(!text.contains("Surfaces"));
+        assert!(!text.contains("Approved\n  » provisioning for declared prerequisites"));
     }
 
     #[test]
@@ -71872,6 +72054,7 @@ fn provisioning_phase_execution_context(
 fn render_repo_receipt(
     text_path: &str,
     json_path: &str,
+    contract_path: &Path,
     report: &RepoReceiptReport,
     format: OutputFormat,
 ) -> CommandOutput {
@@ -71921,6 +72104,8 @@ fn render_repo_receipt(
                     .archive_path
                     .as_ref()
                     .map(|path| receipt_storage_path_display(path));
+                let findings =
+                    retarget_policy_review_followups_for_repo(&report.findings, contract_path);
                 let payload = ReceiptSuccess {
                     ok: report.receipt.ok,
                     path: json_path,
@@ -71929,7 +72114,7 @@ fn render_repo_receipt(
                     receipt: report.receipt.clone(),
                     archive_path: archive_path.as_deref(),
                     promoted_baseline: report.promoted_baseline.clone(),
-                    findings: &report.findings,
+                    findings: &findings,
                 };
                 to_json(&payload)
             },
