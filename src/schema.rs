@@ -287,6 +287,7 @@ impl Contract {
                 continue;
             };
             names.extend(task.requirements.env.iter().cloned());
+            names.extend(task.all_env_binding_password_env_names());
         }
         names
     }
@@ -2163,6 +2164,8 @@ pub struct TaskServiceEnvBindingSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_env: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub database: Option<String>,
 }
 
@@ -3360,7 +3363,66 @@ impl TaskSpec {
             .selected_any_of(backend, context_name)
             .map(|branch| branch.env.as_slice())
             .unwrap_or_default();
-        merged_named_requirements(&self.requirements.env, overlay)
+        let mut names = merged_named_requirements(&self.requirements.env, overlay);
+        for password_env in self.env_binding_password_env_names_for_backend(backend) {
+            if !names.iter().any(|name| name == &password_env) {
+                names.push(password_env);
+            }
+        }
+        names
+    }
+
+    pub fn all_env_binding_password_env_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        for binding in self.env_bindings.values() {
+            if let Some(password_env) = binding
+                .from_service
+                .password_env
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                && !names.iter().any(|name| name == password_env)
+            {
+                names.push(password_env.to_string());
+            }
+        }
+        if let Some(execution) = self.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                for binding in branch.env_bindings.values() {
+                    if let Some(password_env) = binding
+                        .from_service
+                        .password_env
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        && !names.iter().any(|name| name == password_env)
+                    {
+                        names.push(password_env.to_string());
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    pub fn env_binding_password_env_names_for_backend(&self, backend: Backend) -> Vec<String> {
+        let mut names = Vec::new();
+        for binding in self
+            .env_bindings_for_backend_with_context_name(None, backend, None)
+            .values()
+        {
+            if let Some(password_env) = binding
+                .from_service
+                .password_env
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                && !names.iter().any(|name| name == password_env)
+            {
+                names.push(password_env.to_string());
+            }
+        }
+        names
     }
 
     pub fn scoped_check_requirements_for_execution(

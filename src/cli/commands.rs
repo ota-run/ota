@@ -37935,14 +37935,23 @@ fn rewrite_up_preview_next_command(
 ) -> String {
     let next = rewrite_doctor_mode_command(next, doctor_mode, doctor_lifecycle);
     let target = up_preview_selected_command(doctor_mode, doctor_lifecycle);
-    [
-        "ota doctor --mode container",
-        "ota doctor --mode remote",
-        "ota doctor --mode native",
-        "ota doctor",
-    ]
-    .into_iter()
-    .fold(next, |rewritten, source| {
+    let mut sources = vec![String::from("ota doctor")];
+    if let Some(mode) = doctor_mode {
+        sources.push(
+            match mode {
+                DoctorMode::Container => "ota doctor --mode container",
+                DoctorMode::Remote => "ota doctor --mode remote",
+                DoctorMode::Native => "ota doctor --mode native",
+            }
+            .to_string(),
+        );
+    }
+    if let Some(selected_doctor_command) = doctor_selected_command(doctor_mode, doctor_lifecycle) {
+        sources.push(selected_doctor_command);
+    }
+    sources.sort();
+    sources.dedup();
+    sources.into_iter().fold(next, |rewritten, source| {
         rewritten.replace(&format!("`{source}`"), &format!("`{target}`"))
     })
 }
@@ -47418,6 +47427,31 @@ tasks:
 
         assert!(rewritten.contains("`ota doctor --mode native`"));
         assert!(rewritten.contains("`ota run <task> --mode container`"));
+    }
+
+    #[test]
+    fn rewrite_up_preview_next_command_preserves_explicit_native_guidance_when_selected_mode_is_container()
+     {
+        let rewritten = super::rewrite_up_preview_next_command(
+            "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
+            Some(DoctorMode::Container),
+            Some(Lifecycle::Ephemeral),
+        );
+
+        assert!(rewritten.contains("`ota doctor --mode native`"));
+        assert!(!rewritten.contains("`ota up --dry-run --mode container --lifecycle ephemeral`"));
+    }
+
+    #[test]
+    fn rewrite_up_preview_next_command_rewrites_selected_mode_guidance_to_up_preview() {
+        let rewritten = super::rewrite_up_preview_next_command(
+            "install the selected image requirements, then rerun `ota doctor --mode container`",
+            Some(DoctorMode::Container),
+            Some(Lifecycle::Ephemeral),
+        );
+
+        assert!(rewritten.contains("`ota up --dry-run --mode container --lifecycle ephemeral`"));
+        assert!(!rewritten.contains("`ota doctor --mode container`"));
     }
 
     #[test]

@@ -2436,6 +2436,93 @@ fn validate_task_env_bindings(
                 "task `{task_name}` env binding `{name}` must not declare an empty `from_service.username`"
             )));
         }
+        let password = binding
+            .from_service
+            .password
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let password_env = binding
+            .from_service
+            .password_env
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if binding
+            .from_service
+            .password
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` must not declare an empty `from_service.password`"
+            )));
+        }
+        if binding
+            .from_service
+            .password_env
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` must not declare an empty `from_service.password_env`"
+            )));
+        }
+        if password.is_some() && password_env.is_some() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` must not declare both `from_service.password` and `from_service.password_env`; keep one password source"
+            )));
+        }
+        if (password.is_some() || password_env.is_some())
+            && binding
+                .from_service
+                .username
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` must declare `from_service.username` when a password source is configured"
+            )));
+        }
+        if (password.is_some() || password_env.is_some())
+            && binding
+                .from_service
+                .format
+                .is_some_and(|format| format != crate::schema::TaskServiceEnvBindingFormat::Url)
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` can only use password fields with `from_service.format: url`"
+            )));
+        }
+        if (password.is_some() || password_env.is_some())
+            && !contract
+                .env
+                .vars
+                .get(name)
+                .is_some_and(|requirement| requirement.secret)
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` includes a password source, so `env.vars.{name}.secret: true` must be declared for redaction"
+            )));
+        }
+        if let Some(password_env) = password_env {
+            if !is_valid_env_key_name(password_env) {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` env binding `{name}` has invalid `from_service.password_env` value `{password_env}`; use an env key like `POSTGRES_PASSWORD`"
+                )));
+            }
+            match contract.env.vars.get(password_env) {
+                Some(requirement) if requirement.secret => {}
+                Some(_) => errors.push(ValidationError::new(format!(
+                    "task `{task_name}` env binding `{name}` references `from_service.password_env: {password_env}`, so `env.vars.{password_env}.secret: true` must be declared"
+                ))),
+                None => errors.push(ValidationError::new(format!(
+                    "task `{task_name}` env binding `{name}` references unknown `from_service.password_env: {password_env}`; declare it under `env.vars` with `secret: true`"
+                ))),
+            }
+        }
         if let Some(database) = binding.from_service.database.as_deref()
             && database.trim().is_empty()
         {
@@ -14262,6 +14349,123 @@ tasks:
             error.to_string().contains(
                 "task `test` env binding `DATABASE_URL` references unknown service `postgres`",
             )
+        }));
+    }
+
+    #[test]
+    fn accepts_task_env_binding_password_env_when_secret_boundaries_are_declared() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      secret: true
+    POSTGRES_PASSWORD:
+      secret: true
+execution:
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  test:
+    run: echo test
+    env_bindings:
+      DATABASE_URL:
+        from_service:
+          service: postgres
+          scheme: postgres
+          username: postgres
+          password_env: POSTGRES_PASSWORD
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("password_env binding should validate");
+    }
+
+    #[test]
+    fn rejects_task_env_binding_password_without_redacted_output_env() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  test:
+    run: echo test
+    env_bindings:
+      DATABASE_URL:
+        from_service:
+          service: postgres
+          scheme: postgres
+          username: postgres
+          password: postgres
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("env.vars.DATABASE_URL.secret: true` must be declared for redaction")
+        }));
+    }
+
+    #[test]
+    fn rejects_task_env_binding_password_env_without_secret_source_env() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      secret: true
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  test:
+    run: echo test
+    env_bindings:
+      DATABASE_URL:
+        from_service:
+          service: postgres
+          scheme: postgres
+          username: postgres
+          password_env: POSTGRES_PASSWORD
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("references unknown `from_service.password_env: POSTGRES_PASSWORD`")
         }));
     }
 

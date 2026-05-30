@@ -203,14 +203,15 @@ tasks:
     category: test
     script: |
       set -e
-      cargo test contract_is_stable
-      cargo test --test json_schema_contracts
-      cargo test --test json_output_conformance
-      cargo test --test detect_fixtures
+      CARGO_INCREMENTAL=0 cargo test contract_is_stable
+      CARGO_INCREMENTAL=0 cargo test --test json_schema_contracts
+      CARGO_INCREMENTAL=0 cargo test --test json_output_conformance
+      CARGO_INCREMENTAL=0 cargo test --test detect_fixtures
     variants:
       - when:
           os: windows
         script: |
+          $env:CARGO_INCREMENTAL = "0"
           cargo test contract_is_stable
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --test json_schema_contracts

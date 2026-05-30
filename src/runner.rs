@@ -1581,6 +1581,7 @@ fn render_service_env_binding_url(
     binding: &TaskServiceEnvBindingSpec,
     address: &str,
     port: u16,
+    password_env_values: Option<&BTreeMap<String, ResolvedEnvValue>>,
 ) -> String {
     match binding.format.unwrap_or(TaskServiceEnvBindingFormat::Url) {
         TaskServiceEnvBindingFormat::Host => return address.to_string(),
@@ -1606,13 +1607,8 @@ fn render_service_env_binding_url(
         .filter(|value| !value.is_empty())
         .map(|username| {
             let username = url_component_encode(username);
-            let password = binding
-                .password
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(url_component_encode)
-                .map(|password| format!(":{password}"))
+            let password = service_env_binding_password(binding, password_env_values)
+                .map(|password| format!(":{}", url_component_encode(password.as_str())))
                 .unwrap_or_default();
             format!("{username}{password}@")
         })
@@ -1629,12 +1625,36 @@ fn render_service_env_binding_url(
     format!("{scheme}://{auth}{host_port}{path}")
 }
 
+fn service_env_binding_password(
+    binding: &TaskServiceEnvBindingSpec,
+    password_env_values: Option<&BTreeMap<String, ResolvedEnvValue>>,
+) -> Option<String> {
+    binding
+        .password
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            let password_env = binding
+                .password_env
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            password_env_values
+                .and_then(|values| values.get(password_env))
+                .map(|resolved| resolved.value.clone())
+                .or_else(|| std::env::var(password_env).ok())
+        })
+}
+
 fn service_env_bindings_for_task(
     contract: &Contract,
     task: &TaskSpec,
     backend: Backend,
     context_name: Option<&str>,
     engine_hint: Option<&str>,
+    password_env_values: Option<&BTreeMap<String, ResolvedEnvValue>>,
 ) -> BTreeMap<String, String> {
     task.env_bindings_for_backend_with_context_name(
         contract.execution.as_ref(),
@@ -1669,7 +1689,12 @@ fn service_env_bindings_for_task(
         );
         Some((
             name,
-            render_service_env_binding_url(&binding.from_service, address.as_str(), endpoint.port),
+            render_service_env_binding_url(
+                &binding.from_service,
+                address.as_str(),
+                endpoint.port,
+                password_env_values,
+            ),
         ))
     })
     .collect()
@@ -1777,6 +1802,16 @@ pub(crate) fn effective_task_env_for_backend(
     backend: &ResolvedExecutionBackend,
     working_dir: &Path,
 ) -> BTreeMap<String, String> {
+    effective_task_env_for_backend_with_resolved_env(contract, task, backend, working_dir, None)
+}
+
+fn effective_task_env_for_backend_with_resolved_env(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: &ResolvedExecutionBackend,
+    working_dir: &Path,
+    password_env_values: Option<&BTreeMap<String, ResolvedEnvValue>>,
+) -> BTreeMap<String, String> {
     let ota_workspace = ota_workspace_for_backend(working_dir, backend);
     let backend_kind = resolved_execution_backend_kind(backend);
     let engine_hint = match backend {
@@ -1805,6 +1840,7 @@ pub(crate) fn effective_task_env_for_backend(
         backend_kind,
         context_name,
         engine_hint,
+        password_env_values,
     ));
     env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
     env
@@ -1877,6 +1913,7 @@ pub(crate) fn effective_task_env_for_selection(
         backend,
         context_name,
         engine_hint.as_deref(),
+        None,
     ));
     env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
     Some(env)
@@ -5711,7 +5748,21 @@ fn execute_task_with_hooks(
                 os: current_os.to_string(),
             });
         };
-    let task_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
+    let initial_task_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
+    let initial_env_details = resolve_task_env_details_for_task_with_policy(
+        contract,
+        contract_path,
+        task_name,
+        Some(&initial_task_env),
+        policy_env,
+    )?;
+    let task_env = effective_task_env_for_backend_with_resolved_env(
+        contract,
+        task,
+        &backend,
+        working_dir,
+        Some(&initial_env_details),
+    );
     let env_details = resolve_task_env_details_for_task_with_policy(
         contract,
         contract_path,
@@ -22602,12 +22653,19 @@ tasks:
 
     #[test]
     fn service_env_binding_projects_host_service_for_container_task() {
+        let _guard = env_mutex_lock();
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
 version: 1
 project:
   name: ota
+env:
+  vars:
+    DATABASE_URL:
+      secret: true
+    POSTGRES_PASSWORD:
+      secret: true
 execution:
   default_context: host
   contexts:
@@ -22646,12 +22704,16 @@ tasks:
                 view: host
                 scheme: postgres
                 username: postgres
-                password: postgres
+                password_env: POSTGRES_PASSWORD
                 database: athena_api_test
 "#,
         )
         .unwrap();
 
+        let original = env::var_os("POSTGRES_PASSWORD");
+        unsafe {
+            env::set_var("POSTGRES_PASSWORD", "postgres");
+        }
         let env = effective_task_env_for_selection(
             &contract,
             "test",
@@ -22662,11 +22724,84 @@ tasks:
             Path::new("/repo"),
         )
         .unwrap();
+        match original {
+            Some(value) => unsafe { env::set_var("POSTGRES_PASSWORD", value) },
+            None => unsafe { env::remove_var("POSTGRES_PASSWORD") },
+        }
 
         assert_eq!(
             env.get("DATABASE_URL").map(String::as_str),
             Some("postgres://postgres:postgres@host.docker.internal:5432/athena_api_test")
         );
+    }
+
+    #[test]
+    fn service_env_binding_password_env_is_required_for_selected_task() {
+        let _guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      secret: true
+    POSTGRES_PASSWORD:
+      secret: true
+execution:
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  test:
+    run: bundle exec rspec
+    env_bindings:
+      DATABASE_URL:
+        from_service:
+          service: postgres
+          view: host
+          scheme: postgres
+          username: postgres
+          password_env: POSTGRES_PASSWORD
+"#,
+        )
+        .unwrap();
+
+        let original = env::var_os("POSTGRES_PASSWORD");
+        unsafe {
+            env::remove_var("POSTGRES_PASSWORD");
+        }
+        let task_env = effective_task_env_for_selection(
+            &contract,
+            "test",
+            ExecutionOverrides::default(),
+            Path::new("/repo"),
+        )
+        .unwrap();
+        let error = resolve_task_env_details_for_task(
+            &contract,
+            Path::new("ota.yaml"),
+            "test",
+            Some(&task_env),
+        )
+        .unwrap_err();
+        match original {
+            Some(value) => unsafe { env::set_var("POSTGRES_PASSWORD", value) },
+            None => unsafe { env::remove_var("POSTGRES_PASSWORD") },
+        }
+
+        assert!(matches!(
+            error,
+            RunError::MissingRequiredEnv { name } if name == "POSTGRES_PASSWORD"
+        ));
     }
 
     #[test]
