@@ -58135,6 +58135,55 @@ tasks:
     }
 
     #[test]
+    fn run_failure_text_surfaces_container_apt_permission_guidance() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ruby:3.3.11-bookworm
+tasks:
+  install:
+    context: app
+    run: apt-get update && apt-get install -y libpq-dev
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "install",
+            "install",
+            None,
+            ExecutionOverrides::default(),
+            100,
+            "Reading package lists...",
+            "E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nMode:        container",
+        ));
+
+        assert!(
+            rendered.contains(
+                "container tasks run as non-root so `apt-get` cannot write system package state"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_failure_text_classifies_managed_isolated_path_runtime_mutation() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -64067,6 +64116,13 @@ fn render_run_captured_failure_text(
     let mut next_steps = Vec::new();
     let excerpt = run_output_excerpt(stdout, stderr, 20);
     let rerun_backend = effective_task_execution(contract, task_name, overrides).backend;
+    if matches!(rerun_backend, Backend::Container)
+        && detect_container_apt_permission_denied(stdout, stderr)
+    {
+        next_steps.push(String::from(
+            "move OS package installation out of the task command and bake required packages into `execution.contexts.<name>.container.image`; container tasks run as non-root so `apt-get` cannot write system package state",
+        ));
+    }
     if excerpt.is_some() {
         next_steps.push(format!(
             "rerun `{}` for live task output if the excerpt is insufficient",
@@ -64198,6 +64254,17 @@ fn managed_isolated_paths_for_task(contract: &Contract, task_name: &str) -> Vec<
         .into_iter()
         .map(|isolated_path| (context_name.to_string(), isolated_path))
         .collect()
+}
+
+fn detect_container_apt_permission_denied(stdout: &str, stderr: &str) -> bool {
+    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    let mentions_apt = combined.contains("apt-get")
+        || combined.contains("reading package lists")
+        || combined.contains("/var/lib/apt/lists");
+    let mentions_permission = combined.contains("permission denied")
+        || combined.contains("acquire (13)")
+        || combined.contains("eacces");
+    mentions_apt && mentions_permission
 }
 
 fn render_managed_isolated_path_failure_text(

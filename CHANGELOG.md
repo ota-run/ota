@@ -49,6 +49,9 @@
 - fixed `ota run <task> --dry-run --mode container` next-step rewriting so explicit host-readiness
   guidance (`ota doctor --mode native`) is preserved instead of being rewritten to container-mode
   `ota up --dry-run` commands
+- added targeted run-failure guidance for container non-root package-install errors (for example
+  `apt-get` permission failures on `/var/lib/apt/lists`) so Ota points operators to baking OS
+  dependencies into the container image instead of installing them inside task commands
 
 ## 1.6.18
 
