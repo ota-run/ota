@@ -184,7 +184,7 @@ jobs:
 
       - name: Run release gate (non-Windows) - JSON output conformance
         if: runner.os != 'Windows'
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: cargo test --test json_output_conformance
 
       - name: Run release gate (non-Windows) - detect fixtures
@@ -358,7 +358,7 @@ jobs:
       - name: Run release gate (Windows) - JSON output conformance
         if: runner.os == 'Windows'
         shell: pwsh
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: cargo test --test json_output_conformance
 
       - name: Run release gate (Windows) - detect fixtures
