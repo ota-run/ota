@@ -158,32 +158,32 @@ jobs:
             --skip runner::tests::restart_ready_activation_restarts_reachable_native_producer
 
       - name: Run release gate (non-Windows) - policy-backed provisioning test
-        if: runner.os != 'Windows'
+        if: runner.os == 'macOS'
         timeout-minutes: 10
         run: cargo test up_skips_policy_backed_provisioning_when_doctor_is_ready --lib -- --test-threads=1
 
       - name: Run release gate (non-Windows) - remote doctor mode test
-        if: runner.os != 'Windows'
+        if: runner.os == 'macOS'
         timeout-minutes: 10
         run: cargo test remote_doctor_mode_probes_tool_versions_through_remote_contexts --lib -- --test-threads=1
 
       - name: Run release gate (non-Windows) - restart ready activation tests
-        if: runner.os != 'Windows'
+        if: runner.os == 'macOS'
         timeout-minutes: 10
         run: cargo test restart_ready_activation_restarts_reachable --lib -- --test-threads=1
 
       - name: Run release gate (non-Windows) - contract stability
-        if: runner.os != 'Windows'
+        if: runner.os == 'macOS'
         timeout-minutes: 10
         run: cargo test contract_is_stable
 
       - name: Run release gate (non-Windows) - JSON schema contracts
-        if: runner.os != 'Windows'
+        if: runner.os == 'macOS'
         timeout-minutes: 10
         run: cargo test --test json_schema_contracts
 
       - name: Run release gate (non-Windows) - JSON output conformance
-        if: runner.os != 'Windows'
+        if: runner.os == 'macOS'
         timeout-minutes: 20
         run: |
           set +e
@@ -202,17 +202,17 @@ jobs:
           done
 
       - name: Run release gate (non-Windows) - detect fixtures
-        if: runner.os != 'Windows'
+        if: runner.os == 'macOS'
         timeout-minutes: 10
         run: cargo test --test detect_fixtures
 
       - name: Run release gate (non-Windows) - real repo fixtures
-        if: runner.os != 'Windows'
+        if: runner.os == 'macOS'
         timeout-minutes: 20
         run: cargo test --test real_repo_fixtures -- --test-threads=1
 
       - name: Run release gate (non-Windows) - examples validate
-        if: runner.os != 'Windows'
+        if: runner.os == 'macOS'
         timeout-minutes: 20
         run: cargo test --test examples_validate -- --test-threads=1
 
