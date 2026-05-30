@@ -172,7 +172,7 @@ impl StarterPack {
                 toolchains: &["node"],
                 runtimes: &[],
                 tools: &[],
-                checks: &["node-installed"],
+                checks: &[],
                 tasks: &["setup", "dev", "test"],
                 options: NODE_PACK_OPTIONS,
                 does_not_infer: &[
@@ -187,8 +187,8 @@ impl StarterPack {
                 when: "Use this for Python repos that should start from toolchain-owned Python (`toolchains.python`) and uv-managed task execution. The default test path uses `uv run pytest`, and you can switch to `uv run python -m unittest` with `--test-runner unittest` when that is the repo's conventional test entrypoint.",
                 toolchains: &["python"],
                 runtimes: &[],
-                tools: &["uv"],
-                checks: &["python-installed"],
+                tools: &[],
+                checks: &[],
                 tasks: &["setup", "test"],
                 options: PYTHON_PACK_OPTIONS,
                 does_not_infer: &[
@@ -203,7 +203,7 @@ impl StarterPack {
                 toolchains: &["go"],
                 runtimes: &[],
                 tools: &[],
-                checks: &["go-installed"],
+                checks: &[],
                 tasks: &["setup", "build", "test"],
                 options: NO_PACK_OPTIONS,
                 does_not_infer: &[
@@ -217,7 +217,7 @@ impl StarterPack {
                 toolchains: &["rust"],
                 runtimes: &[],
                 tools: &[],
-                checks: &["rust-installed"],
+                checks: &[],
                 tasks: &["setup", "build", "test"],
                 options: NO_PACK_OPTIONS,
                 does_not_infer: &[
@@ -2032,14 +2032,6 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     .tools
                     .insert(String::from(tool), String::from(version));
             }
-            contract.checks.push(DetectCheck {
-                name: String::from("node-installed"),
-                kind: DetectCheckKind::Precondition,
-                severity: DetectCheckSeverity::Error,
-                run: String::from("node --version"),
-                path: None,
-                expect: None,
-            });
             contract.tasks.insert(
                 String::from("setup"),
                 pack_task(
@@ -2078,15 +2070,6 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     fulfillment: None,
                 },
             );
-            contract.tools.insert(String::from("uv"), String::from("*"));
-            contract.checks.push(DetectCheck {
-                name: String::from("python-installed"),
-                kind: DetectCheckKind::Precondition,
-                severity: DetectCheckSeverity::Error,
-                run: String::from("python --version"),
-                path: None,
-                expect: None,
-            });
             contract.tasks.insert(
                 String::from("setup"),
                 pack_task(
@@ -2121,14 +2104,6 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     fulfillment: None,
                 },
             );
-            contract.checks.push(DetectCheck {
-                name: String::from("go-installed"),
-                kind: DetectCheckKind::Precondition,
-                severity: DetectCheckSeverity::Error,
-                run: String::from("go version"),
-                path: None,
-                expect: None,
-            });
             contract.tasks.insert(
                 String::from("setup"),
                 pack_task(
@@ -2164,14 +2139,6 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     fulfillment: None,
                 },
             );
-            contract.checks.push(DetectCheck {
-                name: String::from("rust-installed"),
-                kind: DetectCheckKind::Precondition,
-                severity: DetectCheckSeverity::Error,
-                run: String::from("rustc --version"),
-                path: None,
-                expect: None,
-            });
             contract.tasks.insert(
                 String::from("setup"),
                 pack_task(

@@ -27,8 +27,14 @@
 ## Unreleased
 
 - added first-class check-only `toolchains.go` ownership for Go repos, updated the Go starter pack
-  to emit `provider: go` instead of split `runtimes.go` ownership, and kept starter-pack agent
-  boundary inference aligned with toolchain-owned Node/Python/Go/Rust stacks
+  to emit `provider: go` instead of split `runtimes.go` ownership, removed duplicate
+  toolchain-owned `*-installed` starter checks from Node/Python/Go/Rust packs, and kept
+  starter-pack agent boundary inference aligned with toolchain-owned stacks
+- tightened uv-backed Python ownership so `toolchains.python` owns the `uv` tool surface and
+  starter packs no longer duplicate it under top-level `tools.uv`
+- reject env requirements that combine `secret: true` with a contract `default` during validation,
+  so `ota validate`, `ota doctor`, and dry-run previews fail before task execution reaches env
+  resolution
 - clarified container image acquisition failures during container runtime/tool probes so Ota reports
   one actionable container-image blocker instead of downstream runtime/tool probe noise
 - fixed `ota run <task> --dry-run` precondition scoping so task previews evaluate only the

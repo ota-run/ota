@@ -1803,6 +1803,12 @@ fn validate_env(env: &EnvConfig, errors: &mut Vec<ValidationError>) {
             errors.push(ValidationError::new("env keys must not be empty"));
         }
 
+        if requirement.secret && requirement.default.is_some() {
+            errors.push(ValidationError::new(format!(
+                "env `{name}` cannot declare both `secret: true` and a `default` value"
+            )));
+        }
+
         for value in &requirement.prepend {
             if value.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
@@ -8782,6 +8788,34 @@ tasks:
         if let Err(errors) = validate_contract(&contract) {
             panic!("unexpected validation errors: {errors}");
         }
+    }
+
+    #[test]
+    fn rejects_secret_env_defaults_during_contract_validation() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DB_PASSWORD:
+      secret: true
+      default: postgres
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("secret env defaults should be rejected during validation");
+
+        assert!(errors.to_string().contains(
+            "env `DB_PASSWORD` cannot declare both `secret: true` and a `default` value"
+        ));
     }
 
     #[test]
@@ -20059,6 +20093,39 @@ tools:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "toolchain `node` owns tool `pnpm`, but the contract also declares `tools.pnpm`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ownership_for_uv_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+tools:
+  uv: "*"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate uv tool ownership should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `python` owns tool `uv`, but the contract also declares `tools.uv`",
             )),
             "{rendered:?}"
         );
