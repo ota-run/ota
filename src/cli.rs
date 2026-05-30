@@ -30139,8 +30139,9 @@ tools:
         assert!(stdout.contains("  » it is not available in the configured container image"));
         assert!(stdout.contains("  » `execution.backends.container.image = rust:1.94-bookworm`"));
         let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(normalized.contains("rerun `ota doctor --mode container --lifecycle ephemeral`"));
-        assert!(!stdout.contains("rerun `ota up --dry-run --mode container`"));
+        assert!(normalized
+            .contains("rerun `ota up --dry-run --mode container --lifecycle ephemeral`"));
+        assert!(!stdout.contains("rerun `ota doctor --mode container --lifecycle ephemeral`"));
     }
 
     #[test]

@@ -38,12 +38,17 @@
 - fixed `ota run <task> --dry-run` env reporting so mode-specific task env overrides are resolved
   against the selected execution mode instead of the task's default/native path
 - added task `env_bindings.<NAME>.from_service` so contracts can derive task environment values
-  from declared service endpoints, including container callers that need host-view services
+  from declared service endpoints, including container callers that need host-view services, and
+  added `password_env` for secret-safe service URL credentials while keeping literal `password`
+  limited to documented local/dev use
 - clarified container image acquisition failures during container runtime/tool probes so Ota reports
   one actionable container-image blocker instead of downstream runtime/tool probe noise
 - fixed `ota run <task> --dry-run` precondition scoping so task previews evaluate only the
   selected task dependency path, avoiding unrelated top-level precondition/native-prerequisite
   checks while still blocking when the selected task actually requires them
+- fixed `ota run <task> --dry-run --mode container` next-step rewriting so explicit host-readiness
+  guidance (`ota doctor --mode native`) is preserved instead of being rewritten to container-mode
+  `ota up --dry-run` commands
 
 ## 1.6.18
 

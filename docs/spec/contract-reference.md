@@ -1137,6 +1137,23 @@ tasks:
 This sets ordinary task-scoped env values directly.
 
 ```yaml
+env:
+  vars:
+    DATABASE_URL:
+      secret: true
+    POSTGRES_PASSWORD:
+      secret: true
+execution:
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+
 tasks:
   test:
     requires_services:
@@ -1149,7 +1166,7 @@ tasks:
           format: url
           scheme: postgres
           username: postgres
-          password: postgres
+          password_env: POSTGRES_PASSWORD
           database: app_test
       DB_HOST:
         from_service:
@@ -1162,6 +1179,44 @@ This derives task env values from declared service endpoints. It is useful when 
 run natively or inside a container: Ota keeps the service dependency in `requires_services`, then
 projects the selected service view into env without hand-writing container host aliases such as
 `host.docker.internal`.
+
+Use `password_env` for real credentials. The referenced env var must be declared under `env.vars`
+with `secret: true`, and the generated env value (for example `DATABASE_URL`) must also be declared
+secret so Ota can redact it in receipts and summaries.
+
+Literal `password` is supported only for local/dev fixtures with non-sensitive credentials, for
+example a disposable `postgres` password in a test container:
+
+```yaml
+env:
+  vars:
+    DATABASE_URL:
+      secret: true
+execution:
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+
+tasks:
+  test:
+    env_bindings:
+      DATABASE_URL:
+        from_service:
+          service: postgres
+          format: url
+          scheme: postgres
+          username: postgres
+          password: postgres
+          database: app_test
+```
+
+Do not store production, shared, or personal credentials in `password`; use `password_env` instead.
 
 Example:
 
