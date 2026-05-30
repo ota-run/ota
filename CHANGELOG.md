@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.18
+
 - added `--ready-timeout <DURATION>` to `ota proof runtime` so runtime-proof readiness waits are
   explicitly bounded in CI and local automation (for example `90s`, `5m`, `1h`), aligned timeout
   failures to the explicit `TIMEOUT` runtime-proof status, and normalized timeout-only JSON

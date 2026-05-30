@@ -131,24 +131,76 @@ jobs:
         run: |
           Remove-Item -Path "$env:TEMP\ota-test-locks" -Recurse -Force -ErrorAction SilentlyContinue
 
-      - name: Run release gate (non-Windows)
+      - name: Run release gate (non-Windows) - cargo version
         if: runner.os != 'Windows'
+        timeout-minutes: 2
+        run: cargo --version
+
+      - name: Run release gate (non-Windows) - fmt
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        run: cargo fmt --check
+
+      - name: Run release gate (non-Windows) - check
+        if: runner.os != 'Windows'
+        timeout-minutes: 20
+        run: cargo check
+
+      - name: Run release gate (non-Windows) - lib tests (core)
+        if: runner.os != 'Windows'
+        timeout-minutes: 45
         run: |
-          set -euo pipefail
-          if command -v rustup >/dev/null 2>&1; then
-            CARGO_PATH="$(rustup which cargo)"
-          elif command -v cargo >/dev/null 2>&1; then
-            CARGO_PATH="$(command -v cargo)"
-          else
-            echo "cargo not found after install"
-            exit 1
-          fi
-          CARGO_DIR="$(dirname "$CARGO_PATH")"
-          export PATH="${CARGO_DIR}:$PATH"
-          echo "Using cargo at $CARGO_PATH"
-          command -v cargo
-          "$CARGO_PATH" --version
-          ota run release-gate --backend native --stream
+          cargo test --lib -- --test-threads=1 \
+            --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready \
+            --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts \
+            --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer \
+            --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target \
+            --skip runner::tests::restart_ready_activation_restarts_reachable_native_producer
+
+      - name: Run release gate (non-Windows) - policy-backed provisioning test
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        run: cargo test up_skips_policy_backed_provisioning_when_doctor_is_ready --lib -- --test-threads=1
+
+      - name: Run release gate (non-Windows) - remote doctor mode test
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        run: cargo test remote_doctor_mode_probes_tool_versions_through_remote_contexts --lib -- --test-threads=1
+
+      - name: Run release gate (non-Windows) - restart ready activation tests
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        run: cargo test restart_ready_activation_restarts_reachable --lib -- --test-threads=1
+
+      - name: Run release gate (non-Windows) - contract stability
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        run: cargo test contract_is_stable
+
+      - name: Run release gate (non-Windows) - JSON schema contracts
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        run: cargo test --test json_schema_contracts
+
+      - name: Run release gate (non-Windows) - JSON output conformance
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        run: cargo test --test json_output_conformance
+
+      - name: Run release gate (non-Windows) - detect fixtures
+        if: runner.os != 'Windows'
+        timeout-minutes: 10
+        run: cargo test --test detect_fixtures
+
+      - name: Run release gate (non-Windows) - real repo fixtures
+        if: runner.os != 'Windows'
+        timeout-minutes: 20
+        run: cargo test --test real_repo_fixtures -- --test-threads=1
+
+      - name: Run release gate (non-Windows) - examples validate
+        if: runner.os != 'Windows'
+        timeout-minutes: 20
+        run: cargo test --test examples_validate -- --test-threads=1
 
       - name: Run release gate (Windows) - cargo version
         if: runner.os == 'Windows'
