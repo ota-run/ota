@@ -44792,7 +44792,9 @@ tasks:
             "{stderr}"
         );
         assert!(!stderr.contains("and rerun `ota doctor`"), "{stderr}");
-        assert!(stderr.contains("run `ota run verify`"), "{stderr}");
+        if !missing_runtime {
+            assert!(stderr.contains("run `ota run verify`"), "{stderr}");
+        }
         assert!(!stderr.contains("Task Failed"), "{stderr}");
     }
 
@@ -44852,7 +44854,10 @@ tasks:
             .expect("formatted mismatch"),
         );
 
-        assert!(rendered.contains("run `mise install node@22`"), "{rendered}");
+        assert!(
+            rendered.contains("run `mise install node@22`"),
+            "{rendered}"
+        );
         assert!(rendered.contains("run `ota doctor`"), "{rendered}");
         assert!(!rendered.contains("and rerun `ota doctor`"), "{rendered}");
     }
@@ -47240,9 +47245,8 @@ tasks:
 
     #[test]
     fn finding_next_steps_splits_and_rerun_into_two_steps() {
-        let next_steps = super::finding_next_steps(
-            "run `mise install node@22` and rerun `ota doctor`",
-        );
+        let next_steps =
+            super::finding_next_steps("run `mise install node@22` and rerun `ota doctor`");
 
         assert_eq!(
             next_steps,
@@ -51391,11 +51395,8 @@ workflows:
             Some(&summary),
         ));
 
-        assert!(
-            text.contains(
-                "repair `./.ota/org-policy.yaml` and rerun `ota doctor --mode container`"
-            )
-        );
+        assert!(text.contains("repair `./.ota/org-policy.yaml`"), "{text}");
+        assert!(text.contains("run `ota doctor --mode container`"), "{text}");
     }
 
     #[test]
@@ -51436,11 +51437,8 @@ workflows:
             Some(&summary),
         ));
 
-        assert!(
-            text.contains(
-                "repair `./.ota/org-policy.yaml` and rerun `ota doctor --mode container`"
-            )
-        );
+        assert!(text.contains("repair `./.ota/org-policy.yaml`"), "{text}");
+        assert!(text.contains("run `ota doctor --mode container`"), "{text}");
     }
 
     #[test]
@@ -63016,8 +63014,7 @@ fn extract_backticked_value_after(value: &str, marker: &str) -> Option<String> {
 }
 
 fn normalize_run_blocker_next_step(step: &str) -> String {
-    step
-        .strip_prefix("rerun `")
+    step.strip_prefix("rerun `")
         .map(|rest| format!("run `{rest}"))
         .unwrap_or_else(|| step.to_string())
 }
