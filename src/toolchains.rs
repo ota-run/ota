@@ -1112,10 +1112,16 @@ fn uv_owned_capabilities(
     provider: ToolchainProviderContract,
     _toolchain: &ToolchainSpec,
 ) -> Vec<ToolchainOwnedCapability> {
-    vec![ToolchainOwnedCapability {
-        kind: ToolchainOwnedCapabilityKind::Runtime,
-        name: provider.owned_runtime().to_string(),
-    }]
+    vec![
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Runtime,
+            name: provider.owned_runtime().to_string(),
+        },
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: String::from("uv"),
+        },
+    ]
 }
 
 fn go_owned_capabilities(

@@ -24863,7 +24863,7 @@ name = "fastapi"
         assert_eq!(python["options"][0]["default"], "pytest");
         assert_eq!(python["seeds"]["toolchains"][0], "python");
         assert_eq!(python["seeds"]["runtimes"], json!([]));
-        assert_eq!(python["seeds"]["tools"][0], "uv");
+        assert_eq!(python["seeds"]["tools"], json!([]));
         let rust = packs
             .iter()
             .find(|entry| entry["name"] == "rust")
@@ -24964,13 +24964,13 @@ name = "fastapi"
         assert!(stdout.contains("version: '22'"));
         assert!(stdout.contains("package_managers:"));
         assert!(stdout.contains("pnpm: '11'"));
-        assert!(stdout.contains("name: node-installed"));
+        assert!(!stdout.contains("name: node-installed"));
         assert!(stdout.contains("run: corepack pnpm dev"));
         assert!(stdout.contains("run: pytest") == false);
     }
 
     #[test]
-    fn init_pack_node_write_writes_conventional_starter_with_checks() {
+    fn init_pack_node_write_writes_conventional_toolchain_owned_starter() {
         let fixture = ContractFixture::new_dir();
 
         let output = run_with(["ota", "init", "--pack", "node", fixture.path()]);
@@ -24994,11 +24994,9 @@ name = "fastapi"
         assert!(written.contains("version: '22'"));
         assert!(written.contains("package_managers:"));
         assert!(written.contains("pnpm: '11'"));
-        assert!(written.contains("checks:"));
-        assert!(written.contains("name: node-installed"));
-        assert!(written.contains("kind: precondition"));
-        assert!(written.contains("severity: error"));
-        assert!(written.contains("run: node --version"));
+        assert!(!written.contains("checks:"));
+        assert!(!written.contains("name: node-installed"));
+        assert!(!written.contains("run: node --version"));
         assert!(written.contains("setup:"));
         assert!(written.contains("description: Install repo dependencies."));
         assert!(written.contains("run: corepack pnpm install"));
@@ -25109,8 +25107,8 @@ name = "fastapi"
         assert_eq!(json["inferred"], json!([]));
         assert_eq!(json["config"]["toolchains"]["python"]["provider"], "uv");
         assert_eq!(json["config"]["toolchains"]["python"]["version"], "3.12");
-        assert_eq!(json["config"]["tools"]["uv"], "*");
-        assert_eq!(json["config"]["checks"][0]["name"], "python-installed");
+        assert!(json["config"]["tools"].is_null());
+        assert!(json["config"]["checks"].is_null());
         assert_eq!(
             json["config"]["tasks"]["setup"]["description"],
             "Install and sync dependencies with uv."
@@ -25126,15 +25124,6 @@ name = "fastapi"
             .expect("project.name provenance");
         assert_eq!(project_name["provenance"], "template-derived");
         assert_eq!(project_name["source"], "ota.init#directory_name");
-        let check_run = provenance
-            .iter()
-            .find(|entry| entry["field"] == "checks.0.run")
-            .expect("check provenance");
-        assert_eq!(check_run["provenance"], "template-derived");
-        assert_eq!(
-            check_run["source"],
-            "ota.init#starter_pack.python.test_runner.pytest"
-        );
         let setup_description = provenance
             .iter()
             .find(|entry| entry["field"] == "tasks.setup.description")
@@ -25509,7 +25498,7 @@ requires-python = ">=3.12"
         assert!(stdout.contains("toolchains:"));
         assert!(stdout.contains("provider: go"));
         assert!(stdout.contains("version: '1.24'"));
-        assert!(stdout.contains("name: go-installed"));
+        assert!(!stdout.contains("name: go-installed"));
         assert!(stdout.contains("run: go mod download"));
         assert!(stdout.contains("run: go build ./..."));
         assert!(stdout.contains("run: go test ./..."));
@@ -25538,7 +25527,7 @@ requires-python = ">=3.12"
         assert_eq!(json["config"]["toolchains"]["rust"]["version"], "1.85");
         assert!(json["config"]["runtimes"].is_null());
         assert!(json["config"]["tools"].is_null());
-        assert_eq!(json["config"]["checks"][0]["name"], "rust-installed");
+        assert!(json["config"]["checks"].is_null());
         assert_eq!(
             json["config"]["tasks"]["build"]["description"],
             "Build the default Cargo outputs."
