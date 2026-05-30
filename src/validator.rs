@@ -1869,6 +1869,14 @@ fn validate_tasks(
                 errors,
             );
         }
+        validate_task_env_bindings(
+            contract,
+            name,
+            "env_bindings",
+            &task.env,
+            &task.env_bindings,
+            errors,
+        );
         if let Some(execution) = task.execution.as_ref() {
             if let Some(branch) = execution.modes.native.as_ref()
                 && let Some(runtime) = branch.runtime.as_ref()
@@ -1877,6 +1885,16 @@ fn validate_tasks(
                     contract,
                     &format!("tasks.{name}.execution.modes.native.runtime"),
                     runtime,
+                    errors,
+                );
+            }
+            if let Some(branch) = execution.modes.native.as_ref() {
+                validate_task_env_bindings(
+                    contract,
+                    name,
+                    "execution.modes.native.env_bindings",
+                    &branch.env,
+                    &branch.env_bindings,
                     errors,
                 );
             }
@@ -1890,6 +1908,16 @@ fn validate_tasks(
                     errors,
                 );
             }
+            if let Some(branch) = execution.modes.container.as_ref() {
+                validate_task_env_bindings(
+                    contract,
+                    name,
+                    "execution.modes.container.env_bindings",
+                    &branch.env,
+                    &branch.env_bindings,
+                    errors,
+                );
+            }
             if let Some(branch) = execution.modes.remote.as_ref()
                 && let Some(runtime) = branch.runtime.as_ref()
             {
@@ -1897,6 +1925,16 @@ fn validate_tasks(
                     contract,
                     &format!("tasks.{name}.execution.modes.remote.runtime"),
                     runtime,
+                    errors,
+                );
+            }
+            if let Some(branch) = execution.modes.remote.as_ref() {
+                validate_task_env_bindings(
+                    contract,
+                    name,
+                    "execution.modes.remote.env_bindings",
+                    &branch.env,
+                    &branch.env_bindings,
                     errors,
                 );
             }
@@ -2322,6 +2360,87 @@ fn validate_runtime_surface_attachments(
             errors.push(ValidationError::new(format!(
                 "`{field_path}.surfaces.{surface_name}.bind.port` must preserve declared surface port {} with `mode: fixed`",
                 surface.port
+            )));
+        }
+    }
+}
+
+fn validate_task_env_bindings(
+    contract: &Contract,
+    task_name: &str,
+    field_path: &str,
+    literal_env: &BTreeMap<String, String>,
+    env_bindings: &BTreeMap<String, crate::schema::TaskEnvBindingSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (name, binding) in env_bindings {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` {field_path} keys must not be empty"
+            )));
+        }
+        if literal_env.contains_key(name) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` declares `{name}` in both `env` and `{field_path}`; keep one owner for each env value"
+            )));
+        }
+
+        let service_name = binding.from_service.service.trim();
+        if service_name.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` must declare a non-empty `from_service.service`"
+            )));
+        } else if let Some(service) = contract.services.get(service_name) {
+            let requested_view = binding
+                .from_service
+                .view
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if service.endpoints.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` env binding `{name}` references service `{service_name}`, but that service declares no endpoints"
+                )));
+            } else if let Some(view) = requested_view
+                && !service.endpoints.contains_key(view)
+                && !service.endpoints.contains_key("host")
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` env binding `{name}` references service `{service_name}` view `{view}`, but neither that view nor `host` is declared under `services.{service_name}.endpoints`"
+                )));
+            }
+        } else {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` references unknown service `{service_name}`"
+            )));
+        }
+
+        if let Some(view) = binding.from_service.view.as_deref()
+            && view.trim().is_empty()
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` must not declare an empty `from_service.view`"
+            )));
+        }
+        if let Some(scheme) = binding.from_service.scheme.as_deref()
+            && scheme.trim().is_empty()
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` must not declare an empty `from_service.scheme`"
+            )));
+        }
+        if let Some(username) = binding.from_service.username.as_deref()
+            && username.trim().is_empty()
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` must not declare an empty `from_service.username`"
+            )));
+        }
+        if let Some(database) = binding.from_service.database.as_deref()
+            && database.trim().is_empty()
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` must not declare an empty `from_service.database`"
             )));
         }
     }
@@ -8518,6 +8637,13 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 errors.push(ValidationError::new("task env keys must not be empty"));
             }
         }
+        for name in task.env_bindings.keys().map(String::as_str) {
+            if name.trim().is_empty() {
+                errors.push(ValidationError::new(
+                    "task env binding keys must not be empty",
+                ));
+            }
+        }
     }
 }
 
@@ -14109,6 +14235,34 @@ tasks:
             errors.errors()[0].to_string(),
             "task `dev` requires unknown service `postgres`"
         );
+    }
+
+    #[test]
+    fn rejects_task_env_binding_unknown_service() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: echo test
+    env_bindings:
+      DATABASE_URL:
+        from_service:
+          service: postgres
+          scheme: postgres
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "task `test` env binding `DATABASE_URL` references unknown service `postgres`",
+            )
+        }));
     }
 
     #[test]

@@ -68,10 +68,11 @@ use crate::schema::{
     NativePrerequisiteActivationShell, NativePrerequisiteActivationSpec, ReadinessProbeTargetKind,
     RemoteBackend, RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode,
     TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind,
-    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetAddressView, TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode,
-    ToolchainProvider, ToolchainSpec, format_memory_size_bytes, parse_memory_size_bytes,
-    parse_readiness_duration_spec, task_target_env_name,
+    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskServiceEnvBindingFormat,
+    TaskServiceEnvBindingSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
+    TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
+    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
+    task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_contract};
@@ -1544,6 +1545,136 @@ fn expand_ota_workspace_templates(value: &str, ota_workspace: &str) -> String {
         .replace("$OTA_WORKSPACE", ota_workspace)
 }
 
+fn url_component_encode(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn service_endpoint_address_for_task_env(
+    address: &str,
+    endpoint_view: &str,
+    backend: Backend,
+    engine_hint: Option<&str>,
+) -> String {
+    if backend != Backend::Container
+        || endpoint_view != "host"
+        || !is_loopback_only_host_address(address)
+    {
+        return address.to_string();
+    }
+
+    match engine_hint.unwrap_or("docker") {
+        "podman" => String::from("host.containers.internal"),
+        _ => String::from("host.docker.internal"),
+    }
+}
+
+fn render_service_env_binding_url(
+    binding: &TaskServiceEnvBindingSpec,
+    address: &str,
+    port: u16,
+) -> String {
+    match binding.format.unwrap_or(TaskServiceEnvBindingFormat::Url) {
+        TaskServiceEnvBindingFormat::Host => return address.to_string(),
+        TaskServiceEnvBindingFormat::Port => return port.to_string(),
+        TaskServiceEnvBindingFormat::HostPort => return format!("{address}:{port}"),
+        TaskServiceEnvBindingFormat::Url => {}
+    }
+
+    let host_port = format!("{address}:{port}");
+    let Some(scheme) = binding
+        .scheme
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return host_port;
+    };
+
+    let auth = binding
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|username| {
+            let username = url_component_encode(username);
+            let password = binding
+                .password
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(url_component_encode)
+                .map(|password| format!(":{password}"))
+                .unwrap_or_default();
+            format!("{username}{password}@")
+        })
+        .unwrap_or_default();
+    let path = binding
+        .database
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(url_component_encode)
+        .map(|database| format!("/{database}"))
+        .unwrap_or_default();
+
+    format!("{scheme}://{auth}{host_port}{path}")
+}
+
+fn service_env_bindings_for_task(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: Backend,
+    context_name: Option<&str>,
+    engine_hint: Option<&str>,
+) -> BTreeMap<String, String> {
+    task.env_bindings_for_backend_with_context_name(
+        contract.execution.as_ref(),
+        backend,
+        context_name,
+    )
+    .into_iter()
+    .filter_map(|(name, binding)| {
+        let service_name = binding.from_service.service.trim();
+        let service = contract.services.get(service_name)?;
+        let requested_view = binding
+            .from_service
+            .view
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or(context_name)
+            .unwrap_or("host");
+        let (endpoint_view, endpoint) = service
+            .endpoint_for_context(requested_view)
+            .map(|endpoint| (requested_view, endpoint))
+            .or_else(|| {
+                service
+                    .endpoint_for_context("host")
+                    .map(|endpoint| ("host", endpoint))
+            })?;
+        let address = service_endpoint_address_for_task_env(
+            endpoint.address.as_str(),
+            endpoint_view,
+            backend,
+            engine_hint,
+        );
+        Some((
+            name,
+            render_service_env_binding_url(&binding.from_service, address.as_str(), endpoint.port),
+        ))
+    })
+    .collect()
+}
+
 fn ota_workspace_for_backend(working_dir: &Path, backend: &ResolvedExecutionBackend) -> String {
     match backend {
         ResolvedExecutionBackend::Native { .. } => working_dir.display().to_string(),
@@ -1648,12 +1779,17 @@ pub(crate) fn effective_task_env_for_backend(
 ) -> BTreeMap<String, String> {
     let ota_workspace = ota_workspace_for_backend(working_dir, backend);
     let backend_kind = resolved_execution_backend_kind(backend);
+    let engine_hint = match backend {
+        ResolvedExecutionBackend::Container { engine, .. } => Some(engine.as_str()),
+        _ => None,
+    };
+    let context_name = resolved_backend_context_name(backend);
     let mut env = derived_attachment_env_for_backend(backend, ota_workspace.as_str());
     env.extend(
         task.env_for_backend_with_context_name(
             contract.execution.as_ref(),
             backend_kind,
-            resolved_backend_context_name(backend),
+            context_name,
         )
         .into_iter()
         .map(|(name, value)| {
@@ -1663,6 +1799,13 @@ pub(crate) fn effective_task_env_for_backend(
             )
         }),
     );
+    env.extend(service_env_bindings_for_task(
+        contract,
+        task,
+        backend_kind,
+        context_name,
+        engine_hint,
+    ));
     env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
     env
 }
@@ -1708,6 +1851,16 @@ pub(crate) fn effective_task_env_for_selection(
         &dependency_isolation_paths,
         ota_workspace.as_str(),
     );
+    let engine_hint = if backend == Backend::Container {
+        effective_task_container_backend_for_target_resolution(contract, task_name, overrides)
+            .and_then(|container| {
+                container_engine_candidates_from_backend(Some(container))
+                    .into_iter()
+                    .next()
+            })
+    } else {
+        None
+    };
     env.extend(
         task.env_for_backend_with_context_name(contract.execution.as_ref(), backend, context_name)
             .into_iter()
@@ -1718,6 +1871,13 @@ pub(crate) fn effective_task_env_for_selection(
                 )
             }),
     );
+    env.extend(service_env_bindings_for_task(
+        contract,
+        task,
+        backend,
+        context_name,
+        engine_hint.as_deref(),
+    ));
     env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
     Some(env)
 }
@@ -22082,7 +22242,8 @@ mod tests {
         TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
         TaskTargetActivationStatus, TaskTargetResolutionSource, activation_loader_label,
         backend_fulfillment_plan, clean_execution, clean_execution_report, container_identity_seed,
-        contract_working_dir, current_os, effective_task_env_for_backend, effective_task_execution,
+        contract_working_dir, current_os, effective_task_env_for_backend,
+        effective_task_env_for_selection, effective_task_execution,
         ephemeral_container_stream_command, execute_task_with_hooks, extract_probe_version_token,
         looks_like_posix_script, looks_like_powershell_script, parse_windows_env_block,
         persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
@@ -22437,6 +22598,75 @@ tasks:
             EnvResolutionSource::Task
         );
         assert_eq!(resolved["OTA_TEST_REQUIRED"].value, "task-value");
+    }
+
+    #[test]
+    fn service_env_binding_projects_host_service_for_container_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ruby:3.3.11-bookworm
+        engines:
+          - docker
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  test:
+    context: host
+    run: bundle exec rspec
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          run: bundle exec rspec
+        container:
+          context: app
+          run: bundle exec rspec
+          env_bindings:
+            DATABASE_URL:
+              from_service:
+                service: postgres
+                view: host
+                scheme: postgres
+                username: postgres
+                password: postgres
+                database: athena_api_test
+"#,
+        )
+        .unwrap();
+
+        let env = effective_task_env_for_selection(
+            &contract,
+            "test",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            Path::new("/repo"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            env.get("DATABASE_URL").map(String::as_str),
+            Some("postgres://postgres:postgres@host.docker.internal:5432/athena_api_test")
+        );
     }
 
     #[test]

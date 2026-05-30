@@ -1136,6 +1136,33 @@ tasks:
 
 This sets ordinary task-scoped env values directly.
 
+```yaml
+tasks:
+  test:
+    requires_services:
+      - postgres
+    env_bindings:
+      DATABASE_URL:
+        from_service:
+          service: postgres
+          view: host
+          format: url
+          scheme: postgres
+          username: postgres
+          password: postgres
+          database: app_test
+      DB_HOST:
+        from_service:
+          service: postgres
+          view: host
+          format: host
+```
+
+This derives task env values from declared service endpoints. It is useful when the same task can
+run natively or inside a container: Ota keeps the service dependency in `requires_services`, then
+projects the selected service view into env without hand-writing container host aliases such as
+`host.docker.internal`.
+
 Example:
 
 ```yaml
@@ -1342,6 +1369,7 @@ Fields:
 - `notes`: optional multiline guidance for humans and agents
 - `category`: optional string
 - `env`: optional map of fixed task-scoped environment overrides
+- `env_bindings`: optional map of task env values derived from declared services
 - `inputs`: optional map of named task inputs
 - `context`: optional execution context name
 - `run`: optional string for a single shell-compatible command
