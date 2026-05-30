@@ -25506,7 +25506,9 @@ requires-python = ">=3.12"
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Pack: go"));
-        assert!(stdout.contains("go: '1.24'"));
+        assert!(stdout.contains("toolchains:"));
+        assert!(stdout.contains("provider: go"));
+        assert!(stdout.contains("version: '1.24'"));
         assert!(stdout.contains("name: go-installed"));
         assert!(stdout.contains("run: go mod download"));
         assert!(stdout.contains("run: go build ./..."));

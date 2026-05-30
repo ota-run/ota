@@ -58,8 +58,9 @@ use crate::doctor::{
     diagnose_contract_with_mode_and_lifecycle,
     diagnose_contract_with_mode_and_lifecycle_for_workflow,
     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides, diagnose_policy_review,
-    diagnose_preconditions, diagnose_preconditions_with_mode_for_workflow_with_overrides,
-    diagnose_service, diagnose_services_only_for_workflow, finding_targets_container_image,
+    diagnose_preconditions, diagnose_preconditions_with_mode_for_task_with_overrides,
+    diagnose_preconditions_with_mode_for_workflow_with_overrides, diagnose_service,
+    diagnose_services_only_for_workflow, finding_targets_container_image,
     finding_targets_remote_backend, provisioning_installability_finding, resolve_command_path,
 };
 use crate::execution::{
@@ -152,8 +153,8 @@ use crate::schema::{
     TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
     TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, WorkflowCatalog, WorkflowSpec, WorkflowTaskRefSpec,
-    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
+    ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
+    parse_readiness_duration_spec,
 };
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
@@ -14072,38 +14073,15 @@ fn run_preview_preconditions_report(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> DoctorReport {
-    let mut preview_contract = contract.clone();
-    let workflow_name = "__ota_run_preview__";
-    let workflow = WorkflowSpec {
-        run: Some(WorkflowTaskRefSpec {
-            task: task_name.to_string(),
-        }),
-        ..WorkflowSpec::default()
-    };
-    match preview_contract.workflows.as_mut() {
-        Some(workflows) => {
-            workflows.default = workflow_name.to_string();
-            workflows.items.insert(workflow_name.to_string(), workflow);
-        }
-        None => {
-            let mut items = BTreeMap::new();
-            items.insert(workflow_name.to_string(), workflow);
-            preview_contract.workflows = Some(WorkflowCatalog {
-                default: workflow_name.to_string(),
-                items,
-            });
-        }
-    }
-
     let mode = doctor_mode_from_backend(Some(format_backend(
         effective_task_execution(contract, task_name, overrides).backend,
     )))
     .unwrap_or(DoctorMode::Native);
-    diagnose_preconditions_with_mode_for_workflow_with_overrides(
-        &preview_contract,
+    diagnose_preconditions_with_mode_for_task_with_overrides(
+        contract,
         contract_path,
         mode,
-        Some(workflow_name),
+        task_name,
         overrides,
     )
 }
@@ -45082,6 +45060,142 @@ tasks:
                 || blocker.starts_with("Missing runtime: node"),
             "{json}"
         );
+    }
+
+    #[test]
+    fn run_dry_run_skips_unreferenced_native_prerequisites_and_precondition_checks() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let os = super::current_os();
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+native_prerequisites:
+  native-build-tools:
+    platforms:
+      {os}:
+        check: native-build-tools-check
+        install: install native build tools
+checks:
+  - name: unrelated-precondition
+    kind: precondition
+    severity: error
+    run: exit 1
+  - name: native-build-tools-check
+    kind: precondition
+    severity: error
+    run: exit 1
+tasks:
+  setup:env:
+    action:
+      kind: ensure_env_file
+      path: .env.local
+      vars:
+        APP_SECRET:
+          value: local
+  install:
+    run: echo install
+    requirements:
+      native:
+        - native-build-tools
+"#
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "setup:env",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi_codes(&output.stdout);
+        assert!(stdout.contains("✓ RUNNABLE"), "{stdout}");
+        assert!(stdout.contains("Requirements\n→ none"), "{stdout}");
+        assert!(
+            stdout.contains("→ would run task action `ensure_env_file` on the host"),
+            "{stdout}"
+        );
+        assert!(
+            !stdout.contains("unrelated-precondition")
+                && !stdout.contains("native-build-tools-check")
+                && !stdout.contains("Native prerequisite missing"),
+            "{stdout}"
+        );
+    }
+
+    #[test]
+    fn run_dry_run_blocks_selected_native_prerequisite_check() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let os = super::current_os();
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+native_prerequisites:
+  native-build-tools:
+    platforms:
+      {os}:
+        check: native-build-tools-check
+        install: install native build tools
+checks:
+  - name: native-build-tools-check
+    kind: precondition
+    severity: error
+    run: exit 1
+tasks:
+  install:
+    run: echo install
+    requirements:
+      native:
+        - native-build-tools
+"#
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "install",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["preview_status"], "BLOCKED");
+        let blocker = json["summary"]["primary_blocker"]["summary"]
+            .as_str()
+            .unwrap_or_default();
+        assert_eq!(blocker, "Native prerequisite missing: native-build-tools");
     }
 
     #[test]

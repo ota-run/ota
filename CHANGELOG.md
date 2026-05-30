@@ -26,6 +26,15 @@
 
 ## Unreleased
 
+- added first-class check-only `toolchains.go` ownership for Go repos, updated the Go starter pack
+  to emit `provider: go` instead of split `runtimes.go` ownership, and kept starter-pack agent
+  boundary inference aligned with toolchain-owned Node/Python/Go/Rust stacks
+- clarified container image acquisition failures during container runtime/tool probes so Ota reports
+  one actionable container-image blocker instead of downstream runtime/tool probe noise
+- fixed `ota run <task> --dry-run` precondition scoping so task previews evaluate only the
+  selected task dependency path, avoiding unrelated top-level precondition/native-prerequisite
+  checks while still blocking when the selected task actually requires them
+
 ## 1.6.18
 
 - added `--ready-timeout <DURATION>` to `ota proof runtime` so runtime-proof readiness waits are

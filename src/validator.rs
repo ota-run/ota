@@ -19403,6 +19403,160 @@ toolchains:
     }
 
     #[test]
+    fn supports_go_toolchain_with_provider_go() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: go-repo
+toolchains:
+  go:
+    provider: go
+    version: "1.24"
+tasks:
+  test:
+    run: go test ./...
+    requirements:
+      toolchains:
+        - go
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("go toolchain should validate");
+    }
+
+    #[test]
+    fn rejects_wrong_provider_for_shipped_go_toolchain_name() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  go:
+    provider: rustup
+    version: "1.94.0"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("go toolchain must reject the wrong shipped provider")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `go` is only supported with `provider: go`; `provider: rustup` is not valid for `toolchains.go` and currently belongs to `toolchains.rust`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ownership_for_go_runtime() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  go:
+    provider: go
+    version: "1.24"
+runtimes:
+  go: "1.24"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate go runtime ownership should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `go` owns runtime `go`, but the contract also declares `runtimes.go`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_ownership_for_go_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  go:
+    provider: go
+    version: "1.24"
+tools:
+  go: "*"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate go tool ownership should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `go` owns tool `go`, but the contract also declares `tools.go`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_go_toolchain_run_fulfillment() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  go:
+    provider: go
+    version: "1.24"
+    fulfillment: run
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("go toolchain must stay check-only")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `go` uses `provider: go` with `fulfillment: run`, but Go-backed toolchains are currently check-only; keep `toolchains.go.fulfillment: none` and declare module and build tasks under `tasks`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
     fn rejects_wrong_provider_for_shipped_rust_toolchain_name() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),

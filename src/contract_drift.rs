@@ -660,6 +660,7 @@ fn toolchain_provider_name(provider: ToolchainProvider) -> &'static str {
         ToolchainProvider::Corepack => "corepack",
         ToolchainProvider::Sdkman => "sdkman",
         ToolchainProvider::Uv => "uv",
+        ToolchainProvider::Go => "go",
     }
 }
 

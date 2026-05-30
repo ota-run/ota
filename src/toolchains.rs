@@ -36,6 +36,7 @@ pub(crate) const RUSTUP_TOOLCHAIN_NAME: &str = "rust";
 pub(crate) const COREPACK_TOOLCHAIN_NAME: &str = "node";
 pub(crate) const JAVA_TOOLCHAIN_NAME: &str = "java";
 pub(crate) const PYTHON_TOOLCHAIN_NAME: &str = "python";
+pub(crate) const GO_TOOLCHAIN_NAME: &str = "go";
 const RUSTUP_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] = &[
     ToolchainProviderSpecificField::Profile,
     ToolchainProviderSpecificField::Components,
@@ -120,6 +121,24 @@ pub(crate) const UV_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainPro
     managed_surface_probes_fn: uv_managed_surface_probes,
     managed_surface_entries_fn: uv_managed_surface_entries,
     managed_surface_remediation_command_fn: uv_managed_surface_remediation_command,
+};
+pub(crate) const GO_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
+    toolchain_name: GO_TOOLCHAIN_NAME,
+    provider: ToolchainProvider::Go,
+    label: "go",
+    primary_executable: "go",
+    owned_runtime: GO_TOOLCHAIN_NAME,
+    provider_specific_fields: &[],
+    provider_specific_field_summary: "",
+    requirement_detail_parts_fn: base_requirement_detail_parts,
+    owned_capabilities_fn: go_owned_capabilities,
+    owned_tool_requirements_fn: go_owned_tool_requirements,
+    fulfillment_commands_fn: go_fulfillment_commands,
+    owned_runtime_remediation_command_fn: go_owned_runtime_remediation_command,
+    run_fulfillment_validation_error_fn: go_run_fulfillment_validation_error,
+    managed_surface_probes_fn: go_managed_surface_probes,
+    managed_surface_entries_fn: go_managed_surface_entries,
+    managed_surface_remediation_command_fn: go_managed_surface_remediation_command,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -640,6 +659,7 @@ pub(crate) fn shipped_toolchain_contracts() -> &'static [ToolchainProviderContra
         COREPACK_TOOLCHAIN_CONTRACT,
         SDKMAN_TOOLCHAIN_CONTRACT,
         UV_TOOLCHAIN_CONTRACT,
+        GO_TOOLCHAIN_CONTRACT,
     ]
 }
 
@@ -1098,6 +1118,22 @@ fn uv_owned_capabilities(
     }]
 }
 
+fn go_owned_capabilities(
+    provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+) -> Vec<ToolchainOwnedCapability> {
+    vec![
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Runtime,
+            name: provider.owned_runtime().to_string(),
+        },
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: String::from("go"),
+        },
+    ]
+}
+
 fn rustup_owned_tool_requirements(
     _provider: ToolchainProviderContract,
     _toolchain: &ToolchainSpec,
@@ -1144,6 +1180,14 @@ fn sdkman_owned_tool_requirements(
 }
 
 fn uv_owned_tool_requirements(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> BTreeMap<String, ToolRequirement> {
+    BTreeMap::new()
+}
+
+fn go_owned_tool_requirements(
     _provider: ToolchainProviderContract,
     _toolchain: &ToolchainSpec,
     _target_os: &str,
@@ -1210,6 +1254,14 @@ fn uv_fulfillment_commands(
     }]
 }
 
+fn go_fulfillment_commands(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainCommandSpec> {
+    Vec::new()
+}
+
 fn rustup_owned_runtime_remediation_command(
     _provider: ToolchainProviderContract,
     requirement: &str,
@@ -1236,6 +1288,13 @@ fn uv_owned_runtime_remediation_command(
     requirement: &str,
 ) -> Option<String> {
     Some(format!("uv python install {requirement}"))
+}
+
+fn go_owned_runtime_remediation_command(
+    _provider: ToolchainProviderContract,
+    _requirement: &str,
+) -> Option<String> {
+    None
 }
 
 fn rustup_run_fulfillment_validation_error(
@@ -1301,6 +1360,16 @@ fn uv_run_fulfillment_validation_error(
     })
 }
 
+fn go_run_fulfillment_validation_error(
+    _provider: ToolchainProviderContract,
+    name: &str,
+    _toolchain: &ToolchainSpec,
+) -> Option<String> {
+    Some(format!(
+        "toolchain `{name}` uses `provider: go` with `fulfillment: run`, but Go-backed toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and declare module and build tasks under `tasks`"
+    ))
+}
+
 fn rustup_managed_surface_probes(
     provider: ToolchainProviderContract,
     toolchain: &ToolchainSpec,
@@ -1362,6 +1431,14 @@ fn uv_managed_surface_probes(
     Vec::new()
 }
 
+fn go_managed_surface_probes(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainManagedSurfaceProbe> {
+    Vec::new()
+}
+
 fn corepack_managed_surface_entries(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
@@ -1381,6 +1458,15 @@ fn sdkman_managed_surface_entries(
 }
 
 fn uv_managed_surface_entries(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<String> {
+    Vec::new()
+}
+
+fn go_managed_surface_entries(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
     _toolchain: &ToolchainSpec,
@@ -1426,6 +1512,14 @@ fn sdkman_managed_surface_remediation_command(
 }
 
 fn uv_managed_surface_remediation_command(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _entry: &str,
+) -> Option<String> {
+    None
+}
+
+fn go_managed_surface_remediation_command(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
     _entry: &str,
@@ -1729,6 +1823,12 @@ toolchains:
             "uv"
         );
         assert_eq!(
+            toolchain_provider_contract("go", ToolchainProvider::Go)
+                .unwrap()
+                .label(),
+            "go"
+        );
+        assert_eq!(
             shipped_toolchain_contract_by_label("rustup")
                 .unwrap()
                 .toolchain_name(),
@@ -1748,6 +1848,7 @@ toolchains:
             toolchain_provider_label(ToolchainProvider::Sdkman),
             "sdkman"
         );
+        assert_eq!(toolchain_provider_label(ToolchainProvider::Go), "go");
         assert_eq!(
             known_provider_specific_fields(),
             vec![
