@@ -1546,6 +1546,7 @@ pub enum ToolchainProvider {
     Corepack,
     Sdkman,
     Uv,
+    Go,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

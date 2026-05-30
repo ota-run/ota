@@ -198,10 +198,10 @@ impl StarterPack {
             },
             Self::Go => StarterPackCatalogEntry {
                 pack: self,
-                summary: "Conventional Go starter with module download, build, and test tasks.",
-                when: "Use this for Go module repos that should start from the standard `go mod download`, `go build`, and `go test` flow without relying on detector-led init.",
-                toolchains: &[],
-                runtimes: &["go"],
+                summary: "Conventional Go starter with toolchain-owned Go plus module download, build, and test tasks.",
+                when: "Use this for Go module repos that should start from `toolchains.go` ownership and the standard `go mod download`, `go build`, and `go test` flow without relying on detector-led init.",
+                toolchains: &["go"],
+                runtimes: &[],
                 tools: &[],
                 checks: &["go-installed"],
                 tasks: &["setup", "build", "test"],
@@ -1377,14 +1377,7 @@ fn starter_agent_is_protected_control_extension(extension: &str) -> bool {
 fn starter_agent_stack_companion_protected_paths(contract: &DetectContract) -> Vec<&'static str> {
     let mut paths = Vec::new();
 
-    let has_node_package_manager = ["npm", "pnpm", "yarn", "bun"]
-        .iter()
-        .any(|tool| contract.tools.contains_key(*tool))
-        || contract
-            .toolchains
-            .get("node")
-            .is_some_and(|toolchain| !toolchain.package_managers.is_empty());
-    if has_node_package_manager {
+    if starter_agent_has_node_stack(contract) {
         paths.extend([
             "package-lock.json",
             "pnpm-lock.yaml",
@@ -1394,17 +1387,13 @@ fn starter_agent_stack_companion_protected_paths(contract: &DetectContract) -> V
             "bun.lockb",
         ]);
     }
-    if contract.runtimes.contains_key("python")
-        || ["uv", "pipenv", "pip"]
-            .iter()
-            .any(|tool| contract.tools.contains_key(*tool))
-    {
+    if starter_agent_has_python_stack(contract) {
         paths.extend(["uv.lock", "Pipfile", "requirements.txt", ".python-version"]);
     }
-    if contract.runtimes.contains_key("go") {
+    if starter_agent_has_stack(contract, "go") {
         paths.push("go.sum");
     }
-    if contract.runtimes.contains_key("rust") || contract.tools.contains_key("cargo") {
+    if starter_agent_has_stack(contract, "rust") || contract.tools.contains_key("cargo") {
         paths.push("Cargo.lock");
     }
     if contract.runtimes.contains_key("php") || contract.tools.contains_key("composer") {
@@ -1424,6 +1413,28 @@ fn starter_agent_stack_companion_protected_paths(contract: &DetectContract) -> V
     }
 
     paths
+}
+
+fn starter_agent_has_stack(contract: &DetectContract, name: &str) -> bool {
+    contract.runtimes.contains_key(name) || contract.toolchains.contains_key(name)
+}
+
+fn starter_agent_has_node_stack(contract: &DetectContract) -> bool {
+    starter_agent_has_stack(contract, "node")
+        || ["npm", "pnpm", "yarn", "bun"]
+            .iter()
+            .any(|tool| contract.tools.contains_key(*tool))
+        || contract
+            .toolchains
+            .get("node")
+            .is_some_and(|toolchain| !toolchain.package_managers.is_empty())
+}
+
+fn starter_agent_has_python_stack(contract: &DetectContract) -> bool {
+    starter_agent_has_stack(contract, "python")
+        || ["pip", "pipenv", "uv"]
+            .iter()
+            .any(|tool| contract.tools.contains_key(*tool))
 }
 
 fn starter_agent_source_anchor_dir(name: &str) -> bool {
@@ -1551,25 +1562,17 @@ fn preferred_agent_verify_tasks(safe_tasks: &[String]) -> Vec<String> {
 fn starter_agent_stack_source_extensions(contract: &DetectContract) -> Option<Vec<&'static str>> {
     let mut extensions = BTreeSet::new();
 
-    if contract.runtimes.contains_key("node")
-        || ["npm", "pnpm", "yarn", "bun"]
-            .iter()
-            .any(|tool| contract.tools.contains_key(*tool))
-    {
+    if starter_agent_has_node_stack(contract) {
         extensions.extend([
             "css", "html", "js", "jsx", "mjs", "mts", "sass", "scss", "ts", "tsx", "vue",
         ]);
     }
 
-    if contract.runtimes.contains_key("python")
-        || ["pip", "pipenv", "uv"]
-            .iter()
-            .any(|tool| contract.tools.contains_key(*tool))
-    {
+    if starter_agent_has_python_stack(contract) {
         extensions.extend(["py", "pyi"]);
     }
 
-    if contract.runtimes.contains_key("go") {
+    if starter_agent_has_stack(contract, "go") {
         extensions.extend(["go"]);
     }
 
@@ -1608,7 +1611,7 @@ fn starter_agent_stack_source_extensions(contract: &DetectContract) -> Option<Ve
         extensions.extend(["f", "f03", "f08", "f90", "f95", "for"]);
     }
 
-    if contract.runtimes.contains_key("rust") || contract.tools.contains_key("cargo") {
+    if starter_agent_has_stack(contract, "rust") || contract.tools.contains_key("cargo") {
         extensions.extend(["rs"]);
     }
 
@@ -1820,9 +1823,7 @@ fn starter_agent_is_source_like_file(
         return false;
     };
     if let Some(allowed_extensions) = allowed_extensions {
-        return allowed_extensions
-            .iter()
-            .any(|allowed| *allowed == extension);
+        return allowed_extensions.contains(&extension);
     }
 
     matches!(
@@ -2111,9 +2112,15 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             );
         }
         StarterPack::Go => {
-            contract
-                .runtimes
-                .insert(String::from("go"), String::from("1.24"));
+            contract.toolchains.insert(
+                String::from("go"),
+                DetectToolchainSpec {
+                    provider: crate::schema::ToolchainProvider::Go,
+                    version: String::from("1.24"),
+                    package_managers: BTreeMap::new(),
+                    fulfillment: None,
+                },
+            );
             contract.checks.push(DetectCheck {
                 name: String::from("go-installed"),
                 kind: DetectCheckKind::Precondition,
@@ -2405,7 +2412,7 @@ fn pack_task(task_name: &str, run: &str, description: Option<String>) -> DetectT
     notes.push_str(task_name);
     notes.push_str("` to execute this task.\n");
     if let Some(note) = description.as_deref() {
-        notes.push_str(&note);
+        notes.push_str(note);
     }
 
     DetectTask {
@@ -2510,6 +2517,40 @@ mod tests {
         assert_eq!(
             inferred_boundary.provenance.protected_paths,
             vec![String::from("init:contract_file_default")]
+        );
+    }
+
+    #[test]
+    fn starter_pack_contract_uses_toolchain_stacks_for_agent_boundaries() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::create_dir_all(fixture.path().join("cmd")).unwrap();
+        std::fs::write(fixture.path().join("cmd").join("main.go"), "package main\n").unwrap();
+        std::fs::write(fixture.path().join("go.sum"), "").unwrap();
+
+        let contract = starter_pack_contract(
+            StarterPackConfig {
+                pack: StarterPack::Go,
+                options: StarterPackOptions::default(),
+            },
+            fixture.path(),
+        );
+
+        assert!(
+            contract.toolchains.contains_key("go"),
+            "go starter should own Go through toolchains"
+        );
+        assert!(
+            !contract.runtimes.contains_key("go"),
+            "go starter should not duplicate Go under runtimes"
+        );
+        let agent = contract.agent.expect("starter pack agent");
+        assert!(
+            agent.protected_paths.contains(&String::from("go.sum")),
+            "toolchain-owned Go repos should protect the module lockfile"
+        );
+        assert!(
+            agent.writable_paths.contains(&String::from("cmd")),
+            "toolchain-owned Go source detection should still infer source edit scope"
         );
     }
 

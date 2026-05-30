@@ -517,6 +517,147 @@ fn selected_backend_precondition_selections(
     selections
 }
 
+fn selected_task_backend_precondition_selections(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Vec<BackendPreconditionSelection> {
+    let task_names = contract.task_dependency_closure_names([task_name.to_string()]);
+    if task_names.is_empty() {
+        return Vec::new();
+    }
+
+    let scoped_runtimes = task_names.iter().any(|task_name| {
+        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
+            let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+            !task
+                .scoped_requirement_surface_for_execution(effective.backend, effective.context_name)
+                .runtimes
+                .is_empty()
+        })
+    });
+    let scoped_tools = task_names.iter().any(|task_name| {
+        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
+            let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+            !task
+                .scoped_requirement_surface_for_execution(effective.backend, effective.context_name)
+                .tools
+                .is_empty()
+        })
+    });
+    let scoped_env = task_names.iter().any(|task_name| {
+        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
+            let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+            !task
+                .scoped_env_requirements_for_execution(effective.backend, effective.context_name)
+                .is_empty()
+        })
+    });
+
+    let mut selections = Vec::<BackendPreconditionSelection>::new();
+
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        let selection = if let Some(existing) = selections
+            .iter_mut()
+            .find(|item| item.backend == effective.backend)
+        {
+            existing
+        } else {
+            selections.push(BackendPreconditionSelection {
+                backend: effective.backend,
+                requirement_surface: RequirementSurface::default(),
+                toolchain_names: BTreeSet::new(),
+                native_names: BTreeSet::new(),
+                env_names: BTreeSet::new(),
+                env_scoped: scoped_env,
+            });
+            selections.last_mut().expect("selection was just pushed")
+        };
+
+        let scoped_surface = task
+            .scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
+        for (name, requirement) in &scoped_surface.runtimes {
+            selection.requirement_surface.runtimes.insert(
+                name.clone(),
+                contract.resolve_scoped_runtime_requirement(name, requirement),
+            );
+        }
+        for (name, requirement) in &scoped_surface.tools {
+            selection.requirement_surface.tools.insert(
+                name.clone(),
+                contract.resolve_scoped_tool_requirement(name, requirement),
+            );
+        }
+        selection
+            .toolchain_names
+            .extend(task.scoped_toolchain_requirements_for_execution(
+                effective.backend,
+                effective.context_name,
+            ));
+        selection.env_names.extend(
+            task.scoped_env_requirements_for_execution(effective.backend, effective.context_name),
+        );
+        if matches!(effective.backend, Backend::Native) {
+            let scoped_native = task.scoped_native_requirements_for_execution(
+                effective.backend,
+                effective.context_name,
+            );
+            let native_toolchains = contract.native_prerequisite_required_toolchain_names_for_os(
+                scoped_native.clone(),
+                current_os(),
+            );
+            let native_env = contract
+                .native_prerequisite_required_env_names_for_os(scoped_native.clone(), current_os());
+            selection.toolchain_names.extend(native_toolchains);
+            if !native_env.is_empty() {
+                selection.env_scoped = true;
+                selection.env_names.extend(native_env);
+            }
+            selection.native_names.extend(scoped_native.iter().cloned());
+            selection.requirement_surface.merge(
+                &contract
+                    .native_prerequisite_requirement_surface_for_os(scoped_native, current_os()),
+            );
+        }
+        merge_effective_launch_command_tool_requirement(
+            &mut selection.requirement_surface,
+            task,
+            effective.backend,
+        );
+
+        if let Some(context_name) = effective.context_name
+            && let Some(context) = contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.contexts.get(context_name))
+        {
+            selection.requirement_surface.merge(&RequirementSurface {
+                runtimes: context.requirements.runtimes.clone(),
+                tools: context.requirements.tools.clone(),
+            });
+        }
+    }
+
+    for selection in &mut selections {
+        if !scoped_runtimes {
+            let mut runtimes = contract.runtimes.clone();
+            runtimes.extend(selection.requirement_surface.runtimes.clone());
+            selection.requirement_surface.runtimes = runtimes;
+        }
+        if !scoped_tools && matches!(selection.backend, Backend::Native) {
+            let mut tools = contract.tools.clone();
+            tools.extend(selection.requirement_surface.tools.clone());
+            selection.requirement_surface.tools = tools;
+        }
+    }
+
+    selections
+}
+
 fn scoped_precondition_selection(
     contract: &Contract,
     mode: DoctorMode,
@@ -2594,6 +2735,7 @@ pub fn diagnose_contract(contract: &Contract, contract_path: &Path) -> DoctorRep
         None,
         None,
         ExecutionOverrides::default(),
+        None,
     )
 }
 
@@ -2610,6 +2752,7 @@ pub fn diagnose_contract_in_mode(
         None,
         None,
         ExecutionOverrides::default(),
+        None,
     )
 }
 
@@ -2643,6 +2786,7 @@ pub fn diagnose_contract_with_mode_and_lifecycle_for_workflow(
         lifecycle_override,
         workflow_name,
         ExecutionOverrides::default(),
+        None,
     )
 }
 
@@ -2662,6 +2806,7 @@ pub fn diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
         lifecycle_override,
         workflow_name,
         overrides,
+        None,
     )
 }
 
@@ -2748,6 +2893,26 @@ pub fn diagnose_preconditions_with_mode_for_workflow_with_overrides(
         None,
         workflow_name,
         overrides,
+        None,
+    )
+}
+
+pub fn diagnose_preconditions_with_mode_for_task_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    mode: DoctorMode,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> DoctorReport {
+    diagnose_contract_with_scope(
+        contract,
+        contract_path,
+        DoctorScope::Preconditions,
+        mode,
+        None,
+        None,
+        overrides,
+        Some(task_name),
     )
 }
 
@@ -2768,6 +2933,7 @@ pub fn diagnose_checks_only_for_workflow(
         None,
         workflow_name,
         ExecutionOverrides::default(),
+        None,
     )
 }
 
@@ -2788,6 +2954,7 @@ pub fn diagnose_services_only_for_workflow(
         None,
         workflow_name,
         ExecutionOverrides::default(),
+        None,
     )
 }
 
@@ -2836,14 +3003,18 @@ fn diagnose_contract_with_scope(
     lifecycle_override: Option<Lifecycle>,
     workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
+    task_name: Option<&str>,
 ) -> DoctorReport {
     let mut findings = Vec::new();
     let mut provisioning = None;
     let mut adapter_bootstrap = None;
     let mut execution_target = None;
     let selected_lifecycle = doctor_selected_lifecycle(mode, lifecycle_override);
-    let backend_precondition_selections =
-        selected_backend_precondition_selections(contract, workflow_name, overrides);
+    let backend_precondition_selections = if let Some(task_name) = task_name {
+        selected_task_backend_precondition_selections(contract, task_name, overrides)
+    } else {
+        selected_backend_precondition_selections(contract, workflow_name, overrides)
+    };
     let precondition_selection = backend_precondition_selections
         .iter()
         .find(|selection| selection.backend == backend_for_mode(mode))
@@ -3272,6 +3443,7 @@ fn diagnose_contract_with_scope(
                 contract_path,
                 scope,
                 workflow_name,
+                task_name,
                 &mut findings,
                 overrides,
             );
@@ -6960,6 +7132,17 @@ fn diagnose_command_version(
             match &probe.outcome {
                 CommandVersionProbeOutcome::Missing => {}
                 CommandVersionProbeOutcome::ProbeFailed { exit_code, error } => {
+                    if mode == DoctorMode::Container
+                        && !probe.probe_started
+                        && push_container_image_acquisition_finding(
+                            findings,
+                            container_probe,
+                            error.as_deref(),
+                            rerun_doctor.as_str(),
+                        )
+                    {
+                        return probe_started;
+                    }
                     let resolved_path = probe
                         .resolved_path
                         .as_ref()
@@ -7561,6 +7744,70 @@ fn remote_installability_failure(
     }
 }
 
+fn push_container_image_acquisition_finding(
+    findings: &mut Vec<Finding>,
+    container_probe: Option<&ContainerProbeContext>,
+    error_message: Option<&str>,
+    rerun_doctor: &str,
+) -> bool {
+    let Some(container_probe) = container_probe else {
+        return false;
+    };
+    let Some(message) = error_message else {
+        return false;
+    };
+    if !is_container_image_acquisition_error(message) {
+        return false;
+    }
+
+    let summary = format!("Container image unavailable: {}", container_probe.image);
+    if findings.iter().any(|finding| finding.summary == summary) {
+        return true;
+    }
+
+    let next = container_manifest_platform_mismatch_hint(Some(message))
+        .map(|hint| format!("{hint}, then rerun `{rerun_doctor}`"))
+        .unwrap_or_else(|| {
+            format!(
+                "run `{} pull {}` or fix container registry and engine network access, then rerun `{rerun_doctor}`",
+                container_probe.engine, container_probe.image
+            )
+        });
+    findings.push(Finding {
+        severity: FindingSeverity::Error,
+        summary,
+        why: format!(
+            "ota could not start configured container image `{}` before running runtime/tool probes: {}",
+            container_probe.image,
+            compact_probe_failure_message(message)
+        ),
+        next,
+    });
+    true
+}
+
+fn is_container_image_acquisition_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("unable to find image")
+        || lower.contains("pull access denied")
+        || lower.contains("repository does not exist")
+        || lower.contains("manifest unknown")
+        || lower.contains("no matching manifest")
+        || lower.contains("registry-1.docker.io")
+        || lower.contains("context deadline exceeded")
+        || lower.contains("client.timeout exceeded")
+        || lower.contains("bad gateway")
+}
+
+fn compact_probe_failure_message(message: &str) -> String {
+    message
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn version_command_in_container(
     engine: &str,
     image: &str,
@@ -7832,6 +8079,7 @@ fn diagnose_checks(
     contract_path: &Path,
     scope: DoctorScope,
     workflow_name: Option<&str>,
+    task_name: Option<&str>,
     findings: &mut Vec<Finding>,
     overrides: ExecutionOverrides,
 ) {
@@ -7839,8 +8087,11 @@ fn diagnose_checks(
     let selected_checks = selected_workflow_check_names(contract, workflow_name, scope);
     let selected_signal_checks =
         selected_workflow_signal_check_names(contract, workflow_name, scope);
-    let selected_precondition_checks =
-        selected_task_requirement_check_names(contract, workflow_name);
+    let selected_precondition_checks = task_name
+        .and_then(|task_name| {
+            selected_task_run_requirement_check_names(contract, task_name, overrides)
+        })
+        .or_else(|| selected_task_requirement_check_names(contract, workflow_name));
     let selected_probes = selected_workflow_probe_names(contract, workflow_name, scope);
     let selected_signal_probes =
         selected_workflow_signal_probe_names(contract, workflow_name, scope);
@@ -8324,6 +8575,40 @@ fn selected_task_requirement_check_names(
     }
 
     (scoped || !selected.is_empty()).then_some(selected)
+}
+
+fn selected_task_run_requirement_check_names(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<BTreeSet<String>> {
+    let task_names = contract.task_dependency_closure_names([task_name.to_string()]);
+    if task_names.is_empty() {
+        return None;
+    }
+
+    let mut selected = BTreeSet::new();
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        selected.extend(
+            task.scoped_check_requirements_for_execution(effective.backend, effective.context_name),
+        );
+        if matches!(effective.backend, Backend::Native) {
+            let scoped_native = task.scoped_native_requirements_for_execution(
+                effective.backend,
+                effective.context_name,
+            );
+            selected.extend(
+                contract
+                    .native_prerequisite_required_check_names_for_os(scoped_native, current_os()),
+            );
+        }
+    }
+
+    Some(selected)
 }
 
 fn selected_workflow_probe_names<'a>(
@@ -11773,7 +12058,7 @@ tasks:
         } else {
             "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\necho daemon unavailable >&2\nexit 1\n"
         };
-        write_fake_command(&bin_dir, "docker", &docker_body);
+        write_fake_command(&bin_dir, "docker", docker_body);
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -11832,6 +12117,97 @@ tasks:
     }
 
     #[test]
+    fn reports_container_image_acquisition_failure_once() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\necho Unable to find image 'ruby:3.3.11-bookworm' locally 1>&2\r\necho docker: Error response from daemon: Get \"https://registry-1.docker.io/v2/\": context deadline exceeded 1>&2\r\nexit /b 1\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\necho \"Unable to find image 'ruby:3.3.11-bookworm' locally\" >&2\necho 'docker: Error response from daemon: Get \"https://registry-1.docker.io/v2/\": context deadline exceeded' >&2\nexit 1\n"
+        };
+        write_fake_command(&bin_dir, "docker", docker_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  backends:
+    container:
+      image: ruby:3.3.11-bookworm
+      engines: [docker]
+runtimes:
+  ruby: "3.3.11"
+tools:
+  bundler: ">=2.5.3"
+tasks:
+  test:
+    run: bundle exec rspec
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_contract_in_mode(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Container,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok);
+        let image_findings = report
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.summary == "Container image unavailable: ruby:3.3.11-bookworm"
+            })
+            .count();
+        assert_eq!(image_findings, 1);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Container image unavailable: ruby:3.3.11-bookworm")
+            .expect("expected container image blocker");
+        assert!(finding.why.contains("registry-1.docker.io"));
+        assert!(finding.next.contains("docker pull ruby:3.3.11-bookworm"));
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Runtime probe failed: ruby")
+        );
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Tool probe failed: bundler")
+        );
+    }
+
+    #[test]
     fn reports_container_tool_probe_platform_mismatch_guidance_for_manifest_errors() {
         let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
@@ -11842,7 +12218,7 @@ tasks:
         } else {
             "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\necho \"Unable to find image 'node:22-bookworm' locally\" >&2\necho \"docker: no matching manifest for windows(10.0.26100)/amd64 in the manifest list entries\" >&2\nexit 1\n"
         };
-        write_fake_command(&bin_dir, "docker", &docker_body);
+        write_fake_command(&bin_dir, "docker", docker_body);
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -11893,8 +12269,8 @@ tasks:
         let finding = report
             .findings
             .iter()
-            .find(|finding| finding.summary == "Tool probe failed: node")
-            .expect("expected tool probe failure finding");
+            .find(|finding| finding.summary == "Container image unavailable: node:22-bookworm")
+            .expect("expected container image finding");
         assert!(finding.next.contains(
             "switch Docker Desktop to Linux container mode or use a Windows-compatible image tag"
         ));
