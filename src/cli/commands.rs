@@ -28,6 +28,7 @@ use std::fs::{self, File};
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -1823,10 +1824,29 @@ pub fn proof_runtime(
     file_override: Option<&Path>,
     member: Option<&str>,
     workflow_name: Option<&str>,
+    ready_timeout: Option<&str>,
     overrides: ExecutionOverrides,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    let ready_timeout = match ready_timeout {
+        Some(value) => match parse_readiness_duration_spec(value) {
+            Some(duration) => Some(duration),
+            None => {
+                return finalize_debug(
+                    CommandOutput::failure_with_code(
+                        format!(
+                            "`--ready-timeout {value}` is invalid; expected values like `90s`, `5m`, or `1h`"
+                        ),
+                        2,
+                    ),
+                    debug,
+                    vec![String::from("DEBUG command=proof runtime")],
+                );
+            }
+        },
+        None => None,
+    };
     let resolved_path = match resolve_contract_path(path, file_override) {
         Ok(path) => path,
         Err(error) => {
@@ -1862,6 +1882,9 @@ pub fn proof_runtime(
     }
     if let Some(workflow_name) = workflow_name {
         debug_lines.push(format!("DEBUG workflow={workflow_name}"));
+    }
+    if let Some(timeout) = ready_timeout {
+        debug_lines.push(format!("DEBUG ready_timeout_secs={}", timeout.as_secs()));
     }
 
     if is_org_policy_pack_path(&resolved_path) {
@@ -1960,7 +1983,7 @@ pub fn proof_runtime(
                         overrides,
                         &mut up_process,
                         "ota up --stream",
-                        None,
+                        ready_timeout,
                     ) {
                         Ok(result) => result,
                         Err(error) => {
@@ -2056,18 +2079,33 @@ pub fn proof_runtime(
                     )),
                     (None, None, None) => None,
                 };
+                let timed_out = up_process_failure.is_some_and(|failure| {
+                    failure.contains("timed out while waiting for readiness")
+                });
+                let interrupted = up_process_failure
+                    .is_some_and(|failure| failure.contains("runtime proof interrupted by signal"));
                 let status = proof_runtime_status_word(
                     proof_summary.verdict,
                     proof_phase,
+                    timed_out,
+                    interrupted,
                     cleanup_error.is_some(),
                 );
                 let json_phase = if cleanup_error.is_some() {
                     "cleanup"
+                } else if interrupted {
+                    "interrupted"
+                } else if timed_out {
+                    "timeout"
                 } else {
                     proof_phase
                 };
                 let text_phase = if cleanup_error.is_some() {
                     "cleanup"
+                } else if interrupted {
+                    "interrupted"
+                } else if timed_out {
+                    "timeout"
                 } else {
                     proof_runtime_phase_label(proof_phase)
                 };
@@ -37034,6 +37072,9 @@ fn finding_next_steps(next: &str) -> Vec<String> {
     if let Some((first, rerun)) = next.split_once(", then rerun ") {
         return vec![first.trim().to_string(), format!("rerun {}", rerun.trim())];
     }
+    if let Some((first, rerun)) = next.split_once(" and rerun ") {
+        return vec![first.trim().to_string(), format!("rerun {}", rerun.trim())];
+    }
     if let Some((first, alternative)) = next.split_once(", or ") {
         return vec![first.trim().to_string(), alternative.trim().to_string()];
     }
@@ -42277,6 +42318,72 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_timeout_without_primary_blocker() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            None,
+            Some("timed out while waiting for readiness"),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("readiness_timeout"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_marks_interrupted_without_primary_blocker() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            None,
+            Some("runtime proof interrupted by signal"),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("interrupted"));
+    }
+
+    #[test]
+    fn proof_runtime_status_word_marks_timeouts_explicitly() {
+        assert_eq!(
+            super::proof_runtime_status_word(
+                DoctorVerdict::NotReady,
+                "service readiness",
+                true,
+                false,
+                false,
+            ),
+            "TIMEOUT"
+        );
+    }
+
+    #[test]
+    fn proof_runtime_status_word_marks_interrupts_explicitly() {
+        assert_eq!(
+            super::proof_runtime_status_word(
+                DoctorVerdict::NotReady,
+                "service readiness",
+                false,
+                true,
+                false,
+            ),
+            "INTERRUPTED"
+        );
+    }
+
+    #[test]
     fn render_proof_runtime_text_prioritizes_primary_blocker_over_up_process_failure() {
         let _guard = cwd_mutex_lock();
         let contract_dir = TempDir::new().unwrap();
@@ -42320,7 +42427,13 @@ workflows:
             Some("default"),
             &contract_path,
             "service readiness",
-            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            super::proof_runtime_status_word(
+                summary.verdict,
+                "service readiness",
+                false,
+                false,
+                false,
+            ),
             &summary,
             Some("up process exited with code 1"),
             "topology.json",
@@ -42351,7 +42464,13 @@ workflows:
             Some("default"),
             Path::new("./ota.yaml"),
             "service readiness",
-            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            super::proof_runtime_status_word(
+                summary.verdict,
+                "service readiness",
+                false,
+                false,
+                false,
+            ),
             &summary,
             Some("up process exited with code 1"),
             "topology.json",
@@ -42524,7 +42643,13 @@ workflows:
             Some("default"),
             Path::new("./ota.yaml"),
             "service readiness",
-            super::proof_runtime_status_word(summary.verdict, "service readiness", false),
+            super::proof_runtime_status_word(
+                summary.verdict,
+                "service readiness",
+                false,
+                false,
+                false,
+            ),
             &summary,
             Some("`ota up --stream` exited while waiting for readiness (exit code 1)"),
             "topology.json",
@@ -44646,15 +44771,95 @@ tasks:
                 || stderr.contains("Missing runtime: node"),
             "{stderr}"
         );
-        assert!(stderr.contains("Field: tasks.verify.requirements"), "{stderr}");
-        assert!(stderr.contains("task requires `node@999.0.0`"), "{stderr}");
-        assert!(stderr.contains("resolved runtime is `node@"), "{stderr}");
         assert!(
-            stderr.contains("run `ota doctor` to confirm readiness"),
+            stderr.contains("Field: tasks.verify.requirements"),
             "{stderr}"
         );
-        assert!(stderr.contains("run `ota run verify`"), "{stderr}");
+        let missing_runtime = stderr.contains("Missing runtime: node");
+        if missing_runtime {
+            assert!(
+                stderr.contains("install node and make it available on PATH"),
+                "{stderr}"
+            );
+        } else {
+            assert!(stderr.contains("task requires `node@999.0.0`"), "{stderr}");
+            assert!(stderr.contains("resolved runtime is `node@"), "{stderr}");
+        }
+        assert!(
+            stderr.contains("run `ota doctor` to confirm readiness")
+                || stderr.contains("run `ota doctor`")
+                || stderr.contains("rerun `ota doctor`"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("and rerun `ota doctor`"), "{stderr}");
+        if !missing_runtime {
+            assert!(stderr.contains("run `ota run verify`"), "{stderr}");
+        }
         assert!(!stderr.contains("Task Failed"), "{stderr}");
+    }
+
+    #[test]
+    fn run_version_mismatch_formatter_uses_unified_container_tool_layout() {
+        let rendered = strip_ansi_codes(
+            &super::render_run_version_mismatch_precondition_text(
+                "./ota.yaml",
+                "test:backend",
+                None,
+                Backend::Container,
+                "Version mismatch for tool: poetry",
+                "poetry resolved to `2.4.1` inside the configured container image but the contract requires `>=2.3.4,<2.4.0`",
+                "update `execution.backends.container.image` so `poetry` satisfies `>=2.3.4,<2.4.0`, then rerun `ota doctor --mode container --lifecycle ephemeral`",
+            )
+            .expect("formatted mismatch"),
+        );
+
+        assert!(
+            rendered.contains("task `test:backend` is blocked (container tool mismatch: poetry)"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Field: tasks.test:backend.requirements"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("task requires `poetry@>=2.3.4,<2.4.0`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("resolved tool is `poetry@2.4.1` in the configured container image"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("run `ota doctor --mode container --lifecycle ephemeral`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("run `ota run test:backend --mode container`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_version_mismatch_formatter_splits_and_rerun_steps() {
+        let rendered = strip_ansi_codes(
+            &super::render_run_version_mismatch_precondition_text(
+                "./ota.yaml",
+                "verify",
+                None,
+                Backend::Native,
+                "Version mismatch for runtime: node",
+                "node resolved to `26.0.0` but the contract requires `22`; ota probed `/Users/bobai/.local/bin/mise` with `node --version`",
+                "run `mise install node@22` and rerun `ota doctor`",
+            )
+            .expect("formatted mismatch"),
+        );
+
+        assert!(
+            rendered.contains("run `mise install node@22`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("run `ota doctor`"), "{rendered}");
+        assert!(!rendered.contains("and rerun `ota doctor`"), "{rendered}");
     }
 
     #[test]
@@ -47034,6 +47239,20 @@ tasks:
                 String::from(
                     "run declared tasks with `ota run <task> --mode container` through the validated container path"
                 ),
+            ]
+        );
+    }
+
+    #[test]
+    fn finding_next_steps_splits_and_rerun_into_two_steps() {
+        let next_steps =
+            super::finding_next_steps("run `mise install node@22` and rerun `ota doctor`");
+
+        assert_eq!(
+            next_steps,
+            vec![
+                String::from("run `mise install node@22`"),
+                String::from("rerun `ota doctor`"),
             ]
         );
     }
@@ -51176,11 +51395,8 @@ workflows:
             Some(&summary),
         ));
 
-        assert!(
-            text.contains(
-                "repair `./.ota/org-policy.yaml` and rerun `ota doctor --mode container`"
-            )
-        );
+        assert!(text.contains("repair `./.ota/org-policy.yaml`"), "{text}");
+        assert!(text.contains("run `ota doctor --mode container`"), "{text}");
     }
 
     #[test]
@@ -51221,11 +51437,8 @@ workflows:
             Some(&summary),
         ));
 
-        assert!(
-            text.contains(
-                "repair `./.ota/org-policy.yaml` and rerun `ota doctor --mode container`"
-            )
-        );
+        assert!(text.contains("repair `./.ota/org-policy.yaml`"), "{text}");
+        assert!(text.contains("run `ota doctor --mode container`"), "{text}");
     }
 
     #[test]
@@ -62666,10 +62879,11 @@ fn run_selected_precondition_failure(
         .collect::<Vec<_>>();
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
 
-    if let Some(message) = render_run_runtime_mismatch_precondition_text(
+    if let Some(message) = render_run_version_mismatch_precondition_text(
         &text_path_display,
         task_name.as_str(),
         member,
+        effective.backend,
         &primary_blocker.summary,
         &display_why,
         &rewritten_next,
@@ -62705,17 +62919,31 @@ fn run_selected_precondition_failure(
     })
 }
 
-fn render_run_runtime_mismatch_precondition_text(
+fn render_run_version_mismatch_precondition_text(
     where_value: &str,
     task_name: &str,
     member: Option<&str>,
+    backend: Backend,
     summary: &str,
     why: &str,
     next: &str,
 ) -> Option<String> {
-    let runtime_name = summary
-        .strip_prefix("Version mismatch for runtime: ")
-        .map(strip_finding_context_suffix)?;
+    let (target_kind, subject_name) =
+        if let Some(name) = summary.strip_prefix("Version mismatch for runtime: ") {
+            ("runtime", strip_finding_context_suffix(name))
+        } else if let Some(name) = summary.strip_prefix("Version mismatch for tool: ") {
+            ("tool", strip_finding_context_suffix(name))
+        } else {
+            return None;
+        };
+
+    let mismatch_scope = if finding_targets_container_image(why) {
+        Some("container")
+    } else if finding_targets_remote_backend(why) {
+        Some("remote")
+    } else {
+        None
+    };
 
     let required = extract_backticked_value_after(why, "but the contract requires `");
     let actual = extract_backticked_value_after(why, "resolved to `");
@@ -62724,10 +62952,17 @@ fn render_run_runtime_mismatch_precondition_text(
 
     let mut why_lines = Vec::new();
     if let Some(required) = required.as_deref() {
-        why_lines.push(format!("task requires `{runtime_name}@{required}`"));
+        why_lines.push(format!("task requires `{subject_name}@{required}`"));
     }
     if let Some(actual) = actual.as_deref() {
-        why_lines.push(format!("resolved runtime is `{runtime_name}@{actual}`"));
+        let location_suffix = match mismatch_scope {
+            Some("container") => " in the configured container image",
+            Some("remote") => " through the selected remote backend",
+            _ => "",
+        };
+        why_lines.push(format!(
+            "resolved {target_kind} is `{subject_name}@{actual}`{location_suffix}"
+        ));
     }
     if let Some(path) = probe_path.as_deref() {
         if let Some(command) = probe_command.as_deref() {
@@ -62740,25 +62975,32 @@ fn render_run_runtime_mismatch_precondition_text(
         why_lines.push(why.to_string());
     }
 
-    let mut next_steps = Vec::new();
-    if let Some(command) = parse_leading_run_command(next) {
-        next_steps.push(format!("run `{command}`"));
-    } else {
-        next_steps.extend(finding_next_steps(next));
-    }
+    let mut next_steps = finding_next_steps(next)
+        .into_iter()
+        .map(|step| normalize_run_blocker_next_step(&step))
+        .collect::<Vec<_>>();
     if !next_steps.iter().any(|step| step.contains("`ota doctor`")) {
         next_steps.push(String::from("run `ota doctor` to confirm readiness"));
     }
-    next_steps.push(format!(
+    let rerun_command = format!(
         "run `{}`",
-        repo_run_command(task_name, member)
-    ));
+        repo_run_command_for_backend(task_name, member, backend)
+    );
+    if !next_steps.iter().any(|step| step == &rerun_command) {
+        next_steps.push(rerun_command);
+    }
+
+    let mismatch_summary = if let Some(scope) = mismatch_scope {
+        format!("{scope} {target_kind} mismatch: {subject_name}")
+    } else {
+        format!("{target_kind} mismatch: {subject_name}")
+    };
 
     Some(structured_field_error_text(
         "RUN",
         where_value,
         &format!("tasks.{task_name}.requirements"),
-        &format!("task `{task_name}` is blocked (runtime mismatch: {runtime_name})"),
+        &format!("task `{task_name}` is blocked ({mismatch_summary})"),
         &why_lines,
         &next_steps,
     ))
@@ -62771,11 +63013,10 @@ fn extract_backticked_value_after(value: &str, marker: &str) -> Option<String> {
     (!token.is_empty()).then(|| token.to_string())
 }
 
-fn parse_leading_run_command(next: &str) -> Option<String> {
-    let rest = next.strip_prefix("run `")?;
-    let (command, _) = rest.split_once('`')?;
-    let command = command.trim();
-    (!command.is_empty()).then(|| command.to_string())
+fn normalize_run_blocker_next_step(step: &str) -> String {
+    step.strip_prefix("rerun `")
+        .map(|rest| format!("run `{rest}"))
+        .unwrap_or_else(|| step.to_string())
 }
 
 fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
@@ -64608,6 +64849,19 @@ fn repo_run_stream_command_for_backend(
         Backend::Native => {}
     }
     command.push_str(" --stream");
+    command
+}
+
+fn repo_run_command_for_backend(task_name: &str, member: Option<&str>, backend: Backend) -> String {
+    let mut command = match member {
+        Some(member) => format!("ota run --member {member} {task_name}"),
+        None => format!("ota run {task_name}"),
+    };
+    match backend {
+        Backend::Container => command.push_str(" --mode container"),
+        Backend::Remote => command.push_str(" --mode remote"),
+        Backend::Native => {}
+    }
     command
 }
 
@@ -68595,6 +68849,28 @@ const PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET: u64 = 30;
 const PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS: u64 = 60;
 const PROOF_RUNTIME_SUCCESSFUL_SERVICE_EXIT_GRACE_SECS: u64 = 20;
 const PROOF_RUNTIME_EXIT_OBSERVATION_GRACE_MILLIS: u64 = 250;
+static PROOF_RUNTIME_INTERRUPT_FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+fn proof_runtime_interrupt_flag() -> Arc<AtomicBool> {
+    PROOF_RUNTIME_INTERRUPT_FLAG
+        .get_or_init(|| {
+            let interrupted = Arc::new(AtomicBool::new(false));
+            #[cfg(unix)]
+            {
+                use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
+                for signal in [SIGINT, SIGTERM, SIGHUP, SIGQUIT] {
+                    let _ = signal_hook::flag::register(signal, Arc::clone(&interrupted));
+                }
+            }
+            #[cfg(windows)]
+            {
+                use signal_hook::consts::SIGINT;
+                let _ = signal_hook::flag::register(SIGINT, Arc::clone(&interrupted));
+            }
+            interrupted
+        })
+        .clone()
+}
 
 fn proof_runtime_wait_budget(readiness_strategy: &ProofRuntimeReadinessStrategy) -> Duration {
     let floor = Duration::from_secs(PROOF_RUNTIME_READINESS_WAIT_FLOOR_SECS);
@@ -68655,6 +68931,8 @@ fn wait_for_proof_runtime_readiness(
     process_label: &str,
     wait_budget_override: Option<Duration>,
 ) -> Result<(DoctorReport, &'static str, bool, Option<String>), String> {
+    let interrupted = proof_runtime_interrupt_flag();
+    interrupted.store(false, Ordering::Relaxed);
     let doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
     let readiness_strategy =
         proof_runtime_readiness_strategy(contract, contract_path, workflow_name, overrides);
@@ -68848,6 +69126,16 @@ fn wait_for_proof_runtime_readiness(
         };
 
         let now = Instant::now();
+        if interrupted.load(Ordering::Relaxed) {
+            return Ok((
+                finalize_report(latest_report),
+                "service readiness",
+                false,
+                deferred_service_run_exit_failure
+                    .take()
+                    .or_else(|| Some(String::from("runtime proof interrupted by signal"))),
+            ));
+        }
         let timed_out = now >= deadline
             || service_exit_grace_deadline.is_some_and(|grace_deadline| now >= grace_deadline);
         if timed_out {
@@ -68995,7 +69283,18 @@ fn proof_runtime_failure_class(
         return Some(String::from("cleanup_failure"));
     }
 
+    if up_process_failure
+        .is_some_and(|failure| failure.contains("runtime proof interrupted by signal"))
+    {
+        return Some(String::from("interrupted"));
+    }
+
     let Some(primary) = proof_runtime_blocking_primary_blocker(summary) else {
+        if up_process_failure
+            .is_some_and(|failure| failure.contains("timed out while waiting for readiness"))
+        {
+            return Some(String::from("readiness_timeout"));
+        }
         if up_process_failure.is_some() {
             return Some(String::from("up_process_failure"));
         }
@@ -69055,10 +69354,18 @@ fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path
 fn proof_runtime_status_word(
     verdict: DoctorVerdict,
     phase: &str,
+    timed_out: bool,
+    interrupted: bool,
     cleanup_failed: bool,
 ) -> &'static str {
     if cleanup_failed {
         return "BLOCKED";
+    }
+    if interrupted {
+        return "INTERRUPTED";
+    }
+    if timed_out {
+        return "TIMEOUT";
     }
     match verdict {
         DoctorVerdict::Ready => "READY",

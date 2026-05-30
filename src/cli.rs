@@ -801,6 +801,9 @@ enum ProofCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Override readiness wait budget for runtime proof behavior.
+        #[arg(long, value_name = "DURATION")]
+        ready_timeout: Option<String>,
         /// Override the execution mode for this proof.
         #[arg(long = "mode", visible_alias = "backend", value_enum)]
         backend: Option<RunBackend>,
@@ -4589,6 +4592,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             command:
                 ProofCommands::Runtime {
                     json,
+                    ready_timeout,
                     backend,
                     native,
                     container,
@@ -4605,6 +4609,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             file.as_deref(),
             member.as_deref(),
             workflow.as_deref(),
+            ready_timeout.as_deref(),
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
@@ -7250,16 +7255,11 @@ exec /bin/sh -lc "$1"
         let mut normalized = value.to_string();
         if matches!(name, "doctor_premium.txt" | "doctor_plain_premium.txt") {
             normalized = normalized.replace("./bin/node.cmd", "./bin/node");
-            if let Some(home) = std::env::var_os("HOME") {
-                let mise_path = PathBuf::from(home)
-                    .join(".local")
-                    .join("bin")
-                    .join("mise")
-                    .display()
-                    .to_string()
-                    .replace('\\', "/");
-                normalized = normalized.replace(&mise_path, "./bin/node");
-            }
+            normalized = normalize_backticked_mise_probe_path(&normalized);
+            normalized = normalized.replace(
+                "run `nvm install 22 && nvm use 22`",
+                "run `mise install node@22`",
+            );
             normalized = normalized.replace(
                 "`./bin/node` with\n     `node --version`",
                 "`./bin/node` with `node --version`",
@@ -7312,6 +7312,34 @@ exec /bin/sh -lc "$1"
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    fn normalize_backticked_mise_probe_path(value: &str) -> String {
+        let mut out = String::with_capacity(value.len());
+        let mut remaining = value;
+        while let Some(start) = remaining.find('`') {
+            let (before, after_start) = remaining.split_at(start);
+            out.push_str(before);
+            if let Some(end) = after_start[1..].find('`') {
+                let token = &after_start[1..1 + end];
+                if token.contains("/.local/bin/mise") {
+                    out.push('`');
+                    out.push_str("./bin/node");
+                    out.push('`');
+                } else {
+                    out.push('`');
+                    out.push_str(token);
+                    out.push('`');
+                }
+                remaining = &after_start[1 + end + 1..];
+            } else {
+                out.push_str(after_start);
+                remaining = "";
+                break;
+            }
+        }
+        out.push_str(remaining);
+        out
     }
 
     fn snapshot_file(name: &str) -> PathBuf {
@@ -16718,6 +16746,7 @@ tasks:
         assert!(super::command_supports_spinner(&super::Commands::Proof {
             command: super::ProofCommands::Runtime {
                 json: false,
+                ready_timeout: None,
                 backend: None,
                 native: false,
                 container: false,
@@ -16818,6 +16847,7 @@ tasks:
             super::command_spinner_label(&super::Commands::Proof {
                 command: super::ProofCommands::Runtime {
                     json: false,
+                    ready_timeout: None,
                     backend: None,
                     native: false,
                     container: false,
@@ -16964,6 +16994,7 @@ tasks:
                 super::Commands::Proof {
                     command: super::ProofCommands::Runtime {
                         json: true,
+                        ready_timeout: None,
                         backend: None,
                         native: false,
                         container: false,
@@ -21140,6 +21171,8 @@ policies:
             "app",
             "--container",
             "--persistent",
+            "--ready-timeout",
+            "5m",
             "./ota.yaml",
         ])
         .expect("proof runtime selectors should parse");
@@ -21150,6 +21183,7 @@ policies:
                 command:
                     super::ProofCommands::Runtime {
                         json: false,
+                        ready_timeout,
                         backend,
                         native,
                         container,
@@ -21163,6 +21197,7 @@ policies:
                     },
             } => {
                 assert!(backend.is_none());
+                assert_eq!(ready_timeout.as_deref(), Some("5m"));
                 assert!(!native);
                 assert!(*container);
                 assert!(!remote);
@@ -30255,6 +30290,37 @@ project:
     }
 
     #[test]
+    fn proof_runtime_rejects_invalid_ready_timeout_value() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "proof",
+            "runtime",
+            "--ready-timeout",
+            "soon",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 2);
+        assert_eq!(
+            strip_ansi(output.stderr.as_deref().unwrap()),
+            "`--ready-timeout soon` is invalid; expected values like `90s`, `5m`, or `1h`"
+        );
+    }
+
+    #[test]
     fn up_help_describes_detach_as_keep_running_behavior() {
         let output = run_with(["ota", "up", "--help"]);
 
@@ -35267,7 +35333,11 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains("run `uv python install 3.12.4` and rerun `ota doctor`"));
+        assert!(
+            stdout.contains("run `uv python install 3.12.4`"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("run `ota doctor`"), "{stdout}");
     }
 
     #[test]
@@ -35342,7 +35412,8 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains("run `pyenv install 3.12.4` and rerun `ota doctor`"));
+        assert!(stdout.contains("run `pyenv install 3.12.4`"), "{stdout}");
+        assert!(stdout.contains("run `ota doctor`"), "{stdout}");
     }
 
     #[test]
@@ -35378,7 +35449,15 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains("run `sdk install java 21.0.2-tem` and rerun `ota doctor`"));
+        assert!(
+            stdout.contains("run `sdk install java 21.0.2-tem`")
+                || stdout.contains("run `mise install java@21.0.2-tem`"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("run `ota doctor`") || stdout.contains("rerun `ota doctor`"),
+            "{stdout}"
+        );
     }
 
     #[test]
@@ -35414,7 +35493,8 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains("run `sdk install maven 3.9.9` and rerun `ota doctor`"));
+        assert!(stdout.contains("run `sdk install maven 3.9.9`"), "{stdout}");
+        assert!(stdout.contains("run `ota doctor`"), "{stdout}");
     }
 
     #[test]
@@ -35589,7 +35669,15 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains("run `volta install node@22` and rerun `ota doctor`"));
+        assert!(
+            stdout.contains("run `volta install node@22`")
+                || stdout.contains("run `mise install node@22`"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("run `ota doctor`") || stdout.contains("rerun `ota doctor`"),
+            "{stdout}"
+        );
     }
 
     #[test]
@@ -35625,7 +35713,15 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains("run `nodenv install 22` and rerun `ota doctor`"));
+        assert!(
+            stdout.contains("run `nodenv install 22`")
+                || stdout.contains("run `mise install node@22`"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("run `ota doctor`") || stdout.contains("rerun `ota doctor`"),
+            "{stdout}"
+        );
     }
 
     #[test]
@@ -35661,10 +35757,8 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(
-            stdout.contains("run `mise install node@22` and rerun `ota doctor`"),
-            "{stdout}"
-        );
+        assert!(stdout.contains("run `mise install node@22`"), "{stdout}");
+        assert!(stdout.contains("run `ota doctor`"), "{stdout}");
         assert!(!stdout.contains("nvm install 22"), "{stdout}");
     }
 
@@ -35701,7 +35795,8 @@ tasks:
         let stdout = strip_ansi(&output.stdout);
 
         assert_eq!(output.exit_code, 1);
-        assert!(stdout.contains("run `rbenv install 3.3.0` and rerun `ota doctor`"));
+        assert!(stdout.contains("run `rbenv install 3.3.0`"), "{stdout}");
+        assert!(stdout.contains("run `ota doctor`"), "{stdout}");
     }
 
     #[test]
@@ -35749,10 +35844,12 @@ tasks:
         assert!(stdout.contains("contract requires `3.9.9`"));
         assert!(
             stdout.contains("install a compatible maven version that satisfies `3.9.9`")
-                || stdout.contains("run `asdf install maven 3.9.9` and rerun `ota doctor`")
-                || stdout.contains("run `mise install maven@3.9.9` and rerun `ota doctor`")
-                || stdout.contains("install a compatible maven version")
+                || stdout.contains("run `asdf install maven 3.9.9`")
+                || stdout.contains("run `mise install maven@3.9.9`")
+                || stdout.contains("install a compatible maven version"),
+            "{stdout}"
         );
+        assert!(stdout.contains("run `ota doctor`"), "{stdout}");
     }
 
     #[test]

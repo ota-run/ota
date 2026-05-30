@@ -564,6 +564,7 @@ and tear the runtime back down.
 ```bash
 ota proof runtime [PATH]
 ota proof runtime --workflow app [PATH]
+ota proof runtime --ready-timeout 10m --workflow app [PATH]
 ota proof runtime --mode container --persistent [PATH]
 ota proof runtime --member api --workflow backend [PATH]
 ota proof runtime --json --workflow app [PATH]
@@ -586,6 +587,8 @@ Current behavior:
   preparation report for the selected path
 - honors the selected path's declared readiness timing policy when a workflow/task surface
   defines startup timing such as `start_period`, `interval`, `timeout`, and `retries`
+- supports `--ready-timeout <DURATION>` to cap the runtime-proof readiness wait budget with
+  explicit values such as `90s`, `5m`, or `1h`
 - uses the same backend/lifecycle override rules as `ota doctor` and `ota up`
 - attempts repo-scoped runtime cleanup after capturing artifacts so proof does not leave
   persistent Ota-managed runtime state behind
@@ -601,6 +604,9 @@ Text output:
 - success output includes a compact `Steps` section, final `READY` line, and `Artifacts` paths
 - blocked output keeps the shared `NOT READY` / `BLOCKED` status language, shows the failing proof
   phase, and surfaces one primary `Why` / `Next` lane without duplicating the full doctor report
+- timeout output uses `TIMEOUT` and phase `timeout` when runtime-proof wait budget is exhausted
+- interruption output uses `INTERRUPTED` and phase `interrupted` when runtime proof is terminated
+  by a signal (for example CI cancellation)
 
 JSON output:
 
