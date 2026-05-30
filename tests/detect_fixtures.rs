@@ -52,6 +52,25 @@ fn assert_high_confidence_projection_valid(report: &ota::detector::DetectReport)
     validate_contract(&contract).expect("projected contract should validate");
 }
 
+fn assert_detected_corepack_node_toolchain(
+    report: &ota::detector::DetectReport,
+    expected_version: &str,
+    package_manager: &str,
+    expected_package_manager_version: &str,
+) {
+    let toolchain = report
+        .contract
+        .toolchains
+        .get("node")
+        .expect("expected synthesized node toolchain");
+    assert_eq!(toolchain.provider, ToolchainProvider::Corepack);
+    assert_eq!(toolchain.version, expected_version);
+    assert_eq!(
+        toolchain.package_managers.get(package_manager),
+        Some(&expected_package_manager_version.to_string())
+    );
+}
+
 #[test]
 fn detects_node_pnpm_fixture() {
     let report = assert_detected_contract_valid("node-pnpm");
@@ -64,14 +83,7 @@ fn detects_node_pnpm_fixture() {
             .map(|project| project.name.as_str()),
         Some("ota-web")
     );
-    assert_eq!(
-        report.contract.runtimes.get("node"),
-        Some(&"22".to_string())
-    );
-    assert_eq!(
-        report.contract.tools.get("pnpm"),
-        Some(&"10.1.0".to_string())
-    );
+    assert_detected_corepack_node_toolchain(&report, "22", "pnpm", "10.1.0");
     assert_eq!(
         report
             .contract
@@ -222,14 +234,7 @@ fn detects_tool_versions_fixture() {
             .map(|project| project.name.as_str()),
         Some("ota-tool-versions")
     );
-    assert_eq!(
-        report.contract.runtimes.get("node"),
-        Some(&"24.1.0".to_string())
-    );
-    assert_eq!(
-        report.contract.tools.get("pnpm"),
-        Some(&"10.2.1".to_string())
-    );
+    assert_detected_corepack_node_toolchain(&report, "24.1.0", "pnpm", "10.2.1");
     assert_eq!(
         report
             .contract
@@ -604,17 +609,10 @@ fn detects_mixed_node_python_fixture() {
             .map(|project| project.name.as_str()),
         Some("ota-fullstack")
     );
-    assert_eq!(
-        report.contract.runtimes.get("node"),
-        Some(&"22".to_string())
-    );
+    assert_detected_corepack_node_toolchain(&report, "22", "pnpm", "10.4.0");
     assert_eq!(
         report.contract.runtimes.get("python"),
         Some(&">=3.12".to_string())
-    );
-    assert_eq!(
-        report.contract.tools.get("pnpm"),
-        Some(&"10.4.0".to_string())
     );
     assert_eq!(
         report
@@ -690,10 +688,7 @@ fn detects_polyglot_tool_versions_fixture() {
             .map(|project| project.name.as_str()),
         Some("ota-polyglot")
     );
-    assert_eq!(
-        report.contract.runtimes.get("node"),
-        Some(&"22.6.0".to_string())
-    );
+    assert_detected_corepack_node_toolchain(&report, "22.6.0", "pnpm", "10.5.0");
     assert_eq!(
         report.contract.runtimes.get("python"),
         Some(&"3.12.4".to_string())
@@ -701,10 +696,6 @@ fn detects_polyglot_tool_versions_fixture() {
     assert_eq!(
         report.contract.runtimes.get("go"),
         Some(&"1.24.1".to_string())
-    );
-    assert_eq!(
-        report.contract.tools.get("pnpm"),
-        Some(&"10.5.0".to_string())
     );
     assert_eq!(
         report
@@ -809,14 +800,7 @@ fn detects_fullstack_node_compose_fixture() {
             .map(|project| project.name.as_str()),
         Some("ota-compose-web")
     );
-    assert_eq!(
-        report.contract.runtimes.get("node"),
-        Some(&"22.7.0".to_string())
-    );
-    assert_eq!(
-        report.contract.tools.get("pnpm"),
-        Some(&"10.6.0".to_string())
-    );
+    assert_detected_corepack_node_toolchain(&report, "22.7.0", "pnpm", "10.6.0");
     assert_eq!(
         report
             .contract

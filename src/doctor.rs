@@ -10947,7 +10947,8 @@ workflows:
         let bin_dir = tempdir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
         let original_path = env::var("PATH").unwrap_or_default();
-        let new_path = format!("{}:{}", bin_dir.display(), original_path);
+        let path_separator = if cfg!(windows) { ";" } else { ":" };
+        let new_path = format!("{}{}{}", bin_dir.display(), path_separator, original_path);
         unsafe {
             env::set_var("PATH", new_path);
         }

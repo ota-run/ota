@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- added `--ready-timeout <DURATION>` to `ota proof runtime` so runtime-proof readiness waits are
+  explicitly bounded in CI and local automation (for example `90s`, `5m`, `1h`), aligned timeout
+  failures to the explicit `TIMEOUT` runtime-proof status, and normalized timeout-only JSON
+  classification to `failure_class: readiness_timeout`
+- hardened `ota proof runtime` interruption semantics for CI and automation cancellation paths:
+  runtime proof now captures termination signals and emits deterministic interruption output
+  (`INTERRUPTED` status in text, `phase: interrupted` and `failure_class: interrupted` in JSON)
+  instead of an opaque cancellation result
 - added first-class file-aware container isolation mounts: file-like
   `attachments.isolated_paths` entries (for example `.pnp.cjs`) now mount through deterministic
   `.ota/state/isolated-file-mounts/*` bind files instead of invalid volume targets, while
@@ -49,6 +57,13 @@
   paths
 - extended the same real-run precondition gate to version mismatch blockers, so `ota run` stops
   before dependency tasks when the selected path requires a different runtime or tool version
+- unified `ota run` precondition version-mismatch output across runtime/tool blockers with the
+  same structured task-first layout (`task ... is blocked`, plus `Where`, `Field`, bulletized
+  `Why`, and ordered `Next`), including backend-aware rerun guidance for container and remote
+  lanes
+- fixed `ota run` version-mismatch `Next` rendering to split combined `... and rerun ...`
+  guidance into separate ordered actions (`run <install>`, `run ota doctor`, `run ota run ...`)
+  for clearer task-first remediation flow
 - fixed container-image probe wording so run/doctor errors consistently say "inside the configured
   container image" when a required runtime or tool is missing or cannot be probed in the selected
   image
