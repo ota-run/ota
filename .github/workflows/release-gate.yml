@@ -185,7 +185,21 @@ jobs:
       - name: Run release gate (non-Windows) - JSON output conformance
         if: runner.os != 'Windows'
         timeout-minutes: 20
-        run: cargo test --test json_output_conformance
+        run: |
+          set +e
+          for attempt in 1 2; do
+            cargo test --test json_output_conformance
+            code=$?
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 2 ] && { [ "$code" -eq 143 ] || [ "$code" -eq 137 ] || [ "$code" -eq 124 ]; }; then
+              echo "json_output_conformance terminated with exit $code; retrying once..."
+              sleep 15
+              continue
+            fi
+            exit "$code"
+          done
 
       - name: Run release gate (non-Windows) - detect fixtures
         if: runner.os != 'Windows'
@@ -359,7 +373,21 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         timeout-minutes: 20
-        run: cargo test --test json_output_conformance
+        run: |
+          $attempts = 2
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            cargo test --test json_output_conformance
+            $code = $LASTEXITCODE
+            if ($code -eq 0) {
+              exit 0
+            }
+            if ($attempt -lt $attempts -and ($code -eq 143 -or $code -eq 137 -or $code -eq 124)) {
+              Write-Host "json_output_conformance terminated with exit $code; retrying once..."
+              Start-Sleep -Seconds 15
+              continue
+            }
+            exit $code
+          }
 
       - name: Run release gate (Windows) - detect fixtures
         if: runner.os == 'Windows'
