@@ -60,6 +60,7 @@ jobs:
 
   release-gate:
     name: Release Gate (${{ matrix.os }})
+    if: github.event_name != 'workflow_dispatch' || github.event.inputs.force_release != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -326,10 +327,10 @@ jobs:
       created: ${{ steps.tag.outputs.created }}
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
-    needs: release-gate
     if: |
-      github.event_name == 'push' && github.ref == 'refs/heads/main' ||
-      (github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && github.event.inputs.force_release == 'true')
+      github.event_name == 'workflow_dispatch' &&
+      github.ref_name == 'main' &&
+      github.event.inputs.force_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
