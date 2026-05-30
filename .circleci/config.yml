@@ -23,17 +23,152 @@
 version: 2.1
 
 jobs:
-  bootstrap:
+  release-gate-linux:
+    environment:
+      COLUMNS: "120"
+      RUST_MIN_STACK: "8388608"
     docker:
       - image: cimg/base:stable
     steps:
       - checkout
       - run:
-          name: CircleCI bootstrap
+          name: Install Rust toolchain
           command: |
-            echo "CircleCI project wiring is active for this branch."
+            set -euo pipefail
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+            . "$HOME/.cargo/env"
+            rustup component add rustfmt
+            cargo --version
+      - run:
+          name: Validate contract
+          command: |
+            set -euo pipefail
+            . "$HOME/.cargo/env"
+            cargo run --quiet -- validate ./ota.yaml --plain
+      - run:
+          name: Run ota CI gate
+          command: |
+            set -euo pipefail
+            . "$HOME/.cargo/env"
+            cargo run -- run ci --backend native --stream
+
+  release-gate-macos:
+    environment:
+      COLUMNS: "120"
+      RUST_MIN_STACK: "8388608"
+    macos:
+      xcode: "16.4.0"
+    steps:
+      - checkout
+      - run:
+          name: Install Rust toolchain
+          command: |
+            set -euo pipefail
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+            . "$HOME/.cargo/env"
+            rustup component add rustfmt
+            cargo --version
+      - run:
+          name: Validate contract
+          command: |
+            set -euo pipefail
+            . "$HOME/.cargo/env"
+            cargo run --quiet -- validate ./ota.yaml --plain
+      - run:
+          name: Run ota CI gate
+          command: |
+            set -euo pipefail
+            . "$HOME/.cargo/env"
+            cargo run -- run ci --backend native --stream
+
+  release-gate-windows:
+    environment:
+      COLUMNS: "120"
+      RUST_MIN_STACK: "8388608"
+      RUSTFLAGS: "-C link-arg=/STACK:8388608"
+    machine:
+      image: windows-server-2022-gui:current
+    resource_class: windows.medium
+    shell: powershell.exe -ExecutionPolicy Bypass
+    steps:
+      - checkout
+      - run:
+          name: Install Rust toolchain, validate, and run ota CI gate
+          command: |
+            $ErrorActionPreference = "Stop"
+            Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+            Start-Process -FilePath .\rustup-init.exe -ArgumentList '-y','--default-toolchain','stable','--profile','minimal' -NoNewWindow -Wait
+            $cargo = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
+            $rustup = Join-Path $env:USERPROFILE ".cargo\bin\rustup.exe"
+            if (-not (Test-Path $cargo)) { throw "cargo not found at $cargo" }
+            if (-not (Test-Path $rustup)) { throw "rustup not found at $rustup" }
+            & $rustup component add rustfmt
+            & $cargo --version
+            & $cargo fmt --version
+            & $cargo run --quiet -- validate ./ota.yaml --plain
+            & $cargo run -- run ci --backend native --stream
+
+  trigger-github-release:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run:
+          name: Trigger GitHub release workflow when version changed
+          command: |
+            set -euo pipefail
+
+            if [ -z "${GITHUB_RELEASE_TRIGGER_TOKEN:-}" ]; then
+              echo "GITHUB_RELEASE_TRIGGER_TOKEN is not set; skipping release dispatch."
+              exit 0
+            fi
+
+            repo="${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
+            if [ "${repo}" != "ota-run/ota" ]; then
+              echo "Not ota-run/ota (${repo}); skipping release dispatch."
+              exit 0
+            fi
+
+            git fetch --depth=2 origin "${CIRCLE_BRANCH}"
+
+            if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+              echo "No parent commit available; skipping release dispatch."
+              exit 0
+            fi
+
+            previous_version="$(git show HEAD^:Cargo.toml | awk -F'\"' '/^version = / {print $2; exit}')"
+            current_version="$(awk -F'\"' '/^version = / {print $2; exit}' Cargo.toml)"
+
+            if [ -z "${previous_version}" ] || [ -z "${current_version}" ]; then
+              echo "Unable to resolve versions from Cargo.toml; skipping release dispatch."
+              exit 0
+            fi
+
+            if [ "${previous_version}" = "${current_version}" ]; then
+              echo "Version unchanged (${current_version}); skipping release dispatch."
+              exit 0
+            fi
+
+            echo "Version changed: ${previous_version} -> ${current_version}"
+            curl -fsSL \
+              -X POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GITHUB_RELEASE_TRIGGER_TOKEN}" \
+              https://api.github.com/repos/ota-run/ota/actions/workflows/release-gate.yml/dispatches \
+              -d '{"ref":"main","inputs":{"force_release":"true"}}'
+            echo "Dispatched GitHub release workflow."
 
 workflows:
-  ota:
+  release-gate:
     jobs:
-      - bootstrap
+      - release-gate-linux
+      - release-gate-macos
+      - release-gate-windows
+      - trigger-github-release:
+          requires:
+            - release-gate-linux
+            - release-gate-macos
+            - release-gate-windows
+          filters:
+            branches:
+              only: main
