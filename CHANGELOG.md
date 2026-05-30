@@ -35,6 +35,10 @@
 - reject env requirements that combine `secret: true` with a contract `default` during validation,
   so `ota validate`, `ota doctor`, and dry-run previews fail before task execution reaches env
   resolution
+- fixed `ota run <task> --dry-run` env reporting so mode-specific task env overrides are resolved
+  against the selected execution mode instead of the task's default/native path
+- added task `env_bindings.<NAME>.from_service` so contracts can derive task environment values
+  from declared service endpoints, including container callers that need host-view services
 - clarified container image acquisition failures during container runtime/tool probes so Ota reports
   one actionable container-image blocker instead of downstream runtime/tool probe noise
 - fixed `ota run <task> --dry-run` precondition scoping so task previews evaluate only the

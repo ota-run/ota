@@ -9263,6 +9263,7 @@ fn build_assist_add_task_proposal(
         category: None,
         context: None,
         env: BTreeMap::new(),
+        env_bindings: BTreeMap::new(),
         inputs: BTreeMap::new(),
         targets: BTreeMap::new(),
         run: None,
@@ -11516,6 +11517,20 @@ fn build_env_report(
     contract_path: &Path,
     task_name: Option<&str>,
 ) -> Result<EnvReport, String> {
+    build_env_report_with_overrides(
+        contract,
+        contract_path,
+        task_name,
+        ExecutionOverrides::default(),
+    )
+}
+
+fn build_env_report_with_overrides(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<EnvReport, String> {
     let (task_env, explicit_task_env) = match task_name {
         Some(task_name) => {
             let Some(task) = contract.tasks.get(task_name) else {
@@ -11528,7 +11543,7 @@ fn build_env_report(
                 effective_task_env_for_selection(
                     contract,
                     task_name,
-                    ExecutionOverrides::default(),
+                    overrides,
                     contract_working_dir(contract_path),
                 ),
                 Some(&task.env),
@@ -14123,10 +14138,11 @@ fn render_run_preview_target(
     let applied_overrides = execution_plan_overrides(overrides);
     let requested_task =
         TaskSummary::from_spec(task_name.as_str(), task, current_os(), &target.contract);
-    let env_report = match build_env_report(
+    let env_report = match build_env_report_with_overrides(
         &target.contract,
         &target.contract_path,
         Some(task_name.as_str()),
+        overrides,
     ) {
         Ok(report) => report,
         Err(error) => {
@@ -40934,11 +40950,12 @@ mod tests {
     use super::{
         DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpPreview, RepoUpResult,
         adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
-        build_env_report, build_up_preview, collect_validate_warnings,
-        compact_contract_file_path_relative_to, compact_path_relative_to,
-        compact_policy_path_relative_to_contract, contractless_signal_summary_parts,
-        doctor as doctor_command, doctor_mode_execution_overrides, env as env_command,
-        execute_repo_up, execution_receipt_step, execution_receipt_step_detail, render_clean_text,
+        build_env_report, build_env_report_with_overrides, build_up_preview,
+        collect_validate_warnings, compact_contract_file_path_relative_to,
+        compact_path_relative_to, compact_policy_path_relative_to_contract,
+        contractless_signal_summary_parts, doctor as doctor_command,
+        doctor_mode_execution_overrides, env as env_command, execute_repo_up,
+        execution_receipt_step, execution_receipt_step_detail, render_clean_text,
         render_detect_comparison_section, render_env_text, render_execution_receipt_summary_block,
         render_execution_receipt_text, render_report_section, render_tasks_text,
         render_tasks_use_text, render_up_result, render_up_section_from_parts,
@@ -41208,6 +41225,69 @@ tasks:
             entry.name == "CONTEXT_CACHE"
                 && entry.value.as_deref() == Some("/workspace/context-cache")
                 && entry.source == "execution"
+        }));
+    }
+
+    #[test]
+    fn build_env_report_uses_selected_mode_branch_env_for_task() {
+        let temp_dir = TempDir::new().unwrap();
+        let contract_path = temp_dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DB_HOST:
+      default: localhost
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ruby:3.3.11-bookworm
+tasks:
+  test:
+    context: host
+    run: bundle exec rspec
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          run: bundle exec rspec
+        container:
+          context: app
+          env:
+            DB_HOST: host.docker.internal
+          run: bundle exec rspec
+    env:
+      DB_HOST: localhost
+"#,
+        )
+        .unwrap();
+
+        let report = build_env_report_with_overrides(
+            &contract,
+            &contract_path,
+            Some("test"),
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .unwrap();
+
+        assert!(report.env.iter().any(|entry| {
+            entry.name == "DB_HOST"
+                && entry.value.as_deref() == Some("host.docker.internal")
+                && entry.source == "task"
         }));
     }
 
@@ -62955,7 +63035,13 @@ fn run_selected_precondition_failure(
     {
         return None;
     }
-    let env_report = build_env_report(contract, contract_path, Some(task_name.as_str())).ok()?;
+    let env_report = build_env_report_with_overrides(
+        contract,
+        contract_path,
+        Some(task_name.as_str()),
+        overrides,
+    )
+    .ok()?;
     let preconditions_report =
         run_preview_preconditions_report(contract, contract_path, task_name.as_str(), overrides);
     let summary = run_preview_summary(

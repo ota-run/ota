@@ -2142,6 +2142,39 @@ pub struct EnvRequirement {
     pub append: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEnvBindingSpec {
+    pub from_service: TaskServiceEnvBindingSpec,
+}
+
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskServiceEnvBindingSpec {
+    pub service: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<TaskServiceEnvBindingFormat>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskServiceEnvBindingFormat {
+    Url,
+    Host,
+    Port,
+    HostPort,
+}
+
 #[derive(Debug, Default, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ContractReadinessConfig {
@@ -2950,6 +2983,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
+    pub env_bindings: BTreeMap<String, TaskEnvBindingSpec>,
+    #[serde(default)]
     pub inputs: BTreeMap<String, TaskInputSpec>,
     #[serde(default)]
     pub targets: BTreeMap<String, TaskTargetSpec>,
@@ -3129,6 +3164,19 @@ impl TaskSpec {
         merged.extend(self.env.clone());
         if let Some(branch) = self.mode_execution_branch(backend) {
             merged.extend(branch.env.clone());
+        }
+        merged
+    }
+
+    pub fn env_bindings_for_backend_with_context_name(
+        &self,
+        _execution: Option<&Execution>,
+        backend: Backend,
+        _context_name_override: Option<&str>,
+    ) -> BTreeMap<String, TaskEnvBindingSpec> {
+        let mut merged = self.env_bindings.clone();
+        if let Some(branch) = self.mode_execution_branch(backend) {
+            merged.extend(branch.env_bindings.clone());
         }
         merged
     }
@@ -3444,6 +3492,8 @@ pub struct TaskModeBranchSpec {
     pub lifecycle: Option<Lifecycle>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub env_bindings: BTreeMap<String, TaskEnvBindingSpec>,
     #[serde(default)]
     pub run: Option<String>,
     #[serde(default)]
