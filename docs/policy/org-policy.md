@@ -37,6 +37,7 @@ It keeps the contract discipline high without turning the policy pack into a hid
 - optionally turn on `strict_versions` when already-installed versions must also stay policy-compliant
 - supply approved shared env values explicitly with `env.values`
 - require explicit agent safety surfaces
+- govern task and safe-task side effects explicitly (`network` / `external_state`)
 - require `AGENTS.md` generation in exports
 - approve source managers and adapter bootstrap explicitly for the platforms you actually use
 
@@ -48,6 +49,7 @@ It keeps the contract discipline high without turning the policy pack into a hid
 - org-approved install sources stay reviewable by platform and by tool
 - shared env values stay explicit in policy instead of hiding in shell setup
 - agent execution surfaces stay safe by default
+- effect decisions stay explicit and reviewable on selected task paths
 - provisioning errors become policy issues instead of mysterious backend failures
 - new repos can adopt the same baseline without inventing their own rules
 
@@ -88,6 +90,18 @@ policies:
   agent:
     require_safe_tasks: true
     require_writable_paths: true
+  effects:
+    mode: strict
+    tasks:
+      network: warn
+      dependency_hydration: allow
+      external_state_default: warn
+    safe_tasks:
+      network: deny
+      dependency_hydration: allow
+      external_state_default: warn
+      external_state:
+        docker: deny
   exports:
     require_agents_md: true
   provisioning:

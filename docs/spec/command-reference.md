@@ -1137,6 +1137,7 @@ ota run <task> --mode native [PATH]
 ota run <task> --mode container --ephemeral [PATH]
 ota run <task> --mode remote [PATH]
 ota run <task> --skip-deps [PATH]
+ota run <task> --effect-override network:broad=allow [PATH]
 ota run <task> --memory 4GiB [PATH]
 ota run <task> [PATH] --base-url http://localhost:8080
 ```
@@ -1149,6 +1150,9 @@ Current behavior:
 - `--mode`, `--lifecycle`, and `--ephemeral` can override the contract for one invocation
 - `--skip-deps` is a local execution override that skips `tasks.<name>.depends_on` for the requested task only
 - `--skip-deps` is rejected when the requested task has no declared `depends_on`
+- `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
+  decision for this invocation only; supported selectors are `network`, `network:broad`,
+  `network:dependency_hydration`, and `external_state:<token>`
 - task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
 - when a task input overlaps an ota command flag name such as `mode` or `jobs`, put the ota command flag before the task and the task input after the task
 - task inputs are exposed to the task process as `OTA_INPUT_<NAME>` env variables
@@ -1742,6 +1746,7 @@ ota up --stream [PATH]
 ota up --dry-run [PATH]
 ota up --dry-run --json [PATH]
 ota up --mode container --ephemeral [PATH]
+ota up --effect-override network:broad=allow [PATH]
 ota up --member api [PATH]
 ota up --member api --member web [PATH]
 ```
@@ -1813,6 +1818,8 @@ Current behavior:
 - `--ready-timeout <duration>` overrides readiness wait budget for detached service-runtime proof behavior
 - when setup binds to a named context that uses `extends`, `ota up` uses the merged context backend/lifecycle/image shape
 - can override execution mode and lifecycle for the selected workflow setup/run phase with `--mode`, `--lifecycle`, or the shorthand `--ephemeral`
+- `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
+  decision for this `ota up` invocation only using the same selectors as `ota run`
 - the current workflow-task backend path supports native, container, and the shipped remote providers
 - prints a lifecycle note on stderr when the selected workflow task uses backend-backed execution
 - reruns readiness diagnosis

@@ -132,6 +132,18 @@ policies:
   agent:
     require_safe_tasks: true
     require_writable_paths: true
+  effects:
+    mode: strict
+    tasks:
+      network: warn
+      dependency_hydration: allow
+      external_state_default: warn
+    safe_tasks:
+      network: deny
+      dependency_hydration: allow
+      external_state_default: warn
+      external_state:
+        docker: deny
   exports:
     require_agents_md: true
 ```
@@ -199,6 +211,26 @@ That makes the value visible immediately:
 - `env.values` does not create new repo requirements by itself; it only helps satisfy declared env vars.
 - `agent.require_safe_tasks` requires agent-visible execution surfaces to be explicitly marked safe.
 - `agent.require_writable_paths` requires writable-path intent to be declared instead of assumed.
+- `effects.mode` controls the fallback decision when no explicit rule matches:
+  `compatibility` falls back to `warn`, `strict` falls back to `deny`.
+- `effects.tasks` governs declared `effects.network` / `effects.network_kind` /
+  `effects.external_state` on any selected task closure.
+- `effects.tasks.network` controls broad network lanes for selected task paths.
+- `effects.tasks.dependency_hydration` controls lockfile-backed hydration lanes
+  (`effects.network_kind: dependency_hydration`) for selected task paths.
+- `effects.tasks.external_state_default` sets the default decision for selected-task
+  external-state targets when no target-specific override is declared.
+- `effects.tasks.external_state.<target>` overrides external-state decisions per target token.
+- `effects.safe_tasks` governs the same effect lanes for agent-safe task closures and falls
+  back to `effects.tasks` when the safe-task scope does not declare a more specific rule.
+- `effects.safe_tasks.network` controls broad network lanes for safe-task paths.
+- `effects.safe_tasks.dependency_hydration` controls lockfile-backed hydration lanes
+  (`effects.network_kind: dependency_hydration`) for safe-task paths.
+- `effects.safe_tasks.external_state_default` sets the default decision for safe-task external
+  state targets when no target-specific override is declared.
+- `effects.safe_tasks.external_state.<target>` overrides external-state decisions per target token
+  (for example `docker`, `postgres`).
+- valid effect decisions are `allow`, `warn`, and `deny`.
 - `exports.require_agents_md` requires repo-side agent guidance to be present when the policy pack says so.
 
 ## Enforcement Model
@@ -224,9 +256,13 @@ from the nearest ancestor when it exists, validates the file shape, and reports 
 - required files declared by the policy pack are missing from the repo root
 - declared runtime/tool versions violate `policies.version_policy`
 - resolved installed runtime/tool versions violate `policies.version_policy` while `strict_versions: true`
+- effect governance resolves to `deny` for any selected task/safe-task effect lane or external-state target
 - `policies.adapter_bootstrap` is malformed
 
 `ota doctor` remains read-only. It does not mutate repo contracts or apply policy remediation automatically.
+
+`ota run` and `ota up` also accept `--effect-override <effect>=<allow|warn|deny>` for one
+invocation when policy owners need an explicit, auditable temporary decision.
 
 `ota run` stays non-mutating unless the selected backend or execution context opts into
 `fulfillment: run`. In that case, ota may use policy-approved provisioning to repair missing or

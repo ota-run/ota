@@ -92,6 +92,8 @@ pub struct PolicyRules {
     pub adapter_bootstrap: BTreeMap<String, PolicyAdapterBootstrapRule>,
     #[serde(default)]
     pub backend_environment: PolicyBackendEnvironmentRules,
+    #[serde(default)]
+    pub effects: Option<PolicyEffectsRules>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -108,6 +110,95 @@ pub struct PolicyAgentRules {
     pub require_safe_tasks: bool,
     #[serde(default)]
     pub require_writable_paths: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyEffectsRules {
+    #[serde(default)]
+    pub mode: PolicyEffectsMode,
+    #[serde(default)]
+    pub tasks: PolicyTaskEffectsRules,
+    #[serde(default)]
+    pub safe_tasks: PolicyTaskEffectsRules,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyTaskEffectsRules {
+    #[serde(default)]
+    pub network: Option<PolicyEffectDecision>,
+    #[serde(default)]
+    pub dependency_hydration: Option<PolicyEffectDecision>,
+    #[serde(default)]
+    pub external_state_default: Option<PolicyEffectDecision>,
+    #[serde(default)]
+    pub external_state: BTreeMap<String, PolicyEffectDecision>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyEffectsMode {
+    #[default]
+    Compatibility,
+    Strict,
+}
+
+impl PolicyEffectsMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Compatibility => "compatibility",
+            Self::Strict => "strict",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyEffectDecision {
+    Allow,
+    Warn,
+    Deny,
+}
+
+impl PolicyEffectDecision {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Warn => "warn",
+            Self::Deny => "deny",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectGovernanceScope {
+    Task,
+    SafeTask,
+}
+
+impl EffectGovernanceScope {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Task => "task",
+            Self::SafeTask => "safe_task",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EffectGovernanceOverrides {
+    pub decisions: BTreeMap<String, PolicyEffectDecision>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SafeTaskEffectGovernanceDecision {
+    pub scope: String,
+    pub effect: String,
+    pub decision: PolicyEffectDecision,
+    pub source: String,
+    pub overridden: bool,
+    pub reason: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -445,8 +536,78 @@ impl OrgPolicyPack {
         )?;
         validate_version_policy_rules(&self.policies.version_policy.tools, "tool version policy")?;
         validate_backend_environment_rules(&self.policies.backend_environment)?;
+        validate_effect_rules(self.policies.effects.as_ref())?;
 
         Ok(())
+    }
+
+    pub fn safe_task_effect_governance_decisions(
+        &self,
+        network_kind: Option<crate::schema::TaskNetworkEffectKind>,
+        external_state: &BTreeSet<String>,
+    ) -> Vec<SafeTaskEffectGovernanceDecision> {
+        self.effect_governance_decisions(
+            EffectGovernanceScope::SafeTask,
+            network_kind,
+            external_state,
+            None,
+        )
+    }
+
+    pub fn effect_governance_decisions(
+        &self,
+        scope: EffectGovernanceScope,
+        network_kind: Option<crate::schema::TaskNetworkEffectKind>,
+        external_state: &BTreeSet<String>,
+        overrides: Option<&EffectGovernanceOverrides>,
+    ) -> Vec<SafeTaskEffectGovernanceDecision> {
+        let Some(effects) = self.policies.effects.as_ref() else {
+            return Vec::new();
+        };
+        let mut decisions = Vec::new();
+
+        if let Some(kind) = network_kind {
+            let effect = format!("network:{}", kind.as_str());
+            let (base_decision, base_source) =
+                resolve_network_effect_governance_decision(effects, scope, kind);
+            let (decision, source, overridden) =
+                apply_effect_override(base_decision, &base_source, overrides, &effect);
+            decisions.push(SafeTaskEffectGovernanceDecision {
+                scope: scope.as_str().to_string(),
+                effect,
+                decision,
+                source,
+                overridden,
+                reason: format!(
+                    "{} effect policy resolved network lane `{}` to `{}`",
+                    scope_display(scope),
+                    kind.as_str(),
+                    decision.as_str()
+                ),
+            });
+        }
+
+        for state in external_state {
+            let effect = format!("external_state:{state}");
+            let (base_decision, base_source) =
+                resolve_external_state_effect_governance_decision(effects, scope, state);
+            let (decision, source, overridden) =
+                apply_effect_override(base_decision, &base_source, overrides, &effect);
+            decisions.push(SafeTaskEffectGovernanceDecision {
+                scope: scope.as_str().to_string(),
+                effect,
+                decision,
+                source,
+                overridden,
+                reason: format!(
+                    "{} effect policy resolved external state `{state}` to `{}`",
+                    scope_display(scope),
+                    decision.as_str()
+                ),
+            });
+        }
+
+        decisions
     }
 
     pub fn version_policy_violations_for_os(
@@ -1384,6 +1545,222 @@ fn validate_version_policy_rules(
     Ok(())
 }
 
+fn validate_effect_rules(effect_rules: Option<&PolicyEffectsRules>) -> Result<(), String> {
+    let Some(rules) = effect_rules else {
+        return Ok(());
+    };
+    validate_policy_effect_external_state_tokens("safe-task", &rules.safe_tasks.external_state)?;
+    validate_policy_effect_external_state_tokens("task", &rules.tasks.external_state)?;
+    Ok(())
+}
+
+fn validate_policy_effect_external_state_tokens(
+    scope: &str,
+    entries: &BTreeMap<String, PolicyEffectDecision>,
+) -> Result<(), String> {
+    for state in entries.keys() {
+        if state.trim().is_empty() {
+            return Err(format!(
+                "policy {scope} external_state entries must not be empty",
+            ));
+        }
+        if !is_valid_external_state_token(state) {
+            return Err(format!(
+                "policy {scope} external_state entry `{state}` must be a lowercase token like `docker` or `postgres`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn scope_display(scope: EffectGovernanceScope) -> &'static str {
+    match scope {
+        EffectGovernanceScope::Task => "task",
+        EffectGovernanceScope::SafeTask => "safe-task",
+    }
+}
+
+fn apply_effect_override(
+    decision: PolicyEffectDecision,
+    source: &str,
+    overrides: Option<&EffectGovernanceOverrides>,
+    effect: &str,
+) -> (PolicyEffectDecision, String, bool) {
+    let override_decision =
+        overrides.and_then(|overrides| overrides.decisions.get(effect).copied());
+    match override_decision {
+        Some(override_decision) => (
+            override_decision,
+            format!("override:{effect} (base: {source})"),
+            true,
+        ),
+        None => (decision, source.to_string(), false),
+    }
+}
+
+fn fallback_effect_decision(mode: PolicyEffectsMode) -> (PolicyEffectDecision, String) {
+    match mode {
+        PolicyEffectsMode::Strict => (
+            PolicyEffectDecision::Deny,
+            String::from("policies.effects.mode=strict (implicit deny)"),
+        ),
+        PolicyEffectsMode::Compatibility => (
+            PolicyEffectDecision::Warn,
+            String::from("policies.effects.mode=compatibility (default warn)"),
+        ),
+    }
+}
+
+fn resolve_network_effect_governance_decision(
+    rules: &PolicyEffectsRules,
+    scope: EffectGovernanceScope,
+    kind: crate::schema::TaskNetworkEffectKind,
+) -> (PolicyEffectDecision, String) {
+    let safe = &rules.safe_tasks;
+    let task = &rules.tasks;
+    match (scope, kind) {
+        (
+            EffectGovernanceScope::SafeTask,
+            crate::schema::TaskNetworkEffectKind::DependencyHydration,
+        ) => {
+            if let Some(decision) = safe.dependency_hydration {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.dependency_hydration"),
+                );
+            }
+            if let Some(decision) = safe.network {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.network"),
+                );
+            }
+            if let Some(decision) = task.dependency_hydration {
+                return (
+                    decision,
+                    String::from("policies.effects.tasks.dependency_hydration"),
+                );
+            }
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
+        (EffectGovernanceScope::SafeTask, crate::schema::TaskNetworkEffectKind::Broad) => {
+            if let Some(decision) = safe.network {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.network"),
+                );
+            }
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
+        (
+            EffectGovernanceScope::Task,
+            crate::schema::TaskNetworkEffectKind::DependencyHydration,
+        ) => {
+            if let Some(decision) = task.dependency_hydration {
+                return (
+                    decision,
+                    String::from("policies.effects.tasks.dependency_hydration"),
+                );
+            }
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
+        (EffectGovernanceScope::Task, crate::schema::TaskNetworkEffectKind::Broad) => {
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
+    }
+
+    fallback_effect_decision(rules.mode)
+}
+
+fn resolve_external_state_effect_governance_decision(
+    rules: &PolicyEffectsRules,
+    scope: EffectGovernanceScope,
+    state: &str,
+) -> (PolicyEffectDecision, String) {
+    let safe = &rules.safe_tasks;
+    let task = &rules.tasks;
+    match scope {
+        EffectGovernanceScope::SafeTask => {
+            if let Some(decision) = safe.external_state.get(state).copied() {
+                return (
+                    decision,
+                    format!("policies.effects.safe_tasks.external_state.{state}"),
+                );
+            }
+            if let Some(decision) = safe.external_state_default {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.external_state_default"),
+                );
+            }
+            if let Some(decision) = task.external_state.get(state).copied() {
+                return (
+                    decision,
+                    format!("policies.effects.tasks.external_state.{state}"),
+                );
+            }
+            if let Some(decision) = task.external_state_default {
+                return (
+                    decision,
+                    String::from("policies.effects.tasks.external_state_default"),
+                );
+            }
+        }
+        EffectGovernanceScope::Task => {
+            if let Some(decision) = task.external_state.get(state).copied() {
+                return (
+                    decision,
+                    format!("policies.effects.tasks.external_state.{state}"),
+                );
+            }
+            if let Some(decision) = task.external_state_default {
+                return (
+                    decision,
+                    String::from("policies.effects.tasks.external_state_default"),
+                );
+            }
+        }
+    }
+
+    fallback_effect_decision(rules.mode)
+}
+
+fn is_valid_external_state_token(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+
+    let mut last_was_separator = false;
+    let mut last = first;
+    for ch in chars {
+        if ch == '-' || ch == '_' {
+            if last_was_separator {
+                return false;
+            }
+            last_was_separator = true;
+        } else if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
+            last_was_separator = false;
+        } else {
+            return false;
+        }
+        last = ch;
+    }
+
+    !matches!(last, '-' | '_')
+}
+
 fn validate_backend_environment_rules(rules: &PolicyBackendEnvironmentRules) -> Result<(), String> {
     for (name, profile) in &rules.profiles {
         if name.trim().is_empty() {
@@ -1855,6 +2232,7 @@ fn section_present(contract: &crate::schema::Contract, section: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::path::{Path, PathBuf};
@@ -1866,7 +2244,8 @@ mod tests {
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
-        OrgPolicyPack, PolicyPackSource, ProvisioningActionKind, ProvisioningTargetKind,
+        EffectGovernanceOverrides, EffectGovernanceScope, OrgPolicyPack, PolicyEffectDecision,
+        PolicyPackSource, ProvisioningActionKind, ProvisioningTargetKind,
         load_org_policy_pack_auto, load_org_policy_pack_auto_details,
     };
 
@@ -3036,5 +3415,191 @@ policies:
 
         let error = policy.validate().expect_err("source overlap should fail");
         assert!(error.contains("cannot be both allowed and denied"));
+    }
+
+    #[test]
+    fn safe_task_effect_policy_decisions_apply_overrides() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  effects:
+    tasks:
+      external_state_default: warn
+    safe_tasks:
+      network: deny
+      dependency_hydration: allow
+      external_state_default: warn
+      external_state:
+        docker: deny
+"#,
+        )
+        .unwrap();
+
+        let mut external_state = BTreeSet::new();
+        external_state.insert(String::from("docker"));
+        external_state.insert(String::from("postgres"));
+        let decisions = policy.safe_task_effect_governance_decisions(
+            Some(crate::schema::TaskNetworkEffectKind::DependencyHydration),
+            &external_state,
+        );
+
+        assert!(
+            decisions.iter().any(|decision| {
+                decision.effect == "network:dependency_hydration"
+                    && decision.decision == PolicyEffectDecision::Allow
+                    && decision.scope == "safe_task"
+                    && decision
+                        .source
+                        .contains("policies.effects.safe_tasks.dependency_hydration")
+            }),
+            "{decisions:?}"
+        );
+        assert!(
+            decisions.iter().any(|decision| {
+                decision.effect == "external_state:docker"
+                    && decision.decision == PolicyEffectDecision::Deny
+            }),
+            "{decisions:?}"
+        );
+        assert!(
+            decisions.iter().any(|decision| {
+                decision.effect == "external_state:postgres"
+                    && decision.decision == PolicyEffectDecision::Warn
+            }),
+            "{decisions:?}"
+        );
+    }
+
+    #[test]
+    fn task_effect_policy_decisions_use_tasks_scope_rules() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  effects:
+    tasks:
+      network: deny
+      external_state_default: warn
+      external_state:
+        docker: allow
+"#,
+        )
+        .unwrap();
+
+        let mut external_state = BTreeSet::new();
+        external_state.insert(String::from("docker"));
+        let decisions = policy.effect_governance_decisions(
+            EffectGovernanceScope::Task,
+            Some(crate::schema::TaskNetworkEffectKind::Broad),
+            &external_state,
+            None,
+        );
+
+        assert!(
+            decisions.iter().any(|decision| {
+                decision.effect == "network:broad"
+                    && decision.decision == PolicyEffectDecision::Deny
+                    && decision.scope == "task"
+                    && decision.source == "policies.effects.tasks.network"
+            }),
+            "{decisions:?}"
+        );
+        assert!(
+            decisions.iter().any(|decision| {
+                decision.effect == "external_state:docker"
+                    && decision.decision == PolicyEffectDecision::Allow
+                    && decision.source == "policies.effects.tasks.external_state.docker"
+            }),
+            "{decisions:?}"
+        );
+    }
+
+    #[test]
+    fn strict_effect_mode_denies_unruled_effects() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  effects:
+    mode: strict
+"#,
+        )
+        .unwrap();
+
+        let mut external_state = BTreeSet::new();
+        external_state.insert(String::from("postgres"));
+        let decisions = policy.effect_governance_decisions(
+            EffectGovernanceScope::Task,
+            Some(crate::schema::TaskNetworkEffectKind::Broad),
+            &external_state,
+            None,
+        );
+
+        assert!(
+            decisions.iter().any(|decision| {
+                decision.effect == "network:broad"
+                    && decision.decision == PolicyEffectDecision::Deny
+                    && decision
+                        .source
+                        .contains("policies.effects.mode=strict (implicit deny)")
+            }),
+            "{decisions:?}"
+        );
+        assert!(
+            decisions.iter().any(|decision| {
+                decision.effect == "external_state:postgres"
+                    && decision.decision == PolicyEffectDecision::Deny
+            }),
+            "{decisions:?}"
+        );
+    }
+
+    #[test]
+    fn effect_governance_overrides_apply_explicit_decisions() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  effects:
+    tasks:
+      network: deny
+"#,
+        )
+        .unwrap();
+
+        let mut overrides = EffectGovernanceOverrides::default();
+        overrides
+            .decisions
+            .insert(String::from("network:broad"), PolicyEffectDecision::Allow);
+        let decisions = policy.effect_governance_decisions(
+            EffectGovernanceScope::Task,
+            Some(crate::schema::TaskNetworkEffectKind::Broad),
+            &BTreeSet::new(),
+            Some(&overrides),
+        );
+
+        assert!(
+            decisions.iter().any(|decision| {
+                decision.effect == "network:broad"
+                    && decision.decision == PolicyEffectDecision::Allow
+                    && decision.overridden
+                    && decision.source.contains("override:network:broad")
+            }),
+            "{decisions:?}"
+        );
+    }
+
+    #[test]
+    fn validates_effect_external_state_tokens() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  effects:
+    safe_tasks:
+      external_state:
+        Docker: deny
+"#,
+        )
+        .unwrap();
+
+        let error = policy.validate().expect_err("invalid token should fail");
+        assert!(error.contains("safe-task external_state entry `Docker`"));
     }
 }
