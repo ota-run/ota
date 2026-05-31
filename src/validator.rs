@@ -240,9 +240,6 @@ fn validate_execution(
     };
 
     let uses_context_mode = execution.default_context.is_some() || !execution.contexts.is_empty();
-    let uses_root_shorthand = execution.preferred.is_some()
-        || execution.lifecycle.is_some()
-        || execution.backends.is_some();
 
     for error in execution.context_resolution_errors() {
         errors.push(ValidationError::new(error.clone()));
@@ -258,10 +255,97 @@ fn validate_execution(
         ));
     }
 
-    if uses_context_mode && uses_root_shorthand {
+    if uses_context_mode && execution.preferred.is_some() {
         errors.push(ValidationError::new(
-            "`execution` mixes single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) with named contexts (`execution.default_context` / `execution.contexts`); choose shorthand-only or named contexts, not both",
+            "`execution.preferred` must not be declared when using named contexts; select backend intent through `execution.default_context` / `execution.contexts` and per-task context selection",
         ));
+    }
+
+    if let Some(container) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.container.as_ref())
+        && container.image.trim().is_empty()
+    {
+        errors.push(ValidationError::new(
+            "`execution.backends.container.image` must not be empty",
+        ));
+    }
+    if let Some(container) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.container.as_ref())
+    {
+        validate_container_memory_resources("execution.backends.container", container, errors);
+    }
+
+    if let Some(remote) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.remote.as_ref())
+        && remote.provider.trim().is_empty()
+    {
+        errors.push(ValidationError::new(
+            "`execution.backends.remote.provider` must not be empty",
+        ));
+    }
+
+    if let Some(remote) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.remote.as_ref())
+        && remote
+            .target
+            .as_deref()
+            .is_some_and(|target| target.trim().is_empty())
+    {
+        errors.push(ValidationError::new(
+            "`execution.backends.remote.target` must not be empty",
+        ));
+    }
+
+    if let Some(remote) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.remote.as_ref())
+        && remote
+            .cwd
+            .as_deref()
+            .is_some_and(|cwd| cwd.trim().is_empty())
+    {
+        errors.push(ValidationError::new(
+            "`execution.backends.remote.cwd` must not be empty",
+        ));
+    }
+    if let Some(remote) = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.remote.as_ref())
+    {
+        validate_remote_ssh_options(
+            "execution.backends.remote",
+            remote.provider.trim(),
+            &remote.ssh,
+            errors,
+        );
+        let provider = remote.provider.trim();
+        if !provider.is_empty() && !is_builtin_remote_provider(provider) {
+            if let Some(extension) = contract.extensions.get(provider) {
+                if extension.kind != ExtensionKind::BackendProvider {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.backends.remote.provider` `{provider}` must refer to a `backend_provider` extension"
+                    )));
+                } else if extension.api_version != 1 {
+                    errors.push(ValidationError::new(format!(
+                        "`execution.backends.remote.provider` `{provider}` requires a `backend_provider` extension with `api_version: 1`"
+                    )));
+                }
+            } else {
+                errors.push(ValidationError::new(format!(
+                    "`execution.backends.remote.provider` `{provider}` is not supported; declare a matching `backend_provider` extension or use a built-in provider"
+                )));
+            }
+        }
     }
 
     if !uses_context_mode {
@@ -273,75 +357,6 @@ fn validate_execution(
                 "`execution.preferred` is set to `{}` but it is missing from `execution.supported`",
                 format_backend(preferred)
             )));
-        }
-
-        if let Some(container) = execution
-            .backends
-            .as_ref()
-            .and_then(|backends| backends.container.as_ref())
-            && container.image.trim().is_empty()
-        {
-            errors.push(ValidationError::new(
-                "`execution.backends.container.image` must not be empty",
-            ));
-        }
-        if let Some(container) = execution
-            .backends
-            .as_ref()
-            .and_then(|backends| backends.container.as_ref())
-        {
-            validate_container_memory_resources("execution.backends.container", container, errors);
-        }
-
-        if let Some(remote) = execution
-            .backends
-            .as_ref()
-            .and_then(|backends| backends.remote.as_ref())
-            && remote.provider.trim().is_empty()
-        {
-            errors.push(ValidationError::new(
-                "`execution.backends.remote.provider` must not be empty",
-            ));
-        }
-
-        if let Some(remote) = execution
-            .backends
-            .as_ref()
-            .and_then(|backends| backends.remote.as_ref())
-            && remote
-                .target
-                .as_deref()
-                .is_some_and(|target| target.trim().is_empty())
-        {
-            errors.push(ValidationError::new(
-                "`execution.backends.remote.target` must not be empty",
-            ));
-        }
-
-        if let Some(remote) = execution
-            .backends
-            .as_ref()
-            .and_then(|backends| backends.remote.as_ref())
-            && remote
-                .cwd
-                .as_deref()
-                .is_some_and(|cwd| cwd.trim().is_empty())
-        {
-            errors.push(ValidationError::new(
-                "`execution.backends.remote.cwd` must not be empty",
-            ));
-        }
-        if let Some(remote) = execution
-            .backends
-            .as_ref()
-            .and_then(|backends| backends.remote.as_ref())
-        {
-            validate_remote_ssh_options(
-                "execution.backends.remote",
-                remote.provider.trim(),
-                &remote.ssh,
-                errors,
-            );
         }
 
         if execution.preferred == Some(crate::schema::Backend::Container)
@@ -374,39 +389,6 @@ fn validate_execution(
             errors.push(ValidationError::new(
                 "`execution.preferred: remote` requires `execution.backends.remote.provider`",
             ));
-        }
-
-        if let Some(remote) = execution
-            .backends
-            .as_ref()
-            .and_then(|backends| backends.remote.as_ref())
-        {
-            let provider = remote.provider.trim();
-            if provider.is_empty() {
-                return;
-            }
-
-            if !is_builtin_remote_provider(provider) {
-                let Some(extension) = contract.extensions.get(provider) else {
-                    errors.push(ValidationError::new(format!(
-                        "`execution.backends.remote.provider` `{provider}` is not supported; declare a matching `backend_provider` extension or use a built-in provider"
-                    )));
-                    return;
-                };
-
-                if extension.kind != ExtensionKind::BackendProvider {
-                    errors.push(ValidationError::new(format!(
-                        "`execution.backends.remote.provider` `{provider}` must refer to a `backend_provider` extension"
-                    )));
-                    return;
-                }
-
-                if extension.api_version != 1 {
-                    errors.push(ValidationError::new(format!(
-                        "`execution.backends.remote.provider` `{provider}` requires a `backend_provider` extension with `api_version: 1`"
-                    )));
-                }
-            }
         }
 
         if execution.preferred == Some(crate::schema::Backend::Remote)
@@ -443,6 +425,14 @@ fn validate_execution(
             "`execution.default_context` is set to `{default_context}` but it is missing from `execution.contexts`"
         )));
     }
+    let root_container_backend = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.container.as_ref());
+    let root_remote_backend = execution
+        .backends
+        .as_ref()
+        .and_then(|backends| backends.remote.as_ref());
     for (name, context) in &execution.contexts {
         if name.trim().is_empty() {
             errors.push(ValidationError::new(
@@ -475,28 +465,30 @@ fn validate_execution(
                 }
             }
             crate::schema::Backend::Container => {
-                let Some(container) = context.container.as_ref() else {
+                let Some(container) = context.container.as_ref().or(root_container_backend) else {
                     errors.push(ValidationError::new(format!(
-                        "`execution.contexts.{name}.backend: container` requires `execution.contexts.{name}.container.image`"
+                        "`execution.contexts.{name}.backend: container` requires `execution.contexts.{name}.container.image` or `execution.backends.container.image`"
                     )));
                     continue;
                 };
 
-                if context.lifecycle.is_none() {
+                if context.lifecycle.or(execution.lifecycle).is_none() {
                     errors.push(ValidationError::new(format!(
-                        "`execution.contexts.{name}.backend: container` requires an explicit `execution.contexts.{name}.lifecycle`"
+                        "`execution.contexts.{name}.backend: container` requires an explicit lifecycle (`execution.contexts.{name}.lifecycle` or `execution.lifecycle`)"
                     )));
                 }
-                if container.image.trim().is_empty() {
+                if context.container.is_some() && container.image.trim().is_empty() {
                     errors.push(ValidationError::new(format!(
                         "`execution.contexts.{name}.container.image` must not be empty"
                     )));
                 }
-                validate_container_memory_resources(
-                    format!("execution.contexts.{name}.container").as_str(),
-                    container,
-                    errors,
-                );
+                if let Some(container) = context.container.as_ref() {
+                    validate_container_memory_resources(
+                        format!("execution.contexts.{name}.container").as_str(),
+                        container,
+                        errors,
+                    );
+                }
                 if context.remote.is_some() {
                     errors.push(ValidationError::new(format!(
                         "`execution.contexts.{name}.backend: container` must not declare `remote` settings"
@@ -504,9 +496,9 @@ fn validate_execution(
                 }
             }
             crate::schema::Backend::Remote => {
-                let Some(remote) = context.remote.as_ref() else {
+                let Some(remote) = context.remote.as_ref().or(root_remote_backend) else {
                     errors.push(ValidationError::new(format!(
-                        "`execution.contexts.{name}.backend: remote` requires `execution.contexts.{name}.remote.provider`"
+                        "`execution.contexts.{name}.backend: remote` requires `execution.contexts.{name}.remote.provider` or `execution.backends.remote.provider`"
                     )));
                     continue;
                 };
@@ -565,12 +557,14 @@ fn validate_execution(
                         "`execution.contexts.{name}.remote.cwd` must not be empty"
                     )));
                 }
-                validate_remote_ssh_options(
-                    format!("execution.contexts.{name}.remote").as_str(),
-                    provider,
-                    &remote.ssh,
-                    errors,
-                );
+                if context.remote.is_some() {
+                    validate_remote_ssh_options(
+                        format!("execution.contexts.{name}.remote").as_str(),
+                        provider,
+                        &remote.ssh,
+                        errors,
+                    );
+                }
                 if context.container.is_some() {
                     errors.push(ValidationError::new(format!(
                         "`execution.contexts.{name}.backend: remote` must not declare `container` settings"
@@ -11649,7 +11643,7 @@ tasks:
         let errors = validate_contract(&contract).unwrap_err();
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
-                "`execution.contexts.app.backend: container` requires `execution.contexts.app.container.image`",
+                "`execution.contexts.app.backend: container` requires `execution.contexts.app.container.image` or `execution.backends.container.image`",
             )
         }));
     }
@@ -18533,7 +18527,7 @@ tasks:
     }
 
     #[test]
-    fn rejects_mixed_shorthand_and_named_context_execution_declarations() {
+    fn rejects_named_contexts_when_execution_preferred_is_declared() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -18564,12 +18558,12 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "`execution` mixes single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) with named contexts (`execution.default_context` / `execution.contexts`); choose shorthand-only or named contexts, not both"
+            "`execution.preferred` must not be declared when using named contexts; select backend intent through `execution.default_context` / `execution.contexts` and per-task context selection"
         );
     }
 
     #[test]
-    fn rejects_named_contexts_with_root_backend_shorthand_even_without_preferred() {
+    fn allows_named_contexts_with_root_backend_defaults() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -18593,12 +18587,35 @@ tasks:
         )
         .unwrap();
 
-        let errors = validate_contract(&contract).unwrap_err();
-        assert_eq!(errors.errors().len(), 1);
-        assert_eq!(
-            errors.errors()[0].to_string(),
-            "`execution` mixes single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) with named contexts (`execution.default_context` / `execution.contexts`); choose shorthand-only or named contexts, not both"
-        );
+        validate_contract(&contract).expect("root backend defaults should be valid with contexts");
+    }
+
+    #[test]
+    fn allows_container_context_without_inline_container_when_root_backend_is_declared() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  lifecycle: persistent
+  backends:
+    container:
+      image: ghcr.io/ota/dev:latest
+  default_context: app
+  contexts:
+    app:
+      backend: container
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("container context should inherit root backend container settings");
     }
 
     #[test]
@@ -20520,9 +20537,36 @@ toolchains:
             )),
             "{rendered:?}"
         );
+    }
+
+    #[test]
+    fn rejects_invalid_corepack_package_manager_version_constraint_tokens() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: ">=10;echo nope"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid corepack package manager version should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `node` package manager `pnpm;echo nope` version must be a shell-safe package version token",
+                "toolchain `node` package manager `pnpm` version must be a shell-safe package version constraint",
             )),
             "{rendered:?}"
         );
@@ -20559,6 +20603,28 @@ toolchains:
             )),
             "{rendered:?}"
         );
+    }
+
+    #[test]
+    fn accepts_ruby_bundler_version_constraints() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  ruby:
+    provider: ruby
+    version: "3.3.11"
+    package_managers:
+      bundler: ">=2.5.3,<2.6.0"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("ruby bundler package manager should accept version constraints");
     }
 
     #[test]

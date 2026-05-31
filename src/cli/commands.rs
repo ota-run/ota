@@ -3205,6 +3205,13 @@ fn execution_plan_error(error: &RunError) -> String {
         } => format!(
             "backend provider `{provider}` has unsupported `api_version` `{api_version}`; expected `1`"
         ),
+        RunError::UnsupportedTaskModeOverride {
+            task,
+            requested_mode,
+            supported_modes,
+        } => format!(
+            "task `{task}` was requested with `--mode {requested_mode}`, but it only supports modes: {supported_modes}"
+        ),
         other => other.to_string(),
     }
 }
@@ -3360,6 +3367,24 @@ fn render_execution_plan_structured_error(
                         "run this path on a supported host, then rerun `ota execution plan`",
                     )
                 },
+            ],
+        ),
+        RunError::UnsupportedTaskModeOverride {
+            task,
+            requested_mode,
+            supported_modes,
+        } => (
+            "Requested mode is not declared for this task",
+            vec![
+                format!("task `{task}` was requested with `--mode {requested_mode}`"),
+                format!("declared mode branches: {supported_modes}"),
+            ],
+            vec![
+                format!(
+                    "run `{}` to inspect declared mode branches for this task",
+                    repo_tasks_use_command(member)
+                ),
+                String::from("rerun without the explicit mode override to use the task default"),
             ],
         ),
         _ => (
@@ -16783,20 +16808,20 @@ fn structured_validation_error_details(
 
     let why = why_lines[0].as_str();
     if why
-        == "`execution` mixes single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) with named contexts (`execution.default_context` / `execution.contexts`); choose shorthand-only or named contexts, not both"
+        == "`execution.preferred` must not be declared when using named contexts; select backend intent through `execution.default_context` / `execution.contexts` and per-task context selection"
     {
         return Some((
             vec![
-                String::from("`execution` mixes two execution models:"),
                 String::from(
-                    "single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`)",
+                    "`execution.preferred` is not allowed when named execution contexts are declared",
                 ),
-                String::from("named contexts (`execution.default_context` / `execution.contexts`)"),
-                String::from("choose one: shorthand-only or named contexts"),
+                String::from(
+                    "use `execution.default_context` and `execution.contexts` to select backend intent",
+                ),
             ],
             vec![
-                String::from("remove root shorthand and keep named contexts"),
-                String::from("or remove named contexts and keep shorthand"),
+                String::from("remove `execution.preferred` from the root execution block"),
+                String::from("or remove named contexts and use single-context shorthand execution"),
                 next_steps
                     .iter()
                     .find(|step| step.starts_with("rerun "))
@@ -66466,6 +66491,24 @@ fn render_run_structured_error_text(
             vec![format!(
                 "install one of the supported container engines: `{engines}`"
             )],
+        ),
+        RunError::UnsupportedTaskModeOverride {
+            task,
+            requested_mode,
+            supported_modes,
+        } => (
+            String::from("Requested mode is not declared for this task"),
+            vec![
+                format!("task `{task}` was requested with `--mode {requested_mode}`"),
+                format!("declared mode branches: {supported_modes}"),
+            ],
+            vec![
+                format!(
+                    "run `{}` to inspect declared mode branches for this task",
+                    repo_tasks_use_command(member)
+                ),
+                format!("rerun without `--mode {requested_mode}` to use the task default mode",),
+            ],
         ),
         RunError::HostPublicationConflict {
             task,

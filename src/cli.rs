@@ -7627,17 +7627,17 @@ tasks:
         assert_eq!(output.exit_code, 1);
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Why:"));
-        assert!(stdout.contains("`execution` mixes two execution models:"));
         assert!(stdout.contains(
-            "» single-context shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`)"
+            "» `execution.preferred` is not allowed when named execution contexts are declared"
         ));
+        assert!(stdout.contains(
+            "» use `execution.default_context` and `execution.contexts` to select backend intent"
+        ));
+        assert!(stdout.contains("» remove `execution.preferred` from the root execution block"));
         assert!(
             stdout
-                .contains("» named contexts (`execution.default_context` / `execution.contexts`)")
+                .contains("» or remove named contexts and use single-context shorthand execution")
         );
-        assert!(stdout.contains("» choose one: shorthand-only or named contexts"));
-        assert!(stdout.contains("» remove root shorthand and keep named contexts"));
-        assert!(stdout.contains("» or remove named contexts and keep shorthand"));
         assert!(stdout.contains("» rerun `ota validate "));
     }
 
@@ -13682,6 +13682,38 @@ tasks:
         assert!(stderr.contains("ota execution plan --mode container"));
         assert!(stderr.contains("add `execution.backends.container.image` to the repo contract"));
         assert!(stderr.contains("or rerun without the explicit backend override: `ota run dev`"));
+    }
+
+    #[test]
+    fn run_text_reports_missing_task_mode_branch_for_explicit_override() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: printf ready
+    execution:
+      default_mode: native
+      modes:
+        native:
+          run: printf ready
+"#,
+        );
+
+        let output = run_with(["ota", "run", "dev", "--mode", "container", fixture.path()]);
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("ERROR  Requested mode is not declared for this task"));
+        assert!(stderr.contains("task `dev` was requested with `--mode container`"));
+        assert!(stderr.contains("declared mode branches: native"));
+        assert!(
+            stderr
+                .contains("run `ota tasks --use` to inspect declared mode branches for this task")
+        );
+        assert!(stderr.contains("rerun without `--mode container` to use the task default mode"));
     }
 
     #[test]
