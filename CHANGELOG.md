@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- promoted the remaining maturity backlog into explicit pressure-ledger entries with concrete
+  acceptance evidence for: (1) toolchain fulfillment depth beyond check-only providers, (2)
+  pre-execution effect-governance parity for `network` / `external_state`, and (3)
+  planning-doc status hygiene
+- clarified planning status semantics in the v9.1 plan (`planned` / `active` / `completed`) and
+  marked the shipped v9.1 slice as `completed` so shipped work is not presented as still-planned
 - tightened explicit mode-override trust in `ota run` / `ota execution plan`: when a task declares
   `execution.modes`, unsupported explicit overrides (for example `--mode container` with only a
   native branch) now fail with a task-scoped mode-branch error that reports requested mode and
