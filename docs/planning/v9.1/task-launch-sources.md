@@ -24,7 +24,18 @@
 
 # Task Launch Sources
 
-Status: planned branch-local design for `bobai/task-launch-sources`.
+Status: shipped baseline.
+
+Shipped in this codebase:
+
+- `tasks.<name>.launch.kind: command` with `exe` + `args`
+- `tasks.<name>.launch.kind: container` with `image`, optional `engine`, optional `name`,
+  optional `args`, and optional named volumes
+- selected-path execution through `ota run`
+- task/workflow/topology rendering of launch sources
+- validation rules that keep surfaces as endpoint truth
+
+This document now records the shipped boundary and the remaining optional expansion direction.
 
 ## Problem
 
@@ -210,7 +221,7 @@ For packaged container launch, attached surfaces drive publication.
 The launch source must not duplicate host endpoint truth with another `ports` block unless Ota
 cannot derive publication from the attached surfaces.
 
-Initial planned restriction:
+Current shipped restriction:
 
 - packaged container launch requires attached service surfaces to resolve to fixed host
   projections
@@ -241,13 +252,13 @@ Mode branches:
 Variants:
 
 - variants should eventually follow the same rule
-- if variant launch support is not in the first code slice, variants remain shell-only until the
+- if variant launch support is not in the current shipped slice, variants remain shell-only until the
   follow-up lands
 
 Container launch:
 
 - `launch.kind: container` requires a service runtime with at least one attached surface
-- attached surfaces must resolve to fixed host publication in the first slice
+- attached surfaces must resolve to fixed host publication in the current shipped slice
 - attached surfaces must not use loopback-only container bind addresses when projected to the host
 - named volume `source` and `target` must not be empty
 
@@ -269,24 +280,9 @@ Examples:
 - receipts
   - preserve the actual launch source used
 
-## Implementation slices
+## Remaining optional expansion
 
-### Slice 1
-
-- add task-level `launch.kind: command`
-- keep `run` / `script` backward-compatible
-- wire validation, `ota tasks`, `ota workflows`, and `ota run`
-
-### Slice 2
-
-- add task-level `launch.kind: container`
-- support named volumes
-- derive publication from attached surfaces with fixed host projections
-- surface launch details in topology/receipts
-
-### Slice 3
-
-- expand container launch support only if the first slices prove the model:
+- expand container launch support only if the shipped model needs broader coverage:
   - bind volumes
   - richer engine support
   - explicit lifecycle cleanup knobs
