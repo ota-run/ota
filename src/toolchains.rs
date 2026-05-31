@@ -37,6 +37,7 @@ pub(crate) const COREPACK_TOOLCHAIN_NAME: &str = "node";
 pub(crate) const JAVA_TOOLCHAIN_NAME: &str = "java";
 pub(crate) const PYTHON_TOOLCHAIN_NAME: &str = "python";
 pub(crate) const GO_TOOLCHAIN_NAME: &str = "go";
+pub(crate) const RUBY_TOOLCHAIN_NAME: &str = "ruby";
 const RUSTUP_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] = &[
     ToolchainProviderSpecificField::Profile,
     ToolchainProviderSpecificField::Components,
@@ -44,10 +45,14 @@ const RUSTUP_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] = &[
 ];
 const COREPACK_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] =
     &[ToolchainProviderSpecificField::PackageManagers];
+const RUBY_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] =
+    &[ToolchainProviderSpecificField::PackageManagers];
 const RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`profile`, `components`, `targets`, and their `platforms.<os>.*` overrides";
 const COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`package_managers` and `platforms.<os>.package_managers`";
+const RUBY_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
+    "`package_managers` and `platforms.<os>.package_managers` (Bundler only)";
 const UNSUPPORTED_TOOLCHAIN_OPPORTUNITY_ECOSYSTEMS: &[&str] = &[];
 pub(crate) const RUSTUP_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
     toolchain_name: RUSTUP_TOOLCHAIN_NAME,
@@ -139,6 +144,24 @@ pub(crate) const GO_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainPro
     managed_surface_probes_fn: go_managed_surface_probes,
     managed_surface_entries_fn: go_managed_surface_entries,
     managed_surface_remediation_command_fn: go_managed_surface_remediation_command,
+};
+pub(crate) const RUBY_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
+    toolchain_name: RUBY_TOOLCHAIN_NAME,
+    provider: ToolchainProvider::Ruby,
+    label: "ruby",
+    primary_executable: "ruby",
+    owned_runtime: RUBY_TOOLCHAIN_NAME,
+    provider_specific_fields: RUBY_PROVIDER_SPECIFIC_FIELDS,
+    provider_specific_field_summary: RUBY_PROVIDER_SPECIFIC_FIELD_SUMMARY,
+    requirement_detail_parts_fn: ruby_requirement_detail_parts,
+    owned_capabilities_fn: ruby_owned_capabilities,
+    owned_tool_requirements_fn: ruby_owned_tool_requirements,
+    fulfillment_commands_fn: ruby_fulfillment_commands,
+    owned_runtime_remediation_command_fn: ruby_owned_runtime_remediation_command,
+    run_fulfillment_validation_error_fn: ruby_run_fulfillment_validation_error,
+    managed_surface_probes_fn: ruby_managed_surface_probes,
+    managed_surface_entries_fn: ruby_managed_surface_entries,
+    managed_surface_remediation_command_fn: ruby_managed_surface_remediation_command,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -336,16 +359,15 @@ impl ToolchainProviderSpecificField {
                     ));
                 }
                 for (package_name, version) in &toolchain.package_managers {
-                    if !package_name.trim().is_empty()
-                        && !is_shell_safe_corepack_token(package_name)
+                    if !package_name.trim().is_empty() && !is_shell_safe_package_token(package_name)
                     {
                         errors.push(format!(
-                            "toolchain `{name}` package manager `{package_name}` must be a shell-safe Corepack package token"
+                            "toolchain `{name}` package manager `{package_name}` must be a shell-safe package token"
                         ));
                     }
-                    if !version.trim().is_empty() && !is_shell_safe_corepack_token(version) {
+                    if !version.trim().is_empty() && !is_shell_safe_package_token(version) {
                         errors.push(format!(
-                            "toolchain `{name}` package manager `{package_name}` version must be a shell-safe Corepack version token"
+                            "toolchain `{name}` package manager `{package_name}` version must be a shell-safe package version token"
                         ));
                     }
                 }
@@ -361,15 +383,15 @@ impl ToolchainProviderSpecificField {
                     }
                     for (package_name, version) in &detail.package_managers {
                         if !package_name.trim().is_empty()
-                            && !is_shell_safe_corepack_token(package_name)
+                            && !is_shell_safe_package_token(package_name)
                         {
                             errors.push(format!(
-                                "toolchain `{name}` platform `{platform}` package manager `{package_name}` must be a shell-safe Corepack package token"
+                                "toolchain `{name}` platform `{platform}` package manager `{package_name}` must be a shell-safe package token"
                             ));
                         }
-                        if !version.trim().is_empty() && !is_shell_safe_corepack_token(version) {
+                        if !version.trim().is_empty() && !is_shell_safe_package_token(version) {
                             errors.push(format!(
-                                "toolchain `{name}` platform `{platform}` package manager `{package_name}` version must be a shell-safe Corepack version token"
+                                "toolchain `{name}` platform `{platform}` package manager `{package_name}` version must be a shell-safe package version token"
                             ));
                         }
                     }
@@ -509,7 +531,19 @@ impl ToolchainProviderContract {
                 )
             }));
         }
+        errors.extend(self.additional_provider_validation_errors(name, toolchain));
         errors
+    }
+
+    fn additional_provider_validation_errors(
+        self,
+        name: &str,
+        toolchain: &ToolchainSpec,
+    ) -> Vec<String> {
+        match self.provider() {
+            ToolchainProvider::Ruby => ruby_package_manager_validation_errors(name, toolchain),
+            _ => Vec::new(),
+        }
     }
 
     fn provider_specific_fields_allow(self, field_name: &str) -> bool {
@@ -660,6 +694,7 @@ pub(crate) fn shipped_toolchain_contracts() -> &'static [ToolchainProviderContra
         SDKMAN_TOOLCHAIN_CONTRACT,
         UV_TOOLCHAIN_CONTRACT,
         GO_TOOLCHAIN_CONTRACT,
+        RUBY_TOOLCHAIN_CONTRACT,
     ]
 }
 
@@ -1024,6 +1059,18 @@ fn corepack_requirement_detail_parts_scoped(
     parts
 }
 
+fn ruby_requirement_detail_parts(
+    provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<String> {
+    let mut parts = base_requirement_detail_parts(provider, toolchain, target_os);
+    if let Some(version) = toolchain.package_managers_for_os(target_os).get("bundler") {
+        parts.push(format!("bundler `{version}`"));
+    }
+    parts
+}
+
 fn rustup_owned_capabilities(
     provider: ToolchainProviderContract,
     toolchain: &ToolchainSpec,
@@ -1140,6 +1187,22 @@ fn go_owned_capabilities(
     ]
 }
 
+fn ruby_owned_capabilities(
+    provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+) -> Vec<ToolchainOwnedCapability> {
+    vec![
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Runtime,
+            name: provider.owned_runtime().to_string(),
+        },
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: String::from("bundler"),
+        },
+    ]
+}
+
 fn rustup_owned_tool_requirements(
     _provider: ToolchainProviderContract,
     _toolchain: &ToolchainSpec,
@@ -1199,6 +1262,29 @@ fn go_owned_tool_requirements(
     _target_os: &str,
 ) -> BTreeMap<String, ToolRequirement> {
     BTreeMap::new()
+}
+
+fn ruby_owned_tool_requirements(
+    _provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> BTreeMap<String, ToolRequirement> {
+    let required = toolchain.required_for_os(target_os);
+    let version = toolchain
+        .package_managers_for_os(target_os)
+        .get("bundler")
+        .cloned()
+        .unwrap_or_else(|| String::from("*"));
+    BTreeMap::from([(
+        String::from("bundler"),
+        ToolRequirement::Detailed(ToolDetail {
+            version,
+            required,
+            only_on: toolchain.only_on.clone(),
+            platforms: BTreeMap::<String, ToolPlatformDetail>::new(),
+            acquisition: None,
+        }),
+    )])
 }
 
 fn rustup_fulfillment_commands(
@@ -1268,6 +1354,14 @@ fn go_fulfillment_commands(
     Vec::new()
 }
 
+fn ruby_fulfillment_commands(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainCommandSpec> {
+    Vec::new()
+}
+
 fn rustup_owned_runtime_remediation_command(
     _provider: ToolchainProviderContract,
     requirement: &str,
@@ -1297,6 +1391,13 @@ fn uv_owned_runtime_remediation_command(
 }
 
 fn go_owned_runtime_remediation_command(
+    _provider: ToolchainProviderContract,
+    _requirement: &str,
+) -> Option<String> {
+    None
+}
+
+fn ruby_owned_runtime_remediation_command(
     _provider: ToolchainProviderContract,
     _requirement: &str,
 ) -> Option<String> {
@@ -1376,6 +1477,16 @@ fn go_run_fulfillment_validation_error(
     ))
 }
 
+fn ruby_run_fulfillment_validation_error(
+    _provider: ToolchainProviderContract,
+    name: &str,
+    _toolchain: &ToolchainSpec,
+) -> Option<String> {
+    Some(format!(
+        "toolchain `{name}` uses `provider: ruby` with `fulfillment: run`, but Ruby-backed toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and declare gem setup/test commands under `tasks`"
+    ))
+}
+
 fn rustup_managed_surface_probes(
     provider: ToolchainProviderContract,
     toolchain: &ToolchainSpec,
@@ -1445,6 +1556,14 @@ fn go_managed_surface_probes(
     Vec::new()
 }
 
+fn ruby_managed_surface_probes(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainManagedSurfaceProbe> {
+    Vec::new()
+}
+
 fn corepack_managed_surface_entries(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
@@ -1481,13 +1600,43 @@ fn go_managed_surface_entries(
     Vec::new()
 }
 
-fn is_shell_safe_corepack_token(value: &str) -> bool {
+fn ruby_managed_surface_entries(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<String> {
+    Vec::new()
+}
+
+fn is_shell_safe_package_token(value: &str) -> bool {
     let trimmed = value.trim();
     !trimmed.is_empty()
         && trimmed == value
         && trimmed.chars().all(|ch| {
             ch.is_ascii_alphanumeric() || matches!(ch, '@' | '/' | '.' | '_' | '-' | '+' | '~')
         })
+}
+
+fn ruby_package_manager_validation_errors(name: &str, toolchain: &ToolchainSpec) -> Vec<String> {
+    let mut errors = Vec::new();
+    for package_name in toolchain.package_managers.keys() {
+        if package_name != "bundler" {
+            errors.push(format!(
+                "toolchain `{name}` with `provider: ruby` must only declare `bundler` under `package_managers`; found `{package_name}`"
+            ));
+        }
+    }
+    for (platform, detail) in &toolchain.platforms {
+        for package_name in detail.package_managers.keys() {
+            if package_name != "bundler" {
+                errors.push(format!(
+                    "toolchain `{name}` platform `{platform}` with `provider: ruby` must only declare `bundler` under `package_managers`; found `{package_name}`"
+                ));
+            }
+        }
+    }
+    errors
 }
 
 fn rustup_managed_surface_remediation_command(
@@ -1526,6 +1675,14 @@ fn uv_managed_surface_remediation_command(
 }
 
 fn go_managed_surface_remediation_command(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _entry: &str,
+) -> Option<String> {
+    None
+}
+
+fn ruby_managed_surface_remediation_command(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
     _entry: &str,
@@ -1765,6 +1922,50 @@ toolchains:
     }
 
     #[test]
+    fn ruby_contract_projects_bundler_requirement_when_declared() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  ruby:
+    provider: ruby
+    version: "3.3.11"
+    package_managers:
+      bundler: "2.5"
+"#,
+        );
+        let toolchain = contract.toolchains.get("ruby").unwrap();
+        let provider = declared_toolchain_contract("ruby", toolchain).unwrap();
+
+        assert_eq!(
+            provider.provider_specific_field_summary(),
+            RUBY_PROVIDER_SPECIFIC_FIELD_SUMMARY
+        );
+        assert!(
+            provider
+                .requirement_detail_parts(toolchain, "linux")
+                .iter()
+                .any(|part| part.contains("bundler `2.5`"))
+        );
+        let tool_requirements = provider.owned_tool_requirements(toolchain, "linux");
+        assert_eq!(
+            tool_requirements
+                .get("bundler")
+                .expect("projected bundler requirement")
+                .version(),
+            "2.5"
+        );
+        assert!(
+            provider
+                .run_fulfillment_validation_error("ruby", toolchain)
+                .is_some()
+        );
+        assert_eq!(provider.owned_runtime_remediation_command("3.3.11"), None);
+    }
+
+    #[test]
     fn sdkman_contract_owns_java_surface_but_stays_check_only() {
         let contract = contract(
             r#"
@@ -1835,6 +2036,12 @@ toolchains:
             "go"
         );
         assert_eq!(
+            toolchain_provider_contract("ruby", ToolchainProvider::Ruby)
+                .unwrap()
+                .label(),
+            "ruby"
+        );
+        assert_eq!(
             shipped_toolchain_contract_by_label("rustup")
                 .unwrap()
                 .toolchain_name(),
@@ -1855,6 +2062,7 @@ toolchains:
             "sdkman"
         );
         assert_eq!(toolchain_provider_label(ToolchainProvider::Go), "go");
+        assert_eq!(toolchain_provider_label(ToolchainProvider::Ruby), "ruby");
         assert_eq!(
             known_provider_specific_fields(),
             vec![

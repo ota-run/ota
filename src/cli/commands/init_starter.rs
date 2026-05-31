@@ -51,6 +51,7 @@ const INIT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
 pub(crate) enum StarterPack {
     Node,
     Python,
+    Ruby,
     Go,
     Rust,
     Dotnet,
@@ -129,6 +130,7 @@ impl StarterPack {
         &[
             StarterPack::Node,
             StarterPack::Python,
+            StarterPack::Ruby,
             StarterPack::Go,
             StarterPack::Rust,
             StarterPack::Dotnet,
@@ -142,6 +144,7 @@ impl StarterPack {
         match self {
             Self::Node => "node",
             Self::Python => "python",
+            Self::Ruby => "ruby",
             Self::Go => "go",
             Self::Rust => "rust",
             Self::Dotnet => "dotnet",
@@ -194,6 +197,21 @@ impl StarterPack {
                 does_not_infer: &[
                     "repo-specific pyproject dependency groups, lock strategy, or uv workspace layout beyond the seeded `uv sync` + test loop",
                     "repo-specific test layout beyond the selected `pytest` or `unittest` entrypoint",
+                ],
+            },
+            Self::Ruby => StarterPackCatalogEntry {
+                pack: self,
+                summary: "Conventional Ruby starter with toolchain-owned Ruby and Bundler-driven setup/test tasks.",
+                when: "Use this for Ruby repos that should start from `toolchains.ruby` ownership and the standard Bundler loop without relying on detector-led init.",
+                toolchains: &["ruby"],
+                runtimes: &[],
+                tools: &[],
+                checks: &[],
+                tasks: &["setup", "test"],
+                options: NO_PACK_OPTIONS,
+                does_not_infer: &[
+                    "framework-specific commands (for example Rails, Sinatra, or Hanami server entrypoints) beyond the seeded Bundler setup/test surface",
+                    "repo-specific test wrappers or flags beyond the seeded `bundle exec rake test` command",
                 ],
             },
             Self::Go => StarterPackCatalogEntry {
@@ -399,6 +417,7 @@ impl StarterPackConfig {
                 "`--package-manager` is only supported with `ota init --pack node`",
             )),
             StarterPack::Go
+            | StarterPack::Ruby
             | StarterPack::Rust
             | StarterPack::Dotnet
             | StarterPack::PhpComposer
@@ -1940,6 +1959,13 @@ fn pack_signal_for_inference(inference: &Inference) -> Option<(StarterPack, usiz
         return Some((StarterPack::Go, 4, normalize_pack_signal(source)));
     }
 
+    if source.starts_with("Gemfile")
+        || source.starts_with(".ruby-version")
+        || source.starts_with("Rakefile")
+    {
+        return Some((StarterPack::Ruby, 4, normalize_pack_signal(source)));
+    }
+
     if source.starts_with("Cargo.toml") {
         return Some((StarterPack::Rust, 4, normalize_pack_signal(source)));
     }
@@ -1975,6 +2001,10 @@ fn normalize_pack_signal(source: &str) -> String {
         value if value.starts_with("Pipfile") => String::from("Pipfile"),
         value if value.starts_with("setup.cfg") => String::from("setup.cfg"),
         value if value.starts_with("go.mod") => String::from("go.mod"),
+        value if value.starts_with("Gemfile.lock") => String::from("Gemfile.lock"),
+        value if value.starts_with("Gemfile") => String::from("Gemfile"),
+        value if value.starts_with(".ruby-version") => String::from(".ruby-version"),
+        value if value.starts_with("Rakefile") => String::from("Rakefile"),
         value if value.starts_with("Cargo.toml") => String::from("Cargo.toml"),
         value if value.starts_with("global.json") => String::from("global.json"),
         value if value.starts_with("composer.json#config.platform.php") => {
@@ -2091,6 +2121,35 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                             String::from("Run the default Python unittest suite.")
                         }
                     }),
+                ),
+            );
+        }
+        StarterPack::Ruby => {
+            let mut package_managers = BTreeMap::new();
+            package_managers.insert(String::from("bundler"), String::from("2.5"));
+            contract.toolchains.insert(
+                String::from("ruby"),
+                DetectToolchainSpec {
+                    provider: crate::schema::ToolchainProvider::Ruby,
+                    version: String::from("3.3.11"),
+                    package_managers,
+                    fulfillment: None,
+                },
+            );
+            contract.tasks.insert(
+                String::from("setup"),
+                pack_task(
+                    "setup",
+                    "bundle install",
+                    Some(String::from("Install Ruby gem dependencies with Bundler.")),
+                ),
+            );
+            contract.tasks.insert(
+                String::from("test"),
+                pack_task(
+                    "test",
+                    "bundle exec rake test",
+                    Some(String::from("Run the default Ruby test suite.")),
                 ),
             );
         }

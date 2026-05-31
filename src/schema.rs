@@ -1548,6 +1548,7 @@ pub enum ToolchainProvider {
     Sdkman,
     Uv,
     Go,
+    Ruby,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

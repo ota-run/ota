@@ -20516,13 +20516,46 @@ toolchains:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `node` package manager `pnpm;echo nope` must be a shell-safe Corepack package token",
+                "toolchain `node` package manager `pnpm;echo nope` must be a shell-safe package token",
             )),
             "{rendered:?}"
         );
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `node` package manager `pnpm;echo nope` version must be a shell-safe Corepack version token",
+                "toolchain `node` package manager `pnpm;echo nope` version must be a shell-safe package version token",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_non_bundler_package_manager_on_ruby_toolchain() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  ruby:
+    provider: ruby
+    version: "3.3.11"
+    package_managers:
+      rake: "13.2"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("ruby toolchain package_managers must only allow bundler")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `ruby` with `provider: ruby` must only declare `bundler` under `package_managers`; found `rake`",
             )),
             "{rendered:?}"
         );

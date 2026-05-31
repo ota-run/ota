@@ -2853,7 +2853,8 @@ Failure example:
 ```
 
 `ota init --packs --json` lists the available built-in starter packs without previewing one
-contract:
+contract. The current catalog includes `node`, `python`, `ruby`, `go`, `rust`, `dotnet`,
+`php-composer`, `java-maven`, and `java-gradle`:
 
 ```json
 {
@@ -2882,8 +2883,26 @@ contract:
         "toolchains": ["node"],
         "runtimes": [],
         "tools": [],
-        "checks": ["node-installed"],
+        "checks": [],
         "tasks": ["setup", "dev", "test"]
+      }
+    },
+    {
+      "name": "ruby",
+      "summary": "Conventional Ruby starter with toolchain-owned Ruby and Bundler-driven setup/test tasks.",
+      "when": "Use this for Ruby repos that should start from `toolchains.ruby` ownership and the standard Bundler loop without relying on detector-led init.",
+      "command": "ota init --pack ruby",
+      "next": "ota init --pack ruby --dry-run .",
+      "does_not_infer": [
+        "framework-specific commands (for example Rails, Sinatra, or Hanami server entrypoints) beyond the seeded Bundler setup/test surface",
+        "repo-specific test wrappers or flags beyond the seeded `bundle exec rake test` command"
+      ],
+      "seeds": {
+        "toolchains": ["ruby"],
+        "runtimes": [],
+        "tools": [],
+        "checks": [],
+        "tasks": ["setup", "test"]
       }
     },
     {
@@ -2896,9 +2915,10 @@ contract:
         "workspace layout, code generation, or custom build flags beyond the standard module download/build/test loop"
       ],
       "seeds": {
-        "runtimes": ["go"],
+        "toolchains": ["go"],
+        "runtimes": [],
         "tools": [],
-        "checks": ["go-installed"],
+        "checks": [],
         "tasks": ["setup", "build", "test"]
       }
     },

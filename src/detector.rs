@@ -410,6 +410,8 @@ impl DetectReport {
                             "corepack" => ToolchainProvider::Corepack,
                             "sdkman" => ToolchainProvider::Sdkman,
                             "uv" => ToolchainProvider::Uv,
+                            "go" => ToolchainProvider::Go,
+                            "ruby" => ToolchainProvider::Ruby,
                             _ => toolchain.provider,
                         };
                     }

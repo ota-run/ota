@@ -1216,6 +1216,7 @@ enum PolicyInitPreset {
 enum InitPack {
     Node,
     Python,
+    Ruby,
     Go,
     Rust,
     Dotnet,
@@ -5176,6 +5177,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     let pack = match value {
                         InitPack::Node => commands::StarterPack::Node,
                         InitPack::Python => commands::StarterPack::Python,
+                        InitPack::Ruby => commands::StarterPack::Ruby,
                         InitPack::Go => commands::StarterPack::Go,
                         InitPack::Rust => commands::StarterPack::Rust,
                         InitPack::Dotnet => commands::StarterPack::Dotnet,
@@ -24785,6 +24787,7 @@ name = "fastapi"
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("INIT PACKS catalog"));
         assert!(stdout.contains("go `ota init --pack go`"));
+        assert!(stdout.contains("ruby `ota init --pack ruby`"));
         assert!(stdout.contains("rust `ota init --pack rust`"));
         assert!(stdout.contains("dotnet `ota init --pack dotnet`"));
         assert!(stdout.contains("php-composer `ota init --pack php-composer`"));
@@ -24875,6 +24878,7 @@ name = "fastapi"
         let packs = json["packs"].as_array().expect("packs array");
         assert!(packs.iter().any(|entry| entry["name"] == "node"));
         assert!(packs.iter().any(|entry| entry["name"] == "python"));
+        assert!(packs.iter().any(|entry| entry["name"] == "ruby"));
         let go = packs
             .iter()
             .find(|entry| entry["name"] == "go")
@@ -24922,6 +24926,16 @@ name = "fastapi"
             rust["does_not_infer"][0],
             "workspace members, feature flags, or custom cargo aliases beyond the standard fetch/build/test loop"
         );
+        let ruby = packs
+            .iter()
+            .find(|entry| entry["name"] == "ruby")
+            .expect("ruby pack");
+        assert_eq!(ruby["command"], "ota init --pack ruby");
+        assert_eq!(ruby["next"], "ota init --pack ruby --dry-run .");
+        assert_eq!(ruby["seeds"]["toolchains"][0], "ruby");
+        assert_eq!(ruby["seeds"]["runtimes"], json!([]));
+        assert_eq!(ruby["seeds"]["tools"], json!([]));
+        assert_eq!(ruby["seeds"]["tasks"][1], "test");
         let dotnet = packs
             .iter()
             .find(|entry| entry["name"] == "dotnet")
@@ -25549,6 +25563,25 @@ requires-python = ">=3.12"
         assert!(stdout.contains("run: go mod download"));
         assert!(stdout.contains("run: go build ./..."));
         assert!(stdout.contains("run: go test ./..."));
+    }
+
+    #[test]
+    fn init_pack_ruby_dry_run_renders_explicit_pack_contract() {
+        let fixture = ContractFixture::new_dir();
+
+        let output = run_with(["ota", "init", "--pack", "ruby", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Pack: ruby"));
+        assert!(stdout.contains("toolchains:"));
+        assert!(stdout.contains("provider: ruby"));
+        assert!(stdout.contains("version: 3.3.11"));
+        assert!(stdout.contains("package_managers:"));
+        assert!(stdout.contains("bundler: '2.5'"));
+        assert!(!stdout.contains("name: ruby-installed"));
+        assert!(stdout.contains("run: bundle install"));
+        assert!(stdout.contains("run: bundle exec rake test"));
     }
 
     #[test]

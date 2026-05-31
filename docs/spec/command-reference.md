@@ -1433,7 +1433,7 @@ Create a starter ota contract for a repo that does not yet have one.
 ```bash
 ota init [PATH]
 ota init --bootstrap [PATH]
-ota init --pack <node|python|go|rust|dotnet|php-composer|java-maven|java-gradle> [PATH]
+ota init --pack <node|python|ruby|go|rust|dotnet|php-composer|java-maven|java-gradle> [PATH]
 ota init --pack node --package-manager <npm|pnpm|yarn|bun> [PATH]
 ota init --pack python --test-runner <pytest|unittest> [PATH]
 ota init --packs
@@ -1446,7 +1446,7 @@ Current behavior:
 - inspects the repo using the detection engine
 - writes by default
 - `--bootstrap` writes the fuller detected starter contract when it is safe to do so
-- `--pack <node|python|go|rust|dotnet|php-composer|java-maven|java-gradle>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
+- `--pack <node|python|ruby|go|rust|dotnet|php-composer|java-maven|java-gradle>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
 - `--pack node --package-manager <npm|pnpm|yarn|bun>` keeps pack mode explicit while swapping the conventional Node starter commands and seeded tool requirement to the selected package manager
 - `--pack python --test-runner <pytest|unittest>` keeps pack mode explicit while swapping the conventional Python test entrypoint to the selected runner
 - `--packs` lists the built-in starter packs, what they seed, the exact `ota init --pack ...` selection command, the safe dry-run preview command to use next, and any explicit starter knobs exposed by that pack
@@ -1479,6 +1479,7 @@ Choosing an init path:
 - use `ota init --pack <name> --dry-run` when you want an explicit conventional starter without detector-led selection
 - use `ota init --pack node --package-manager <name> --dry-run` when the repo is intentionally npm-, pnpm-, yarn-, or bun-based and you want the starter to match that package-manager boundary from the first write
 - use `ota init --pack python --test-runner <name> --dry-run` when the repo is intentionally `pytest`- or `unittest`-driven and you want the starter to reflect that test command directly
+- use `ota init --pack ruby --dry-run` when the repo is intentionally Ruby/Bundler-based and the standard `bundle install` plus `bundle exec rake test` loop is the honest first draft, with Bundler version governance seeded under `toolchains.ruby.package_managers.bundler`
 - use `ota init --pack dotnet --dry-run` when the repo is intentionally .NET-first and the standard `dotnet restore` / `dotnet build` / `dotnet test` loop is already the honest first draft
 - use `ota init --pack php-composer --dry-run` when the repo is intentionally Composer-managed PHP and `composer install` plus reuse of an existing `scripts.test` entry is the honest first draft you want to review
 - the Java packs prefer `mvnw` or `gradlew` when those wrappers already exist
@@ -1499,6 +1500,7 @@ ota init --pack node --dry-run
 ota init --pack node --package-manager yarn --dry-run
 ota init --pack python --dry-run
 ota init --pack python --test-runner unittest --dry-run
+ota init --pack ruby --dry-run
 ota init --pack go --dry-run
 ota init --pack rust --dry-run
 ota init --pack dotnet --dry-run
