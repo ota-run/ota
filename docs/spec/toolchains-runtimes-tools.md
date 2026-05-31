@@ -34,13 +34,17 @@ Current shipped scope:
 - Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
 - Corepack-backed diagnosis for Node toolchains
 - uv-backed diagnosis and run-path fulfillment for Python toolchains
+- Go-backed diagnosis for Go toolchains
+- Ruby-backed diagnosis for Ruby toolchains
 - hard validation errors when the same prerequisite is declared under both `toolchains` and
   `runtimes` or `tools`
-- four supported contract shapes today:
+- six supported contract shapes today:
   - `toolchains.rust` with `provider: rustup`
   - `toolchains.node` with `provider: corepack`
   - `toolchains.java` with `provider: sdkman`
   - `toolchains.python` with `provider: uv`
+  - `toolchains.go` with `provider: go`
+  - `toolchains.ruby` with `provider: ruby`
 
 ## Ownership rule
 
@@ -68,25 +72,32 @@ Examples:
   declared Corepack package-manager activation
 - Python via uv, when the repo wants one owner for the Python runtime while tools such as Poetry
   remain standalone under `tools`
+- Go via the built-in Go provider, when the repo wants one owner for the Go runtime boundary
+- Ruby via the built-in Ruby provider, when the repo wants one owner for the Ruby runtime boundary
 
 Current parser boundary:
 
 - the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup`,
-  `toolchains.node` with `provider: corepack`, `toolchains.java` with `provider: sdkman`, and
-  `toolchains.python` with `provider: uv`
+  `toolchains.node` with `provider: corepack`, `toolchains.java` with `provider: sdkman`,
+  `toolchains.python` with `provider: uv`, `toolchains.go` with `provider: go`, and
+  `toolchains.ruby` with `provider: ruby`
 - those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use `provider: rustup`,
   `toolchains.node` must use `provider: corepack`, `toolchains.java` must use `provider: sdkman`,
-  and `toolchains.python` must use `provider: uv`
+  `toolchains.python` must use `provider: uv`, `toolchains.go` must use `provider: go`, and
+  `toolchains.ruby` must use `provider: ruby`
 - the shared provider-agnostic toolchain fields are currently `provider`, `version`,
   `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
 - validation and command behavior read from a provider contract, not from free-form capability
-  text; today those contracts are the shipped Rustup and Corepack slices behind `toolchains.rust`
-  `toolchains.node`, `toolchains.java`, and `toolchains.python`
+  text; today those contracts are the shipped Rustup/Corepack/sdkman/uv/Go/Ruby slices behind
+  `toolchains.rust`, `toolchains.node`, `toolchains.java`, `toolchains.python`,
+  `toolchains.go`, and `toolchains.ruby`
 - that provider contract also owns Rustup field-shape validation, so empty `profile`,
   `components`, or `targets` entries fail as provider-contract violations rather than generic
   schema drift
 - Corepack-backed Node toolchains currently support one provider-specific field:
   `package_managers` (plus `platforms.<os>.package_managers`) and stay check-only
+- Ruby-backed toolchains support `package_managers` too, but only `bundler` is valid there; use it
+  to make Bundler version governance explicit under `toolchains.ruby`
 - `profile`, `components`, and `targets` are Rustup-specific compatibility fields, not a generic
   ecosystem-wide toolchain schema
 - future-fit examples for .NET remain ownership-model examples only; they are not valid contract
@@ -230,6 +241,8 @@ This slice is intentionally narrow:
   - `toolchains.node` with `provider: corepack`
   - `toolchains.java` with `provider: sdkman`
   - `toolchains.python` with `provider: uv`
+  - `toolchains.go` with `provider: go`
+  - `toolchains.ruby` with `provider: ruby`
 - toolchains are selected at the task path, not through execution-context requirements
 - duplicate ownership is invalid and fails validation
 - Rustup currently owns diagnosis plus run-path fulfillment for the declared toolchain and its
@@ -237,11 +250,13 @@ This slice is intentionally narrow:
 - uv currently owns diagnosis plus run-path fulfillment for the declared Python runtime version
 - org-policy version/provisioning reasoning now sees the selected toolchain-owned runtime lane too,
   so approved runtime versions and approved install sources can govern `toolchains.rust`,
-  `toolchains.node`, `toolchains.java`, or `toolchains.python` without re-declaring duplicate
-  runtime ownership
+  `toolchains.node`, `toolchains.java`, `toolchains.python`, `toolchains.go`, or
+  `toolchains.ruby` without re-declaring duplicate runtime ownership
 - Corepack-backed Node toolchains are currently diagnosis-only; `tools.node` is invalid duplicate
   ownership, and package managers declared under `toolchains.node.package_managers` must not be
   redeclared under `tools`
+- Ruby-backed toolchains are currently check-only; `tools.bundler` is invalid duplicate ownership,
+  and Bundler should be modeled under `toolchains.ruby.package_managers.bundler`
 - contracts that declare any other toolchain/provider combination fail validation today
 
 That is enough to remove shell-based Rust component workarounds cleanly without introducing a new

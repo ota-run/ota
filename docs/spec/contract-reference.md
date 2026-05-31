@@ -653,26 +653,31 @@ Rules:
 - shared provider-agnostic toolchain fields are currently `provider`, `version`,
   `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
 - shipped providers are currently `rustup` for `toolchains.rust`, `corepack` for
-  `toolchains.node`, `sdkman` for `toolchains.java`, and `uv` for `toolchains.python`
+  `toolchains.node`, `sdkman` for `toolchains.java`, `uv` for `toolchains.python`,
+  `go` for `toolchains.go`, and `ruby` for `toolchains.ruby`
 - `required` defaults to `true` and controls whether missing or mismatched toolchains are blocking
 - the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup`,
-  `toolchains.node` with `provider: corepack`, `toolchains.java` with `provider: sdkman`, and
-  `toolchains.python` with `provider: uv`
+  `toolchains.node` with `provider: corepack`, `toolchains.java` with `provider: sdkman`,
+  `toolchains.python` with `provider: uv`, `toolchains.go` with `provider: go`, and
+  `toolchains.ruby` with `provider: ruby`
 - those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use
   `provider: rustup`, `toolchains.node` must use `provider: corepack`, `toolchains.java` must
-  use `provider: sdkman`, and `toolchains.python` must use `provider: uv`
+  use `provider: sdkman`, `toolchains.python` must use `provider: uv`, `toolchains.go` must use
+  `provider: go`, and `toolchains.ruby` must use `provider: ruby`
 - ota validates and interprets toolchains through an explicit provider contract; Rustup currently
   owns which extra toolchain fields are legal, which capabilities belong to `toolchains.rust`, and
   how `doctor`, `up`, and `run` interpret fulfillment and managed surfaces, while Corepack-backed
-  Node toolchains stay check-only and currently allow provider-scoped `package_managers`
+  Node toolchains stay check-only and currently allow provider-scoped `package_managers`, and
+  Ruby-backed toolchains allow provider-scoped `package_managers` for Bundler version governance
 - provider-specific field shape checks also live there: empty Rustup `profile`, `components`, and
   `targets` entries fail because the Rustup provider contract rejects them, and Corepack-backed
   Node toolchains reject those Rust-shaped fields entirely while validating
-  `package_managers` tokens and versions as Corepack-safe activation inputs
+  `package_managers` tokens and versions as shell-safe package inputs; `provider: ruby`
+  accepts only `bundler` under `package_managers`
 - `only_on`, when set, scopes the toolchain to `linux`, `macos`, or `windows`
 - `profile`, `components`, and `targets` are currently Rustup-specific compatibility fields; Node
-  via Corepack currently adds provider-scoped `package_managers`; these are not a generic
-  ecosystem-wide toolchain schema
+  via Corepack and Ruby via the built-in Ruby provider add provider-scoped `package_managers`;
+  these are not a generic ecosystem-wide toolchain schema
 - `platforms` may override `version`, `profile`, `components`, `package_managers`, and `targets`
   per OS using `linux`, `macos`, or `windows`
 - `platforms` entries must also appear in `only_on` when `only_on` is declared
@@ -690,7 +695,8 @@ Rules:
 - duplicate ownership is invalid; if the same Rust capability is also declared under `runtimes`
   or `tools`, validation fails and the duplicate must be removed; the same applies to
   `toolchains.node` versus `runtimes.node` or `tools.node`, and `toolchains.python` versus
-  `runtimes.python`
+  `runtimes.python`, `toolchains.go` versus `runtimes.go`, and `toolchains.ruby` versus
+  `runtimes.ruby`
 
 Ownership boundary:
 
@@ -702,7 +708,9 @@ Ownership boundary:
   ownership from `toolchains.rust` with `provider: rustup` and Node runtime/executable plus
   declared Corepack package-manager ownership from `toolchains.node` with `provider: corepack`,
   Java plus `javac` ownership from `toolchains.java` with `provider: sdkman`, and Python runtime
-  ownership from `toolchains.python` with `provider: uv`
+  ownership from `toolchains.python` with `provider: uv`, Go runtime ownership from
+  `toolchains.go` with `provider: go`, and Ruby runtime plus Bundler ownership from
+  `toolchains.ruby` with `provider: ruby`
 
 If a declared toolchain owns the capability, require the toolchain. Do not also require the same
 runtime or tool unless it is deliberately standalone outside that toolchain.

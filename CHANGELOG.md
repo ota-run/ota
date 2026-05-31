@@ -30,6 +30,10 @@
   to emit `provider: go` instead of split `runtimes.go` ownership, removed duplicate
   toolchain-owned `*-installed` starter checks from Node/Python/Go/Rust packs, and kept
   starter-pack agent boundary inference aligned with toolchain-owned stacks
+- added first-class check-only `toolchains.ruby` ownership for Ruby repos and added
+  `ota init --pack ruby` so starter contracts seed toolchain-owned Ruby setup/test paths instead
+  of split runtime/tool declarations, including explicit Bundler version governance under
+  `toolchains.ruby.package_managers.bundler`
 - tightened uv-backed Python ownership so `toolchains.python` owns the `uv` tool surface and
   starter packs no longer duplicate it under top-level `tools.uv`
 - reject env requirements that combine `secret: true` with a contract `default` during validation,

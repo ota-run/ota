@@ -8070,6 +8070,7 @@ fn container_backend_unavailable_finding(engine: &str, details: &str) -> Finding
 fn tool_executable_name(name: &str) -> &str {
     match name {
         "maven" => "mvn",
+        "bundler" => "bundle",
         _ => name,
     }
 }
@@ -17372,6 +17373,7 @@ tasks:
     #[test]
     fn maps_maven_tool_to_mvn_executable() {
         assert_eq!(tool_executable_name("maven"), "mvn");
+        assert_eq!(tool_executable_name("bundler"), "bundle");
         assert_eq!(tool_executable_name("cargo"), "cargo");
     }
 

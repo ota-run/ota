@@ -8893,6 +8893,7 @@ fn version_matches_requirement(requirement: &str, actual: &str) -> bool {
 fn task_tool_executable_name(name: &str) -> &str {
     match name {
         "maven" => "mvn",
+        "bundler" => "bundle",
         _ => name,
     }
 }
