@@ -2407,6 +2407,10 @@ Current write behavior:
   for detect write, merge, rewrite, ownership metadata, and drift comparison, and is written as
   canonical `toolchains.node` Corepack ownership so a detected Node contract does not silently omit
   the runtime or generate legacy split ownership
+- detected Go and Ruby runtime lanes now converge to canonical toolchain ownership on write/merge
+  when repo signals confirm the ecosystem (`toolchains.go` with `provider: go`, `toolchains.ruby`
+  with `provider: ruby`), and detected `tools.bundler` ownership folds into
+  `toolchains.ruby.package_managers.bundler` instead of remaining split
 - Docker Compose service `start`, `stop`, and declared `healthcheck.test` commands are high
   confidence and can be written with the inferred service block
 - detect preview, exact starter preview, and detect write now keep the same derived starter `agent` block that init uses, while detect-owned field metadata remains scoped to actually inferred fields and writable-path inference can include broader common directories plus bounded custom source roots

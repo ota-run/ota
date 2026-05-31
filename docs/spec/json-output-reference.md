@@ -2831,7 +2831,10 @@ text stays user-safe and only says to keep the current `runtimes` / `tools` fall
 now; provider-candidate detail stays in JSON. When ota already ships the ecosystem owner, the
 starter `config` uses `toolchains.<name>` directly instead of adding a fallback opportunity. For
 example, Python repos with `uv.lock` now converge directly on `toolchains.python` with
-`provider: uv`, so they no longer emit fallback Python opportunity guidance.
+`provider: uv`, so they no longer emit fallback Python opportunity guidance. The same ownership
+promotion now applies to detected Go and Ruby ecosystems when repo signals are explicit, yielding
+`toolchains.go` (`provider: go`) and `toolchains.ruby` (`provider: ruby`) instead of split
+runtime/tool declarations.
 
 `provenance` is the per-field source map for the starter contract:
 

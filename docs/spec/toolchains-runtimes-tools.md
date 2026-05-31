@@ -255,8 +255,11 @@ This slice is intentionally narrow:
 - Corepack-backed Node toolchains are currently diagnosis-only; `tools.node` is invalid duplicate
   ownership, and package managers declared under `toolchains.node.package_managers` must not be
   redeclared under `tools`
+- Go-backed toolchains are currently check-only; keep host installation on a governed path (policy
+  provisioning or the host package manager), and keep module/build/test execution under `tasks`
 - Ruby-backed toolchains are currently check-only; `tools.bundler` is invalid duplicate ownership,
-  and Bundler should be modeled under `toolchains.ruby.package_managers.bundler`
+  Bundler should be modeled under `toolchains.ruby.package_managers.bundler`, and Ruby runtime
+  installation stays host-governed today
 - contracts that declare any other toolchain/provider combination fail validation today
 
 That is enough to remove shell-based Rust component workarounds cleanly without introducing a new

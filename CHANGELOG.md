@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- expanded detector-led toolchain parity for Go and Ruby: `ota detect` now promotes detected
+  `go` and `ruby` runtime lanes into canonical `toolchains.go` (`provider: go`) and
+  `toolchains.ruby` (`provider: ruby`) ownership when repo signals confirm those ecosystems, and
+  normalizes legacy `tools.bundler` detection into `toolchains.ruby.package_managers.bundler`
+- expanded `toolchain_repo_signals(...)` support for Go (`go.mod`, `go.work`, `.tool-versions`)
+  and Ruby (`Gemfile`, `Gemfile.lock`, `.ruby-version`, `Rakefile`, `.tool-versions`) so
+  detector-led toolchain synthesis is gated by explicit ecosystem signals instead of broad runtime
+  inference alone
 - added first-class check-only `toolchains.go` ownership for Go repos, updated the Go starter pack
   to emit `provider: go` instead of split `runtimes.go` ownership, removed duplicate
   toolchain-owned `*-installed` starter checks from Node/Python/Go/Rust packs, and kept

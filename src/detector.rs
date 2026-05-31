@@ -35,7 +35,8 @@ use crate::schema::{
     ToolchainFulfillmentMode, ToolchainProvider,
 };
 use crate::toolchains::{
-    COREPACK_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME, PYTHON_TOOLCHAIN_NAME, toolchain_repo_signals,
+    COREPACK_TOOLCHAIN_NAME, GO_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME, PYTHON_TOOLCHAIN_NAME,
+    RUBY_TOOLCHAIN_NAME, toolchain_repo_signals,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -4214,6 +4215,8 @@ fn synthesize_detected_toolchain_inferences(
     synthesize_corepack_node_toolchain(contract, inferences);
     synthesize_sdkman_java_toolchain(root, contract, inferences);
     synthesize_uv_python_toolchain(root, contract, inferences);
+    synthesize_go_toolchain(root, contract, inferences);
+    synthesize_ruby_toolchain(root, contract, inferences);
 }
 
 fn synthesize_corepack_node_toolchain(
@@ -4398,6 +4401,139 @@ fn synthesize_uv_python_toolchain(
     );
 }
 
+fn synthesize_go_toolchain(
+    root: &Path,
+    contract: &mut DetectContract,
+    inferences: &mut BTreeMap<String, Inference>,
+) {
+    let Some(go_version) = contract.runtimes.get(GO_TOOLCHAIN_NAME).cloned() else {
+        return;
+    };
+    if toolchain_repo_signals(root, GO_TOOLCHAIN_NAME).is_empty() {
+        return;
+    }
+
+    let confidence = inferences
+        .get("runtimes.go")
+        .map(|inference| inference.confidence)
+        .unwrap_or(Confidence::High);
+    let version_source = inferences
+        .get("runtimes.go")
+        .map(|inference| inference.source.clone())
+        .unwrap_or_else(|| String::from("ota.detect#toolchains.go.version"));
+
+    contract.runtimes.remove(GO_TOOLCHAIN_NAME);
+    inferences.remove("runtimes.go");
+    contract.toolchains.insert(
+        String::from(GO_TOOLCHAIN_NAME),
+        DetectToolchainSpec {
+            provider: ToolchainProvider::Go,
+            version: go_version.clone(),
+            package_managers: BTreeMap::new(),
+            fulfillment: None,
+        },
+    );
+    inferences.insert(
+        String::from("toolchains.go.provider"),
+        Inference::new(
+            String::from("toolchains.go.provider"),
+            String::from("go"),
+            String::from("ota.detect#toolchains.go.provider"),
+            confidence,
+        ),
+    );
+    inferences.insert(
+        String::from("toolchains.go.version"),
+        Inference::new(
+            String::from("toolchains.go.version"),
+            go_version,
+            version_source,
+            confidence,
+        ),
+    );
+}
+
+fn synthesize_ruby_toolchain(
+    root: &Path,
+    contract: &mut DetectContract,
+    inferences: &mut BTreeMap<String, Inference>,
+) {
+    let Some(ruby_version) = contract.runtimes.get(RUBY_TOOLCHAIN_NAME).cloned() else {
+        return;
+    };
+    if toolchain_repo_signals(root, RUBY_TOOLCHAIN_NAME).is_empty() {
+        return;
+    }
+
+    let runtime_inference = inferences.get("runtimes.ruby");
+    let bundler_inference = inferences.get("tools.bundler");
+    let confidence = runtime_inference
+        .map(|inference| inference.confidence)
+        .zip(bundler_inference.map(|inference| inference.confidence))
+        .map(|(runtime, bundler)| runtime.min(bundler))
+        .unwrap_or_else(|| {
+            runtime_inference
+                .map(|inference| inference.confidence)
+                .or_else(|| bundler_inference.map(|inference| inference.confidence))
+                .unwrap_or(Confidence::High)
+        });
+    let version_source = runtime_inference
+        .map(|inference| inference.source.clone())
+        .unwrap_or_else(|| String::from("ota.detect#toolchains.ruby.version"));
+    let bundler_source = bundler_inference
+        .map(|inference| inference.source.clone())
+        .unwrap_or_else(|| String::from("ota.detect#toolchains.ruby.package_managers"));
+    let bundler_version = contract.tools.get("bundler").cloned();
+
+    let mut package_managers = BTreeMap::new();
+    if let Some(version) = bundler_version.clone() {
+        package_managers.insert(String::from("bundler"), version);
+    }
+
+    contract.runtimes.remove(RUBY_TOOLCHAIN_NAME);
+    contract.tools.remove("bundler");
+    inferences.remove("runtimes.ruby");
+    inferences.remove("tools.bundler");
+    contract.toolchains.insert(
+        String::from(RUBY_TOOLCHAIN_NAME),
+        DetectToolchainSpec {
+            provider: ToolchainProvider::Ruby,
+            version: ruby_version.clone(),
+            package_managers,
+            fulfillment: None,
+        },
+    );
+    inferences.insert(
+        String::from("toolchains.ruby.provider"),
+        Inference::new(
+            String::from("toolchains.ruby.provider"),
+            String::from("ruby"),
+            String::from("ota.detect#toolchains.ruby.provider"),
+            confidence,
+        ),
+    );
+    inferences.insert(
+        String::from("toolchains.ruby.version"),
+        Inference::new(
+            String::from("toolchains.ruby.version"),
+            ruby_version,
+            version_source,
+            confidence,
+        ),
+    );
+    if let Some(version) = bundler_version {
+        inferences.insert(
+            String::from("toolchains.ruby.package_managers.bundler"),
+            Inference::new(
+                String::from("toolchains.ruby.package_managers.bundler"),
+                version,
+                bundler_source,
+                confidence,
+            ),
+        );
+    }
+}
+
 fn normalize_detected_toolchains(_root: &Path, contract: &mut DetectContract) {
     if let Some(toolchain) = contract.toolchains.get(COREPACK_TOOLCHAIN_NAME) {
         contract.runtimes.remove(COREPACK_TOOLCHAIN_NAME);
@@ -4416,6 +4552,13 @@ fn normalize_detected_toolchains(_root: &Path, contract: &mut DetectContract) {
     if contract.toolchains.contains_key(PYTHON_TOOLCHAIN_NAME) {
         contract.runtimes.remove(PYTHON_TOOLCHAIN_NAME);
         contract.tools.remove("uv");
+    }
+    if contract.toolchains.contains_key(GO_TOOLCHAIN_NAME) {
+        contract.runtimes.remove(GO_TOOLCHAIN_NAME);
+    }
+    if contract.toolchains.contains_key(RUBY_TOOLCHAIN_NAME) {
+        contract.runtimes.remove(RUBY_TOOLCHAIN_NAME);
+        contract.tools.remove("bundler");
     }
 }
 
@@ -4895,8 +5038,23 @@ requires-python = ">=3.12"
             Some(&">=3.12".to_string())
         );
         assert_eq!(
-            report.contract.runtimes.get("go"),
-            Some(&"1.24.0".to_string())
+            report
+                .contract
+                .toolchains
+                .get("go")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Go, "1.24.0"))
+        );
+        assert!(!report.contract.runtimes.contains_key("go"));
+        assert!(report.inferences.iter().any(|inference| inference.field
+            == "toolchains.go.provider"
+            && inference.value == "go"));
+        assert!(
+            report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "toolchains.go.version"
+                    && inference.source == "go.mod#go")
         );
     }
 
@@ -5080,10 +5238,24 @@ gem "rails"
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report.contract.runtimes.get("ruby"),
-            Some(&"3.3.2".to_string())
+            report
+                .contract
+                .toolchains
+                .get("ruby")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Ruby, "3.3.2"))
         );
-        assert_eq!(report.contract.tools.get("bundler"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .toolchains
+                .get("ruby")
+                .and_then(|toolchain| toolchain.package_managers.get("bundler"))
+                .map(String::as_str),
+            Some("*")
+        );
+        assert!(!report.contract.runtimes.contains_key("ruby"));
+        assert!(!report.contract.tools.contains_key("bundler"));
     }
 
     #[test]
@@ -7014,9 +7186,14 @@ channel = "1.85.0"
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report.contract.runtimes.get("go"),
-            Some(&"1.24.1".to_string())
+            report
+                .contract
+                .toolchains
+                .get("go")
+                .map(|toolchain| toolchain.version.as_str()),
+            Some("1.24.1")
         );
+        assert!(!report.contract.runtimes.contains_key("go"));
     }
 
     #[test]

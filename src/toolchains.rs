@@ -1473,7 +1473,7 @@ fn go_run_fulfillment_validation_error(
     _toolchain: &ToolchainSpec,
 ) -> Option<String> {
     Some(format!(
-        "toolchain `{name}` uses `provider: go` with `fulfillment: run`, but Go-backed toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and declare module and build tasks under `tasks`"
+        "toolchain `{name}` uses `provider: go` with `fulfillment: run`, but Go-backed toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none`, install Go through a host-governed path (for example org provisioning policy or the host package manager), and keep module/build/test execution under `tasks`"
     ))
 }
 
@@ -1483,7 +1483,7 @@ fn ruby_run_fulfillment_validation_error(
     _toolchain: &ToolchainSpec,
 ) -> Option<String> {
     Some(format!(
-        "toolchain `{name}` uses `provider: ruby` with `fulfillment: run`, but Ruby-backed toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and declare gem setup/test commands under `tasks`"
+        "toolchain `{name}` uses `provider: ruby` with `fulfillment: run`, but Ruby-backed toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none`, install Ruby through a host-governed path (for example org provisioning policy or the host package manager), and keep Bundler/setup/test execution under `tasks`"
     ))
 }
 
@@ -1761,6 +1761,38 @@ pub(crate) fn toolchain_repo_signals(contract_root: &Path, ecosystem: &str) -> V
             }
             signals
         }
+        GO_TOOLCHAIN_NAME => {
+            let mut signals = Vec::new();
+            if contract_root.join("go.mod").is_file() {
+                signals.push("go.mod");
+            }
+            if contract_root.join("go.work").is_file() {
+                signals.push("go.work");
+            }
+            if tool_versions_entry(contract_root, &[GO_TOOLCHAIN_NAME]).is_some() {
+                signals.push(".tool-versions");
+            }
+            signals
+        }
+        RUBY_TOOLCHAIN_NAME => {
+            let mut signals = Vec::new();
+            if contract_root.join("Gemfile").is_file() {
+                signals.push("Gemfile");
+            }
+            if contract_root.join("Gemfile.lock").is_file() {
+                signals.push("Gemfile.lock");
+            }
+            if contract_root.join(".ruby-version").is_file() {
+                signals.push(".ruby-version");
+            }
+            if contract_root.join("Rakefile").is_file() {
+                signals.push("Rakefile");
+            }
+            if tool_versions_entry(contract_root, &[RUBY_TOOLCHAIN_NAME]).is_some() {
+                signals.push(".tool-versions");
+            }
+            signals
+        }
         _ => Vec::new(),
     }
 }
@@ -1796,7 +1828,9 @@ pub(crate) fn tool_versions_entry(
 mod tests {
     use super::*;
     use crate::parser::parse_contract_str;
+    use std::fs;
     use std::path::Path;
+    use tempfile::TempDir;
 
     fn contract(yaml: &str) -> Contract {
         parse_contract_str(Path::new("./ota.yaml"), yaml).unwrap()
@@ -1806,6 +1840,29 @@ mod tests {
     fn unsupported_toolchain_opportunity_ecosystems_match_declared_contexts() {
         let ecosystems = unsupported_toolchain_opportunity_ecosystems();
         assert!(ecosystems.is_empty());
+    }
+
+    #[test]
+    fn go_and_ruby_repo_signal_detection_is_explicit() {
+        let fixture = TempDir::new().expect("tempdir");
+        let root = fixture.path();
+        fs::write(
+            root.join("go.mod"),
+            "module example.com/demo\n\ngo 1.24.0\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("Gemfile"),
+            "source \"https://rubygems.org\"\nruby \"3.3.2\"\n",
+        )
+        .unwrap();
+        fs::write(root.join(".ruby-version"), "3.3.2\n").unwrap();
+
+        let go_signals = toolchain_repo_signals(root, GO_TOOLCHAIN_NAME);
+        let ruby_signals = toolchain_repo_signals(root, RUBY_TOOLCHAIN_NAME);
+
+        assert_eq!(go_signals, vec!["go.mod"]);
+        assert_eq!(ruby_signals, vec!["Gemfile", ".ruby-version"]);
     }
 
     #[test]
