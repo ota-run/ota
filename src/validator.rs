@@ -19959,7 +19959,7 @@ toolchains:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `go` uses `provider: go` with `fulfillment: run`, but Go-backed toolchains are currently check-only; keep `toolchains.go.fulfillment: none` and declare module and build tasks under `tasks`",
+                "toolchain `go` uses `provider: go` with `fulfillment: run`, but Go-backed toolchains are currently check-only; keep `toolchains.go.fulfillment: none`, install Go through a host-governed path (for example org provisioning policy or the host package manager), and keep module/build/test execution under `tasks`",
             )),
             "{rendered:?}"
         );

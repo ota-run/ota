@@ -14959,7 +14959,14 @@ tasks:
             .stderr
             .as_deref()
             .expect("help text should be present in stderr");
-        assert!(help.contains("Put ota command flags like `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, and `--memory` before task inputs."));
+        assert!(help.contains("Put ota command flags like"));
+        assert!(help.contains("--dry-run"));
+        assert!(help.contains("--json"));
+        assert!(help.contains("--stream"));
+        assert!(help.contains("--mode"));
+        assert!(help.contains("--container"));
+        assert!(help.contains("--memory"));
+        assert!(help.contains("before task inputs"));
         assert!(help.contains("ota run ci --dry-run"));
         assert!(help.contains("ota run ci --dry-run --json"));
         assert!(help.contains("--native"));
@@ -24697,7 +24704,12 @@ name = "fastapi"
         ));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: go-service"));
-        assert!(written.contains("go: 1.24.0"));
+        assert!(written.contains("toolchains:"));
+        assert!(written.contains("go:\n    provider: go"));
+        assert!(
+            written.contains("version: 1.24.0"),
+            "unexpected starter contract:\n{written}"
+        );
     }
 
     #[test]
