@@ -3,6 +3,14 @@
 This ledger tracks platform gaps surfaced by pressure-test repositories and the current maturity
 state in Ota.
 
+## Open Maturity Work
+
+| Gap                                                                                              | Status | Acceptance Evidence |
+| ------------------------------------------------------------------------------------------------ | ------ | ------------------- |
+| Toolchain fulfillment depth for check-only providers (`corepack`, `go`, `ruby`, `sdkman`)      | Open   | `provider:*` toolchains support a governed `fulfillment: run` lane (or an explicit policy-backed fulfillment mode) with deterministic policy enforcement, capability/min-version gating, and command/docs parity |
+| Effects governance parity for `network` and `external_state`                                    | Open   | `ota run` / `ota up` enforce policy decisions for selected-path `effects.network` and `effects.external_state` pre-execution (not advisory-only), with deterministic allow/deny semantics and machine-readable decision receipts |
+| Plan/docs status hygiene for shipped planning slices                                             | Open   | Planning docs carry unambiguous status semantics (active/completed/archived) so shipped features are not presented as still-planned work; status guidance is documented and applied consistently for active slices |
+
 ## Closed In Current Branch
 
 
@@ -16,7 +24,7 @@ state in Ota.
 | First-class deterministic bootstrap actions (`ensure_file`, `ensure_env_file`, `ensure_directory`) | Closed | Contract schema + runner + docs + capability gating in place                      |
 | First-class compose health readiness for internal services                                         | Closed | `services.<name>.readiness.kind: compose_health` supported and documented         |
 | Agent exception semantics for sensitive writable boundaries                                        | Closed | `agent.exceptions.sensitive_writes` validation/advisories documented and enforced |
-| Agent authority authoring ergonomics                                                              | Closed | contract/site guidance now pin posture/exception usage, safe-task defaults, and explicit `ota tasks --safe/--unsafe --via` authoring-discovery lanes |
+| Agent authority authoring ergonomics                                                             | Closed | contract/site guidance now pin posture/exception usage, safe-task defaults, and explicit `ota tasks --safe/--unsafe --via` authoring-discovery lanes |
 | JSON schema validation pipeline maturity for command outputs                                       | Closed | `ota json validate` and CI schema guard lane shipped                              |
 | Contract-native conditional execution beyond `checks.kind: changed_files` (for example `nx affected`) | Closed | `tasks.<name>.when.checks` gates execution with first-class precondition/file/changed_files checks |
 | Higher-level bootstrap orchestration (multi-file compose/secret generation plans)                | Closed | `action.kind: ensure_bundle` composes ordered deterministic setup steps without shell glue |
@@ -24,7 +32,7 @@ state in Ota.
 
 ## Remaining Product-Maturity Work
 
-No open planned gap from the current v9.1 pressure-test ledger.
+The open maturity items are listed in the `Open Maturity Work` section above.
 
 ## Rule For New Pressure Gaps
 

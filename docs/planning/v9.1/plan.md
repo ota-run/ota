@@ -24,7 +24,13 @@
 
 # V9.1 Plan
 
-Status: planned.
+Status: completed.
+
+Status semantics:
+
+- `planned`: scoped but not started
+- `active`: in-flight implementation
+- `completed`: shipped in product and retained for auditability
 
 Source direction:
 
