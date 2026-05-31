@@ -52,6 +52,14 @@
 - added targeted run-failure guidance for container non-root package-install errors (for example
   `apt-get` permission failures on `/var/lib/apt/lists`) so Ota points operators to baking OS
   dependencies into the container image instead of installing them inside task commands
+- added repo-scoped execution locking for `ota run` task execution so concurrent local runs fail
+  fast with explicit lock guidance instead of contending silently on shared package/tool caches
+- added first-class effect governance policy under `policies.effects` (mode + `tasks` +
+  `safe_tasks`, each using `allow|warn|deny` for network lanes and external-state targets),
+  enforced deny decisions pre-execution in both `ota run` and `ota up` preflights, and surfaced
+  resolved governance decisions in run receipts under the existing `policy` evidence lines
+- added `--effect-override <effect>=<allow|warn|deny>` to `ota run` and `ota up` for explicit
+  per-invocation effect-governance overrides on selected task/workflow paths
 
 ## 1.6.18
 

@@ -20,7 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
@@ -113,7 +113,8 @@ use crate::parser::{
     load_contract_for_member_with_contents, parse_contract_str,
 };
 use crate::policy_pack::{
-    LoadedOrgPolicyPack, load_org_policy_pack_auto, load_org_policy_pack_auto_details,
+    EffectGovernanceOverrides, EffectGovernanceScope, LoadedOrgPolicyPack, PolicyEffectDecision,
+    load_org_policy_pack_auto, load_org_policy_pack_auto_details,
 };
 use crate::provisioning::{
     ProvisioningBackendError, ProvisioningExecutionTarget, ProvisioningFailureDiagnosis,
@@ -217,6 +218,11 @@ const DEFAULT_RECEIPT_BASELINE_FILE: &str = "repo-baseline.json";
 const OTA_SKILL_NAME: &str = "ota";
 const OTA_SKILL_RAW_BASE_URL: &str =
     "https://raw.githubusercontent.com/ota-run/skills/main/skills/ota";
+
+thread_local! {
+    static EFFECT_GOVERNANCE_OVERRIDE_CONTEXT: RefCell<EffectGovernanceOverrides> =
+        RefCell::new(EffectGovernanceOverrides::default());
+}
 thread_local! {
     static PLAIN_MODE: Cell<bool> = const { Cell::new(false) };
     static CONCISE_MODE: Cell<bool> = const { Cell::new(false) };
@@ -13666,12 +13672,120 @@ fn format_service_readiness_summary(readiness: &ServiceReadinessSummary) -> Stri
     format!("from {from} -> {detail}")
 }
 
+fn parse_effect_override_decision(value: &str) -> Option<PolicyEffectDecision> {
+    match value.trim() {
+        "allow" => Some(PolicyEffectDecision::Allow),
+        "warn" => Some(PolicyEffectDecision::Warn),
+        "deny" => Some(PolicyEffectDecision::Deny),
+        _ => None,
+    }
+}
+
+fn parse_effect_override_selector(value: &str) -> Option<String> {
+    let selector = value.trim();
+    if selector.eq_ignore_ascii_case("network") {
+        return Some(String::from("network:broad"));
+    }
+    if selector.eq_ignore_ascii_case("network:broad") {
+        return Some(String::from("network:broad"));
+    }
+    if selector.eq_ignore_ascii_case("network:dependency_hydration") {
+        return Some(String::from("network:dependency_hydration"));
+    }
+    if let Some(state) = selector.strip_prefix("external_state:") {
+        let token = state.trim();
+        if token.is_empty() {
+            return None;
+        }
+        if is_valid_external_state_effect_token(token) {
+            return Some(format!("external_state:{token}"));
+        }
+    }
+    None
+}
+
+fn is_valid_external_state_effect_token(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_lowercase() {
+        return false;
+    }
+
+    let mut last_was_separator = false;
+    let mut last = first;
+    for ch in chars {
+        if ch == '-' || ch == '_' {
+            if last_was_separator {
+                return false;
+            }
+            last_was_separator = true;
+        } else if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
+            last_was_separator = false;
+        } else {
+            return false;
+        }
+        last = ch;
+    }
+
+    !matches!(last, '-' | '_')
+}
+
+fn parse_effect_governance_overrides(
+    values: &[String],
+) -> Result<EffectGovernanceOverrides, String> {
+    let mut overrides = EffectGovernanceOverrides::default();
+    for raw in values {
+        let Some((selector_raw, decision_raw)) = raw.split_once('=') else {
+            return Err(format!(
+                "invalid `--effect-override {raw}`; expected `<effect>=<allow|warn|deny>`"
+            ));
+        };
+        let Some(selector) = parse_effect_override_selector(selector_raw) else {
+            return Err(format!(
+                "invalid `--effect-override {raw}` effect selector; use one of `network`, `network:broad`, `network:dependency_hydration`, or `external_state:<token>`"
+            ));
+        };
+        let Some(decision) = parse_effect_override_decision(decision_raw) else {
+            return Err(format!(
+                "invalid `--effect-override {raw}` decision; use `allow`, `warn`, or `deny`"
+            ));
+        };
+        overrides.decisions.insert(selector, decision);
+    }
+    Ok(overrides)
+}
+
+fn current_effect_governance_overrides() -> EffectGovernanceOverrides {
+    EFFECT_GOVERNANCE_OVERRIDE_CONTEXT.with(|context| context.borrow().clone())
+}
+
+fn with_effect_governance_override_map<T>(
+    overrides: &EffectGovernanceOverrides,
+    action: impl FnOnce() -> T,
+) -> T {
+    if overrides.decisions.is_empty() {
+        return action();
+    }
+    EFFECT_GOVERNANCE_OVERRIDE_CONTEXT.with(|context| {
+        let previous = context.replace(overrides.clone());
+        let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(action));
+        context.replace(previous);
+        match output {
+            Ok(output) => output,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    })
+}
+
 pub fn run_command(
     task_name: &str,
     path: Option<&Path>,
     file_override: Option<&Path>,
     format: OutputFormat,
     overrides: ExecutionOverrides,
+    effect_overrides: &[String],
     members: &[String],
     task_inputs: &[String],
     dry_run: bool,
@@ -13723,6 +13837,19 @@ pub fn run_command(
             ],
         );
     }
+    let parsed_effect_overrides = match parse_effect_governance_overrides(effect_overrides) {
+        Ok(overrides) => overrides,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure_with_code(error, 2),
+                debug,
+                vec![
+                    String::from("DEBUG command=run"),
+                    format!("DEBUG task={task_name}"),
+                ],
+            );
+        }
+    };
 
     let (resolved_path, normalized_task_inputs) = match resolve_repo_run_path_and_inputs(
         task_name,
@@ -13775,55 +13902,65 @@ pub fn run_command(
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
+    if !parsed_effect_overrides.decisions.is_empty() {
+        for (effect, decision) in &parsed_effect_overrides.decisions {
+            debug_lines.push(format!(
+                "DEBUG effect_override={effect}={}",
+                decision.as_str()
+            ));
+        }
+    }
 
-    finalize_debug(
-        if dry_run {
-            run_preview_command(
-                task_name,
-                &resolved_path,
-                overrides,
-                members,
-                format,
-                persist_logs,
-            )
-        } else {
-            match run_contract_targets(
-                task_name,
-                &resolved_path,
-                overrides,
-                members,
-                &normalized_task_inputs,
-                show_receipt,
-                run_command_streaming_enabled(stream),
-                persist_logs,
-            ) {
-                Ok(stderr) => CommandOutput {
-                    stdout: String::new(),
-                    stderr: (!stderr.is_empty()).then_some(stderr),
-                    exit_code: 0,
-                },
-                Err(error) => CommandOutput {
-                    stdout: String::new(),
-                    stderr: Some(match (error.summary, error.receipt) {
-                        (Some(summary), Some(receipt)) if error.message.is_empty() => {
-                            format!("{summary}\n{receipt}")
-                        }
-                        (Some(summary), Some(receipt)) => {
-                            format!("{summary}\n\n{}\n{}", error.message, receipt)
-                        }
-                        (Some(summary), None) if error.message.is_empty() => summary,
-                        (Some(summary), None) => format!("{summary}\n\n{}", error.message),
-                        (None, Some(receipt)) if error.message.is_empty() => receipt,
-                        (None, Some(receipt)) => format!("{}\n{}", error.message, receipt),
-                        (None, None) => error.message,
-                    }),
-                    exit_code: error.exit_code,
-                },
-            }
-        },
-        debug,
-        debug_lines,
-    )
+    with_effect_governance_override_map(&parsed_effect_overrides, || {
+        finalize_debug(
+            if dry_run {
+                run_preview_command(
+                    task_name,
+                    &resolved_path,
+                    overrides,
+                    members,
+                    format,
+                    persist_logs,
+                )
+            } else {
+                match run_contract_targets(
+                    task_name,
+                    &resolved_path,
+                    overrides,
+                    members,
+                    &normalized_task_inputs,
+                    show_receipt,
+                    run_command_streaming_enabled(stream),
+                    persist_logs,
+                ) {
+                    Ok(stderr) => CommandOutput {
+                        stdout: String::new(),
+                        stderr: (!stderr.is_empty()).then_some(stderr),
+                        exit_code: 0,
+                    },
+                    Err(error) => CommandOutput {
+                        stdout: String::new(),
+                        stderr: Some(match (error.summary, error.receipt) {
+                            (Some(summary), Some(receipt)) if error.message.is_empty() => {
+                                format!("{summary}\n{receipt}")
+                            }
+                            (Some(summary), Some(receipt)) => {
+                                format!("{summary}\n\n{}\n{}", error.message, receipt)
+                            }
+                            (Some(summary), None) if error.message.is_empty() => summary,
+                            (Some(summary), None) => format!("{summary}\n\n{}", error.message),
+                            (None, Some(receipt)) if error.message.is_empty() => receipt,
+                            (None, Some(receipt)) => format!("{}\n{}", error.message, receipt),
+                            (None, None) => error.message,
+                        }),
+                        exit_code: error.exit_code,
+                    },
+                }
+            },
+            debug,
+            debug_lines,
+        )
+    })
 }
 
 fn resolve_repo_run_path_and_inputs(
@@ -14092,13 +14229,199 @@ fn run_preview_preconditions_report(
         effective_task_execution(contract, task_name, overrides).backend,
     )))
     .unwrap_or(DoctorMode::Native);
-    diagnose_preconditions_with_mode_for_task_with_overrides(
+    let mut report = diagnose_preconditions_with_mode_for_task_with_overrides(
         contract,
         contract_path,
         mode,
         task_name,
         overrides,
-    )
+    );
+    append_safe_task_effect_policy_findings(contract, contract_path, task_name, &mut report);
+    report
+}
+
+fn task_is_agent_safe(contract: &Contract, task_name: &str) -> bool {
+    contract
+        .tasks
+        .get(task_name)
+        .is_some_and(|task| task.safe_for_agent)
+        || contract
+            .agent
+            .as_ref()
+            .is_some_and(|agent| agent.safe_tasks.iter().any(|safe| safe == task_name))
+}
+
+fn task_effect_governance_scope(contract: &Contract, task_name: &str) -> EffectGovernanceScope {
+    if task_is_agent_safe(contract, task_name) {
+        EffectGovernanceScope::SafeTask
+    } else {
+        EffectGovernanceScope::Task
+    }
+}
+
+fn task_effect_dependency_names<'a>(task: &'a TaskSpec) -> impl Iterator<Item = &'a str> + 'a {
+    task.depends_on
+        .iter()
+        .chain(task.after_success.iter())
+        .chain(task.after_failure.iter())
+        .chain(task.after_always.iter())
+        .map(String::as_str)
+}
+
+fn collect_task_closure_effects(
+    contract: &Contract,
+    task_name: &str,
+) -> (
+    Option<crate::schema::TaskNetworkEffectKind>,
+    BTreeSet<String>,
+) {
+    let mut network_kind: Option<crate::schema::TaskNetworkEffectKind> = None;
+    let mut external_state = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    let mut stack = vec![task_name.to_string()];
+
+    while let Some(current) = stack.pop() {
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        let Some(task) = contract.tasks.get(current.as_str()) else {
+            continue;
+        };
+        if let Some(kind) = task.effects.effective_network_kind() {
+            network_kind = Some(match (network_kind, kind) {
+                (Some(crate::schema::TaskNetworkEffectKind::Broad), _) => {
+                    crate::schema::TaskNetworkEffectKind::Broad
+                }
+                (_, crate::schema::TaskNetworkEffectKind::Broad) => {
+                    crate::schema::TaskNetworkEffectKind::Broad
+                }
+                _ => crate::schema::TaskNetworkEffectKind::DependencyHydration,
+            });
+        }
+        external_state.extend(task.effects.external_state.iter().cloned());
+        for dependency in task_effect_dependency_names(task) {
+            if contract.tasks.contains_key(dependency) {
+                stack.push(dependency.to_string());
+            }
+        }
+    }
+
+    (network_kind, external_state)
+}
+
+fn safe_task_effect_policy_lines(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+) -> Vec<String> {
+    let Ok(Some((policy_pack, _policy_path))) = load_org_policy_pack_auto(contract_path) else {
+        return Vec::new();
+    };
+    let (network_kind, external_state) = collect_task_closure_effects(contract, task_name);
+    let scope = task_effect_governance_scope(contract, task_name);
+    let overrides = current_effect_governance_overrides();
+    policy_pack
+        .effect_governance_decisions(scope, network_kind, &external_state, Some(&overrides))
+        .into_iter()
+        .map(|decision| {
+            format!(
+                "effect scope={} effect={} decision={} source={} overridden={} ({})",
+                decision.scope,
+                decision.effect,
+                decision.decision.as_str(),
+                decision.source,
+                decision.overridden,
+                decision.reason
+            )
+        })
+        .collect()
+}
+
+fn append_safe_task_effect_policy_findings(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    report: &mut DoctorReport,
+) {
+    let Ok(Some((policy_pack, policy_path))) = load_org_policy_pack_auto(contract_path) else {
+        return;
+    };
+    let (network_kind, external_state) = collect_task_closure_effects(contract, task_name);
+    let scope = task_effect_governance_scope(contract, task_name);
+    let overrides = current_effect_governance_overrides();
+    let decisions = policy_pack.effect_governance_decisions(
+        scope,
+        network_kind,
+        &external_state,
+        Some(&overrides),
+    );
+    if decisions.is_empty() {
+        return;
+    }
+    let policy_display = compact_contract_path(&policy_path);
+    for decision in decisions {
+        let severity = match decision.decision {
+            PolicyEffectDecision::Allow => FindingSeverity::Info,
+            PolicyEffectDecision::Warn => FindingSeverity::Warn,
+            PolicyEffectDecision::Deny => FindingSeverity::Error,
+        };
+        let effect_label = if decision.scope == "safe_task" {
+            "safe-task effect"
+        } else {
+            "task effect"
+        };
+        let summary = match decision.decision {
+            PolicyEffectDecision::Allow => {
+                format!(
+                    "Effect governance policy allowed {effect_label} `{}`",
+                    decision.effect
+                )
+            }
+            PolicyEffectDecision::Warn => {
+                format!(
+                    "Effect governance policy warning for {effect_label} `{}`",
+                    decision.effect
+                )
+            }
+            PolicyEffectDecision::Deny => {
+                format!(
+                    "Effect governance policy blocked {effect_label} `{}`",
+                    decision.effect
+                )
+            }
+        };
+        let next = match decision.decision {
+            PolicyEffectDecision::Allow => {
+                String::from("continue with execution and keep this decision visible in receipts")
+            }
+            PolicyEffectDecision::Warn => String::from(
+                "keep this effect explicit in the task contract, or tighten policy to `allow`/`deny` for deterministic governance",
+            ),
+            PolicyEffectDecision::Deny => String::from(
+                "update org policy to allow this effect for the selected task path, or tighten task scope before rerunning `ota run`",
+            ),
+        };
+        report.findings.push(Finding {
+            severity,
+            summary,
+            why: format!(
+                "{} (source: `{}`, policy: `{}`{})",
+                decision.reason,
+                decision.source,
+                policy_display,
+                if decision.overridden {
+                    ", override applied"
+                } else {
+                    ""
+                }
+            ),
+            next,
+        });
+    }
+    report.ok = !report
+        .findings
+        .iter()
+        .any(|finding| finding.severity == FindingSeverity::Error);
 }
 
 fn render_run_preview_target(
@@ -23071,6 +23394,7 @@ pub fn up(
     path: Option<&Path>,
     file_override: Option<&Path>,
     overrides: ExecutionOverrides,
+    effect_overrides: &[String],
     members: &[String],
     workflow_name: Option<&str>,
     format: OutputFormat,
@@ -23093,6 +23417,16 @@ pub fn up(
             vec![String::from("DEBUG command=up")],
         );
     }
+    let parsed_effect_overrides = match parse_effect_governance_overrides(effect_overrides) {
+        Ok(overrides) => overrides,
+        Err(error) => {
+            return finalize_debug(
+                CommandOutput::failure_with_code(error, 2),
+                debug,
+                vec![String::from("DEBUG command=up")],
+            );
+        }
+    };
     if stream && matches!(format, OutputFormat::Json) {
         return finalize_debug(
             CommandOutput::failure_with_code(
@@ -23181,6 +23515,14 @@ pub fn up(
     for member in members {
         debug_lines.push(format!("DEBUG member={member}"));
     }
+    if !parsed_effect_overrides.decisions.is_empty() {
+        for (effect, decision) in &parsed_effect_overrides.decisions {
+            debug_lines.push(format!(
+                "DEBUG effect_override={effect}={}",
+                decision.as_str()
+            ));
+        }
+    }
     let execution_mode = if stream {
         RepoExecutionMode::Stream
     } else {
@@ -23208,109 +23550,222 @@ pub fn up(
         );
     }
 
-    finalize_debug(
-        match load_and_validate_target(&resolved_path, single_member) {
-            Ok(target) if members.is_empty() || members.len() == 1 => {
-                if members.is_empty()
-                    && target.contract_path == resolved_path
-                    && target.contract.workspace.as_ref().is_some_and(|workspace| {
-                        workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
-                    })
-                {
-                    let root_result = match execute_repo_up_with_behavior(
-                        &target.contract,
-                        &target.contract_path,
-                        overrides,
-                        workflow_name,
-                        None,
-                        dry_run,
-                        execution_mode,
-                        run_behavior_preference,
-                        ready_timeout,
-                    ) {
-                        Ok(result) => result,
-                        Err(error) => return CommandOutput::failure(error),
-                    };
-                    let mut overall_ok = root_result.ok;
-                    let mut text_sections = vec![render_up_section_with_receipt(
-                        &text_path_display,
-                        &root_result,
-                        show_receipt,
-                    )];
-                    let mut member_results = Vec::new();
+    with_effect_governance_override_map(&parsed_effect_overrides, || {
+        finalize_debug(
+            match load_and_validate_target(&resolved_path, single_member) {
+                Ok(target) if members.is_empty() || members.len() == 1 => {
+                    if members.is_empty()
+                        && target.contract_path == resolved_path
+                        && target.contract.workspace.as_ref().is_some_and(|workspace| {
+                            workspace.workspace_type == crate::schema::RepoWorkspaceType::Monorepo
+                        })
+                    {
+                        let root_result = match execute_repo_up_with_behavior(
+                            &target.contract,
+                            &target.contract_path,
+                            overrides,
+                            workflow_name,
+                            None,
+                            dry_run,
+                            execution_mode,
+                            run_behavior_preference,
+                            ready_timeout,
+                        ) {
+                            Ok(result) => result,
+                            Err(error) => return CommandOutput::failure(error),
+                        };
+                        let mut overall_ok = root_result.ok;
+                        let mut text_sections = vec![render_up_section_with_receipt(
+                            &text_path_display,
+                            &root_result,
+                            show_receipt,
+                        )];
+                        let mut member_results = Vec::new();
 
-                    if let Some(workspace) = target.contract.workspace.as_ref() {
-                        for member in &workspace.members {
-                            let member_target =
-                                match load_and_validate_target(&resolved_path, Some(member)) {
-                                    Ok(target) => target,
-                                    Err(ContractProblem::Validation(errors)) => {
-                                        return match format {
-                                            OutputFormat::Text => {
-                                                CommandOutput::failure(errors.to_string())
-                                            }
-                                            OutputFormat::Json => {
-                                                CommandOutput::failure(to_json(&ValidateFailure {
-                                                    summary: None,
-                                                    ok: false,
-                                                    path: &path_display,
-                                                    errors: errors
-                                                        .errors()
-                                                        .iter()
-                                                        .map(ToString::to_string)
-                                                        .collect(),
-                                                    error: None,
-                                                    warnings: Vec::new(),
-                                                }))
-                                            }
-                                        };
-                                    }
-                                    Err(ContractProblem::Load(error)) => {
-                                        return match format {
-                                            OutputFormat::Text => {
-                                                CommandOutput::failure(error.to_string())
-                                            }
-                                            OutputFormat::Json => {
-                                                CommandOutput::failure(to_json(&ValidateFailure {
-                                                    summary: None,
-                                                    ok: false,
-                                                    path: &path_display,
-                                                    errors: Vec::new(),
-                                                    error: Some(error.to_string()),
-                                                    warnings: Vec::new(),
-                                                }))
-                                            }
-                                        };
-                                    }
+                        if let Some(workspace) = target.contract.workspace.as_ref() {
+                            for member in &workspace.members {
+                                let member_target =
+                                    match load_and_validate_target(&resolved_path, Some(member)) {
+                                        Ok(target) => target,
+                                        Err(ContractProblem::Validation(errors)) => {
+                                            return match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(errors.to_string())
+                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&ValidateFailure {
+                                                        summary: None,
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: errors
+                                                            .errors()
+                                                            .iter()
+                                                            .map(ToString::to_string)
+                                                            .collect(),
+                                                        error: None,
+                                                        warnings: Vec::new(),
+                                                    }),
+                                                ),
+                                            };
+                                        }
+                                        Err(ContractProblem::Load(error)) => {
+                                            return match format {
+                                                OutputFormat::Text => {
+                                                    CommandOutput::failure(error.to_string())
+                                                }
+                                                OutputFormat::Json => CommandOutput::failure(
+                                                    to_json(&ValidateFailure {
+                                                        summary: None,
+                                                        ok: false,
+                                                        path: &path_display,
+                                                        errors: Vec::new(),
+                                                        error: Some(error.to_string()),
+                                                        warnings: Vec::new(),
+                                                    }),
+                                                ),
+                                            };
+                                        }
+                                    };
+                                let member_result = match execute_repo_up_with_behavior(
+                                    &member_target.contract,
+                                    &member_target.contract_path,
+                                    overrides,
+                                    workflow_name,
+                                    None,
+                                    dry_run,
+                                    execution_mode,
+                                    run_behavior_preference,
+                                    ready_timeout,
+                                ) {
+                                    Ok(result) => result,
+                                    Err(error) => return CommandOutput::failure(error),
                                 };
-                            let member_result = match execute_repo_up_with_behavior(
-                                &member_target.contract,
-                                &member_target.contract_path,
-                                overrides,
-                                workflow_name,
-                                None,
-                                dry_run,
-                                execution_mode,
-                                run_behavior_preference,
-                                ready_timeout,
-                            ) {
-                                Ok(result) => result,
-                                Err(error) => return CommandOutput::failure(error),
-                            };
-                            if !member_result.ok {
-                                overall_ok = false;
+                                if !member_result.ok {
+                                    overall_ok = false;
+                                }
+                                text_sections.push(render_up_section_with_receipt(
+                                    &display_contract_target(
+                                        &compact_path_display,
+                                        Some(member.as_str()),
+                                    ),
+                                    &member_result,
+                                    show_receipt,
+                                ));
+                                member_results
+                                    .push(up_member_result_json_value(member, &member_result));
                             }
-                            text_sections.push(render_up_section_with_receipt(
-                                &display_contract_target(
-                                    &compact_path_display,
-                                    Some(member.as_str()),
-                                ),
-                                &member_result,
-                                show_receipt,
-                            ));
-                            member_results
-                                .push(up_member_result_json_value(member, &member_result));
                         }
+
+                        match format {
+                            OutputFormat::Text => CommandOutput {
+                                stdout: text_sections.join("\n\n"),
+                                stderr: None,
+                                exit_code: if overall_ok { 0 } else { 1 },
+                            },
+                            OutputFormat::Json => {
+                                let mut root_value =
+                                    up_result_json_value(&path_display, &root_result);
+                                root_value["members"] = JsonValue::Array(member_results);
+                                CommandOutput {
+                                    stdout: to_json_value(root_value),
+                                    stderr: None,
+                                    exit_code: if overall_ok { 0 } else { 1 },
+                                }
+                            }
+                        }
+                    } else {
+                        match execute_repo_up_with_behavior(
+                            &target.contract,
+                            &target.contract_path,
+                            overrides,
+                            workflow_name,
+                            None,
+                            dry_run,
+                            execution_mode,
+                            run_behavior_preference,
+                            ready_timeout,
+                        ) {
+                            Ok(result) => render_up_result(
+                                &path_display,
+                                &text_path_display,
+                                result,
+                                format,
+                                show_receipt,
+                            ),
+                            Err(error) => CommandOutput::failure(error),
+                        }
+                    }
+                }
+                Ok(_) => {
+                    let mut overall_ok = true;
+                    let mut text_sections = Vec::new();
+                    let mut member_results = Vec::new();
+                    for member in members {
+                        let target =
+                            match load_and_validate_target(&resolved_path, Some(member.as_str())) {
+                                Ok(target) => target,
+                                Err(ContractProblem::Validation(errors)) => {
+                                    return match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(errors.to_string())
+                                        }
+                                        OutputFormat::Json => {
+                                            CommandOutput::failure(to_json(&ValidateFailure {
+                                                summary: None,
+                                                ok: false,
+                                                path: &path_display,
+                                                errors: errors
+                                                    .errors()
+                                                    .iter()
+                                                    .map(ToString::to_string)
+                                                    .collect(),
+                                                error: None,
+                                                warnings: Vec::new(),
+                                            }))
+                                        }
+                                    };
+                                }
+                                Err(ContractProblem::Load(error)) => {
+                                    return match format {
+                                        OutputFormat::Text => {
+                                            CommandOutput::failure(error.to_string())
+                                        }
+                                        OutputFormat::Json => {
+                                            CommandOutput::failure(to_json(&ValidateFailure {
+                                                summary: None,
+                                                ok: false,
+                                                path: &path_display,
+                                                errors: Vec::new(),
+                                                error: Some(error.to_string()),
+                                                warnings: Vec::new(),
+                                            }))
+                                        }
+                                    };
+                                }
+                            };
+                        let result = match execute_repo_up_with_behavior(
+                            &target.contract,
+                            &target.contract_path,
+                            overrides,
+                            workflow_name,
+                            None,
+                            dry_run,
+                            execution_mode,
+                            run_behavior_preference,
+                            ready_timeout,
+                        ) {
+                            Ok(result) => result,
+                            Err(error) => return CommandOutput::failure(error),
+                        };
+                        if !result.ok {
+                            overall_ok = false;
+                        }
+                        text_sections.push(render_up_section_with_receipt(
+                            &display_contract_target(&compact_path_display, Some(member.as_str())),
+                            &result,
+                            show_receipt,
+                        ));
+                        member_results.push(up_member_result_json_value(member, &result));
                     }
 
                     match format {
@@ -23319,210 +23774,108 @@ pub fn up(
                             stderr: None,
                             exit_code: if overall_ok { 0 } else { 1 },
                         },
-                        OutputFormat::Json => {
-                            let mut root_value = up_result_json_value(&path_display, &root_result);
-                            root_value["members"] = JsonValue::Array(member_results);
-                            CommandOutput {
-                                stdout: to_json_value(root_value),
-                                stderr: None,
-                                exit_code: if overall_ok { 0 } else { 1 },
-                            }
-                        }
-                    }
-                } else {
-                    match execute_repo_up_with_behavior(
-                        &target.contract,
-                        &target.contract_path,
-                        overrides,
-                        workflow_name,
-                        None,
-                        dry_run,
-                        execution_mode,
-                        run_behavior_preference,
-                        ready_timeout,
-                    ) {
-                        Ok(result) => render_up_result(
-                            &path_display,
-                            &text_path_display,
-                            result,
-                            format,
-                            show_receipt,
-                        ),
-                        Err(error) => CommandOutput::failure(error),
+                        OutputFormat::Json => CommandOutput {
+                            stdout: to_json_value(json!({
+                                "ok": overall_ok,
+                                "path": path_display,
+                                "dry_run": dry_run,
+                                "members": member_results,
+                                "status": "MULTI",
+                                "phase": "aggregate",
+                                "findings": Vec::<JsonValue>::new(),
+                            })),
+                            stderr: None,
+                            exit_code: if overall_ok { 0 } else { 1 },
+                        },
                     }
                 }
-            }
-            Ok(_) => {
-                let mut overall_ok = true;
-                let mut text_sections = Vec::new();
-                let mut member_results = Vec::new();
-                for member in members {
-                    let target =
-                        match load_and_validate_target(&resolved_path, Some(member.as_str())) {
-                            Ok(target) => target,
-                            Err(ContractProblem::Validation(errors)) => {
-                                return match format {
-                                    OutputFormat::Text => {
-                                        CommandOutput::failure(errors.to_string())
-                                    }
-                                    OutputFormat::Json => {
-                                        CommandOutput::failure(to_json(&ValidateFailure {
-                                            summary: None,
-                                            ok: false,
-                                            path: &path_display,
-                                            errors: errors
-                                                .errors()
-                                                .iter()
-                                                .map(ToString::to_string)
-                                                .collect(),
-                                            error: None,
-                                            warnings: Vec::new(),
-                                        }))
-                                    }
-                                };
-                            }
-                            Err(ContractProblem::Load(error)) => {
-                                return match format {
-                                    OutputFormat::Text => CommandOutput::failure(error.to_string()),
-                                    OutputFormat::Json => {
-                                        CommandOutput::failure(to_json(&ValidateFailure {
-                                            summary: None,
-                                            ok: false,
-                                            path: &path_display,
-                                            errors: Vec::new(),
-                                            error: Some(error.to_string()),
-                                            warnings: Vec::new(),
-                                        }))
-                                    }
-                                };
-                            }
-                        };
-                    let result = match execute_repo_up_with_behavior(
-                        &target.contract,
-                        &target.contract_path,
-                        overrides,
-                        workflow_name,
-                        None,
-                        dry_run,
-                        execution_mode,
-                        run_behavior_preference,
-                        ready_timeout,
-                    ) {
-                        Ok(result) => result,
-                        Err(error) => return CommandOutput::failure(error),
-                    };
-                    if !result.ok {
-                        overall_ok = false;
-                    }
-                    text_sections.push(render_up_section_with_receipt(
-                        &display_contract_target(&compact_path_display, Some(member.as_str())),
-                        &result,
-                        show_receipt,
-                    ));
-                    member_results.push(up_member_result_json_value(member, &result));
-                }
-
-                match format {
-                    OutputFormat::Text => CommandOutput {
-                        stdout: text_sections.join("\n\n"),
-                        stderr: None,
-                        exit_code: if overall_ok { 0 } else { 1 },
-                    },
-                    OutputFormat::Json => CommandOutput {
-                        stdout: to_json_value(json!({
-                            "ok": overall_ok,
-                            "path": path_display,
-                            "dry_run": dry_run,
-                            "members": member_results,
-                            "status": "MULTI",
-                            "phase": "aggregate",
-                            "findings": Vec::<JsonValue>::new(),
-                        })),
-                        stderr: None,
-                        exit_code: if overall_ok { 0 } else { 1 },
-                    },
-                }
-            }
-            Err(ContractProblem::Validation(errors)) => match format {
-                OutputFormat::Text => invalid_repo_contract_output(
-                    "UP",
-                    &resolved_path,
-                    &errors
-                        .errors()
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>(),
-                    vec![
-                        format!(
-                            "repair {}",
-                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
-                        ),
-                        format!(
-                            "rerun {}",
-                            paint_code(&format!(
-                                "`{}`",
-                                command_for_repo_contract_target("ota validate", &resolved_path)
-                            ))
-                        ),
-                        format!(
-                            "rerun {}",
-                            paint_code(&format!(
-                                "`{}`",
-                                command_for_repo_contract_target("ota up", &resolved_path)
-                            ))
-                        ),
-                    ],
-                    format,
-                ),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    summary: None,
-                    ok: false,
-                    path: &path_display,
-                    errors: errors.errors().iter().map(ToString::to_string).collect(),
-                    error: None,
-                    warnings: Vec::new(),
-                })),
+                Err(ContractProblem::Validation(errors)) => match format {
+                    OutputFormat::Text => invalid_repo_contract_output(
+                        "UP",
+                        &resolved_path,
+                        &errors
+                            .errors()
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>(),
+                        vec![
+                            format!(
+                                "repair {}",
+                                paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_repo_contract_target(
+                                        "ota validate",
+                                        &resolved_path
+                                    )
+                                ))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_repo_contract_target("ota up", &resolved_path)
+                                ))
+                            ),
+                        ],
+                        format,
+                    ),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &path_display,
+                        errors: errors.errors().iter().map(ToString::to_string).collect(),
+                        error: None,
+                        warnings: Vec::new(),
+                    })),
+                },
+                Err(ContractProblem::Load(error)) => match format {
+                    OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
+                        "UP",
+                        &resolved_path,
+                        "Contract could not be loaded",
+                        &error.to_string(),
+                        &[
+                            format!(
+                                "repair {}",
+                                paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_repo_contract_target(
+                                        "ota validate",
+                                        &resolved_path
+                                    )
+                                ))
+                            ),
+                            format!(
+                                "rerun {}",
+                                paint_code(&format!(
+                                    "`{}`",
+                                    command_for_repo_contract_target("ota up", &resolved_path)
+                                ))
+                            ),
+                        ],
+                    )),
+                    OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: &path_display,
+                        errors: Vec::new(),
+                        error: Some(error.to_string()),
+                        warnings: Vec::new(),
+                    })),
+                },
             },
-            Err(ContractProblem::Load(error)) => match format {
-                OutputFormat::Text => CommandOutput::failure(repo_contract_load_text(
-                    "UP",
-                    &resolved_path,
-                    "Contract could not be loaded",
-                    &error.to_string(),
-                    &[
-                        format!(
-                            "repair {}",
-                            paint_code(&format!("`{}`", compact_contract_path(&resolved_path)))
-                        ),
-                        format!(
-                            "rerun {}",
-                            paint_code(&format!(
-                                "`{}`",
-                                command_for_repo_contract_target("ota validate", &resolved_path)
-                            ))
-                        ),
-                        format!(
-                            "rerun {}",
-                            paint_code(&format!(
-                                "`{}`",
-                                command_for_repo_contract_target("ota up", &resolved_path)
-                            ))
-                        ),
-                    ],
-                )),
-                OutputFormat::Json => CommandOutput::failure(to_json(&ValidateFailure {
-                    summary: None,
-                    ok: false,
-                    path: &path_display,
-                    errors: Vec::new(),
-                    error: Some(error.to_string()),
-                    warnings: Vec::new(),
-                })),
-            },
-        },
-        debug,
-        debug_lines,
-    )
+            debug,
+            debug_lines,
+        )
+    })
 }
 
 pub fn clean(
@@ -44518,6 +44871,7 @@ tasks:
             ExecutionOverrides::default(),
             &[],
             &[],
+            &[],
             false,
             false,
             false,
@@ -44579,6 +44933,7 @@ tasks:
             ExecutionOverrides::default(),
             &[],
             &[],
+            &[],
             false,
             false,
             false,
@@ -44629,6 +44984,7 @@ tasks:
             ExecutionOverrides::default(),
             &[],
             &[],
+            &[],
             false,
             false,
             false,
@@ -44674,6 +45030,7 @@ tasks:
             None,
             OutputFormat::Text,
             ExecutionOverrides::default(),
+            &[],
             &[],
             &[],
             true,
@@ -44754,6 +45111,7 @@ tasks:
             },
             &[],
             &[],
+            &[],
             false,
             false,
             false,
@@ -44818,6 +45176,7 @@ tasks:
             None,
             OutputFormat::Text,
             ExecutionOverrides::default(),
+            &[],
             &[],
             &[],
             false,
@@ -44968,6 +45327,7 @@ tasks:
             ExecutionOverrides::default(),
             &[],
             &[],
+            &[],
             true,
             false,
             false,
@@ -45004,6 +45364,7 @@ tasks:
             None,
             OutputFormat::Json,
             ExecutionOverrides::default(),
+            &[],
             &[],
             &[],
             true,
@@ -45051,6 +45412,7 @@ tasks:
             ExecutionOverrides::default(),
             &[],
             &[],
+            &[],
             true,
             false,
             false,
@@ -45072,6 +45434,121 @@ tasks:
                 || blocker.starts_with("Missing runtime: node"),
             "{json}"
         );
+    }
+
+    #[test]
+    fn run_dry_run_blocks_when_effect_policy_denies_selected_task_path() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    run: echo ok
+    effects:
+      network: true
+"#,
+        )
+        .expect("write contract");
+        let policy_dir = repo.path().join(".ota");
+        fs::create_dir_all(&policy_dir).expect("create policy directory");
+        fs::write(
+            policy_dir.join("org-policy.yaml"),
+            r#"
+policies:
+  effects:
+    tasks:
+      network: deny
+"#,
+        )
+        .expect("write policy");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["preview_status"], "BLOCKED");
+        let blocker = json["summary"]["primary_blocker"]["summary"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            blocker.starts_with("Effect governance policy blocked task effect `network:broad`"),
+            "{json}"
+        );
+    }
+
+    #[test]
+    fn run_dry_run_effect_override_can_temporarily_allow_denied_effect() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    run: echo ok
+    effects:
+      network: true
+"#,
+        )
+        .expect("write contract");
+        let policy_dir = repo.path().join(".ota");
+        fs::create_dir_all(&policy_dir).expect("create policy directory");
+        fs::write(
+            policy_dir.join("org-policy.yaml"),
+            r#"
+policies:
+  effects:
+    tasks:
+      network: deny
+"#,
+        )
+        .expect("write policy");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[String::from("network:broad=allow")],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["preview_status"], "RUNNABLE");
     }
 
     #[test]
@@ -45126,6 +45603,7 @@ tasks:
             None,
             OutputFormat::Json,
             ExecutionOverrides::default(),
+            &[],
             &[],
             &[],
             true,
@@ -45204,6 +45682,7 @@ tasks:
             ExecutionOverrides::default(),
             &[],
             &[],
+            &[],
             true,
             false,
             false,
@@ -45269,6 +45748,7 @@ tasks:
             ExecutionOverrides::default(),
             &[],
             &[],
+            &[],
             true,
             false,
             false,
@@ -45323,6 +45803,7 @@ tasks:
             ExecutionOverrides::default(),
             &[],
             &[],
+            &[],
             true,
             false,
             false,
@@ -45375,6 +45856,7 @@ tasks:
             None,
             OutputFormat::Json,
             ExecutionOverrides::default(),
+            &[],
             &[],
             &[],
             true,
@@ -58184,6 +58666,44 @@ tasks:
     }
 
     #[test]
+    fn run_failure_text_does_not_surface_container_apt_guidance_for_native_backend() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    run: apt-get update && apt-get install -y libpq-dev
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "install",
+            "install",
+            None,
+            ExecutionOverrides::default(),
+            100,
+            "Reading package lists...",
+            "E: List directory /var/lib/apt/lists/partial is missing. - Acquire (13: Permission denied)",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nMode:        native",
+        ));
+
+        assert!(
+            !rendered.contains("container tasks run as non-root"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_failure_text_classifies_managed_isolated_path_runtime_mutation() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -63309,6 +63829,56 @@ fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
         || summary.starts_with("Runtime probe failed: ")
         || summary.starts_with("Version mismatch for tool: ")
         || summary.starts_with("Version mismatch for runtime: ")
+        || summary.starts_with("Effect governance policy blocked safe-task effect")
+        || summary.starts_with("Effect governance policy blocked task effect")
+}
+
+#[cfg(test)]
+#[test]
+fn run_precondition_blocker_stops_for_effect_policy_block() {
+    assert!(run_precondition_blocker_should_stop_execution(
+        "Effect governance policy blocked safe-task effect `external_state:docker`",
+    ));
+    assert!(run_precondition_blocker_should_stop_execution(
+        "Effect governance policy blocked task effect `network:broad`",
+    ));
+}
+
+#[cfg(test)]
+#[test]
+fn effect_override_parser_accepts_supported_selectors() {
+    let overrides = parse_effect_governance_overrides(&[
+        String::from("network=deny"),
+        String::from("network:dependency_hydration=allow"),
+        String::from("external_state:docker_compose=warn"),
+    ])
+    .expect("selectors should parse");
+
+    assert_eq!(
+        overrides.decisions.get("network:broad"),
+        Some(&PolicyEffectDecision::Deny)
+    );
+    assert_eq!(
+        overrides.decisions.get("network:dependency_hydration"),
+        Some(&PolicyEffectDecision::Allow)
+    );
+    assert_eq!(
+        overrides.decisions.get("external_state:docker_compose"),
+        Some(&PolicyEffectDecision::Warn)
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn effect_override_parser_rejects_invalid_external_state_tokens() {
+    let error = parse_effect_governance_overrides(&[String::from("external_state:Docker=allow")])
+        .expect_err("uppercase token should be rejected");
+    assert!(error.contains("effect selector"), "{error}");
+
+    let error =
+        parse_effect_governance_overrides(&[String::from("external_state:docker--ops=allow")])
+            .expect_err("duplicate separator token should be rejected");
+    assert!(error.contains("effect selector"), "{error}");
 }
 
 fn run_single_contract_target_streaming(
@@ -65718,6 +66288,37 @@ fn render_run_structured_error_text(
                 ),
             ],
         ),
+        RunError::RepoExecutionLockBusy { path, .. } => (
+            String::from("Another ota execution is already active"),
+            vec![format!(
+                "ota could not acquire repo execution lock `{path}` because another ota run/up command is still running"
+            )],
+            vec![
+                String::from("wait for the active ota execution to finish"),
+                format!(
+                    "then rerun `{}`",
+                    repo_run_stream_command(task_name, member).replace(" --stream", "")
+                ),
+            ],
+        ),
+        RunError::RepoExecutionLockFailed {
+            action,
+            path,
+            details,
+            ..
+        } => (
+            String::from("Repo execution lock failed"),
+            vec![format!(
+                "ota could not {action} repo execution lock `{path}`: {details}"
+            )],
+            vec![
+                String::from("repair local permissions or file-system access for `.ota/state/`"),
+                format!(
+                    "then rerun `{}`",
+                    repo_run_stream_command(task_name, member).replace(" --stream", "")
+                ),
+            ],
+        ),
         RunError::UnknownTask { task } => (
             String::from("Unknown task"),
             vec![format!("task `{task}` is not declared in this contract")],
@@ -66767,6 +67368,17 @@ fn run_execution_receipt_with_shared(
     let mut toolchains = selected_task_toolchain_summaries(contract, task_name, overrides);
     apply_toolchain_fulfillment_evidence(&mut toolchains, fulfilled_toolchains);
     let toolchain_names = toolchain_summary_names(&toolchains);
+    let mut policy_lines = execution_policy_lines_for_toolchain_names(
+        contract,
+        contract_path,
+        backend,
+        &toolchain_names,
+    );
+    policy_lines.extend(safe_task_effect_policy_lines(
+        contract,
+        contract_path,
+        task_name,
+    ));
 
     ExecutionReceipt {
         ok,
@@ -66799,12 +67411,7 @@ fn run_execution_receipt_with_shared(
         service_termination: None,
         backend_fulfillment,
         workloads: BTreeMap::new(),
-        policy: execution_policy_lines_for_toolchain_names(
-            contract,
-            contract_path,
-            backend,
-            &toolchain_names,
-        ),
+        policy: policy_lines,
         steps,
         status: Some(status),
         failed_task: failure_context
@@ -76240,6 +76847,24 @@ fn up_remote_execution_blocker(
     None
 }
 
+fn append_up_safe_task_effect_policy_findings(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    report: &mut DoctorReport,
+) {
+    let mut task_names = BTreeSet::new();
+    if let Some(setup_task) = selected_up_setup_task_name(contract, workflow_name) {
+        task_names.insert(setup_task.to_string());
+    }
+    if let Some(activation_task) = selected_up_activation_task_name(contract, workflow_name) {
+        task_names.insert(activation_task.to_string());
+    }
+    for task_name in task_names {
+        append_safe_task_effect_policy_findings(contract, contract_path, &task_name, report);
+    }
+}
+
 fn execute_repo_up(
     contract: &Contract,
     resolved_path: &Path,
@@ -76377,6 +77002,12 @@ fn execute_repo_up_with_behavior(
         workflow_name,
         overrides,
     );
+    append_up_safe_task_effect_policy_findings(
+        contract,
+        resolved_path,
+        workflow_name,
+        &mut preflight,
+    );
     if dry_run {
         let preview = build_up_preview(
             contract,
@@ -76478,6 +77109,12 @@ fn execute_repo_up_with_behavior(
                     doctor_mode,
                     workflow_name,
                     overrides,
+                );
+                append_up_safe_task_effect_policy_findings(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    &mut preflight,
                 );
             }
             Err(ProvisioningBackendError::DiagnosedCommandFailed {
@@ -76916,6 +77553,12 @@ fn execute_repo_up_with_behavior(
             workflow_name,
             overrides,
         );
+        append_up_safe_task_effect_policy_findings(
+            contract,
+            resolved_path,
+            workflow_name,
+            &mut preflight,
+        );
     }
 
     if has_native_prerequisite_blocker(&preflight) {
@@ -77062,6 +77705,12 @@ fn execute_repo_up_with_behavior(
                     doctor_mode,
                     workflow_name,
                     overrides,
+                );
+                append_up_safe_task_effect_policy_findings(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    &mut preflight,
                 );
                 if !preflight.ok && setup_task.is_none() {
                     return Ok(RepoUpResult {

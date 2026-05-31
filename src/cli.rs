@@ -188,7 +188,7 @@ enum Commands {
     },
     #[command(
         display_order = 4,
-        after_help = "Ordering:\n  Put ota command flags like `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, and `--memory` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run version:bump patch"
+        after_help = "Ordering:\n  Put ota command flags like `--dry-run`, `--json`, `--stream`, `--receipt`, `--log`, `--mode`, `--native`, `--container`, `--lifecycle`, `--ephemeral`, `--persistent`, `--skip-deps`, `--host-port`, `--memory`, and `--effect-override` before task inputs.\n\nExamples:\n  ota run ci --dry-run\n  ota run ci --dry-run --json\n  ota run version:bump --stream --version patch\n  ota run dev --host-port 4000\n  ota run dev --memory 4GiB\n  ota run test --skip-deps\n  ota run dev --log\n  ota run ci --effect-override network:broad=allow\n  ota run version:bump patch"
     )]
     /// Run a validated task from an Ota contract.
     Run {
@@ -231,6 +231,9 @@ enum Commands {
         /// Skip declared task dependencies for this local invocation only.
         #[arg(long, action = ArgAction::SetTrue)]
         skip_deps: bool,
+        /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, or `external_state:<token>`).
+        #[arg(long = "effect-override", value_name = "EFFECT=DECISION")]
+        effect_override: Vec<String>,
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
@@ -532,6 +535,9 @@ enum Commands {
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
+        /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, or `external_state:<token>`).
+        #[arg(long = "effect-override", value_name = "EFFECT=DECISION")]
+        effect_override: Vec<String>,
         /// Run the command against one or more monorepo members declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Vec<String>,
@@ -3357,6 +3363,11 @@ fn repo_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
+        "--effect-override" => Some(RunFlagSpec {
+            canonical: "effect-override",
+            takes_value: true,
+            value_kind: RunFlagValueKind::Any,
+        }),
         "--json" | "--dry-run" | "--native" | "--container" | "--remote" | "--ephemeral"
         | "--persistent" | "--skip-deps" | "--receipt" | "--stream" | "--log" | "--debug"
         | "--plain" | "--concise" | "--verbose" => Some(RunFlagSpec {
@@ -4852,6 +4863,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             memory,
             ephemeral,
             skip_deps,
+            effect_override,
             receipt,
             stream,
             log,
@@ -4870,6 +4882,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 memory,
                 skip_deps,
             },
+            &effect_override,
             &member,
             &inputs,
             dry_run,
@@ -5006,6 +5019,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             persistent,
             ephemeral,
             receipt,
+            effect_override,
             member,
             workflow,
             path,
@@ -5019,6 +5033,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 memory: None,
                 skip_deps: false,
             },
+            &effect_override,
             &member,
             workflow.as_deref(),
             format_from_json(json),
@@ -15675,6 +15690,7 @@ tasks:
                 stream: false,
                 log: false,
                 member: Vec::new(),
+                effect_override: Vec::new(),
                 path: None,
                 inputs: Vec::new(),
             },
@@ -15713,6 +15729,7 @@ tasks:
                 stream: false,
                 log: false,
                 member: Vec::new(),
+                effect_override: Vec::new(),
                 path: None,
                 inputs: Vec::new(),
             },
@@ -16714,6 +16731,7 @@ tasks:
             ephemeral: false,
             receipt: false,
             member: Vec::new(),
+            effect_override: Vec::new(),
             workflow: None,
         }));
     }
@@ -16737,6 +16755,7 @@ tasks:
             ephemeral: false,
             receipt: false,
             member: Vec::new(),
+            effect_override: Vec::new(),
             workflow: None,
         }));
     }
@@ -16789,6 +16808,7 @@ tasks:
                 ephemeral: false,
                 receipt: false,
                 member: Vec::new(),
+                effect_override: Vec::new(),
                 workflow: None,
             },
         };
@@ -16818,6 +16838,7 @@ tasks:
                 ephemeral: false,
                 receipt: false,
                 member: Vec::new(),
+                effect_override: Vec::new(),
                 workflow: None,
             }),
             Some("Preparing environment...")
@@ -16884,6 +16905,7 @@ tasks:
             stream: false,
             log: false,
             member: Vec::new(),
+            effect_override: Vec::new(),
             path: None,
             inputs: Vec::new(),
         }));
@@ -17255,6 +17277,7 @@ tasks:
                     ephemeral: false,
                     receipt: false,
                     member: Vec::new(),
+                    effect_override: Vec::new(),
                     workflow: None,
                     path: None,
                 },
@@ -21268,6 +21291,29 @@ policies:
     }
 
     #[test]
+    fn run_effect_override_is_classified_as_repo_run_value_flag() {
+        let occurrence = super::parse_run_flag_occurrence(
+            &[
+                OsString::from("--effect-override"),
+                OsString::from("network:broad=allow"),
+            ],
+            0,
+            super::RunCommandKind::Repo,
+        )
+        .expect("effect override should be classified");
+
+        assert_eq!(occurrence.canonical, "effect-override");
+        assert!(occurrence.takes_value);
+        assert!(occurrence.valid_for_flag);
+        assert_eq!(occurrence.span, 2);
+        assert_eq!(super::run_command_value_span("--effect-override"), Some(2),);
+        assert_eq!(
+            super::run_command_value_span("--effect-override=network:broad=allow"),
+            Some(1),
+        );
+    }
+
+    #[test]
     fn run_dry_run_json_requests_json_output() {
         let command = super::Commands::Run {
             task: String::from("ci"),
@@ -21287,6 +21333,7 @@ policies:
             stream: false,
             log: false,
             member: Vec::new(),
+            effect_override: Vec::new(),
             path: None,
             inputs: Vec::new(),
         };
@@ -30139,8 +30186,9 @@ tools:
         assert!(stdout.contains("  » it is not available in the configured container image"));
         assert!(stdout.contains("  » `execution.backends.container.image = rust:1.94-bookworm`"));
         let normalized = stdout.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(normalized
-            .contains("rerun `ota up --dry-run --mode container --lifecycle ephemeral`"));
+        assert!(
+            normalized.contains("rerun `ota up --dry-run --mode container --lifecycle ephemeral`")
+        );
         assert!(!stdout.contains("rerun `ota doctor --mode container --lifecycle ephemeral`"));
     }
 

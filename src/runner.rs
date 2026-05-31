@@ -41,6 +41,7 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json;
 
@@ -800,6 +801,17 @@ pub enum RunError {
         path: String,
         details: String,
     },
+    #[error(
+        "task `{task}` cannot start because another ota execution is already active for this repo (`{path}` is locked)"
+    )]
+    RepoExecutionLockBusy { task: String, path: String },
+    #[error("task `{task}` could not {action} repo execution lock `{path}`: {details}")]
+    RepoExecutionLockFailed {
+        task: String,
+        action: String,
+        path: String,
+        details: String,
+    },
     #[error("container backend `{engine}` could not list stale ota containers: {details}")]
     StaleContainerQueryFailed { engine: String, details: String },
     #[error("could not compose environment variable `{name}` as a PATH: {source}")]
@@ -1488,6 +1500,7 @@ const OTA_STATE_DIR: &str = "state";
 const OTA_OWNERSHIP_ID_FILE: &str = "ownership-id";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
 const OTA_ISOLATED_FILE_MOUNTS_DIR: &str = "isolated-file-mounts";
+const OTA_RUN_EXECUTION_LOCK_FILE: &str = "run-execution.lock";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 const EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS: usize = 5;
 const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
@@ -1497,6 +1510,16 @@ static RUN_INTERRUPT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 static RUN_INTERRUPT_HANDLER: Once = Once::new();
 static CLEAN_ENGINE_TIMEOUT_CACHE: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
 static CONTAINER_HOST_USER_SPEC_CACHE: OnceLock<Option<String>> = OnceLock::new();
+
+struct RepoExecutionLockGuard {
+    lock_file: File,
+}
+
+impl Drop for RepoExecutionLockGuard {
+    fn drop(&mut self) {
+        let _ = self.lock_file.unlock();
+    }
+}
 
 fn clean_engine_timeout_cache() -> &'static Mutex<BTreeMap<String, String>> {
     CLEAN_ENGINE_TIMEOUT_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -4552,6 +4575,7 @@ fn run_task_internal(
         });
     }
     let working_dir = contract_working_dir(contract_path);
+    let _repo_execution_lock = acquire_repo_execution_lock(task_name, working_dir)?;
     let backend = match resolve_execution_backend_with_contract_path(
         contract,
         task_name,
@@ -6662,7 +6686,7 @@ fn execute_task_command(
             host_port_override,
             mode,
         ),
-        (ResolvedExecutionBackend::Native { .. }, PreparedTaskExecution::FileAction { action }) => {
+        (_, PreparedTaskExecution::FileAction { action }) => {
             execute_native_file_action_task(task_name, action, working_dir)
         }
         (_, PreparedTaskExecution::Shell { command, .. }) => match backend {
@@ -21376,6 +21400,54 @@ fn repo_ota_state_file_path(working_dir: &Path, file_name: &str) -> PathBuf {
     repo_ota_state_dir(working_dir).join(file_name)
 }
 
+fn repo_execution_lock_path(working_dir: &Path) -> PathBuf {
+    repo_ota_state_file_path(working_dir, OTA_RUN_EXECUTION_LOCK_FILE)
+}
+
+fn acquire_repo_execution_lock(
+    task_name: &str,
+    working_dir: &Path,
+) -> Result<RepoExecutionLockGuard, RunError> {
+    let lock_path = repo_execution_lock_path(working_dir);
+    fs::create_dir_all(repo_ota_state_dir(working_dir)).map_err(|source| {
+        RunError::RepoExecutionLockFailed {
+            task: task_name.to_string(),
+            action: String::from("create"),
+            path: lock_path.display().to_string(),
+            details: source.to_string(),
+        }
+    })?;
+    let lock_file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|source| RunError::RepoExecutionLockFailed {
+            task: task_name.to_string(),
+            action: String::from("open"),
+            path: lock_path.display().to_string(),
+            details: source.to_string(),
+        })?;
+    lock_file
+        .try_lock_exclusive()
+        .map_err(|source| {
+            if source.kind() == fs2::lock_contended_error().kind() {
+                RunError::RepoExecutionLockBusy {
+                    task: task_name.to_string(),
+                    path: lock_path.display().to_string(),
+                }
+            } else {
+                RunError::RepoExecutionLockFailed {
+                    task: task_name.to_string(),
+                    action: String::from("lock"),
+                    path: lock_path.display().to_string(),
+                    details: source.to_string(),
+                }
+            }
+        })
+        .map(|()| RepoExecutionLockGuard { lock_file })
+}
+
 fn legacy_repo_ota_state_file_path(working_dir: &Path, file_name: &str) -> PathBuf {
     repo_ota_dir(working_dir).join(file_name)
 }
@@ -22285,22 +22357,24 @@ mod tests {
     use super::{
         BackendFulfillmentStrategy, CapturedRunOutcome, ContainerPortPublication,
         EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides, HttpReadinessRequest,
-        LEGACY_EXECUTION_CONTEXT_NAME, ProvisioningExecutionTarget, ResolvedExecutionBackend,
-        ResolvedSharedLocalBackend, ResolvedTaskRuntime, ResolvedTaskRuntimeBind,
-        ResolvedTaskRuntimeEndpoint, ResolvedTaskRuntimeHost, ResolvedTaskRuntimeListener,
-        ResolvedTaskRuntimeResolution, RunError, RuntimeListenerHostPublicationFailure,
-        RuntimeListenerResolutionKind, RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode,
-        TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
-        TaskTargetActivationStatus, TaskTargetResolutionSource, activation_loader_label,
+        LEGACY_EXECUTION_CONTEXT_NAME, PreparedTaskExecution, ProvisioningExecutionTarget,
+        ResolvedExecutionBackend, ResolvedSharedLocalBackend, ResolvedTaskRuntime,
+        ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint, ResolvedTaskRuntimeHost,
+        ResolvedTaskRuntimeListener, ResolvedTaskRuntimeResolution, RunError,
+        RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind,
+        RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode, TaskExecutionRelation,
+        TaskRunState, TaskTargetActivationEvidence, TaskTargetActivationStatus,
+        TaskTargetResolutionSource, acquire_repo_execution_lock, activation_loader_label,
         backend_fulfillment_plan, clean_execution, clean_execution_report, container_identity_seed,
         contract_working_dir, current_os, effective_task_env_for_backend,
         effective_task_env_for_selection, effective_task_execution,
-        ephemeral_container_stream_command, execute_task_with_hooks, extract_probe_version_token,
-        looks_like_posix_script, looks_like_powershell_script, parse_windows_env_block,
-        persistent_cleanup_targets, persistent_container_name, persistent_container_name_for_seed,
-        plan_task_execution, preflight_container_host_publications,
-        prepare_container_runtime_projection, preparing_loader_label, producer_owned_service_next,
-        ready_runtime_public_endpoint_line, resolve_execution_backend,
+        ephemeral_container_stream_command, execute_task_command, execute_task_with_hooks,
+        extract_probe_version_token, looks_like_posix_script, looks_like_powershell_script,
+        parse_windows_env_block, persistent_cleanup_targets, persistent_container_name,
+        persistent_container_name_for_seed, plan_task_execution,
+        preflight_container_host_publications, prepare_container_runtime_projection,
+        preparing_loader_label, producer_owned_service_next, ready_runtime_public_endpoint_line,
+        repo_execution_lock_path, resolve_execution_backend,
         resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
         resolve_task_env_details_for_task, resolve_task_target_binding_url,
         resolve_task_target_binding_url_with_contract_path, run_task, run_task_captured,
@@ -22340,6 +22414,19 @@ mod tests {
                 },
             }
         }
+    }
+
+    #[test]
+    fn repo_execution_lock_creates_state_lock_and_releases_cleanly() {
+        let fixture = tempdir().expect("tempdir");
+        let lock_path = repo_execution_lock_path(fixture.path());
+        {
+            let _guard =
+                acquire_repo_execution_lock("build", fixture.path()).expect("lock should acquire");
+            assert!(lock_path.exists(), "{lock_path:?}");
+        }
+        let _guard =
+            acquire_repo_execution_lock("build", fixture.path()).expect("lock should reacquire");
     }
 
     #[test]
@@ -46051,6 +46138,63 @@ tasks:
             ),
             "{}",
             output.stdout
+        );
+    }
+
+    #[test]
+    fn file_action_executes_when_backend_is_container() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env-local:
+    action:
+      kind: ensure_file
+      path: .env.local
+      value: TOKEN=local
+"#,
+        );
+
+        let task = fixture
+            .contract
+            .tasks
+            .get("setup:env-local")
+            .expect("task should exist");
+        let action = task.action.clone().expect("task should declare action");
+        let backend = ResolvedExecutionBackend::Container {
+            context_name: Some(String::from("app")),
+            shared_local_backend: None,
+            image: String::from("ghcr.io/ota/test:latest"),
+            engine: String::from("docker"),
+            lifecycle: Lifecycle::Ephemeral,
+            memory_bytes: None,
+            compose_networks: Vec::new(),
+            publications: Vec::new(),
+            dependency_isolation_paths: Vec::new(),
+        };
+
+        let output = execute_task_command(
+            Some(&fixture.contract),
+            "setup:env-local",
+            None,
+            &PreparedTaskExecution::FileAction { action },
+            fixture.dir.path(),
+            &BTreeMap::new(),
+            None,
+            &BTreeSet::new(),
+            &backend,
+            None,
+            None,
+            TaskExecutionMode::Capture,
+        )
+        .expect("file action should execute for container backend");
+
+        assert_eq!(output.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join(".env.local")).unwrap(),
+            "TOKEN=local"
         );
     }
 

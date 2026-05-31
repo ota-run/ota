@@ -19,7 +19,7 @@ ctrlc = "3.5.0"
 signal-hook = "0.3.18"
 jsonschema = { version = "0.18.3", features = ["draft202012"] }
 getrandom = "0.2.16"
+fs2 = "0.4.3"
 
 [dev-dependencies]
-fs2 = "0.4.3"
 tempfile = "3.23.0"
