@@ -394,7 +394,12 @@ execution:
 ```
 
 `extends` is optional. It reduces repetition for named contexts; it does not replace shorthand for simple repos.
-Single-context shorthand and named contexts are separate declaration modes: once a contract declares `execution.default_context` or `execution.contexts`, it must stop using root shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) as overlapping default execution truth.
+Named-context execution is the canonical selector whenever `execution.default_context` /
+`execution.contexts` are present. In that mode:
+
+- `execution.preferred` is not allowed
+- `execution.lifecycle` and `execution.backends` may still be used as root defaults that named
+  contexts inherit from when context-local values are omitted
 
 Supported backend values:
 
@@ -421,9 +426,9 @@ Current validation rule:
 - `execution.default_context` declares the context used when task-level `context` is not set
 - `execution.contexts` defines backend and requirement surfaces per context
 - `execution.contexts.<name>.extends` lets a named context inherit from one parent context to avoid repetition
-- root shorthand (`execution.preferred` / `execution.lifecycle` / `execution.backends`) must not be combined with `execution.default_context` or `execution.contexts`; pick either shorthand-only or named-context mode
 - each `execution.contexts.<name>` requires:
-  - `backend` and matching backend settings (`container.image` + `lifecycle`, or `remote.provider` + `remote.target`)
+  - `backend` and matching backend settings; contexts may declare those settings inline or inherit
+    them from root defaults (`execution.lifecycle` / `execution.backends`)
   - optional `only_on` to scope the context to supported host OS values (`linux`, `macos`, `windows`)
   - optional `container.resources.memory.minimum` and `container.resources.memory.default` for container contexts
   - optional `env` for context-wide environment defaults that apply before task-level and mode-level env overrides
@@ -672,7 +677,7 @@ Rules:
 - provider-specific field shape checks also live there: empty Rustup `profile`, `components`, and
   `targets` entries fail because the Rustup provider contract rejects them, and Corepack-backed
   Node toolchains reject those Rust-shaped fields entirely while validating
-  `package_managers` tokens and versions as shell-safe package inputs; `provider: ruby`
+  `package_managers` tokens and shell-safe version constraints; `provider: ruby`
   accepts only `bundler` under `package_managers`
 - `only_on`, when set, scopes the toolchain to `linux`, `macos`, or `windows`
 - `profile`, `components`, and `targets` are currently Rustup-specific compatibility fields; Node
@@ -1506,7 +1511,9 @@ Task-effect rules:
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
 - when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`launch`, and `runtime`
-- when a selected branch omits `run`/`script`/`launch`, or when no branch exists for the selected mode, ota falls back to the task-level execution body (including OS variants)
+- when a selected branch omits `run`/`script`/`launch`, ota falls back to the task-level execution body (including OS variants)
+- when a task declares `execution.modes`, an explicit `--mode` must resolve to a declared branch
+  unless it matches `default_mode`; unsupported explicit overrides fail early with a mode-branch error
 - use `modes.<mode>` only for mode-specific overrides; you do not need an empty branch such as `modes.native: {}` just to pair with `default_mode: native`
 - `modes.native.lifecycle` and `modes.remote.lifecycle` are invalid; lifecycle is only valid for container execution
 

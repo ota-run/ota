@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- tightened explicit mode-override trust in `ota run` / `ota execution plan`: when a task declares
+  `execution.modes`, unsupported explicit overrides (for example `--mode container` with only a
+  native branch) now fail with a task-scoped mode-branch error that reports requested mode and
+  declared mode branches instead of generic execution-plan resolution text
+- relaxed execution schema ergonomics for named-context contracts: `execution.default_context` /
+  `execution.contexts` can now coexist with root `execution.lifecycle` and
+  `execution.backends` defaults, while `execution.preferred` remains disallowed in named-context
+  mode to keep backend selection unambiguous
+- expanded toolchain package-manager version validation from token-only strings to shell-safe
+  version constraints (for example `>=2.5.3,<2.6.0`) and aligned validation messaging to
+  `version constraint` semantics
 - expanded detector-led toolchain parity for Go and Ruby: `ota detect` now promotes detected
   `go` and `ruby` runtime lanes into canonical `toolchains.go` (`provider: go`) and
   `toolchains.ruby` (`provider: ruby`) ownership when repo signals confirm those ecosystems, and

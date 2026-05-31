@@ -365,9 +365,11 @@ impl ToolchainProviderSpecificField {
                             "toolchain `{name}` package manager `{package_name}` must be a shell-safe package token"
                         ));
                     }
-                    if !version.trim().is_empty() && !is_shell_safe_package_token(version) {
+                    if !version.trim().is_empty()
+                        && !is_shell_safe_package_version_constraint(version)
+                    {
                         errors.push(format!(
-                            "toolchain `{name}` package manager `{package_name}` version must be a shell-safe package version token"
+                            "toolchain `{name}` package manager `{package_name}` version must be a shell-safe package version constraint"
                         ));
                     }
                 }
@@ -389,9 +391,11 @@ impl ToolchainProviderSpecificField {
                                 "toolchain `{name}` platform `{platform}` package manager `{package_name}` must be a shell-safe package token"
                             ));
                         }
-                        if !version.trim().is_empty() && !is_shell_safe_package_token(version) {
+                        if !version.trim().is_empty()
+                            && !is_shell_safe_package_version_constraint(version)
+                        {
                             errors.push(format!(
-                                "toolchain `{name}` platform `{platform}` package manager `{package_name}` version must be a shell-safe package version token"
+                                "toolchain `{name}` platform `{platform}` package manager `{package_name}` version must be a shell-safe package version constraint"
                             ));
                         }
                     }
@@ -1615,6 +1619,19 @@ fn is_shell_safe_package_token(value: &str) -> bool {
         && trimmed == value
         && trimmed.chars().all(|ch| {
             ch.is_ascii_alphanumeric() || matches!(ch, '@' | '/' | '.' | '_' | '-' | '+' | '~')
+        })
+}
+
+fn is_shell_safe_package_version_constraint(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && trimmed == value
+        && trimmed.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || matches!(
+                    ch,
+                    '.' | '_' | '-' | '+' | '~' | '^' | '<' | '>' | '=' | '!' | ',' | '*'
+                )
         })
 }
 

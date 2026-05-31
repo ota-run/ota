@@ -644,6 +644,14 @@ pub enum RunError {
     SkipDepsWithoutDependencies { task: String },
     #[error("task `{task}` does not have a valid execution form")]
     InvalidTaskExecution { task: String },
+    #[error(
+        "task `{task}` was requested with `--mode {requested_mode}`, but it only supports modes: {supported_modes}"
+    )]
+    UnsupportedTaskModeOverride {
+        task: String,
+        requested_mode: String,
+        supported_modes: String,
+    },
     #[error("environment variable `{name}` is required for task execution but is not set")]
     MissingRequiredEnv { name: String },
     #[error(
@@ -13975,8 +13983,31 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
         && task.mode_default_backend() != Some(override_backend)
         && task.mode_execution_branch(override_backend).is_none()
     {
-        return Err(RunError::InvalidTaskExecution {
+        let supported_modes = task
+            .execution
+            .as_ref()
+            .map(|execution| execution.modes.iter())
+            .into_iter()
+            .flatten()
+            .map(|(backend, _)| match backend {
+                Backend::Native => "native",
+                Backend::Container => "container",
+                Backend::Remote => "remote",
+            })
+            .collect::<Vec<_>>();
+        let rendered_modes = if supported_modes.is_empty() {
+            String::from("none")
+        } else {
+            supported_modes.join(", ")
+        };
+        return Err(RunError::UnsupportedTaskModeOverride {
             task: task_name.to_string(),
+            requested_mode: match override_backend {
+                Backend::Native => String::from("native"),
+                Backend::Container => String::from("container"),
+                Backend::Remote => String::from("remote"),
+            },
+            supported_modes: rendered_modes,
         });
     }
 
@@ -40440,7 +40471,16 @@ tasks:
             },
         )
         .unwrap_err();
-        assert!(matches!(error, RunError::InvalidTaskExecution { task } if task == "start"));
+        assert!(matches!(
+            error,
+            RunError::UnsupportedTaskModeOverride {
+                task,
+                requested_mode,
+                supported_modes
+            } if task == "start"
+                && requested_mode == "container"
+                && supported_modes == "native"
+        ));
     }
 
     #[cfg(unix)]
