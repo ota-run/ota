@@ -11,18 +11,18 @@
         <img src="https://ota.run/brand/ota-github-social-card.png" alt="ota social card" width="100%" />
       </p>
   <p>
-    <a href="https://github.com/ota-run/ota/releases"><img src="https://img.shields.io/github/v/release/ota-run/ota?style=flat-square" alt="Latest release" /></a>
-    <a href="https://github.com/ota-run/ota/actions/workflows/release-gate.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/release-gate.yml?branch=main&style=flat-square&label=release%20gate" alt="Release gate status" /></a>
-    <a href="https://github.com/ota-run/ota/actions/workflows/docs-quality.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/docs-quality.yml?branch=main&style=flat-square&label=docs" alt="Docs quality status" /></a>
-    <a href="https://github.com/ota-run/ota/actions/workflows/codeql.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/codeql.yml?branch=main&style=flat-square&label=codeql" alt="CodeQL status" /></a>
-    <a href="LICENSE"><img src="https://img.shields.io/github/license/ota-run/ota?style=flat-square" alt="License" /></a>
+    <a href="https://github.com/ota-run/ota/releases"><img src="https://img.shields.io/github/v/release/ota-run/ota?style=for-the-badge&label=release&labelColor=111827&color=2563eb&logo=github" alt="Latest release" /></a>
+    <a href="https://github.com/ota-run/ota/actions/workflows/release-gate.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/release-gate.yml?branch=main&style=for-the-badge&label=release%20gate&labelColor=111827&logo=githubactions" alt="Release gate status" /></a>
+    <a href="https://github.com/ota-run/ota/actions/workflows/docs-quality.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/docs-quality.yml?branch=main&style=for-the-badge&label=docs&labelColor=111827&logo=readthedocs" alt="Docs quality status" /></a>
+    <a href="https://github.com/ota-run/ota/actions/workflows/codeql.yml"><img src="https://img.shields.io/github/actions/workflow/status/ota-run/ota/codeql.yml?branch=main&style=for-the-badge&label=codeql&labelColor=111827&logo=github" alt="CodeQL status" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/ota-run/ota?style=for-the-badge&label=license&labelColor=111827&logo=apache" alt="License" /></a>
 <!--     <a href="https://github.com/ota-run/ota/stargazers"><img src="https://img.shields.io/github/stars/ota-run/ota?style=flat-square" alt="GitHub stars" /></a> -->
   </p>
   <p>
     <a href="https://ota.run/docs/getting-started">Get Started</a> ·
     <a href="https://ota.run/docs">Docs</a> ·
     <a href="https://ota.run/docs/reference">Reference</a> ·
-    <a href="https://ota.run">Website</a>
+    <a href="https://ota.run/blogs">Blogs</a>
   </p>
   <p>
     <a href="https://ota.run/docs/install">Install</a> ·
