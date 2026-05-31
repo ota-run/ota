@@ -34,6 +34,9 @@
   `ota init --pack ruby` so starter contracts seed toolchain-owned Ruby setup/test paths instead
   of split runtime/tool declarations, including explicit Bundler version governance under
   `toolchains.ruby.package_managers.bundler`
+- closed planning drift for task launch sources: `tasks.<name>.launch` is now documented as a
+  shipped baseline (command + container launch kinds), and the v9.1 pressure-test ledger now marks
+  first-class task launch sources as closed
 - tightened uv-backed Python ownership so `toolchains.python` owns the `uv` tool surface and
   starter packs no longer duplicate it under top-level `tools.uv`
 - reject env requirements that combine `secret: true` with a contract `default` during validation,

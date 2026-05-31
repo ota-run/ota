@@ -20,6 +20,7 @@ state in Ota.
 | JSON schema validation pipeline maturity for command outputs                                       | Closed | `ota json validate` and CI schema guard lane shipped                              |
 | Contract-native conditional execution beyond `checks.kind: changed_files` (for example `nx affected`) | Closed | `tasks.<name>.when.checks` gates execution with first-class precondition/file/changed_files checks |
 | Higher-level bootstrap orchestration (multi-file compose/secret generation plans)                | Closed | `action.kind: ensure_bundle` composes ordered deterministic setup steps without shell glue |
+| Task launch sources as first-class task model (`tasks.<name>.launch`)                            | Closed | Shipped command/container launch surfaces wired through schema, validator, runner, tasks/workflows/topology output |
 
 ## Remaining Product-Maturity Work
 
