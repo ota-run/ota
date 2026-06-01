@@ -35,8 +35,8 @@ use crate::schema::{
     ToolchainFulfillmentMode, ToolchainProvider,
 };
 use crate::toolchains::{
-    COREPACK_TOOLCHAIN_NAME, GO_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME, PYTHON_TOOLCHAIN_NAME,
-    RUBY_TOOLCHAIN_NAME, toolchain_repo_signals,
+    COREPACK_TOOLCHAIN_NAME, DOTNET_TOOLCHAIN_NAME, GO_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME,
+    PYTHON_TOOLCHAIN_NAME, RUBY_TOOLCHAIN_NAME, toolchain_repo_signals,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -413,6 +413,7 @@ impl DetectReport {
                             "uv" => ToolchainProvider::Uv,
                             "go" => ToolchainProvider::Go,
                             "ruby" => ToolchainProvider::Ruby,
+                            "dotnet" => ToolchainProvider::Dotnet,
                             _ => toolchain.provider,
                         };
                     }
@@ -4217,6 +4218,7 @@ fn synthesize_detected_toolchain_inferences(
     synthesize_uv_python_toolchain(root, contract, inferences);
     synthesize_go_toolchain(root, contract, inferences);
     synthesize_ruby_toolchain(root, contract, inferences);
+    synthesize_dotnet_toolchain(contract, inferences);
 }
 
 fn synthesize_corepack_node_toolchain(
@@ -4534,6 +4536,72 @@ fn synthesize_ruby_toolchain(
     }
 }
 
+fn synthesize_dotnet_toolchain(
+    contract: &mut DetectContract,
+    inferences: &mut BTreeMap<String, Inference>,
+) {
+    let runtime_inference = inferences.get("runtimes.dotnet");
+    let tool_inference = inferences.get("tools.dotnet");
+    let dotnet_version = contract
+        .runtimes
+        .get(DOTNET_TOOLCHAIN_NAME)
+        .cloned()
+        .or_else(|| contract.tools.get("dotnet").cloned())
+        .unwrap_or_else(|| String::from("*"));
+    if dotnet_version.is_empty() {
+        return;
+    }
+    if runtime_inference.is_none() && tool_inference.is_none() {
+        return;
+    }
+    let confidence = runtime_inference
+        .map(|inference| inference.confidence)
+        .zip(tool_inference.map(|inference| inference.confidence))
+        .map(|(runtime, tool)| runtime.min(tool))
+        .unwrap_or_else(|| {
+            runtime_inference
+                .map(|inference| inference.confidence)
+                .or_else(|| tool_inference.map(|inference| inference.confidence))
+                .unwrap_or(Confidence::High)
+        });
+    let version_source = runtime_inference
+        .map(|inference| inference.source.clone())
+        .or_else(|| tool_inference.map(|inference| inference.source.clone()))
+        .unwrap_or_else(|| String::from("ota.detect#toolchains.dotnet.version"));
+
+    contract.runtimes.remove(DOTNET_TOOLCHAIN_NAME);
+    contract.tools.remove("dotnet");
+    inferences.remove("runtimes.dotnet");
+    inferences.remove("tools.dotnet");
+    contract.toolchains.insert(
+        String::from(DOTNET_TOOLCHAIN_NAME),
+        DetectToolchainSpec {
+            provider: ToolchainProvider::Dotnet,
+            version: dotnet_version.clone(),
+            package_managers: BTreeMap::new(),
+            fulfillment: None,
+        },
+    );
+    inferences.insert(
+        String::from("toolchains.dotnet.provider"),
+        Inference::new(
+            String::from("toolchains.dotnet.provider"),
+            String::from("dotnet"),
+            String::from("ota.detect#toolchains.dotnet.provider"),
+            confidence,
+        ),
+    );
+    inferences.insert(
+        String::from("toolchains.dotnet.version"),
+        Inference::new(
+            String::from("toolchains.dotnet.version"),
+            dotnet_version,
+            version_source,
+            confidence,
+        ),
+    );
+}
+
 fn normalize_detected_toolchains(_root: &Path, contract: &mut DetectContract) {
     if let Some(toolchain) = contract.toolchains.get(COREPACK_TOOLCHAIN_NAME) {
         contract.runtimes.remove(COREPACK_TOOLCHAIN_NAME);
@@ -4559,6 +4627,10 @@ fn normalize_detected_toolchains(_root: &Path, contract: &mut DetectContract) {
     if contract.toolchains.contains_key(RUBY_TOOLCHAIN_NAME) {
         contract.runtimes.remove(RUBY_TOOLCHAIN_NAME);
         contract.tools.remove("bundler");
+    }
+    if contract.toolchains.contains_key(DOTNET_TOOLCHAIN_NAME) {
+        contract.runtimes.remove(DOTNET_TOOLCHAIN_NAME);
+        contract.tools.remove("dotnet");
     }
 }
 
@@ -5279,12 +5351,25 @@ gem "rails"
         );
 
         let report = detect_repo(fixture.path()).unwrap();
+        let high_confidence = report.high_confidence_contract();
 
         assert_eq!(
-            report.contract.runtimes.get("dotnet"),
-            Some(&"8.0.203".to_string())
+            report
+                .contract
+                .toolchains
+                .get("dotnet")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Dotnet, "8.0.203"))
         );
-        assert_eq!(report.contract.tools.get("dotnet"), Some(&"*".to_string()));
+        assert!(!report.contract.runtimes.contains_key("dotnet"));
+        assert!(!report.contract.tools.contains_key("dotnet"));
+        assert_eq!(
+            high_confidence
+                .toolchains
+                .get("dotnet")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Dotnet, "8.0.203"))
+        );
         assert_eq!(
             report
                 .contract
@@ -5333,7 +5418,15 @@ gem "rails"
 
         let report = detect_repo(fixture.path()).unwrap();
 
-        assert_eq!(report.contract.tools.get("dotnet"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .toolchains
+                .get("dotnet")
+                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
+            Some((ToolchainProvider::Dotnet, "8.0.203"))
+        );
+        assert!(!report.contract.tools.contains_key("dotnet"));
         assert_eq!(
             report
                 .contract
@@ -5359,8 +5452,8 @@ gem "rails"
             Some(true)
         );
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "tools.dotnet"
-                && inference.source == "src/WindowsAdoptionFlow/WindowsAdoptionFlow.csproj"
+            inference.field == "toolchains.dotnet.version"
+                && inference.source == "global.json#sdk.version"
                 && inference.confidence == Confidence::High
         }));
     }
@@ -6184,7 +6277,15 @@ solc_version = "0.8.25"
         );
 
         let report = detect_repo(fixture.path()).unwrap();
-        assert_eq!(report.contract.tools.get("dotnet"), Some(&"*".to_string()));
+        assert_eq!(
+            report
+                .contract
+                .toolchains
+                .get("dotnet")
+                .map(|toolchain| toolchain.provider),
+            Some(ToolchainProvider::Dotnet)
+        );
+        assert!(!report.contract.tools.contains_key("dotnet"));
         assert_eq!(
             report.contract.runtimes.get("fsharp"),
             Some(&"*".to_string())

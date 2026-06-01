@@ -6661,8 +6661,8 @@ fn exact_tooling_remediation_fallback(
             tool_versions_remediation(&contract_root, &["php"], requirement)
         }
         (ProvisioningTargetKind::Runtime, "dotnet") => {
-            if let Some(version) = dotnet_global_json_version(&contract_root) {
-                return Some(dotnet_install_command(&version));
+            if let Some(command) = dotnet_remediation_command(&contract_root, requirement) {
+                return Some(command);
             }
             tool_versions_remediation(&contract_root, &["dotnet"], requirement)
         }
@@ -6674,8 +6674,8 @@ fn exact_tooling_remediation_fallback(
             tool_versions_remediation(&contract_root, &["nodejs", "node"], requirement)
         }
         (ProvisioningTargetKind::Tool, "dotnet") => {
-            if let Some(version) = dotnet_global_json_version(&contract_root) {
-                return Some(dotnet_install_command(&version));
+            if let Some(command) = dotnet_remediation_command(&contract_root, requirement) {
+                return Some(command);
             }
             tool_versions_remediation(&contract_root, &["dotnet"], requirement)
         }
@@ -6958,7 +6958,77 @@ fn dotnet_global_json_version(contract_root: &Path) -> Option<String> {
     }
 }
 
-fn dotnet_install_command(version: &str) -> String {
+fn dotnet_remediation_command(contract_root: &Path, requirement: &str) -> Option<String> {
+    let global_json_version = dotnet_global_json_version(contract_root);
+    if let Some(version) = global_json_version.as_deref()
+        && version_matches(requirement, version)
+    {
+        return Some(dotnet_install_version_command(version));
+    }
+    if let Some(command) = dotnet_requirement_install_command(requirement) {
+        return Some(command);
+    }
+    global_json_version
+        .as_deref()
+        .map(dotnet_install_version_command)
+}
+
+fn dotnet_requirement_install_command(requirement: &str) -> Option<String> {
+    let trimmed = requirement.trim();
+    if trimmed.is_empty() || trimmed == "*" {
+        return None;
+    }
+
+    if dotnet_plain_version_token(trimmed) {
+        let parts_count = trimmed.split('.').count();
+        return Some(if parts_count >= 3 {
+            dotnet_install_version_command(trimmed)
+        } else {
+            let channel = if parts_count == 1 {
+                format!("{trimmed}.0")
+            } else {
+                trimmed.to_string()
+            };
+            dotnet_install_channel_command(&channel)
+        });
+    }
+
+    let requirement = parse_semver_requirement(trimmed)?;
+    let channel = dotnet_channel_from_requirement(&requirement)?;
+    Some(dotnet_install_channel_command(&channel))
+}
+
+fn dotnet_plain_version_token(value: &str) -> bool {
+    value
+        .split('.')
+        .all(|segment| !segment.is_empty() && segment.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn dotnet_channel_from_requirement(requirement: &VersionReq) -> Option<String> {
+    let comparator = requirement
+        .comparators
+        .iter()
+        .filter(|comparator| {
+            matches!(
+                comparator.op,
+                Op::Exact | Op::Caret | Op::Tilde | Op::GreaterEq | Op::Greater | Op::Wildcard
+            )
+        })
+        .max_by_key(|comparator| {
+            (
+                comparator.major,
+                comparator.minor.unwrap_or(0),
+                comparator.patch.unwrap_or(0),
+            )
+        })?;
+    Some(format!(
+        "{}.{}",
+        comparator.major,
+        comparator.minor.unwrap_or(0)
+    ))
+}
+
+fn dotnet_install_version_command(version: &str) -> String {
     if cfg!(windows) {
         format!(
             "powershell -ExecutionPolicy Bypass -Command \"iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1; ./dotnet-install.ps1 -Version {version}\""
@@ -6966,6 +7036,18 @@ fn dotnet_install_command(version: &str) -> String {
     } else {
         format!(
             "curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && bash dotnet-install.sh --version {version}"
+        )
+    }
+}
+
+fn dotnet_install_channel_command(channel: &str) -> String {
+    if cfg!(windows) {
+        format!(
+            "powershell -ExecutionPolicy Bypass -Command \"iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1; ./dotnet-install.ps1 -Channel {channel}\""
+        )
+    } else {
+        format!(
+            "curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && bash dotnet-install.sh --channel {channel}"
         )
     }
 }

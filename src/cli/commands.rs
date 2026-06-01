@@ -44696,6 +44696,55 @@ env:
     }
 
     #[test]
+    fn detect_dry_run_json_prefers_dotnet_toolchain_contract_when_provider_is_shipped() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("global.json"),
+            r#"{
+  "sdk": {
+    "version": "9.0.100"
+  }
+}"#,
+        )
+        .expect("write global.json");
+        fs::write(
+            repo.path().join("Demo.App.csproj"),
+            r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+  </PropertyGroup>
+</Project>"#,
+        )
+        .expect("write csproj");
+
+        let output = super::detect(
+            Some(repo.path()),
+            false,
+            true,
+            false,
+            false,
+            &[],
+            false,
+            false,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse detect json");
+        assert_eq!(json["config"]["toolchains"]["dotnet"]["provider"], "dotnet");
+        assert_eq!(json["config"]["toolchains"]["dotnet"]["version"], "9.0.100");
+        assert!(json["config"]["runtimes"]["dotnet"].is_null(), "{json}");
+        assert!(json["config"]["tools"]["dotnet"].is_null(), "{json}");
+        assert!(
+            json["toolchain_opportunities"].as_array().is_none(),
+            "{json}"
+        );
+    }
+
+    #[test]
     fn init_preview_text_prefers_python_toolchain_contract_when_provider_is_shipped() {
         let repo = tempfile::tempdir().expect("repo tempdir");
         fs::write(
@@ -44749,6 +44798,48 @@ env:
             serde_json::from_str(&output.stdout).expect("parse init json");
         assert_eq!(json["config"]["toolchains"]["python"]["provider"], "uv");
         assert_eq!(json["config"]["toolchains"]["python"]["version"], "3.12");
+        assert!(json["toolchain_opportunities"].is_null(), "{json}");
+    }
+
+    #[test]
+    fn init_preview_json_prefers_dotnet_toolchain_contract_when_provider_is_shipped() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("global.json"),
+            r#"{
+  "sdk": {
+    "version": "9.0.100"
+  }
+}"#,
+        )
+        .expect("write global.json");
+        fs::write(
+            repo.path().join("Demo.App.csproj"),
+            r#"<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+  </PropertyGroup>
+</Project>"#,
+        )
+        .expect("write csproj");
+
+        let output = super::init(
+            Some(repo.path()),
+            false,
+            false,
+            None,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse init json");
+        assert_eq!(json["config"]["toolchains"]["dotnet"]["provider"], "dotnet");
+        assert_eq!(json["config"]["toolchains"]["dotnet"]["version"], "9.0.100");
+        assert!(json["config"]["runtimes"]["dotnet"].is_null(), "{json}");
+        assert!(json["config"]["tools"]["dotnet"].is_null(), "{json}");
         assert!(json["toolchain_opportunities"].is_null(), "{json}");
     }
 
@@ -62138,6 +62229,84 @@ tasks:
     }
 
     #[test]
+    fn up_blocks_effect_policy_denies_before_setup_execution() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: policy-blocked-up
+tasks:
+  setup:
+    run: this-command-must-not-run
+    effects:
+      network: true
+"#,
+        )
+        .expect("write contract");
+        let policy_dir = repo.path().join(".ota");
+        fs::create_dir_all(&policy_dir).expect("create policy directory");
+        fs::write(
+            policy_dir.join("org-policy.yaml"),
+            r#"
+policies:
+  effects:
+    tasks:
+      network: deny
+"#,
+        )
+        .expect("write policy");
+
+        let contract = parse_contract_str(
+            repo.path().join("ota.yaml").as_path(),
+            r#"
+version: 1
+project:
+  name: policy-blocked-up
+tasks:
+  setup:
+    run: this-command-must-not-run
+    effects:
+      network: true
+"#,
+        )
+        .expect("parse contract");
+        let result = execute_repo_up(
+            &contract,
+            repo.path().join("ota.yaml").as_path(),
+            ExecutionOverrides::default(),
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .expect("execute up");
+
+        assert!(!result.ok);
+        assert_eq!(result.status, "BLOCKED");
+        assert_eq!(result.phase, "preconditions");
+        let primary = result
+            .report
+            .findings
+            .first()
+            .expect("expected precondition finding");
+        assert!(
+            primary
+                .summary
+                .starts_with("Effect governance policy blocked task effect `network:broad`"),
+            "{:?}",
+            result
+                .report
+                .findings
+                .iter()
+                .map(|finding| finding.summary.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn no_policy_backend_fulfillment_maps_to_tool_probe_blocker() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -63847,6 +64016,11 @@ fn normalize_run_blocker_next_step(step: &str) -> String {
         .unwrap_or_else(|| step.to_string())
 }
 
+fn is_effect_governance_policy_block_summary(summary: &str) -> bool {
+    summary.starts_with("Effect governance policy blocked safe-task effect")
+        || summary.starts_with("Effect governance policy blocked task effect")
+}
+
 fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
     summary.starts_with("Missing tool: ")
         || summary.starts_with("Missing runtime: ")
@@ -63854,8 +64028,7 @@ fn run_precondition_blocker_should_stop_execution(summary: &str) -> bool {
         || summary.starts_with("Runtime probe failed: ")
         || summary.starts_with("Version mismatch for tool: ")
         || summary.starts_with("Version mismatch for runtime: ")
-        || summary.starts_with("Effect governance policy blocked safe-task effect")
-        || summary.starts_with("Effect governance policy blocked task effect")
+        || is_effect_governance_policy_block_summary(summary)
 }
 
 #[cfg(test)]
@@ -76785,6 +76958,13 @@ fn has_native_prerequisite_blocker(report: &DoctorReport) -> bool {
     })
 }
 
+fn has_effect_governance_policy_blocker(report: &DoctorReport) -> bool {
+    report
+        .findings
+        .iter()
+        .any(|finding| is_effect_governance_policy_block_summary(&finding.summary))
+}
+
 fn remote_up_blocker_finding(
     phase_task: Option<&str>,
     setup_task: bool,
@@ -77075,6 +77255,44 @@ fn execute_repo_up_with_behavior(
             report: preflight,
             preview: Some(preview),
             receipt,
+            service: None,
+            service_command: None,
+            task: None,
+            task_command: None,
+            exit_code: None,
+            stdout,
+            stderr,
+        });
+    }
+
+    if has_effect_governance_policy_blocker(&preflight) {
+        return Ok(RepoUpResult {
+            ok: false,
+            status: "BLOCKED",
+            phase: "preconditions",
+            preview: None,
+            receipt: repo_execution_receipt(
+                resolved_path,
+                contract,
+                doctor_report_execution_context(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    overrides.lifecycle,
+                    &preflight,
+                ),
+                "BLOCKED",
+                "preconditions",
+                None,
+                None,
+                &preflight.findings,
+                None,
+                preflight
+                    .findings
+                    .first()
+                    .map(|finding| finding.next.clone()),
+            ),
+            report: preflight,
             service: None,
             service_command: None,
             task: None,

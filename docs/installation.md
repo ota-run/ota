@@ -71,24 +71,10 @@ The shell installer also supports `OTA_RELEASE_BASE` if you host the release ass
 If a prebuilt release is not published for the detected target, the installer now says so explicitly before trying the cargo fallback.
 `--setup-path` is opt-in: ota will not silently modify shell startup files unless you ask it to.
 
-### Install the Ota skill (Windows PowerShell)
-
-After `ota` is installed, install the optional Ota skill for Codex:
+### Install the Ota skill
 
 ```bash
-ota skills install --agent codex
-```
-
-Install the optional Ota skill for Claude Code:
-
-```bash
-ota skills install --agent claude
-```
-
-The skill source lives in [ota-run/skills](https://github.com/ota-run/skills). It can also be installed through the `skills` CLI:
-
-```bash
-npx skills add ota-run/skills
+npx skills add ota-run/skills --full-depth
 ```
 
 ## Windows (PowerShell)
@@ -130,22 +116,8 @@ Official release installs require published checksums; custom mirrors can set `O
 
 ### Install the Ota skill
 
-After `ota` is installed, install the optional Ota skill for Codex:
-
 ```powershell
-ota skills install --agent codex
-```
-
-Install the optional Ota skill for Claude Code:
-
-```powershell
-ota skills install --agent claude
-```
-
-The skill source lives in [ota-run/skills](https://github.com/ota-run/skills). It can also be installed through the `skills` CLI:
-
-```powershell
-npx skills add ota-run/skills
+npx skills add ota-run/skills --full-depth
 ```
 
 ## Windows (Git Bash / MSYS / MinGW / Cygwin)

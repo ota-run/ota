@@ -97,14 +97,7 @@ Persist the Windows install directory on `PATH` explicitly:
 Install the optional Ota skill after `ota` is installed:
 
 ```bash
-ota skills install --agent codex
-ota skills install --agent claude
-```
-
-The skill source lives in [ota-run/skills](https://github.com/ota-run/skills). It can also be installed through the `skills` CLI:
-
-```bash
-npx skills add ota-run/skills
+npx skills add ota-run/skills --full-depth
 ```
 
 Windows Git Bash, MSYS, MinGW, or Cygwin:

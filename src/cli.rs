@@ -24986,9 +24986,10 @@ name = "fastapi"
             .expect("dotnet pack");
         assert_eq!(dotnet["command"], "ota init --pack dotnet");
         assert_eq!(dotnet["next"], "ota init --pack dotnet --dry-run .");
-        assert_eq!(dotnet["seeds"]["runtimes"][0], "dotnet");
-        assert_eq!(dotnet["seeds"]["tools"][0], "dotnet");
-        assert_eq!(dotnet["seeds"]["checks"][0], "dotnet-installed");
+        assert_eq!(dotnet["seeds"]["toolchains"][0], "dotnet");
+        assert_eq!(dotnet["seeds"]["runtimes"], json!([]));
+        assert_eq!(dotnet["seeds"]["tools"], json!([]));
+        assert_eq!(dotnet["seeds"]["checks"], json!([]));
         assert_eq!(dotnet["seeds"]["tasks"][2], "test");
         assert!(
             dotnet["does_not_infer"][0]
@@ -25053,6 +25054,16 @@ name = "fastapi"
     #[test]
     fn init_pack_node_dry_run_renders_explicit_pack_contract() {
         let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "node-pack-dry-run",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest"
+  }
+}"#,
+        );
 
         let output = run_with(["ota", "init", "--pack", "node", "--dry-run", fixture.path()]);
 
@@ -25077,6 +25088,16 @@ name = "fastapi"
     #[test]
     fn init_pack_node_write_writes_conventional_toolchain_owned_starter() {
         let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "node-pack-write",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest"
+  }
+}"#,
+        );
 
         let output = run_with(["ota", "init", "--pack", "node", fixture.path()]);
 
@@ -25153,6 +25174,16 @@ name = "fastapi"
     #[test]
     fn init_pack_node_npm_uses_npm_commands_and_selected_pack_options() {
         let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "node-pack-demo",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest"
+  }
+}"#,
+        );
 
         let output = run_with([
             "ota",
@@ -25186,6 +25217,37 @@ name = "fastapi"
             task_run["source"],
             "ota.init#starter_pack.node.package_manager.npm"
         );
+    }
+
+    #[test]
+    fn init_pack_node_omits_dev_and_test_without_root_package_scripts() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "node-pack-no-scripts"
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "node",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["pack"], "node");
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["run"],
+            "corepack pnpm install"
+        );
+        assert!(json["config"]["tasks"]["dev"].is_null());
+        assert!(json["config"]["tasks"]["test"].is_null());
     }
 
     #[test]
@@ -25685,9 +25747,12 @@ requires-python = ">=3.12"
         assert_eq!(json["ok"], true);
         assert_eq!(json["mode"], "pack");
         assert_eq!(json["pack"], "dotnet");
-        assert_eq!(json["config"]["runtimes"]["dotnet"], "9.0");
-        assert_eq!(json["config"]["tools"]["dotnet"], "*");
-        assert_eq!(json["config"]["checks"][0]["name"], "dotnet-installed");
+        assert_eq!(json["config"]["toolchains"]["dotnet"]["provider"], "dotnet");
+        assert_eq!(json["config"]["toolchains"]["dotnet"]["version"], "9.0");
+        assert!(json["config"]["toolchains"]["dotnet"]["fulfillment"].is_null());
+        assert!(json["config"]["runtimes"].is_null());
+        assert!(json["config"]["tools"].is_null());
+        assert!(json["config"]["checks"].is_null());
         assert_eq!(json["config"]["tasks"]["setup"]["run"], "dotnet restore");
         assert_eq!(
             json["config"]["tasks"]["build"]["description"],
@@ -35663,6 +35728,65 @@ tasks:
         assert_eq!(output.exit_code, 1);
         assert!(stdout.contains(expected_command));
         assert!(stdout.contains("rerun `ota doctor`"));
+    }
+
+    #[test]
+    fn doctor_dotnet_remediation_prefers_contract_requirement_over_conflicting_global_json() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: dotnet-version-mismatch
+runtimes:
+  dotnet: "9.0"
+tools:
+  dotnet: "*"
+tasks:
+  ci:
+    run: echo ci
+"#,
+        );
+        fixture.write(
+            "global.json",
+            r#"{
+  "sdk": {
+    "version": "10.0.100"
+  }
+}"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create bin dir");
+        let dotnet_body = if cfg!(windows) {
+            "@echo off\r\necho 10.0.100\r\n"
+        } else {
+            "#!/bin/sh\necho '10.0.100'\n"
+        };
+        write_fake_command(&bin_dir, "dotnet", dotnet_body);
+        let path = prepend_path(&bin_dir);
+        let _path_guard = EnvVarGuard::set("PATH", path);
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+
+        let output = run_with(["ota", "doctor", "."]);
+        let stdout = strip_ansi(&output.stdout);
+        let expected_channel_command = if cfg!(windows) {
+            "powershell -ExecutionPolicy Bypass -Command \"iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1; ./dotnet-install.ps1 -Channel 9.0\""
+        } else {
+            "curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && bash dotnet-install.sh --channel 9.0"
+        };
+        let conflicting_version_command_fragment = if cfg!(windows) {
+            "-Version 10.0.100"
+        } else {
+            "--version 10.0.100"
+        };
+
+        assert_eq!(output.exit_code, 1);
+        assert!(stdout.contains(expected_channel_command), "{stdout}");
+        assert!(
+            !stdout.contains(conflicting_version_command_fragment),
+            "{stdout}"
+        );
     }
 
     #[test]

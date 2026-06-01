@@ -662,6 +662,7 @@ fn toolchain_provider_name(provider: ToolchainProvider) -> &'static str {
         ToolchainProvider::Uv => "uv",
         ToolchainProvider::Go => "go",
         ToolchainProvider::Ruby => "ruby",
+        ToolchainProvider::Dotnet => "dotnet",
     }
 }
 

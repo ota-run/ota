@@ -32,19 +32,22 @@ Current shipped scope:
 - top-level `toolchains`
 - task-scoped `requirements.toolchains`
 - Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
-- Corepack-backed diagnosis for Node toolchains
+- Corepack-backed diagnosis plus policy-governed run-path fulfillment for Node toolchains
+- SDKMAN-backed diagnosis plus policy-governed run-path fulfillment for Java toolchains
 - uv-backed diagnosis and run-path fulfillment for Python toolchains
-- Go-backed diagnosis for Go toolchains
-- Ruby-backed diagnosis for Ruby toolchains
+- Go-backed diagnosis plus policy-governed run-path fulfillment for Go toolchains
+- Ruby-backed diagnosis plus policy-governed run-path fulfillment for Ruby toolchains
+- dotnet-backed diagnosis plus policy-governed run-path fulfillment for .NET toolchains
 - hard validation errors when the same prerequisite is declared under both `toolchains` and
   `runtimes` or `tools`
-- six supported contract shapes today:
+- seven supported contract shapes today:
   - `toolchains.rust` with `provider: rustup`
   - `toolchains.node` with `provider: corepack`
   - `toolchains.java` with `provider: sdkman`
   - `toolchains.python` with `provider: uv`
   - `toolchains.go` with `provider: go`
   - `toolchains.ruby` with `provider: ruby`
+  - `toolchains.dotnet` with `provider: dotnet`
 
 ## Ownership rule
 
@@ -74,35 +77,34 @@ Examples:
   remain standalone under `tools`
 - Go via the built-in Go provider, when the repo wants one owner for the Go runtime boundary
 - Ruby via the built-in Ruby provider, when the repo wants one owner for the Ruby runtime boundary
+- .NET via the built-in dotnet provider, when the repo wants one owner for the .NET runtime/CLI
+  boundary
 
 Current parser boundary:
 
 - the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup`,
   `toolchains.node` with `provider: corepack`, `toolchains.java` with `provider: sdkman`,
   `toolchains.python` with `provider: uv`, `toolchains.go` with `provider: go`, and
-  `toolchains.ruby` with `provider: ruby`
+  `toolchains.ruby` with `provider: ruby`, plus `toolchains.dotnet` with `provider: dotnet`
 - those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use `provider: rustup`,
   `toolchains.node` must use `provider: corepack`, `toolchains.java` must use `provider: sdkman`,
   `toolchains.python` must use `provider: uv`, `toolchains.go` must use `provider: go`, and
-  `toolchains.ruby` must use `provider: ruby`
+  `toolchains.ruby` must use `provider: ruby`, and `toolchains.dotnet` must use `provider: dotnet`
 - the shared provider-agnostic toolchain fields are currently `provider`, `version`,
   `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
 - validation and command behavior read from a provider contract, not from free-form capability
-  text; today those contracts are the shipped Rustup/Corepack/sdkman/uv/Go/Ruby slices behind
+  text; today those contracts are the shipped Rustup/Corepack/sdkman/uv/Go/Ruby/dotnet slices behind
   `toolchains.rust`, `toolchains.node`, `toolchains.java`, `toolchains.python`,
-  `toolchains.go`, and `toolchains.ruby`
+  `toolchains.go`, `toolchains.ruby`, and `toolchains.dotnet`
 - that provider contract also owns Rustup field-shape validation, so empty `profile`,
   `components`, or `targets` entries fail as provider-contract violations rather than generic
   schema drift
 - Corepack-backed Node toolchains currently support one provider-specific field:
-  `package_managers` (plus `platforms.<os>.package_managers`) and stay check-only
+  `package_managers` (plus `platforms.<os>.package_managers`)
 - Ruby-backed toolchains support `package_managers` too, but only `bundler` is valid there; use it
   to make Bundler version governance explicit under `toolchains.ruby`
 - `profile`, `components`, and `targets` are Rustup-specific compatibility fields, not a generic
   ecosystem-wide toolchain schema
-- future-fit examples for .NET remain ownership-model examples only; they are not valid contract
-  entries until ota ships those provider adapters and schema fields
-
 Use `runtimes` when the requirement is simply "this runtime must exist at this version."
 
 Examples:
@@ -213,7 +215,10 @@ Toolchain fulfillment is strict:
 
 - `ota doctor` never mutates
 - run-path fulfillment only happens when the toolchain declares `fulfillment: run`
-- the current shipped provider-backed fulfillment paths are `provider: rustup` and `provider: uv`
+- the current shipped fulfillment surface is:
+  - provider-command fulfillment for `provider: rustup` and `provider: uv`
+  - policy-governed selected-path fulfillment lanes for `provider: corepack`, `provider: sdkman`,
+    `provider: go`, `provider: ruby`, and `provider: dotnet`
 
 For Rustup-backed fulfillment:
 
@@ -232,6 +237,21 @@ For uv-backed Python fulfillment:
   but not for uv fulfillment because `uv python install` needs one concrete Python reference to
   install
 
+For the policy-governed fulfillment providers:
+
+- `provider: corepack`, `provider: sdkman`, `provider: go`, `provider: ruby`, and
+  `provider: dotnet` can all declare `fulfillment: run`
+- those providers validate as selected-path run intent instead of hard check-only contracts
+- provisioning authority stays with org policy and backend requirement fulfillment rather than a
+  provider-owned install command surface
+- duplicate ownership rules still apply:
+  - `toolchains.node` must not be duplicated under `tools.node`
+  - `toolchains.java` keeps `java` / `javac` ownership while Maven and Gradle remain standalone
+    under `tools`
+  - `toolchains.ruby` keeps Bundler governance under
+    `toolchains.ruby.package_managers.bundler`
+  - `toolchains.dotnet` must not be duplicated under `runtimes.dotnet` or `tools.dotnet`
+
 ## Current shipped limits
 
 This slice is intentionally narrow:
@@ -243,23 +263,30 @@ This slice is intentionally narrow:
   - `toolchains.python` with `provider: uv`
   - `toolchains.go` with `provider: go`
   - `toolchains.ruby` with `provider: ruby`
+  - `toolchains.dotnet` with `provider: dotnet`
 - toolchains are selected at the task path, not through execution-context requirements
 - duplicate ownership is invalid and fails validation
 - Rustup currently owns diagnosis plus run-path fulfillment for the declared toolchain and its
   components/targets
 - uv currently owns diagnosis plus run-path fulfillment for the declared Python runtime version
+- Corepack-backed Node toolchains now allow `fulfillment: run` as a policy-governed fulfillment
+  lane for the selected task path; `tools.node` is still invalid duplicate ownership, and package
+  managers declared under `toolchains.node.package_managers` must not be redeclared under `tools`
+- SDKMAN-backed Java toolchains now allow `fulfillment: run` as a policy-governed fulfillment
+  lane for the selected task path while Maven and Gradle remain standalone tool surfaces
+- Go-backed toolchains now allow `fulfillment: run` as a policy-governed fulfillment lane for the
+  selected task path; there is no provider-specific install command, so provisioning stays governed
+  by org policy and backend requirement fulfillment
+- Ruby-backed toolchains now allow `fulfillment: run` as a policy-governed fulfillment lane for
+  the selected task path; `tools.bundler` is still invalid duplicate ownership and Bundler should
+  be modeled under `toolchains.ruby.package_managers.bundler`
+- dotnet-backed toolchains now allow `fulfillment: run` as a policy-governed fulfillment lane for
+  the selected task path; `tools.dotnet` remains invalid duplicate ownership and install source
+  governance remains policy-owned
 - org-policy version/provisioning reasoning now sees the selected toolchain-owned runtime lane too,
   so approved runtime versions and approved install sources can govern `toolchains.rust`,
-  `toolchains.node`, `toolchains.java`, `toolchains.python`, `toolchains.go`, or
-  `toolchains.ruby` without re-declaring duplicate runtime ownership
-- Corepack-backed Node toolchains are currently diagnosis-only; `tools.node` is invalid duplicate
-  ownership, and package managers declared under `toolchains.node.package_managers` must not be
-  redeclared under `tools`
-- Go-backed toolchains are currently check-only; keep host installation on a governed path (policy
-  provisioning or the host package manager), and keep module/build/test execution under `tasks`
-- Ruby-backed toolchains are currently check-only; `tools.bundler` is invalid duplicate ownership,
-  Bundler should be modeled under `toolchains.ruby.package_managers.bundler`, and Ruby runtime
-  installation stays host-governed today
+  `toolchains.node`, `toolchains.java`, `toolchains.python`, `toolchains.go`,
+  `toolchains.ruby`, and `toolchains.dotnet` without re-declaring duplicate runtime ownership
 - contracts that declare any other toolchain/provider combination fail validation today
 
 That is enough to remove shell-based Rust component workarounds cleanly without introducing a new

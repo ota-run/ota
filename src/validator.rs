@@ -19934,7 +19934,7 @@ tools:
     }
 
     #[test]
-    fn rejects_go_toolchain_run_fulfillment() {
+    fn supports_go_toolchain_run_fulfillment() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -19950,8 +19950,76 @@ toolchains:
         )
         .unwrap();
 
+        validate_contract(&contract).expect("go toolchain run fulfillment should validate");
+    }
+
+    #[test]
+    fn supports_ruby_toolchain_run_fulfillment() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  ruby:
+    provider: ruby
+    version: "3.3.11"
+    fulfillment: run
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ruby toolchain run fulfillment should validate");
+    }
+
+    #[test]
+    fn supports_dotnet_toolchain_with_provider_dotnet() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: dotnet-repo
+toolchains:
+  dotnet:
+    provider: dotnet
+    version: "9.0"
+tasks:
+  test:
+    run: dotnet test
+    requirements:
+      toolchains:
+        - dotnet
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("dotnet toolchain should validate");
+    }
+
+    #[test]
+    fn rejects_duplicate_ownership_for_dotnet_runtime_and_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  dotnet:
+    provider: dotnet
+    version: "9.0"
+runtimes:
+  dotnet: "9.0"
+tools:
+  dotnet: "*"
+"#,
+        )
+        .unwrap();
+
         let rendered = validate_contract(&contract)
-            .expect_err("go toolchain must stay check-only")
+            .expect_err("duplicate dotnet ownership should fail")
             .errors()
             .iter()
             .map(ToString::to_string)
@@ -19959,10 +20027,36 @@ toolchains:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `go` uses `provider: go` with `fulfillment: run`, but Go-backed toolchains are currently check-only; keep `toolchains.go.fulfillment: none`, install Go through a host-governed path (for example org provisioning policy or the host package manager), and keep module/build/test execution under `tasks`",
+                "toolchain `dotnet` owns runtime `dotnet`, but the contract also declares `runtimes.dotnet`",
             )),
             "{rendered:?}"
         );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `dotnet` owns tool `dotnet`, but the contract also declares `tools.dotnet`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn supports_dotnet_toolchain_run_fulfillment() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  dotnet:
+    provider: dotnet
+    version: "9.0"
+    fulfillment: run
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("dotnet toolchain run fulfillment should validate");
     }
 
     #[test]
@@ -20278,7 +20372,7 @@ tasks:
     }
 
     #[test]
-    fn rejects_corepack_toolchain_run_fulfillment() {
+    fn supports_corepack_toolchain_run_fulfillment() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -20294,23 +20388,11 @@ toolchains:
         )
         .unwrap();
 
-        let rendered = validate_contract(&contract)
-            .expect_err("corepack node toolchain must stay check-only")
-            .errors()
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
-
-        assert!(
-            rendered.iter().any(|error| error.contains(
-                "toolchain `node` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.node.fulfillment: none` and declare package-manager activation under `toolchains.node.package_managers`",
-            )),
-            "{rendered:?}"
-        );
+        validate_contract(&contract).expect("corepack node run fulfillment should validate");
     }
 
     #[test]
-    fn rejects_sdkman_toolchain_run_fulfillment() {
+    fn supports_sdkman_toolchain_run_fulfillment() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -20326,19 +20408,7 @@ toolchains:
         )
         .unwrap();
 
-        let rendered = validate_contract(&contract)
-            .expect_err("sdkman java toolchain must stay check-only")
-            .errors()
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
-
-        assert!(
-            rendered.iter().any(|error| error.contains(
-                "toolchain `java` uses `provider: sdkman` with `fulfillment: run`, but SDKMAN-backed Java toolchains are currently check-only; keep `toolchains.java.fulfillment: none` and declare build tools such as Maven or Gradle separately under `tools`",
-            )),
-            "{rendered:?}"
-        );
+        validate_contract(&contract).expect("sdkman java run fulfillment should validate");
     }
 
     #[test]
