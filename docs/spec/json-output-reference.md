@@ -2832,9 +2832,9 @@ now; provider-candidate detail stays in JSON. When ota already ships the ecosyst
 starter `config` uses `toolchains.<name>` directly instead of adding a fallback opportunity. For
 example, Python repos with `uv.lock` now converge directly on `toolchains.python` with
 `provider: uv`, so they no longer emit fallback Python opportunity guidance. The same ownership
-promotion now applies to detected Go and Ruby ecosystems when repo signals are explicit, yielding
-`toolchains.go` (`provider: go`) and `toolchains.ruby` (`provider: ruby`) instead of split
-runtime/tool declarations.
+promotion now applies to detected Go, Ruby, and .NET ecosystems, yielding `toolchains.go`
+(`provider: go`), `toolchains.ruby` (`provider: ruby`), and `toolchains.dotnet`
+(`provider: dotnet`) instead of split runtime/tool declarations.
 
 `provenance` is the per-field source map for the starter contract:
 
@@ -2927,17 +2927,18 @@ contract. The current catalog includes `node`, `python`, `ruby`, `go`, `rust`, `
     },
     {
       "name": "dotnet",
-      "summary": "Conventional .NET starter with restore, build, and test tasks.",
-      "when": "Use this for .NET repos that should start from the standard `dotnet restore`, `dotnet build`, and `dotnet test` loop without relying on detector-led init.",
+      "summary": "Conventional .NET starter with toolchain-owned .NET plus restore, build, and test tasks.",
+      "when": "Use this for .NET repos that should start from `toolchains.dotnet` ownership and the standard `dotnet restore`, `dotnet build`, and `dotnet test` loop without relying on detector-led init.",
       "command": "ota init --pack dotnet",
       "next": "ota init --pack dotnet --dry-run .",
       "does_not_infer": [
         "solution-specific target selection, test filtering, or custom dotnet CLI flags beyond the standard restore/build/test loop"
       ],
       "seeds": {
-        "runtimes": ["dotnet"],
-        "tools": ["dotnet"],
-        "checks": ["dotnet-installed"],
+        "toolchains": ["dotnet"],
+        "runtimes": [],
+        "tools": [],
+        "checks": [],
         "tasks": ["setup", "build", "test"]
       }
     },

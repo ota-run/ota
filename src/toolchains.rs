@@ -23,6 +23,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use semver::{Op, VersionReq};
+
 use crate::schema::{
     Contract, RequirementSurface, RuntimeDetail, RuntimePlatformDetail, RuntimeRequirement,
     ToolAcquisitionProvider, ToolAcquisitionSpec, ToolDetail, ToolPlatformDetail, ToolRequirement,
@@ -38,6 +40,7 @@ pub(crate) const JAVA_TOOLCHAIN_NAME: &str = "java";
 pub(crate) const PYTHON_TOOLCHAIN_NAME: &str = "python";
 pub(crate) const GO_TOOLCHAIN_NAME: &str = "go";
 pub(crate) const RUBY_TOOLCHAIN_NAME: &str = "ruby";
+pub(crate) const DOTNET_TOOLCHAIN_NAME: &str = "dotnet";
 const RUSTUP_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] = &[
     ToolchainProviderSpecificField::Profile,
     ToolchainProviderSpecificField::Components,
@@ -162,6 +165,24 @@ pub(crate) const RUBY_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainP
     managed_surface_probes_fn: ruby_managed_surface_probes,
     managed_surface_entries_fn: ruby_managed_surface_entries,
     managed_surface_remediation_command_fn: ruby_managed_surface_remediation_command,
+};
+pub(crate) const DOTNET_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainProviderContract {
+    toolchain_name: DOTNET_TOOLCHAIN_NAME,
+    provider: ToolchainProvider::Dotnet,
+    label: "dotnet",
+    primary_executable: "dotnet",
+    owned_runtime: DOTNET_TOOLCHAIN_NAME,
+    provider_specific_fields: &[],
+    provider_specific_field_summary: "",
+    requirement_detail_parts_fn: base_requirement_detail_parts,
+    owned_capabilities_fn: dotnet_owned_capabilities,
+    owned_tool_requirements_fn: dotnet_owned_tool_requirements,
+    fulfillment_commands_fn: dotnet_fulfillment_commands,
+    owned_runtime_remediation_command_fn: dotnet_owned_runtime_remediation_command,
+    run_fulfillment_validation_error_fn: dotnet_run_fulfillment_validation_error,
+    managed_surface_probes_fn: dotnet_managed_surface_probes,
+    managed_surface_entries_fn: dotnet_managed_surface_entries,
+    managed_surface_remediation_command_fn: dotnet_managed_surface_remediation_command,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -699,6 +720,7 @@ pub(crate) fn shipped_toolchain_contracts() -> &'static [ToolchainProviderContra
         UV_TOOLCHAIN_CONTRACT,
         GO_TOOLCHAIN_CONTRACT,
         RUBY_TOOLCHAIN_CONTRACT,
+        DOTNET_TOOLCHAIN_CONTRACT,
     ]
 }
 
@@ -1207,6 +1229,22 @@ fn ruby_owned_capabilities(
     ]
 }
 
+fn dotnet_owned_capabilities(
+    provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+) -> Vec<ToolchainOwnedCapability> {
+    vec![
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Runtime,
+            name: provider.owned_runtime().to_string(),
+        },
+        ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: String::from("dotnet"),
+        },
+    ]
+}
+
 fn rustup_owned_tool_requirements(
     _provider: ToolchainProviderContract,
     _toolchain: &ToolchainSpec,
@@ -1291,6 +1329,14 @@ fn ruby_owned_tool_requirements(
     )])
 }
 
+fn dotnet_owned_tool_requirements(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> BTreeMap<String, ToolRequirement> {
+    BTreeMap::new()
+}
+
 fn rustup_fulfillment_commands(
     _provider: ToolchainProviderContract,
     toolchain: &ToolchainSpec,
@@ -1366,6 +1412,14 @@ fn ruby_fulfillment_commands(
     Vec::new()
 }
 
+fn dotnet_fulfillment_commands(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainCommandSpec> {
+    Vec::new()
+}
+
 fn rustup_owned_runtime_remediation_command(
     _provider: ToolchainProviderContract,
     requirement: &str,
@@ -1408,6 +1462,114 @@ fn ruby_owned_runtime_remediation_command(
     None
 }
 
+fn dotnet_owned_runtime_remediation_command(
+    _provider: ToolchainProviderContract,
+    requirement: &str,
+) -> Option<String> {
+    let trimmed = requirement.trim();
+    if trimmed.is_empty() || trimmed == "*" {
+        return None;
+    }
+
+    if dotnet_plain_version_token(trimmed) {
+        let parts_count = trimmed.split('.').count();
+        return Some(if parts_count >= 3 {
+            dotnet_install_version_command(trimmed)
+        } else {
+            let channel = if parts_count == 1 {
+                format!("{trimmed}.0")
+            } else {
+                trimmed.to_string()
+            };
+            dotnet_install_channel_command(&channel)
+        });
+    }
+
+    let requirement = parse_semver_requirement(trimmed)?;
+    let channel = dotnet_channel_from_requirement(&requirement)?;
+    Some(dotnet_install_channel_command(&channel))
+}
+
+fn dotnet_plain_version_token(value: &str) -> bool {
+    value
+        .split('.')
+        .all(|segment| !segment.is_empty() && segment.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn dotnet_install_version_command(version: &str) -> String {
+    if cfg!(windows) {
+        format!(
+            "powershell -ExecutionPolicy Bypass -Command \"iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1; ./dotnet-install.ps1 -Version {version}\""
+        )
+    } else {
+        format!(
+            "curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && bash dotnet-install.sh --version {version}"
+        )
+    }
+}
+
+fn dotnet_install_channel_command(channel: &str) -> String {
+    if cfg!(windows) {
+        format!(
+            "powershell -ExecutionPolicy Bypass -Command \"iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1; ./dotnet-install.ps1 -Channel {channel}\""
+        )
+    } else {
+        format!(
+            "curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && bash dotnet-install.sh --channel {channel}"
+        )
+    }
+}
+
+fn dotnet_channel_from_requirement(requirement: &VersionReq) -> Option<String> {
+    let comparator = requirement
+        .comparators
+        .iter()
+        .filter(|comparator| {
+            matches!(
+                comparator.op,
+                Op::Exact | Op::Caret | Op::Tilde | Op::GreaterEq | Op::Greater | Op::Wildcard
+            )
+        })
+        .max_by_key(|comparator| {
+            (
+                comparator.major,
+                comparator.minor.unwrap_or(0),
+                comparator.patch.unwrap_or(0),
+            )
+        })?;
+    Some(format!(
+        "{}.{}",
+        comparator.major,
+        comparator.minor.unwrap_or(0)
+    ))
+}
+
+fn parse_semver_requirement(value: &str) -> Option<VersionReq> {
+    let trimmed = value.trim();
+    VersionReq::parse(trimmed).ok().or_else(|| {
+        normalize_short_version_requirement(trimmed)
+            .and_then(|normalized| VersionReq::parse(&normalized).ok())
+    })
+}
+
+fn normalize_short_version_requirement(value: &str) -> Option<String> {
+    if value.is_empty() || value == "*" {
+        return None;
+    }
+    if value
+        .chars()
+        .all(|character| character.is_ascii_digit() || character == '.')
+    {
+        let segments = value.split('.').filter(|segment| !segment.is_empty()).count();
+        return match segments {
+            1 => Some(format!(">={value}.0.0,<{value}.999.999")),
+            2 => Some(format!(">={value}.0,<{value}.999")),
+            _ => None,
+        };
+    }
+    None
+}
+
 fn rustup_run_fulfillment_validation_error(
     _provider: ToolchainProviderContract,
     name: &str,
@@ -1431,22 +1593,18 @@ fn rustup_run_fulfillment_validation_error(
 
 fn corepack_run_fulfillment_validation_error(
     _provider: ToolchainProviderContract,
-    name: &str,
+    _name: &str,
     _toolchain: &ToolchainSpec,
 ) -> Option<String> {
-    Some(format!(
-        "toolchain `{name}` uses `provider: corepack` with `fulfillment: run`, but Corepack-backed Node toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and declare package-manager activation under `toolchains.{name}.package_managers`"
-    ))
+    None
 }
 
 fn sdkman_run_fulfillment_validation_error(
     _provider: ToolchainProviderContract,
-    name: &str,
+    _name: &str,
     _toolchain: &ToolchainSpec,
 ) -> Option<String> {
-    Some(format!(
-        "toolchain `{name}` uses `provider: sdkman` with `fulfillment: run`, but SDKMAN-backed Java toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none` and declare build tools such as Maven or Gradle separately under `tools`"
-    ))
+    None
 }
 
 fn uv_run_fulfillment_validation_error(
@@ -1473,22 +1631,26 @@ fn uv_run_fulfillment_validation_error(
 
 fn go_run_fulfillment_validation_error(
     _provider: ToolchainProviderContract,
-    name: &str,
+    _name: &str,
     _toolchain: &ToolchainSpec,
 ) -> Option<String> {
-    Some(format!(
-        "toolchain `{name}` uses `provider: go` with `fulfillment: run`, but Go-backed toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none`, install Go through a host-governed path (for example org provisioning policy or the host package manager), and keep module/build/test execution under `tasks`"
-    ))
+    None
 }
 
 fn ruby_run_fulfillment_validation_error(
     _provider: ToolchainProviderContract,
-    name: &str,
+    _name: &str,
     _toolchain: &ToolchainSpec,
 ) -> Option<String> {
-    Some(format!(
-        "toolchain `{name}` uses `provider: ruby` with `fulfillment: run`, but Ruby-backed toolchains are currently check-only; keep `toolchains.{name}.fulfillment: none`, install Ruby through a host-governed path (for example org provisioning policy or the host package manager), and keep Bundler/setup/test execution under `tasks`"
-    ))
+    None
+}
+
+fn dotnet_run_fulfillment_validation_error(
+    _provider: ToolchainProviderContract,
+    _name: &str,
+    _toolchain: &ToolchainSpec,
+) -> Option<String> {
+    None
 }
 
 fn rustup_managed_surface_probes(
@@ -1568,6 +1730,14 @@ fn ruby_managed_surface_probes(
     Vec::new()
 }
 
+fn dotnet_managed_surface_probes(
+    _provider: ToolchainProviderContract,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<ToolchainManagedSurfaceProbe> {
+    Vec::new()
+}
+
 fn corepack_managed_surface_entries(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
@@ -1605,6 +1775,15 @@ fn go_managed_surface_entries(
 }
 
 fn ruby_managed_surface_entries(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _toolchain: &ToolchainSpec,
+    _target_os: &str,
+) -> Vec<String> {
+    Vec::new()
+}
+
+fn dotnet_managed_surface_entries(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
     _toolchain: &ToolchainSpec,
@@ -1700,6 +1879,14 @@ fn go_managed_surface_remediation_command(
 }
 
 fn ruby_managed_surface_remediation_command(
+    _provider: ToolchainProviderContract,
+    _kind: ToolchainManagedSurfaceKind,
+    _entry: &str,
+) -> Option<String> {
+    None
+}
+
+fn dotnet_managed_surface_remediation_command(
     _provider: ToolchainProviderContract,
     _kind: ToolchainManagedSurfaceKind,
     _entry: &str,
@@ -1810,6 +1997,28 @@ pub(crate) fn toolchain_repo_signals(contract_root: &Path, ecosystem: &str) -> V
             }
             signals
         }
+        DOTNET_TOOLCHAIN_NAME => {
+            let mut signals = Vec::new();
+            if contract_root.join("global.json").is_file() {
+                signals.push("global.json");
+            }
+            if contract_root.join("Directory.Build.props").is_file() {
+                signals.push("Directory.Build.props");
+            }
+            if contract_root.join("Directory.Build.targets").is_file() {
+                signals.push("Directory.Build.targets");
+            }
+            if contract_root.join("dotnet-tools.json").is_file() {
+                signals.push("dotnet-tools.json");
+            }
+            if contract_root.join("dotnet.json").is_file() {
+                signals.push("dotnet.json");
+            }
+            if tool_versions_entry(contract_root, &[DOTNET_TOOLCHAIN_NAME]).is_some() {
+                signals.push(".tool-versions");
+            }
+            signals
+        }
         _ => Vec::new(),
     }
 }
@@ -1883,6 +2092,20 @@ mod tests {
     }
 
     #[test]
+    fn dotnet_repo_signal_detection_is_explicit() {
+        let fixture = TempDir::new().expect("tempdir");
+        let root = fixture.path();
+        fs::write(
+            root.join("global.json"),
+            "{\n  \"sdk\": { \"version\": \"9.0.100\" }\n}\n",
+        )
+        .unwrap();
+
+        let dotnet_signals = toolchain_repo_signals(root, DOTNET_TOOLCHAIN_NAME);
+        assert_eq!(dotnet_signals, vec!["global.json"]);
+    }
+
+    #[test]
     fn rustup_contract_exposes_provider_specific_behavior_without_provider_match_fallback() {
         let contract = contract(
             r#"
@@ -1941,7 +2164,7 @@ toolchains:
     }
 
     #[test]
-    fn corepack_contract_stays_check_only_through_provider_contract_hooks() {
+    fn corepack_contract_supports_policy_governed_run_fulfillment_hooks() {
         let contract = contract(
             r#"
 version: 1
@@ -1990,7 +2213,7 @@ toolchains:
         assert!(
             provider
                 .run_fulfillment_validation_error("node", toolchain)
-                .is_some()
+                .is_none()
         );
         assert_eq!(provider.owned_runtime_remediation_command("22"), None);
     }
@@ -2031,16 +2254,15 @@ toolchains:
                 .version(),
             "2.5"
         );
-        assert!(
-            provider
-                .run_fulfillment_validation_error("ruby", toolchain)
-                .is_some()
+        assert_eq!(
+            provider.run_fulfillment_validation_error("ruby", toolchain),
+            None
         );
         assert_eq!(provider.owned_runtime_remediation_command("3.3.11"), None);
     }
 
     #[test]
-    fn sdkman_contract_owns_java_surface_but_stays_check_only() {
+    fn sdkman_contract_owns_java_surface_and_allows_run_path_fulfillment() {
         let contract = contract(
             r#"
 version: 1
@@ -2069,11 +2291,91 @@ toolchains:
         assert!(
             provider
                 .run_fulfillment_validation_error("java", toolchain)
-                .is_some()
+                .is_none()
         );
         assert_eq!(
             provider.owned_runtime_remediation_command("21.0.2-tem"),
             Some(String::from("sdk install java 21.0.2-tem"))
+        );
+    }
+
+    #[test]
+    fn dotnet_contract_owns_dotnet_surface_and_allows_run_path_fulfillment() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  dotnet:
+    provider: dotnet
+    version: "9.0"
+"#,
+        );
+        let toolchain = contract.toolchains.get("dotnet").unwrap();
+        let provider = declared_toolchain_contract("dotnet", toolchain).unwrap();
+
+        assert_eq!(provider.label(), "dotnet");
+        assert!(
+            provider
+                .owned_capabilities(toolchain)
+                .iter()
+                .any(
+                    |capability| capability.kind == ToolchainOwnedCapabilityKind::Runtime
+                        && capability.name == "dotnet"
+                )
+        );
+        assert!(
+            provider
+                .owned_capabilities(toolchain)
+                .iter()
+                .any(
+                    |capability| capability.kind == ToolchainOwnedCapabilityKind::Tool
+                        && capability.name == "dotnet"
+                )
+        );
+        assert!(provider.fulfillment_commands(toolchain, "linux").is_empty());
+        assert_eq!(
+            provider.run_fulfillment_validation_error("dotnet", toolchain),
+            None
+        );
+        let expected = if cfg!(windows) {
+            "powershell -ExecutionPolicy Bypass -Command \"iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1; ./dotnet-install.ps1 -Channel 9.0\""
+        } else {
+            "curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && bash dotnet-install.sh --channel 9.0"
+        };
+        assert_eq!(
+            provider.owned_runtime_remediation_command("9.0"),
+            Some(String::from(expected))
+        );
+    }
+
+    #[test]
+    fn dotnet_runtime_remediation_uses_channel_for_semver_ranges() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  dotnet:
+    provider: dotnet
+    version: ">=9.0,<10.0"
+"#,
+        );
+        let toolchain = contract.toolchains.get("dotnet").unwrap();
+        let provider =
+            declared_toolchain_contract("dotnet", toolchain).expect("dotnet provider contract");
+
+        let expected = if cfg!(windows) {
+            "powershell -ExecutionPolicy Bypass -Command \"iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1; ./dotnet-install.ps1 -Channel 9.0\""
+        } else {
+            "curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && bash dotnet-install.sh --channel 9.0"
+        };
+
+        assert_eq!(
+            provider.owned_runtime_remediation_command(">=9.0,<10.0"),
+            Some(String::from(expected))
         );
     }
 
@@ -2116,6 +2418,12 @@ toolchains:
             "ruby"
         );
         assert_eq!(
+            toolchain_provider_contract("dotnet", ToolchainProvider::Dotnet)
+                .unwrap()
+                .label(),
+            "dotnet"
+        );
+        assert_eq!(
             shipped_toolchain_contract_by_label("rustup")
                 .unwrap()
                 .toolchain_name(),
@@ -2137,6 +2445,10 @@ toolchains:
         );
         assert_eq!(toolchain_provider_label(ToolchainProvider::Go), "go");
         assert_eq!(toolchain_provider_label(ToolchainProvider::Ruby), "ruby");
+        assert_eq!(
+            toolchain_provider_label(ToolchainProvider::Dotnet),
+            "dotnet"
+        );
         assert_eq!(
             known_provider_specific_fields(),
             vec![

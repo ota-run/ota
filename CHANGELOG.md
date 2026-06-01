@@ -26,6 +26,24 @@
 
 ## Unreleased
 
+- fixed dotnet remediation trust drift across doctor and provider-owned toolchain guidance:
+  dotnet install commands are now requirement-first, use `global.json` only when it satisfies the
+  declared contract requirement, and fall back to channel-based install guidance for broad or
+  range requirements (for example `9.0` or `>=9.0,<10.0`) instead of surfacing conflicting exact-
+  version suggestions
+- hardened `ota init --pack node` for monorepo/root-script truth: node starter contracts now seed
+  `dev` and `test` tasks only when the root `package.json` actually declares `scripts.dev` and
+  `scripts.test`, avoiding non-runnable default task emission on repos where those scripts live in
+  subpackages only
+- added first-class check-only `toolchains.dotnet` ownership for .NET repos and migrated
+  `ota init --pack dotnet` to seed `provider: dotnet` under `toolchains` instead of split
+  `runtimes.dotnet` / `tools.dotnet` / duplicate installed checks
+- updated the shell installer and install docs to point optional skill setup at
+  `npx skills add ota-run/skills --full-depth` instead of separate Codex and Claude Code
+  `ota skills install` commands
+- recorded the Hoppscotch pressure-test adoption outcome in the v9.1 pressure-test ledger
+  (`hoppscotch/hoppscotch#6382` closed as not planned) while preserving the contract/matrix
+  evidence as reusable Ota readiness signal
 - promoted the remaining maturity backlog into explicit pressure-ledger entries with concrete
   acceptance evidence for: (1) toolchain fulfillment depth beyond check-only providers, (2)
   pre-execution effect-governance parity for `network` / `external_state`, and (3)
@@ -47,6 +65,9 @@
   `go` and `ruby` runtime lanes into canonical `toolchains.go` (`provider: go`) and
   `toolchains.ruby` (`provider: ruby`) ownership when repo signals confirm those ecosystems, and
   normalizes legacy `tools.bundler` detection into `toolchains.ruby.package_managers.bundler`
+- expanded detector-led .NET ownership parity: detected `.NET` runtime/tool lanes now converge to
+  canonical `toolchains.dotnet` (`provider: dotnet`) ownership on detect write/merge so contracts
+  do not regress back to split `runtimes.dotnet` / `tools.dotnet` declarations
 - expanded `toolchain_repo_signals(...)` support for Go (`go.mod`, `go.work`, `.tool-versions`)
   and Ruby (`Gemfile`, `Gemfile.lock`, `.ruby-version`, `Rakefile`, `.tool-versions`) so
   detector-led toolchain synthesis is gated by explicit ecosystem signals instead of broad runtime
@@ -90,6 +111,15 @@
   `safe_tasks`, each using `allow|warn|deny` for network lanes and external-state targets),
   enforced deny decisions pre-execution in both `ota run` and `ota up` preflights, and surfaced
   resolved governance decisions in run receipts under the existing `policy` evidence lines
+- hardened `ota up` effect-governance enforcement to fail closed before provisioning/setup side
+  effects whenever selected-path policy decisions resolve to deny, including workflows that declare
+  a setup task
+- allowed policy-governed `fulfillment: run` for `toolchains.go`, `toolchains.ruby`, and
+  `toolchains.dotnet` (removing check-only validation blocks for those providers) while keeping
+  provisioning authority in org policy/back-end requirement fulfillment
+- allowed policy-governed `fulfillment: run` for `toolchains.node` (`provider: corepack`) and
+  `toolchains.java` (`provider: sdkman`) by removing check-only validation blocks and treating
+  those fulfillment lanes as selected-path run intent governed by org policy/provisioning rules
 - added `--effect-override <effect>=<allow|warn|deny>` to `ota run` and `ota up` for explicit
   per-invocation effect-governance overrides on selected task/workflow paths
 

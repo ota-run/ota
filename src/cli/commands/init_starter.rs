@@ -170,8 +170,8 @@ impl StarterPack {
         match self {
             Self::Node => StarterPackCatalogEntry {
                 pack: self,
-                summary: "Conventional Node starter with toolchain-owned Node and package-manager-driven setup, dev, and test tasks.",
-                when: "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path keeps Node ownership under `toolchains.node` and uses pnpm via Corepack, and you can override the package manager with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
+                summary: "Conventional Node starter with toolchain-owned Node plus package-manager-driven setup and script-aware dev/test tasks.",
+                when: "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path keeps Node ownership under `toolchains.node` and uses pnpm via Corepack, and you can override the package manager with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based. `dev` and `test` are seeded only when the root `package.json` declares those scripts.",
                 toolchains: &["node"],
                 runtimes: &[],
                 tools: &[],
@@ -180,7 +180,7 @@ impl StarterPack {
                 options: NODE_PACK_OPTIONS,
                 does_not_infer: &[
                     "the repo's package manager unless `--package-manager` says so",
-                    "repo-specific script names or extra task variants beyond the seeded `setup`, `dev`, and `test` loop",
+                    "repo-specific script names or extra task variants beyond seeded `setup` plus optional root `dev`/`test` script tasks",
                     "dotenv env sources from repo files such as `.env.local` or `.env`",
                 ],
             },
@@ -244,12 +244,12 @@ impl StarterPack {
             },
             Self::Dotnet => StarterPackCatalogEntry {
                 pack: self,
-                summary: "Conventional .NET starter with restore, build, and test tasks.",
-                when: "Use this for .NET repos that should start from the standard `dotnet restore`, `dotnet build`, and `dotnet test` loop without relying on detector-led init.",
-                toolchains: &[],
-                runtimes: &["dotnet"],
-                tools: &["dotnet"],
-                checks: &["dotnet-installed"],
+                summary: "Conventional .NET starter with toolchain-owned .NET plus restore, build, and test tasks.",
+                when: "Use this for .NET repos that should start from `toolchains.dotnet` ownership and the standard `dotnet restore`, `dotnet build`, and `dotnet test` loop without relying on detector-led init.",
+                toolchains: &["dotnet"],
+                runtimes: &[],
+                tools: &[],
+                checks: &[],
                 tasks: &["setup", "build", "test"],
                 options: NO_PACK_OPTIONS,
                 does_not_infer: &[
@@ -1148,6 +1148,15 @@ fn starter_agent_protected_paths(
     let mut protected_paths = BTreeSet::from([String::from("ota.yaml")]);
     provenance.insert(format!("{provenance_prefix}:contract_file_default"));
 
+    let mut added_ci_topology = false;
+    if root.join(".github").join("workflows").is_dir() {
+        protected_paths.insert(String::from(".github/workflows"));
+        added_ci_topology = true;
+    }
+    if added_ci_topology {
+        provenance.insert(format!("{provenance_prefix}:ci_topology_default"));
+    }
+
     let mut added_stack_companions = false;
     for candidate in starter_agent_stack_companion_protected_paths(contract) {
         if root.join(candidate).is_file() {
@@ -1683,7 +1692,8 @@ fn starter_agent_stack_source_extensions(contract: &DetectContract) -> Option<Ve
         extensions.extend(["java", "kt", "kts"]);
     }
 
-    if contract.runtimes.contains_key("dotnet")
+    if contract.toolchains.contains_key("dotnet")
+        || contract.runtimes.contains_key("dotnet")
         || contract.runtimes.contains_key("fsharp")
         || contract.tools.contains_key("dotnet")
     {
@@ -1770,6 +1780,7 @@ fn starter_agent_ignored_scan_dir(name: &str) -> bool {
         ".git"
             | ".hg"
             | ".svn"
+            | ".github"
             | ".next"
             | ".nuxt"
             | ".turbo"
@@ -2070,22 +2081,26 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     Some(String::from("Install repo dependencies.")),
                 ),
             );
-            contract.tasks.insert(
-                String::from("dev"),
-                pack_task(
-                    "dev",
-                    package_manager.dev_command(),
-                    Some(String::from("Start the local development loop.")),
-                ),
-            );
-            contract.tasks.insert(
-                String::from("test"),
-                pack_task(
-                    "test",
-                    package_manager.test_command(),
-                    Some(String::from("Run the default automated test command.")),
-                ),
-            );
+            if node_root_package_json_has_script(root, "dev") {
+                contract.tasks.insert(
+                    String::from("dev"),
+                    pack_task(
+                        "dev",
+                        package_manager.dev_command(),
+                        Some(String::from("Start the local development loop.")),
+                    ),
+                );
+            }
+            if node_root_package_json_has_script(root, "test") {
+                contract.tasks.insert(
+                    String::from("test"),
+                    pack_task(
+                        "test",
+                        package_manager.test_command(),
+                        Some(String::from("Run the default automated test command.")),
+                    ),
+                );
+            }
         }
         StarterPack::Python => {
             let test_runner = config
@@ -2224,20 +2239,15 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             );
         }
         StarterPack::Dotnet => {
-            contract
-                .runtimes
-                .insert(String::from("dotnet"), String::from("9.0"));
-            contract
-                .tools
-                .insert(String::from("dotnet"), String::from("*"));
-            contract.checks.push(DetectCheck {
-                name: String::from("dotnet-installed"),
-                kind: DetectCheckKind::Precondition,
-                severity: DetectCheckSeverity::Error,
-                run: String::from("dotnet --version"),
-                path: None,
-                expect: None,
-            });
+            contract.toolchains.insert(
+                String::from("dotnet"),
+                DetectToolchainSpec {
+                    provider: crate::schema::ToolchainProvider::Dotnet,
+                    version: String::from("9.0"),
+                    package_managers: BTreeMap::new(),
+                    fulfillment: None,
+                },
+            );
             contract.tasks.insert(
                 String::from("setup"),
                 pack_task(
@@ -2467,6 +2477,20 @@ fn composer_has_test_script(root: &Path) -> bool {
         .is_some_and(|scripts| scripts.contains_key("test"))
 }
 
+fn node_root_package_json_has_script(root: &Path, script: &str) -> bool {
+    let path = root.join("package.json");
+    let Ok(contents) = fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(package) = serde_json::from_str::<JsonValue>(&contents) else {
+        return false;
+    };
+    package
+        .get("scripts")
+        .and_then(JsonValue::as_object)
+        .is_some_and(|scripts| scripts.contains_key(script))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2547,6 +2571,110 @@ mod tests {
     }
 
     #[test]
+    fn starter_pack_node_omits_dev_and_test_without_root_scripts() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::write(
+            fixture.path().join("package.json"),
+            r#"{
+  "name": "no-root-scripts"
+}"#,
+        )
+        .expect("write package.json");
+
+        let contract = starter_pack_contract(
+            StarterPackConfig {
+                pack: StarterPack::Node,
+                options: StarterPackOptions::default(),
+            },
+            fixture.path(),
+        );
+
+        assert!(contract.tasks.contains_key("setup"));
+        assert!(!contract.tasks.contains_key("dev"));
+        assert!(!contract.tasks.contains_key("test"));
+    }
+
+    #[test]
+    fn starter_pack_node_seeds_dev_and_test_when_root_scripts_exist() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::write(
+            fixture.path().join("package.json"),
+            r#"{
+  "name": "with-root-scripts",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest"
+  }
+}"#,
+        )
+        .expect("write package.json");
+
+        let contract = starter_pack_contract(
+            StarterPackConfig {
+                pack: StarterPack::Node,
+                options: StarterPackOptions::default(),
+            },
+            fixture.path(),
+        );
+
+        assert!(contract.tasks.contains_key("setup"));
+        assert!(contract.tasks.contains_key("dev"));
+        assert!(contract.tasks.contains_key("test"));
+    }
+
+    #[test]
+    fn starter_pack_protects_ci_workflows_and_avoids_github_writable_root() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::create_dir_all(fixture.path().join(".github/workflows"))
+            .expect("create workflows dir");
+        std::fs::write(
+            fixture.path().join(".github/workflows/ci.yml"),
+            "name: ci\non: [push]\n",
+        )
+        .expect("write workflow file");
+        std::fs::write(
+            fixture.path().join("package.json"),
+            r#"{
+  "name": "ci-protected-demo",
+  "scripts": {
+    "test": "vitest"
+  }
+}"#,
+        )
+        .expect("write package.json");
+
+        let contract = starter_pack_contract(
+            StarterPackConfig {
+                pack: StarterPack::Node,
+                options: StarterPackOptions::default(),
+            },
+            fixture.path(),
+        );
+        let agent = contract.agent.expect("starter pack agent");
+        assert!(
+            agent
+                .protected_paths
+                .contains(&String::from(".github/workflows")),
+            "starter contracts should protect CI workflows by default"
+        );
+        assert!(
+            !agent.writable_paths.iter().any(|path| path == ".github"),
+            "starter contracts should not infer .github as writable in readiness_strict posture"
+        );
+        let inferred = agent
+            .inferred_boundary
+            .expect("starter pack inferred boundary");
+        assert!(
+            inferred
+                .provenance
+                .protected_paths
+                .iter()
+                .any(|entry| entry == "init:ci_topology_default"),
+            "starter contracts should record CI topology protection provenance"
+        );
+    }
+
+    #[test]
     fn starter_pack_contract_uses_toolchain_stacks_for_agent_boundaries() {
         let fixture = TempDir::new().expect("fixture");
         std::fs::create_dir_all(fixture.path().join("cmd")).unwrap();
@@ -2577,6 +2705,41 @@ mod tests {
         assert!(
             agent.writable_paths.contains(&String::from("cmd")),
             "toolchain-owned Go source detection should still infer source edit scope"
+        );
+    }
+
+    #[test]
+    fn starter_pack_dotnet_uses_toolchain_owner() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::write(
+            fixture.path().join("demo.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>\n",
+        )
+        .unwrap();
+
+        let contract = starter_pack_contract(
+            StarterPackConfig {
+                pack: StarterPack::Dotnet,
+                options: StarterPackOptions::default(),
+            },
+            fixture.path(),
+        );
+
+        assert!(
+            contract.toolchains.contains_key("dotnet"),
+            "dotnet starter should own .NET through toolchains"
+        );
+        assert!(
+            !contract.runtimes.contains_key("dotnet"),
+            "dotnet starter should not duplicate .NET under runtimes"
+        );
+        assert!(
+            !contract.tools.contains_key("dotnet"),
+            "dotnet starter should not duplicate .NET under tools"
+        );
+        assert!(
+            contract.checks.is_empty(),
+            "dotnet starter should rely on toolchain-owned probe semantics instead of duplicate installed checks"
         );
     }
 

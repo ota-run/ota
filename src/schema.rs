@@ -1549,6 +1549,7 @@ pub enum ToolchainProvider {
     Uv,
     Go,
     Ruby,
+    Dotnet,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

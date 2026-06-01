@@ -624,8 +624,12 @@ Current shipped scope is intentionally narrow:
 - top-level `toolchains`
 - task-scoped `requirements.toolchains`
 - Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
-- Corepack-backed diagnosis for Node toolchains
+- Corepack-backed diagnosis plus policy-governed run-path fulfillment for Node toolchains
+- SDKMAN-backed diagnosis plus policy-governed run-path fulfillment for Java toolchains
 - uv-backed diagnosis and run-path fulfillment for Python toolchains
+- Go-backed diagnosis plus policy-governed run-path fulfillment for Go toolchains
+- Ruby-backed diagnosis plus policy-governed run-path fulfillment for Ruby toolchains
+- dotnet-backed diagnosis plus policy-governed run-path fulfillment for .NET toolchains
 - duplicate ownership is invalid when the same prerequisite is declared under both `toolchains`
   and `runtimes` or `tools`
 
@@ -659,21 +663,25 @@ Rules:
   `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
 - shipped providers are currently `rustup` for `toolchains.rust`, `corepack` for
   `toolchains.node`, `sdkman` for `toolchains.java`, `uv` for `toolchains.python`,
-  `go` for `toolchains.go`, and `ruby` for `toolchains.ruby`
+  `go` for `toolchains.go`, `ruby` for `toolchains.ruby`, and `dotnet` for
+  `toolchains.dotnet`
 - `required` defaults to `true` and controls whether missing or mismatched toolchains are blocking
 - the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup`,
   `toolchains.node` with `provider: corepack`, `toolchains.java` with `provider: sdkman`,
   `toolchains.python` with `provider: uv`, `toolchains.go` with `provider: go`, and
-  `toolchains.ruby` with `provider: ruby`
+  `toolchains.ruby` with `provider: ruby`, and `toolchains.dotnet` with
+  `provider: dotnet`
 - those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use
   `provider: rustup`, `toolchains.node` must use `provider: corepack`, `toolchains.java` must
   use `provider: sdkman`, `toolchains.python` must use `provider: uv`, `toolchains.go` must use
-  `provider: go`, and `toolchains.ruby` must use `provider: ruby`
+  `provider: go`, `toolchains.ruby` must use `provider: ruby`, and `toolchains.dotnet` must use
+  `provider: dotnet`
 - ota validates and interprets toolchains through an explicit provider contract; Rustup currently
   owns which extra toolchain fields are legal, which capabilities belong to `toolchains.rust`, and
   how `doctor`, `up`, and `run` interpret fulfillment and managed surfaces, while Corepack-backed
-  Node toolchains stay check-only and currently allow provider-scoped `package_managers`, and
-  Ruby-backed toolchains allow provider-scoped `package_managers` for Bundler version governance
+  Node toolchains allow provider-scoped `package_managers`, SDKMAN-backed Java toolchains own
+  `java` plus `javac`, and Ruby-backed toolchains allow provider-scoped `package_managers` for
+  Bundler version governance
 - provider-specific field shape checks also live there: empty Rustup `profile`, `components`, and
   `targets` entries fail because the Rustup provider contract rejects them, and Corepack-backed
   Node toolchains reject those Rust-shaped fields entirely while validating
@@ -692,16 +700,21 @@ Rules:
   paths to provision the declared toolchain on the run path
 - for `provider: rustup` with `fulfillment: run`, `version` must be one installable Rustup
   toolchain reference such as `stable`, `beta`, `nightly`, or `1.94.0`
-- `provider: corepack` currently supports only `fulfillment: none`; ota diagnoses Node through
-  `toolchains.node`, and declared `package_managers` surface Corepack activation through that same
-  toolchain owner
+- `provider: corepack` supports `fulfillment: run` as a policy-governed selected-path lane; ota
+  still diagnoses Node through `toolchains.node`, and declared `package_managers` surface Corepack
+  activation through that same toolchain owner
+- `provider: sdkman` supports `fulfillment: run` as a policy-governed selected-path lane; ota
+  still keeps Maven and Gradle outside the Java toolchain boundary under `tools`
 - for `provider: uv` with `fulfillment: run`, `version` must be one installable uv Python
   reference such as `3.12`, `3.12.10`, or `3.13`
+- `provider: go`, `provider: ruby`, and `provider: dotnet` also support `fulfillment: run` as
+  policy-governed selected-path lanes; provisioning authority stays with org policy and backend
+  requirement fulfillment rather than provider-owned install commands
 - duplicate ownership is invalid; if the same Rust capability is also declared under `runtimes`
   or `tools`, validation fails and the duplicate must be removed; the same applies to
   `toolchains.node` versus `runtimes.node` or `tools.node`, and `toolchains.python` versus
-  `runtimes.python`, `toolchains.go` versus `runtimes.go`, and `toolchains.ruby` versus
-  `runtimes.ruby`
+  `runtimes.python`, `toolchains.go` versus `runtimes.go`, `toolchains.ruby` versus
+  `runtimes.ruby`, and `toolchains.dotnet` versus `runtimes.dotnet` or `tools.dotnet`
 
 Ownership boundary:
 
@@ -715,7 +728,8 @@ Ownership boundary:
   Java plus `javac` ownership from `toolchains.java` with `provider: sdkman`, and Python runtime
   ownership from `toolchains.python` with `provider: uv`, Go runtime ownership from
   `toolchains.go` with `provider: go`, and Ruby runtime plus Bundler ownership from
-  `toolchains.ruby` with `provider: ruby`
+  `toolchains.ruby` with `provider: ruby`, plus .NET runtime/CLI ownership from
+  `toolchains.dotnet` with `provider: dotnet`
 
 If a declared toolchain owns the capability, require the toolchain. Do not also require the same
 runtime or tool unless it is deliberately standalone outside that toolchain.
