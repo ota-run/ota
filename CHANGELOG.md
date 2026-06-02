@@ -44,6 +44,9 @@
 - updated the shell installer and install docs to point optional skill setup at
   `npx skills add ota-run/skills --full-depth` instead of separate Codex and Claude Code
   `ota skills install` commands
+- tightened the shell installer success receipt so optional skill setup now renders on one compact
+  line (`Install Ota skill: npx skills add ota-run/skills --full-depth`) without changing the
+  existing accent color treatment
 - recorded the Hoppscotch pressure-test adoption outcome in the v9.1 pressure-test ledger
   (`hoppscotch/hoppscotch#6382` closed as not planned) while preserving the contract/matrix
   evidence as reusable Ota readiness signal
