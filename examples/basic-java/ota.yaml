@@ -1,3 +1,4 @@
+#
 #                █████
 #               ░░███
 #       ██████  ███████    ██████
@@ -23,54 +24,61 @@
 version: 1
 project:
   name: basic-java
-  description: Basic Java repo with Maven tasks
+  description: Basic Java repo with SDKMAN-owned Java plus Maven tasks
   type: application
-runtimes:
-  java: "21"
+toolchains:
+  java:
+    provider: sdkman
+    version: "22"
 tools:
-  maven: "*"
+  maven: "3.9"
+checks:
+  - name: maven-installed
+    kind: precondition
+    severity: error
+    run: mvn --version
 tasks:
   setup:
     description: Warm the Maven dependency graph
-    run: mvn -q -DskipTests dependency:go-offline
+    run: mvn -q dependency:resolve
     requirements:
-      runtimes:
-        java: "21"
+      toolchains:
+        - java
       tools:
-        maven: "*"
+        maven: "3.9"
       checks:
-        - java-installed
+        - maven-installed
   build:
     description: Compile and package the repo
     run: mvn package
     depends_on:
       - setup
     requirements:
+      toolchains:
+        - java
       tools:
-        maven: "*"
+        maven: "3.9"
   test:
     description: Run the Maven test suite
     run: mvn test
     depends_on:
       - setup
     requirements:
+      toolchains:
+        - java
       tools:
-        maven: "*"
+        maven: "3.9"
 workflows:
   default: verify
   verify:
-    description: Canonical Java dependency warmup and verification path
+    description: Canonical Java toolchain warmup and verification path
     setup:
       task: setup
     run:
       task: test
     notes: |
       Use this when you want the repo front door instead of calling Maven tasks directly.
-checks:
-  - name: java-installed
-    kind: precondition
-    severity: error
-    run: java --version
+      `toolchains.java` owns Java and `javac`, while Maven remains a standalone build tool.
 agent:
   entrypoint: setup
   default_task: test
@@ -88,4 +96,5 @@ agent:
     - ota.yaml
   notes: |
     Use `ota validate` before changes and `ota workflows` to inspect the dependency-and-test path.
-    Use `ota run build` to confirm the Maven wiring and `ota run test` to verify Java changes.
+    Keep Java ownership under `toolchains.java`, leave Maven under `tools`, and use `ota run test`
+    to verify Java changes.

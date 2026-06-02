@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- fixed a trust bug in failed-task output excerpts: relevance ranking now prefers real test
+  failure summaries/assertions over incidental package-manager noise containing words like
+  `failed`, so captured failure excerpts point at the actual failing test surface instead of
+  unrelated install/build chatter
+- fixed a trust bug in container run failure classification: managed isolated-path mutation now
+  requires a real filesystem-mutation signal tied to the isolated path, so unrelated task failures
+  (for example long-running Go test timeouts with `.go` paths in stack traces) keep their true
+  primary diagnosis instead of being misclassified as isolated-path mutation errors
 - added a contract advisory for container contexts that isolate `.yarn`/`.yarn/releases` while
   Yarn tasks run in that same context, so `ota doctor` warns before runtime about container
   isolation shadowing committed `.yarn/releases/yarn-*.cjs` artifacts

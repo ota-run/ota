@@ -246,6 +246,7 @@ Choose by goal:
 - first contract for one stack:
   [Basic Node](../../examples/basic-node/ota.yaml),
   [Basic Python](../../examples/basic-python/ota.yaml),
+  [Basic Ruby](../../examples/basic-ruby/ota.yaml),
   [Basic Go](../../examples/basic-go/ota.yaml),
   [Basic Java](../../examples/basic-java/ota.yaml),
   [Basic Rust](../../examples/basic-rust/ota.yaml),

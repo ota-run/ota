@@ -57196,6 +57196,7 @@ tasks:
             "dev:www",
             None,
             Backend::Container,
+            ExecutionOverrides::default(),
             &ServiceTermination {
                 kind: ServiceTerminationKind::ServiceStopped,
                 cause: ServiceTerminationCause::ExitedNonZero,
@@ -57214,6 +57215,47 @@ tasks:
         assert!(
             rendered
                 .contains("rerun `ota run dev:www --mode container --stream` for live task output"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_structured_error_text_preserves_explicit_overrides_for_lock_rerun() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: cargo build
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "build",
+            Some("web"),
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                lifecycle: Some(Lifecycle::Persistent),
+                host_port: Some(3002),
+                memory: Some(parse_memory_size_bytes("4GiB").unwrap()),
+                skip_deps: true,
+            },
+            &RunError::RepoExecutionLockBusy {
+                task: String::from("build"),
+                path: String::from("./.ota/state/run-execution.lock"),
+            },
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered.contains("then rerun `ota run --member web build --mode container --lifecycle persistent --host-port 3002 --memory 4GiB --skip-deps`"),
             "{rendered}"
         );
     }
@@ -58702,6 +58744,58 @@ tasks:
     }
 
     #[test]
+    fn run_failure_text_prefers_actual_test_failures_over_package_manager_failed_noise() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: yarn test
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "test",
+            "test",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            r#"
+➤ YN0007: │ @appsmith/eslint-plugin@workspace:packages/eslint-plugin must be built because it never has been before or the last one failed
+Summary of all failing tests
+FAIL src/pages/Editor/GlobalHotKeys/GlobalHotKeys.test.tsx
+● Undo/Redo hotkey › should dispatch undo Action on cmd + z
+thrown: "Exceeded timeout of 9000 ms for a test.
+"#,
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(
+            rendered.contains("FAIL src/pages/Editor/GlobalHotKeys/GlobalHotKeys.test.tsx"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Exceeded timeout of 9000 ms for a test"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("must be built because it never has been before or the last one failed"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_failure_text_preserves_container_mode_in_excerpt_rerun_hint() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -58871,7 +58965,7 @@ tasks:
             ExecutionOverrides::default(),
             1,
             "",
-            "Error: , Unknown error: Device or resource busy '.next'\nnode:fs:1222",
+            "Error: EBUSY: resource busy or locked, rmdir '.next'\nnode:fs:1222",
             None,
             None,
             false,
@@ -58932,7 +59026,7 @@ tasks:
             ExecutionOverrides::default(),
             1,
             "",
-            "Error: , Unknown error: Device or resource busy '.next'\nnode:fs:1222",
+            "Error: EBUSY: resource busy or locked, unlink '.next/build-manifest.json'\nnode:fs:1222",
             None,
             None,
             false,
@@ -58948,6 +59042,56 @@ tasks:
             rendered.contains(
                 "task `build` failed while mutating `.next`, which is declared under `execution.contexts.verify:ctx.attachments.isolated_paths`"
             ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_failure_text_does_not_misclassify_busy_output_without_mutation_signal() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: golang:1.26-bookworm
+      attachments:
+        isolated_paths:
+          - .go
+tasks:
+  test:
+    run: go test ./...
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "test",
+            "test",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            "panic: test timed out after 10m0s\nresource busy\n/workspace/pkg/example/file.go:12",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nContext:     app\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(rendered.contains("ERROR  Task Failed"), "{rendered}");
+        assert!(
+            !rendered.contains("ERROR  Task mutated managed isolated path"),
             "{rendered}"
         );
     }
@@ -60570,6 +60714,7 @@ project:
             "dev",
             None,
             Backend::Native,
+            ExecutionOverrides::default(),
             &ServiceTermination {
                 kind: ServiceTerminationKind::ServiceStopped,
                 cause: ServiceTerminationCause::ExitedNonZero,
@@ -64166,6 +64311,7 @@ fn run_single_contract_target_streaming(
                 receipt.next = Some(skip_deps_next(
                     task_name.as_str(),
                     member,
+                    overrides,
                     receipt.next.take(),
                 ));
             }
@@ -64238,6 +64384,7 @@ fn run_single_contract_target_streaming(
                 receipt.next = Some(skip_deps_next(
                     task_name.as_str(),
                     member,
+                    overrides,
                     receipt.next.take(),
                 ));
             }
@@ -64285,7 +64432,13 @@ fn run_single_contract_target_streaming(
                     task,
                     listener,
                     kind,
-                } => runtime_listener_resolution_receipt_note(member, task, listener, kind),
+                } => runtime_listener_resolution_receipt_note(
+                    member,
+                    task,
+                    listener,
+                    kind,
+                    overrides,
+                ),
                 _ => format!(
                     "{}; {}",
                     format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
@@ -64328,6 +64481,7 @@ fn run_single_contract_target_streaming(
                 receipt.next = Some(skip_deps_next(
                     task_name.as_str(),
                     member,
+                    overrides,
                     receipt.next.take(),
                 ));
             }
@@ -64415,6 +64569,7 @@ fn run_single_contract_target_captured(
                 receipt.next = Some(skip_deps_next(
                     task_name.as_str(),
                     member,
+                    overrides,
                     receipt.next.take(),
                 ));
             }
@@ -64466,7 +64621,11 @@ fn run_single_contract_target_captured(
                 outcome.runtime.clone(),
                 Some(format!(
                     "inspect the task output excerpt and rerun `{}`",
-                    repo_run_stream_command(&failed_task_name, member)
+                    repo_run_stream_command_with_overrides(
+                        &failed_task_name,
+                        member,
+                        overrides,
+                    )
                 )),
             );
             receipt.service_termination = outcome.service_termination.clone();
@@ -64480,6 +64639,7 @@ fn run_single_contract_target_captured(
                 receipt.next = Some(skip_deps_next(
                     task_name.as_str(),
                     member,
+                    overrides,
                     receipt.next.take(),
                 ));
             }
@@ -64527,7 +64687,13 @@ fn run_single_contract_target_captured(
                     task,
                     listener,
                     kind,
-                } => runtime_listener_resolution_receipt_note(member, task, listener, kind),
+                } => runtime_listener_resolution_receipt_note(
+                    member,
+                    task,
+                    listener,
+                    kind,
+                    overrides,
+                ),
                 _ => format!(
                     "{}; {}",
                     format!("repair task `{task_name}` and rerun `ota run {task_name}`"),
@@ -64570,6 +64736,7 @@ fn run_single_contract_target_captured(
                 receipt.next = Some(skip_deps_next(
                     task_name.as_str(),
                     member,
+                    overrides,
                     receipt.next.take(),
                 ));
             }
@@ -64825,6 +64992,7 @@ fn render_run_captured_failure_text(
                 task_name,
                 requested_task_name,
                 member,
+                overrides,
                 service_termination,
                 runtime,
                 summary,
@@ -64841,6 +65009,7 @@ fn render_run_captured_failure_text(
                 requested_task_name,
                 member,
                 requested_backend,
+                overrides,
                 service_termination,
                 runtime,
                 stdout,
@@ -64854,6 +65023,7 @@ fn render_run_captured_failure_text(
             task_name,
             requested_task_name,
             member,
+            overrides,
             service_termination,
             runtime,
             summary,
@@ -64866,6 +65036,7 @@ fn render_run_captured_failure_text(
             task_name,
             requested_task_name,
             member,
+            overrides,
             summary,
             receipt_text,
         );
@@ -64876,6 +65047,7 @@ fn render_run_captured_failure_text(
             where_value,
             task_name,
             requested_task_name,
+            member,
             overrides,
             &conflict,
             &[],
@@ -64896,6 +65068,7 @@ fn render_run_captured_failure_text(
             summary,
             receipt_text,
             member,
+            overrides,
         );
     }
     let mut next_steps = Vec::new();
@@ -64911,7 +65084,7 @@ fn render_run_captured_failure_text(
     if excerpt.is_some() {
         next_steps.push(format!(
             "rerun `{}` for live task output if the excerpt is insufficient",
-            repo_run_stream_command_for_backend(task_name, member, rerun_backend)
+            repo_run_stream_command_for_execution(task_name, member, rerun_backend, overrides)
         ));
     }
     next_steps.push(task_use_details_step(Some(contract_path), member));
@@ -64951,6 +65124,7 @@ fn render_task_interrupted_text(
     task_name: &str,
     requested_task_name: &str,
     member: Option<&str>,
+    overrides: ExecutionOverrides,
     summary_block: &str,
     receipt_text: Option<&str>,
 ) -> String {
@@ -64977,7 +65151,7 @@ fn render_task_interrupted_text(
     );
     let next_steps = [format!(
         "rerun `{}` when ready",
-        repo_run_stream_command(requested_task_name, member)
+        repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
     )];
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()
@@ -64997,25 +65171,67 @@ fn detect_managed_isolated_path_runtime_mutation(
     stdout: &str,
     stderr: &str,
 ) -> Option<crate::validator::ManagedIsolatedPathMutationAdvisory> {
-    let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
-    if !combined.contains("device or resource busy")
-        && !combined.contains("resource busy")
-        && !combined.contains("ebusy")
-    {
-        return None;
-    }
-
     managed_isolated_paths_for_task(contract, task_name)
         .into_iter()
         .find_map(|(context_name, isolated_path)| {
-            combined
-                .contains(&isolated_path.to_ascii_lowercase())
-                .then_some(crate::validator::ManagedIsolatedPathMutationAdvisory {
-                    task_name: task_name.to_string(),
-                    context_name,
-                    isolated_path,
-                })
+            runtime_output_appears_to_mutate_managed_isolated_path(
+                stdout,
+                stderr,
+                isolated_path.as_str(),
+            )
+            .then_some(crate::validator::ManagedIsolatedPathMutationAdvisory {
+                task_name: task_name.to_string(),
+                context_name,
+                isolated_path,
+            })
         })
+}
+
+fn runtime_output_appears_to_mutate_managed_isolated_path(
+    stdout: &str,
+    stderr: &str,
+    isolated_path: &str,
+) -> bool {
+    let isolated_path = isolated_path.to_ascii_lowercase();
+    let busy_markers = ["device or resource busy", "resource busy", "ebusy"];
+    let mutation_markers = [
+        " rmdir ",
+        "rmdir '",
+        "rmdir \"",
+        " unlink ",
+        "unlink '",
+        "unlink \"",
+        " rename ",
+        "rename '",
+        "rename \"",
+        " remove ",
+        "remove '",
+        "remove \"",
+        " delete ",
+        "delete '",
+        "delete \"",
+        "mkdir ",
+        "mkdir '",
+        "mkdir \"",
+        "unknown error:",
+    ];
+
+    stdout
+        .lines()
+        .chain(stderr.lines())
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .any(|line| {
+            busy_markers.iter().any(|marker| line.contains(marker))
+                && mutation_markers.iter().any(|marker| line.contains(marker))
+                && line_mentions_isolated_path(line.as_str(), isolated_path.as_str())
+        })
+}
+
+fn line_mentions_isolated_path(line: &str, isolated_path: &str) -> bool {
+    line.contains(isolated_path)
+        || line.contains(&format!("{isolated_path}/"))
+        || line.contains(&format!("{isolated_path}\\"))
 }
 
 fn managed_isolated_paths_for_task(contract: &Contract, task_name: &str) -> Vec<(String, String)> {
@@ -65062,6 +65278,7 @@ fn render_managed_isolated_path_failure_text(
     summary_block: &str,
     receipt_text: Option<&str>,
     member: Option<&str>,
+    overrides: ExecutionOverrides,
 ) -> String {
     let mut out = format!(
         "{}  {}",
@@ -65122,7 +65339,7 @@ fn render_managed_isolated_path_failure_text(
             ),
             format!(
                 "rerun `{}` after the task stops mutating the managed isolated path",
-                repo_run_stream_command(requested_task_name, member)
+                repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
             ),
         ],
     );
@@ -65134,6 +65351,7 @@ fn render_service_interrupted_text(
     task_name: &str,
     requested_task_name: &str,
     member: Option<&str>,
+    overrides: ExecutionOverrides,
     service_termination: &ServiceTermination,
     runtime: Option<&ResolvedTaskRuntime>,
     summary_block: &str,
@@ -65187,17 +65405,17 @@ fn render_service_interrupted_text(
         match runtime.and_then(primary_runtime_endpoint) {
             Some(endpoint) => format!(
                 "rerun `{}` and wait for Ota to confirm the projected host endpoint at `{endpoint}`",
-                repo_run_stream_command(requested_task_name, member)
+                repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
             ),
             None => format!(
                 "rerun `{}` and wait for Ota to confirm readiness",
-                repo_run_stream_command(requested_task_name, member)
+                repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
             ),
         }
     } else {
         format!(
             "rerun `{}` for live service output",
-            repo_run_stream_command(requested_task_name, member)
+            repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
         )
     }];
     if !service_termination.after_readiness
@@ -65271,6 +65489,7 @@ fn render_service_stopped_failure_text(
     task_name: &str,
     requested_task_name: &str,
     member: Option<&str>,
+    overrides: ExecutionOverrides,
     service_termination: &ServiceTermination,
     runtime: Option<&ResolvedTaskRuntime>,
     summary_block: &str,
@@ -65330,7 +65549,7 @@ fn render_service_stopped_failure_text(
 
     let mut next_steps = vec![format!(
         "rerun `{}` for live task output",
-        repo_run_stream_command(requested_task_name, member)
+        repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
     )];
     if matches!(
         service_termination.cause,
@@ -65414,6 +65633,7 @@ fn render_service_startup_failure_text(
     requested_task_name: &str,
     member: Option<&str>,
     backend: Backend,
+    overrides: ExecutionOverrides,
     service_termination: &ServiceTermination,
     runtime: Option<&ResolvedTaskRuntime>,
     stdout: &str,
@@ -65491,7 +65711,12 @@ fn render_service_startup_failure_text(
     let next_steps = [
         format!(
             "rerun `{}` for live task output",
-            repo_run_stream_command_for_backend(requested_task_name, member, backend)
+            repo_run_stream_command_for_execution(
+                requested_task_name,
+                member,
+                backend,
+                overrides,
+            )
         ),
         task_use_details_step(Some(contract_path), member),
     ];
@@ -65736,6 +65961,7 @@ fn render_host_publication_failure_text(
     where_value: &str,
     task_name: &str,
     requested_task_name: &str,
+    member: Option<&str>,
     overrides: ExecutionOverrides,
     conflict: &ContainerHostPortConflict,
     next_steps: &[String],
@@ -65778,15 +66004,20 @@ fn render_host_publication_failure_text(
         None,
     );
     let mut next_steps = next_steps.to_vec();
+    let rerun_command =
+        repo_run_command_with_overrides(requested_task_name, member, overrides);
     match host_port_mode {
         Some(TaskRuntimeHostPortMode::Auto) => {
             next_steps.push(format!(
-                "rerun `ota run {requested_task_name}` so ota can reserve a new host port"
+                "rerun `{rerun_command}` so ota can reserve a new host port"
             ));
         }
         _ => {
+            let mut override_command =
+                repo_run_command_with_overrides(requested_task_name, member, overrides);
+            override_command.push_str(" --host-port <free port>");
             next_steps.push(format!(
-                "rerun `ota run {requested_task_name} --host-port <free port>`"
+                "rerun `{override_command}`"
             ));
             next_steps.push(format!("or set `{field}.mode` to `auto`"));
         }
@@ -65879,7 +66110,18 @@ fn choose_output_excerpt_window(lines: &[String], max_lines: usize) -> (usize, u
 
 fn output_excerpt_relevance_score(line: &str) -> usize {
     let lower = line.to_ascii_lowercase();
-    if lower.contains("panic") || lower.contains("thread '") {
+    if lower.contains("must be built because it never has been before or the last one failed")
+        || lower.contains("peer dependencies are incorrectly met")
+    {
+        0
+    } else if lower.starts_with("fail ")
+        || lower.starts_with("summary of all failing tests")
+        || lower.contains("● ")
+        || lower.contains("exceeded timeout of")
+        || lower.contains("expected number of calls:")
+    {
+        6
+    } else if lower.contains("panic") || lower.contains("thread '") {
         5
     } else if lower.contains("unable to find package manager binary")
         || lower.contains("cannot find binary path")
@@ -65913,42 +66155,81 @@ fn output_excerpt_notice(excerpt: &OutputExcerpt) -> String {
     )
 }
 
-fn repo_run_stream_command(task_name: &str, member: Option<&str>) -> String {
-    match member {
-        Some(member) => format!("ota run --member {member} {task_name} --stream"),
-        None => format!("ota run {task_name} --stream"),
+fn append_run_execution_override_flags(command: &mut String, overrides: ExecutionOverrides) {
+    if let Some(backend) = overrides.backend {
+        command.push_str(" --mode ");
+        command.push_str(match backend {
+            Backend::Native => "native",
+            Backend::Container => "container",
+            Backend::Remote => "remote",
+        });
+    }
+    if let Some(lifecycle) = overrides.lifecycle {
+        command.push_str(" --lifecycle ");
+        command.push_str(match lifecycle {
+            Lifecycle::Ephemeral => "ephemeral",
+            Lifecycle::Persistent => "persistent",
+        });
+    }
+    if let Some(host_port) = overrides.host_port {
+        command.push_str(&format!(" --host-port {host_port}"));
+    }
+    if let Some(memory) = overrides.memory {
+        command.push_str(&format!(" --memory {}", format_memory_size_bytes(memory)));
+    }
+    if overrides.skip_deps {
+        command.push_str(" --skip-deps");
     }
 }
 
-fn repo_run_stream_command_for_backend(
+fn repo_run_command_with_overrides(
     task_name: &str,
     member: Option<&str>,
-    backend: Backend,
+    overrides: ExecutionOverrides,
 ) -> String {
-    let mut command = match member {
-        Some(member) => format!("ota run --member {member} {task_name}"),
-        None => format!("ota run {task_name}"),
-    };
-    match backend {
-        Backend::Container => command.push_str(" --mode container"),
-        Backend::Remote => command.push_str(" --mode remote"),
-        Backend::Native => {}
-    }
+    let mut command = repo_run_command(task_name, member);
+    append_run_execution_override_flags(&mut command, overrides);
+    command
+}
+
+fn repo_run_stream_command_with_overrides(
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> String {
+    let mut command = repo_run_command_with_overrides(task_name, member, overrides);
     command.push_str(" --stream");
     command
 }
 
-fn repo_run_command_for_backend(task_name: &str, member: Option<&str>, backend: Backend) -> String {
-    let mut command = match member {
-        Some(member) => format!("ota run --member {member} {task_name}"),
-        None => format!("ota run {task_name}"),
-    };
-    match backend {
-        Backend::Container => command.push_str(" --mode container"),
-        Backend::Remote => command.push_str(" --mode remote"),
-        Backend::Native => {}
+fn repo_run_command_for_execution(
+    task_name: &str,
+    member: Option<&str>,
+    backend: Backend,
+    overrides: ExecutionOverrides,
+) -> String {
+    let mut rerun_overrides = overrides;
+    if backend != Backend::Native || overrides.backend.is_some() {
+        rerun_overrides.backend = Some(backend);
     }
-    command
+    repo_run_command_with_overrides(task_name, member, rerun_overrides)
+}
+
+fn repo_run_stream_command_for_execution(
+    task_name: &str,
+    member: Option<&str>,
+    backend: Backend,
+    overrides: ExecutionOverrides,
+) -> String {
+    let mut rerun_overrides = overrides;
+    if backend != Backend::Native || overrides.backend.is_some() {
+        rerun_overrides.backend = Some(backend);
+    }
+    repo_run_stream_command_with_overrides(task_name, member, rerun_overrides)
+}
+
+fn repo_run_command_for_backend(task_name: &str, member: Option<&str>, backend: Backend) -> String {
+    repo_run_command_for_execution(task_name, member, backend, ExecutionOverrides::default())
 }
 
 fn repo_run_command(task_name: &str, member: Option<&str>) -> String {
@@ -66444,10 +66725,16 @@ fn runtime_listener_resolution_receipt_note(
     task: &str,
     listener: &str,
     kind: &RuntimeListenerResolutionKind,
+    overrides: ExecutionOverrides,
 ) -> String {
-    runtime_listener_resolution_text(task, listener, kind, &repo_run_stream_command(task, member))
-        .next_steps
-        .join("; ")
+    runtime_listener_resolution_text(
+        task,
+        listener,
+        kind,
+        &repo_run_stream_command_with_overrides(task, member, overrides),
+    )
+    .next_steps
+    .join("; ")
 }
 
 fn render_run_structured_error_text(
@@ -66461,6 +66748,9 @@ fn render_run_structured_error_text(
     receipt_text: Option<&str>,
 ) -> String {
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
+    let rerun_command = repo_run_command_with_overrides(task_name, member, overrides);
+    let rerun_stream_command =
+        repo_run_stream_command_with_overrides(task_name, member, overrides);
     let (summary, mut why_lines, mut next_steps) = match error {
         RunError::RuntimeListenerResolutionFailed {
             task,
@@ -66471,7 +66761,7 @@ fn render_run_structured_error_text(
                 task,
                 listener,
                 kind,
-                &repo_run_stream_command(task, member),
+                &repo_run_stream_command_with_overrides(task, member, overrides),
             );
             (
                 runtime_listener_resolution.summary,
@@ -66497,10 +66787,7 @@ fn render_run_structured_error_text(
                 String::from(
                     "rerun `ota clean` or remove the container manually if it is still present",
                 ),
-                format!(
-                    "rerun `{}` when ready",
-                    repo_run_stream_command(task_name, member)
-                ),
+                format!("rerun `{}` when ready", rerun_stream_command),
             ],
         ),
         RunError::RepoExecutionLockBusy { path, .. } => (
@@ -66510,10 +66797,7 @@ fn render_run_structured_error_text(
             )],
             vec![
                 String::from("wait for the active ota execution to finish"),
-                format!(
-                    "then rerun `{}`",
-                    repo_run_stream_command(task_name, member).replace(" --stream", "")
-                ),
+                format!("then rerun `{}`", rerun_command),
             ],
         ),
         RunError::RepoExecutionLockFailed {
@@ -66528,10 +66812,7 @@ fn render_run_structured_error_text(
             )],
             vec![
                 String::from("repair local permissions or file-system access for `.ota/state/`"),
-                format!(
-                    "then rerun `{}`",
-                    repo_run_stream_command(task_name, member).replace(" --stream", "")
-                ),
+                format!("then rerun `{}`", rerun_command),
             ],
         ),
         RunError::UnknownTask { task } => (
@@ -66599,7 +66880,7 @@ fn render_run_structured_error_text(
                 String::from(
                     "or satisfy the missing prerequisites in the backend environment manually",
                 ),
-                format!("rerun `{}`", repo_run_stream_command(task_name, member)),
+                format!("rerun `{}`", rerun_stream_command),
             ],
         ),
         RunError::BackendFulfillmentFailed {
@@ -66615,7 +66896,7 @@ fn render_run_structured_error_text(
             ],
             vec![
                 String::from("repair the backend provisioning source or policy mapping and retry"),
-                format!("rerun `{}`", repo_run_stream_command(task_name, member)),
+                format!("rerun `{}`", rerun_stream_command),
             ],
         ),
         RunError::ToolchainFulfillmentFailed {
@@ -66641,7 +66922,7 @@ fn render_run_structured_error_text(
                     ),
                 ],
                 toolchain_fulfillment_next_steps(
-                    &repo_run_stream_command(task_name, member),
+                    rerun_stream_command.as_str(),
                     provider,
                     task,
                     toolchain,
@@ -66656,7 +66937,14 @@ fn render_run_structured_error_text(
             vec![
                 format!(
                     "rerun `{}` without `--skip-deps`",
-                    repo_run_command(task, member)
+                    repo_run_command_with_overrides(
+                        task,
+                        member,
+                        ExecutionOverrides {
+                            skip_deps: false,
+                            ..overrides
+                        },
+                    )
                 ),
                 task_use_details_step(Some(contract_path), member),
             ],
@@ -66726,7 +67014,7 @@ fn render_run_structured_error_text(
                 .and_then(|listener_spec| listener_spec.project.host.as_ref())
                 .is_some_and(|host| host.port.mode == TaskRuntimeHostPortMode::Auto);
             let run_command =
-                repo_run_stream_command(task.as_str(), member).replace(" --stream", "");
+                repo_run_command_with_overrides(task.as_str(), member, overrides);
             let mut next_steps = vec![format!(
                 "stop the process or container currently using `{address}:{port}`"
             )];
@@ -66773,7 +67061,10 @@ fn render_run_structured_error_text(
             vec![
                 format!("stop the process already using `{address}:{port}`"),
                 format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
-                format!("rerun `{}`", repo_run_stream_command(task.as_str(), member)),
+                format!(
+                    "rerun `{}`",
+                    repo_run_stream_command_with_overrides(task.as_str(), member, overrides)
+                ),
                 task_use_details_step(Some(contract_path), member),
             ],
         ),
@@ -66797,7 +67088,10 @@ fn render_run_structured_error_text(
                 format!("stop the process already using `{address}:{port}` inside the container"),
                 String::from("or run `ota clean` to recreate the persistent backend"),
                 format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
-                format!("rerun `{}`", repo_run_stream_command(task, member)),
+                format!(
+                    "rerun `{}`",
+                    repo_run_stream_command_with_overrides(task, member, overrides)
+                ),
             ],
         ),
         RunError::HostPortOverrideNoProjectedListener { task } => (
@@ -66994,7 +67288,7 @@ fn render_run_structured_error_text(
                 ),
                 format!(
                     "repair the declared environment sources, then rerun `{}`",
-                    paint_code(&repo_run_command(task_name, member))
+                    paint_code(&rerun_command)
                 ),
             ],
         ),
@@ -67014,7 +67308,7 @@ fn render_run_structured_error_text(
                 ),
                 format!(
                     "repair the declared environment sources, then rerun `{}`",
-                    paint_code(&repo_run_command(task_name, member))
+                    paint_code(&rerun_command)
                 ),
             ],
         ),
@@ -67128,7 +67422,7 @@ fn render_run_structured_error_text(
                 task,
                 listener,
                 kind,
-                &repo_run_stream_command(task, member),
+                &repo_run_stream_command_with_overrides(task, member, overrides),
             );
             let mut output = structured_field_error_text(
                 "RUN",
@@ -72982,8 +73276,20 @@ struct PhaseExecutionContext {
     cwd: Option<String>,
 }
 
-fn skip_deps_next(task_name: &str, member: Option<&str>, existing: Option<String>) -> String {
-    let rerun_command = repo_run_stream_command(task_name, member);
+fn skip_deps_next(
+    task_name: &str,
+    member: Option<&str>,
+    overrides: ExecutionOverrides,
+    existing: Option<String>,
+) -> String {
+    let rerun_command = repo_run_stream_command_with_overrides(
+        task_name,
+        member,
+        ExecutionOverrides {
+            skip_deps: false,
+            ..overrides
+        },
+    );
     let override_note = format!(
         "rerun `{rerun_command}` without `--skip-deps` to validate the full declared task flow"
     );

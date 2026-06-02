@@ -351,8 +351,11 @@ If you want the fastest path to the right example by repo shape, use
 Example contracts:
 
 - [basic-node](examples/basic-node/ota.yaml) - Node / TypeScript starter
-- [basic-dotnet](examples/basic-dotnet/ota.yaml) - C# / .NET starter
-- [basic-java](examples/basic-java/ota.yaml) - Maven starter
+- [basic-python](examples/basic-python/ota.yaml) - uv-backed Python starter
+- [basic-go](examples/basic-go/ota.yaml) - Go toolchain starter
+- [basic-ruby](examples/basic-ruby/ota.yaml) - Ruby + Bundler starter
+- [basic-dotnet](examples/basic-dotnet/ota.yaml) - .NET toolchain starter
+- [basic-java](examples/basic-java/ota.yaml) - SDKMAN-backed Maven starter
 - [basic-rust](examples/basic-rust/ota.yaml) - Rustup-backed Cargo starter
 - [basic-script](examples/basic-script/ota.yaml) - Script-only starter
 - [basic-services](examples/basic-services/ota.yaml) - Service-backed repo starter
@@ -803,7 +806,7 @@ Repo-level support entry point: [SUPPORT.md](SUPPORT.md)
 
 Choose by goal:
 
-- first repo contract: [Basic Node](examples/basic-node/ota.yaml), [Basic Python](examples/basic-python/ota.yaml), [Basic Rust](examples/basic-rust/ota.yaml)
+- first repo contract: [Basic Node](examples/basic-node/ota.yaml), [Basic Python](examples/basic-python/ota.yaml), [Basic Ruby](examples/basic-ruby/ota.yaml), [Basic Rust](examples/basic-rust/ota.yaml)
 - existing app with services: [Basic Services](examples/basic-services/ota.yaml), [Mixed Node + Python](examples/mixed-node-python/ota.yaml)
 - shared topology: [Shared Local Topology](examples/shared-local-topology/ota.yaml), [Shared Remote Topology](examples/shared-remote-topology/README.md)
 - multi-repo bootstrap: [Basic Workspace](examples/workspace-basic/ota.workspace.yaml), [Acquisition Workspace](examples/workspace-acquire/ota.workspace.yaml)
@@ -815,10 +818,11 @@ If you want the shortest “which example proves what?” guide, use
 ### Minimal contracts
 
 - [Basic Node](examples/basic-node/ota.yaml) - Node / TypeScript starter
-- [Basic .NET](examples/basic-dotnet/ota.yaml) - C# / .NET starter
-- [Basic Java](examples/basic-java/ota.yaml) - Maven starter
-- [Basic Python](examples/basic-python/ota.yaml) - Python starter
-- [Basic Go](examples/basic-go/ota.yaml) - Go module starter
+- [Basic .NET](examples/basic-dotnet/ota.yaml) - .NET toolchain starter
+- [Basic Java](examples/basic-java/ota.yaml) - SDKMAN-backed Maven starter
+- [Basic Python](examples/basic-python/ota.yaml) - uv-backed Python starter
+- [Basic Go](examples/basic-go/ota.yaml) - Go toolchain starter
+- [Basic Ruby](examples/basic-ruby/ota.yaml) - Ruby + Bundler starter
 - [Basic Rust](examples/basic-rust/ota.yaml) - Rustup-backed Cargo starter
 - [Basic Script](examples/basic-script/ota.yaml) - Script-only starter
 
