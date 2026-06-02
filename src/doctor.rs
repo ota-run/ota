@@ -25,6 +25,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::net::TcpStream;
+use std::ffi::OsStr;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -7122,7 +7123,7 @@ fn diagnose_command_version(
         Some(command_version_probe_candidates(
             executable_candidates,
             requirement,
-            command_version_probe,
+            |candidate| command_version_probe_in_working_dir(candidate, contract_working_dir(contract_path)),
         ))
     } else if mode == DoctorMode::Container {
         let Some(container_probe) = container_probe else {
@@ -9877,17 +9878,35 @@ pub(crate) fn command_available(name: &str) -> bool {
 }
 
 fn command_version_probe(name: &str) -> CommandVersionProbe {
+    command_version_probe_in_working_dir(name, Path::new("."))
+}
+
+fn command_version_probe_in_working_dir(name: &str, working_dir: &Path) -> CommandVersionProbe {
     let command = version_command_string(name);
-    let Some(resolved_path) = resolve_command_path(name) else {
+    let resolved_path = resolve_command_path(name);
+    if resolved_path.is_none() && !looks_like_command_path(name) {
         return CommandVersionProbe {
             command,
             resolved_path: None,
             probe_started: false,
             outcome: CommandVersionProbeOutcome::Missing,
         };
-    };
+    }
 
-    let outcome = match version_command_at_path(&resolved_path, name).output() {
+    let resolved_path = resolved_path
+        .as_deref()
+        .filter(|path| !should_probe_via_command_name(name, path))
+        .map(Path::to_path_buf);
+    let program = if looks_like_command_path(name) {
+        resolved_path
+            .as_deref()
+            .unwrap_or_else(|| Path::new(name))
+            .as_os_str()
+    } else {
+        OsStr::new(name)
+    };
+    let outcome = version_command(name, program, working_dir).output();
+    let outcome = match outcome {
         Ok(output) if output.status.success() => {
             let combined = format!(
                 "{} {}",
@@ -9910,7 +9929,7 @@ fn command_version_probe(name: &str) -> CommandVersionProbe {
 
     CommandVersionProbe {
         command,
-        resolved_path: Some(resolved_path),
+        resolved_path,
         probe_started: true,
         outcome,
     }
@@ -10064,14 +10083,25 @@ fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
     deduped
 }
 
-fn version_command_at_path(path: &Path, name: &str) -> Command {
-    let mut command = Command::new(path);
+fn version_command(name: &str, program: &OsStr, working_dir: &Path) -> Command {
+    let mut command = Command::new(program);
+    command.current_dir(working_dir);
     if name == "go" {
         command.arg("version");
     } else {
         command.arg("--version");
     }
     command
+}
+
+fn should_probe_via_command_name(name: &str, resolved_path: &Path) -> bool {
+    if looks_like_command_path(name) {
+        return false;
+    }
+    let Ok(target) = std::fs::read_link(resolved_path) else {
+        return false;
+    };
+    provider_hint_from_probe_path(&target) == Some("mise")
 }
 
 pub(crate) fn resolve_command_path(name: &str) -> Option<PathBuf> {
@@ -11894,6 +11924,72 @@ tasks:
         assert_windows_path_eq(resolved.as_deref(), npm_path.as_path());
         #[cfg(not(windows))]
         assert_eq!(resolved.as_deref(), Some(npm_path.as_path()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mise_shim_paths_use_command_name_probe_strategy() {
+        use std::os::unix::fs::symlink;
+
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let shim_bin = temp.path().join("shim-bin");
+        let manager_bin = temp.path().join("manager-bin");
+        fs::create_dir_all(&shim_bin).unwrap();
+        fs::create_dir_all(&manager_bin).unwrap();
+
+        let mise_path = write_fake_command(&manager_bin, "mise", "#!/bin/sh\necho v24.16.0\n");
+        let shim_path = shim_bin.join("node");
+        symlink(&mise_path, &shim_path).unwrap();
+        assert!(super::should_probe_via_command_name("node", &shim_path));
+        assert!(!super::should_probe_via_command_name(
+            shim_path.to_str().unwrap(),
+            &shim_path
+        ));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn command_version_probe_uses_contract_working_dir_for_mise_shims() {
+        use std::os::unix::fs::symlink;
+
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        let repo_dir = temp.path().join("repo-22");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::create_dir_all(&repo_dir).unwrap();
+
+        let mise_path = write_fake_command(
+            &bin_dir,
+            "mise",
+            "#!/bin/sh\ncase \"$PWD\" in\n  *repo-22*) echo v22.22.3 ;;\n  *) echo v24.16.0 ;;\nesac\n",
+        );
+        let shim_path = bin_dir.join("node");
+        symlink(&mise_path, &shim_path).unwrap();
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let probe = super::command_version_probe_in_working_dir("node", &repo_dir);
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match probe.outcome {
+            super::CommandVersionProbeOutcome::Version(actual) => {
+                assert_eq!(actual, "22.22.3");
+            }
+            other => panic!("expected version probe result, got {other:?}"),
+        }
     }
 
     #[test]
