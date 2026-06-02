@@ -169,7 +169,8 @@ use crate::toolchains::{
 };
 use crate::update;
 use crate::validator::{
-    ContractAdvisory, ValidationErrors, collect_contract_advisories, validate_contract_with_path,
+    ContractAdvisory, ValidationErrors, collect_contract_advisories_with_contract_path,
+    validate_contract_with_path,
 };
 use crate::workspace::{
     DEFAULT_WORKSPACE_FILE, WorkspaceContract, WorkspaceExecutionSummary, WorkspaceRepoRef,
@@ -1085,7 +1086,10 @@ pub fn validate(
             Ok(target) => match validate_declared_monorepo_members(&resolved_path) {
                 Ok(()) => match format {
                     OutputFormat::Text => {
-                        let advisories = collect_contract_advisories(&target.contract);
+                        let advisories = collect_contract_advisories_with_contract_path(
+                            &target.contract,
+                            Some(&resolved_path),
+                        );
                         CommandOutput::success(render_validate_success_output(
                             &resolved_path,
                             member,
@@ -1094,7 +1098,8 @@ pub fn validate(
                         ))
                     }
                     OutputFormat::Json => {
-                        let warnings = collect_validate_warnings(&target.contract);
+                        let warnings =
+                            collect_validate_warnings(&target.contract, Some(&resolved_path));
                         CommandOutput::success(to_json(&ValidateSuccess {
                             ok: true,
                             path: &path_display,
@@ -1174,8 +1179,8 @@ pub fn validate(
     )
 }
 
-fn collect_validate_warnings(contract: &Contract) -> Vec<String> {
-    collect_contract_advisories(contract)
+fn collect_validate_warnings(contract: &Contract, contract_path: Option<&Path>) -> Vec<String> {
+    collect_contract_advisories_with_contract_path(contract, contract_path)
         .into_iter()
         .map(|advisory| format!("{} | Why: {}", advisory.summary(), advisory.why()))
         .collect()
@@ -1244,6 +1249,18 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
                 "{} attachment → {}",
                 value.tool, value.effective_path
             )),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
+        ContractAdvisory::IsolatedYarnReleaseShadow(value) => format!(
+            "{} context `{}` path `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.context_name,
+            value.isolated_path,
+            paint_key("Risk:"),
+            render_validate_warning_detail("Yarn release artifact shadowing in container mode"),
             paint_key("Why:"),
             render_validate_warning_detail(&advisory.why()),
             paint_key("Next:"),
@@ -52538,7 +52555,7 @@ tasks:
         )
         .unwrap();
 
-        let warnings = collect_validate_warnings(&contract);
+        let warnings = collect_validate_warnings(&contract, None);
 
         assert!(warnings.iter().any(|warning| {
             warning
@@ -52580,7 +52597,7 @@ tasks:
         )
         .unwrap();
 
-        let warnings = collect_validate_warnings(&contract);
+        let warnings = collect_validate_warnings(&contract, None);
 
         assert!(!warnings.iter().any(|warning| {
             warning.contains(
@@ -52615,7 +52632,7 @@ tasks:
         )
         .unwrap();
 
-        let warnings = collect_validate_warnings(&contract);
+        let warnings = collect_validate_warnings(&contract, None);
 
         assert!(warnings.iter().any(|warning| {
             warning.contains("task `build` mutates managed isolated path `.next`")
@@ -52642,7 +52659,7 @@ agent:
         )
         .unwrap();
 
-        let warnings = collect_validate_warnings(&contract);
+        let warnings = collect_validate_warnings(&contract, None);
         assert!(warnings.iter().any(|warning| {
             warning.contains("agent.bootstrap.ota.sh")
                 && warning.contains("moving target without an explicit version pin")
@@ -52668,7 +52685,7 @@ tasks:
         )
         .unwrap();
 
-        let warnings = collect_validate_warnings(&contract);
+        let warnings = collect_validate_warnings(&contract, None);
         assert!(warnings.iter().any(|warning| {
             warning.contains("split ownership")
                 && warning.contains("runtimes.node")
