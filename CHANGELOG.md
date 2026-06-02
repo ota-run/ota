@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- hardened container runtime-proof cleanup for dependency-isolation volumes: Ota now retries
+  transient Docker `volume is in use` cleanup races with backoff instead of turning a proven ready
+  container proof into a cleanup failure on the first short release lag
+- improved `ota run` failure excerpts for noisy test runners: Ota now prioritizes real failing-test
+  markers such as `FAIL`, `Failed Tests`, and `AssertionError` over surrounding passing test
+  chatter, so captured output centers on the actual failure instead of adjacent success lines
+- fixed a native runtime/tool trust bug across `ota doctor` and `ota run`: Ota no longer
+  prepends `mise` shim directories into its own process PATH, and native version probes now run
+  commands from the contract working directory instead of reconstructing shim paths, so active
+  `mise exec` environments and repo-scoped version-manager context are preserved instead of being
+  overwritten by Ota-owned PATH drift
 - fixed a Python toolchain trust bug in `ota doctor`: `toolchains.python` with `provider: uv`
   now probes Python runtime candidates (`python3.12`, `python3`, `python`) instead of probing
   the `uv` executable as if it were the runtime, so native/container diagnosis no longer reports

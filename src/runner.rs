@@ -1511,7 +1511,7 @@ const OTA_ISOLATED_FILE_MOUNTS_DIR: &str = "isolated-file-mounts";
 const OTA_RUN_EXECUTION_LOCK_FILE: &str = "run-execution.lock";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 const EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS: usize = 5;
-const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 5;
+const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 8;
 
 static RUN_INTERRUPT_REQUESTED: AtomicBool = AtomicBool::new(false);
 static RUN_INTERRUPT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -3390,7 +3390,112 @@ fn task_command_output_reports_user_interruption(command_output: &TaskCommandOut
         || (command_output.interrupted && command_output.exit_code == 0)
 }
 
+const NATIVE_SERVICE_POST_EXIT_READINESS_GRACE_FLOOR_MILLIS: u64 = 5_000;
+const NATIVE_SERVICE_POST_EXIT_READINESS_GRACE_CEILING_SECS: u64 = 30;
+
+fn native_service_post_exit_readiness_grace(
+    runtime_spec: Option<&TaskRuntimeSpec>,
+) -> Duration {
+    let floor = Duration::from_millis(NATIVE_SERVICE_POST_EXIT_READINESS_GRACE_FLOOR_MILLIS);
+    let ceiling = Duration::from_secs(NATIVE_SERVICE_POST_EXIT_READINESS_GRACE_CEILING_SECS);
+    let Some(readiness) = runtime_spec.and_then(|runtime| runtime.readiness.as_ref()) else {
+        return floor;
+    };
+    let grace = readiness
+        .start_period
+        .as_deref()
+        .and_then(parse_readiness_duration_spec)
+        .unwrap_or(Duration::ZERO)
+        .saturating_add(
+            readiness
+                .timeout
+                .as_deref()
+                .and_then(parse_readiness_duration_spec)
+                .unwrap_or(Duration::from_millis(200)),
+        )
+        .saturating_add(
+            readiness
+                .interval
+                .as_deref()
+                .and_then(parse_readiness_duration_spec)
+                .unwrap_or(Duration::from_millis(200)),
+        );
+    grace.max(floor).min(ceiling)
+}
+
+fn final_runtime_readiness_probe_observed(
+    contract: Option<&Contract>,
+    task: Option<&crate::schema::TaskSpec>,
+    backend: Backend,
+    runtime_spec: Option<&TaskRuntimeSpec>,
+    resolved_runtime: Option<&ResolvedTaskRuntime>,
+) -> bool {
+    if let (Some(contract), Some(task), Some(runtime_spec)) = (contract, task, runtime_spec) {
+        let listener_name = runtime_spec
+            .readiness
+            .as_ref()
+            .and_then(|readiness| readiness.listener.as_deref())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .or_else(|| runtime_spec.listeners.keys().next().map(String::as_str));
+        if let Some(listener_name) = listener_name
+            && let Ok(probe) =
+                task_runtime_host_readiness_probe_for_backend(contract, task, backend, listener_name)
+        {
+            if host_runtime_readiness_observed(&probe, probe.default_timeout) {
+                return true;
+            }
+        }
+    }
+    let (Some(runtime_spec), Some(resolved_runtime)) = (runtime_spec, resolved_runtime) else {
+        return false;
+    };
+    let Some(targets) = runtime_readiness_targets(contract, runtime_spec, resolved_runtime) else {
+        return false;
+    };
+    let timeout = readiness_timing_policy(contract, runtime_spec.readiness.as_ref()).timeout;
+    readiness_targets_observed_with_timeout(targets.as_slice(), timeout)
+}
+
+fn collect_runtime_readiness_after_command_exit(
+    contract: Option<&Contract>,
+    task: Option<&crate::schema::TaskSpec>,
+    backend: Backend,
+    readiness_probe: Option<RuntimeReadinessProbe>,
+    runtime_spec: Option<&TaskRuntimeSpec>,
+    resolved_runtime: Option<&ResolvedTaskRuntime>,
+    command_exit_code: i32,
+    interrupted: bool,
+) -> bool {
+    let Some(probe) = readiness_probe else {
+        return false;
+    };
+    let service_requires_readiness = runtime_spec.is_some_and(|spec| {
+        spec.kind == TaskRuntimeKind::Service
+            && resolved_runtime.is_some_and(resolved_runtime_has_public_endpoint)
+    });
+    if service_requires_readiness && command_exit_code == 0 && !interrupted {
+        let observed = probe.wait_then_stop_and_collect(native_service_post_exit_readiness_grace(
+            runtime_spec,
+        ));
+        return observed
+            || final_runtime_readiness_probe_observed(
+                contract,
+                task,
+                backend,
+                runtime_spec,
+                resolved_runtime,
+            );
+    }
+    probe.stop_and_collect()
+}
+
+fn task_effects_mutate_external_state(task: Option<&crate::schema::TaskSpec>) -> bool {
+    task.is_some_and(|task| !task.effects.external_state.is_empty())
+}
+
 fn normalize_native_service_startup_exit_code(
+    task: Option<&crate::schema::TaskSpec>,
     runtime_spec: Option<&TaskRuntimeSpec>,
     resolved_runtime: Option<&ResolvedTaskRuntime>,
     command_exit_code: i32,
@@ -3403,6 +3508,17 @@ fn normalize_native_service_startup_exit_code(
             && resolved_runtime.is_some_and(resolved_runtime_has_public_endpoint)
     });
     if service_requires_readiness && !readiness_observed && command_exit_code == 0 && !interrupted {
+        if task_effects_mutate_external_state(task) {
+            return (
+                0,
+                merge_execution_note(
+                    interruption_note,
+                    Some(String::from(
+                        "starter exited cleanly before local readiness was observed; use workflow/runtime proof to confirm the declared endpoint",
+                    )),
+                ),
+            );
+        }
         return (
             1,
             merge_execution_note(
@@ -4467,6 +4583,18 @@ struct RuntimeReadinessProbe {
 }
 
 impl RuntimeReadinessProbe {
+    fn wait_then_stop_and_collect(mut self, grace: Duration) -> bool {
+        let deadline = Instant::now() + grace;
+        while !self.observed.load(Ordering::Relaxed) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(25));
+        }
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+        self.observed.load(Ordering::Relaxed)
+    }
+
     fn stop_and_collect(mut self) -> bool {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
@@ -5924,6 +6052,7 @@ fn execute_task_with_hooks(
     }
     let command_output = execute_task_command(
         Some(contract),
+        Some(task),
         task_name,
         runtime,
         &prepared_execution,
@@ -6648,6 +6777,7 @@ fn hook_generation_for_task(
 
 fn execute_task_command(
     contract: Option<&Contract>,
+    task: Option<&crate::schema::TaskSpec>,
     task_name: &str,
     runtime: Option<&TaskRuntimeSpec>,
     execution: &PreparedTaskExecution,
@@ -6702,6 +6832,8 @@ fn execute_task_command(
                 let mut resolved_env = env_overrides.clone();
                 extend_missing_env(&mut resolved_env, runtime_bind_env_for_native(runtime));
                 execute_native_task_command(
+                    contract,
+                    task,
                     task_name,
                     runtime,
                     command,
@@ -7377,6 +7509,7 @@ pub(crate) fn run_backend_command_captured(
 ) -> Result<TaskCommandOutput, RunError> {
     execute_task_command(
         None,
+        None,
         task_name,
         None,
         &PreparedTaskExecution::Shell {
@@ -7413,6 +7546,7 @@ pub(crate) fn run_backend_argv_command_captured(
         },
     };
     execute_task_command(
+        None,
         None,
         task_name,
         None,
@@ -8944,16 +9078,16 @@ fn probe_native_backend_command_version(
     working_dir: &Path,
     command_name: &str,
 ) -> Result<Option<String>, String> {
-    let Some(resolved) = crate::doctor::resolve_command_path(command_name) else {
+    if crate::doctor::resolve_command_path(command_name).is_none() {
         return Ok(None);
-    };
+    }
 
     let mut attempted_exit_code = None;
     let mut attempted_error = None;
     let mut parseable_attempt_observed = false;
 
     for args in native_backend_version_probe_args(command_name) {
-        let output = native_backend_probe_output(resolved.as_path(), args, working_dir);
+        let output = native_backend_probe_output(command_name, args, working_dir);
         match output {
             Ok(output) => {
                 if output.status.success() {
@@ -9006,11 +9140,11 @@ fn native_backend_version_probe_args(command_name: &str) -> Vec<&'static str> {
 }
 
 fn native_backend_probe_output(
-    resolved_path: &Path,
+    command_name: &str,
     args: &str,
     working_dir: &Path,
 ) -> std::io::Result<std::process::Output> {
-    let mut command = native_backend_probe_command(resolved_path);
+    let mut command = native_backend_probe_command(command_name);
     command
         .arg(args)
         .current_dir(working_dir)
@@ -9021,8 +9155,8 @@ fn native_backend_probe_output(
 }
 
 #[cfg(windows)]
-fn native_backend_probe_command(resolved_path: &Path) -> Command {
-    let is_wrapper = resolved_path
+fn native_backend_probe_command(command_name: &str) -> Command {
+    let is_wrapper = Path::new(command_name)
         .extension()
         .and_then(|value| value.to_str())
         .is_some_and(|value| {
@@ -9030,15 +9164,15 @@ fn native_backend_probe_command(resolved_path: &Path) -> Command {
         });
     if is_wrapper {
         let mut command = Command::new("cmd");
-        command.arg("/C").arg(resolved_path);
+        command.arg("/C").arg(command_name);
         return command;
     }
-    Command::new(resolved_path)
+    Command::new(command_name)
 }
 
 #[cfg(not(windows))]
-fn native_backend_probe_command(resolved_path: &Path) -> Command {
-    Command::new(resolved_path)
+fn native_backend_probe_command(command_name: &str) -> Command {
+    Command::new(command_name)
 }
 
 fn backend_runtime_version_probe_command(
@@ -15068,6 +15202,8 @@ fn shell_quote(value: &str) -> String {
 }
 
 fn execute_native_task_command(
+    contract: Option<&Contract>,
+    task: Option<&crate::schema::TaskSpec>,
     task_name: &str,
     runtime: Option<&crate::schema::TaskRuntimeSpec>,
     command: &str,
@@ -15160,10 +15296,18 @@ fn execute_native_task_command(
 
                 let command_exit_code = status.code().unwrap_or(1);
                 let interrupted = interruption_observed_since(interrupt_epoch);
-                let readiness_observed = readiness_probe
-                    .map(RuntimeReadinessProbe::stop_and_collect)
-                    .unwrap_or(false);
+                let readiness_observed = collect_runtime_readiness_after_command_exit(
+                    contract,
+                    task,
+                    Backend::Native,
+                    readiness_probe,
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    command_exit_code,
+                    interrupted,
+                );
                 let (exit_code, execution_note) = normalize_native_service_startup_exit_code(
+                    task,
                     runtime_spec,
                     resolved_runtime.as_ref(),
                     command_exit_code,
@@ -15246,10 +15390,18 @@ fn execute_native_task_command(
 
                 let command_exit_code = status.code().unwrap_or(1);
                 let interrupted = interruption_observed_since(interrupt_epoch);
-                let readiness_observed = readiness_probe
-                    .map(RuntimeReadinessProbe::stop_and_collect)
-                    .unwrap_or(false);
+                let readiness_observed = collect_runtime_readiness_after_command_exit(
+                    contract,
+                    task,
+                    Backend::Native,
+                    readiness_probe,
+                    runtime_spec,
+                    resolved_runtime.as_ref(),
+                    command_exit_code,
+                    interrupted,
+                );
                 let (exit_code, execution_note) = normalize_native_service_startup_exit_code(
+                    task,
                     runtime_spec,
                     resolved_runtime.as_ref(),
                     command_exit_code,
@@ -21202,7 +21354,7 @@ fn remove_dependency_isolation_volume(
         if attempt + 1 < DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS
             && dependency_isolation_volume_still_in_use(&remove)
         {
-            thread::sleep(Duration::from_millis(150));
+            thread::sleep(dependency_isolation_volume_remove_retry_delay(attempt));
             continue;
         }
 
@@ -21216,6 +21368,12 @@ fn remove_dependency_isolation_volume(
     }
 
     Ok(false)
+}
+
+fn dependency_isolation_volume_remove_retry_delay(attempt: usize) -> Duration {
+    let shift = attempt.min(4) as u32;
+    let millis = 100u64.saturating_mul(1u64 << shift).min(1_000);
+    Duration::from_millis(millis)
 }
 
 fn dependency_isolation_volume_still_in_use(output: &ContainerCommandOutput) -> bool {
@@ -33077,6 +33235,112 @@ tasks:
     }
 
     #[test]
+    fn native_external_state_starter_clean_exit_before_readiness_stays_successful() {
+        let _guard = env_mutex_lock();
+        let reserved = TcpListener::bind("127.0.0.1:0").expect("should reserve free port");
+        let port = reserved
+            .local_addr()
+            .expect("reserved socket should expose local address")
+            .port();
+        drop(reserved);
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: exit 0
+    effects:
+      external_state:
+        - docker
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+"#
+        ));
+
+        let outcome =
+            super::run_task_with_progress(&fixture.contract, fixture.file_path(), "dev", false)
+                .expect("external-state starter should return streaming output");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(outcome.execution_note.as_deref().is_some_and(|note| {
+            note.contains("starter exited cleanly before local readiness was observed")
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_service_detached_starter_can_become_ready_after_clean_exit() {
+        let _guard = env_mutex_lock();
+        if !Command::new("sh")
+            .args(["-c", "command -v python3 >/dev/null 2>&1"])
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            return;
+        }
+
+        let reserved = TcpListener::bind("127.0.0.1:0").expect("should reserve free port");
+        let port = reserved
+            .local_addr()
+            .expect("reserved socket should expose local address")
+            .port();
+        drop(reserved);
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > detached.pid
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+"#
+        ));
+
+        let outcome =
+            super::run_task_with_progress(&fixture.contract, fixture.file_path(), "dev", false)
+                .expect("native detached starter should return streaming output");
+
+        if let Ok(pid) = fs::read_to_string(fixture.dir.path().join("detached.pid")) {
+            let _ = Command::new("kill").arg(pid.trim()).status();
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(outcome.execution_note.is_none(), "{outcome:?}");
+    }
+
+    #[test]
     fn run_task_captured_rejects_host_port_override_for_native_execution() {
         let fixture = ContractFixture::new(
             r#"
@@ -42879,6 +43143,62 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn remove_dependency_isolation_volume_retries_transient_in_use_failures() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::write(state_dir.join("volume.retry-me"), "").unwrap();
+        fs::write(state_dir.join("volume.retry-me.inuse_attempts"), "2").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let removed =
+            super::remove_dependency_isolation_volume("clean", "docker", "retry-me").unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(removed);
+        assert!(!state_dir.join("volume.retry-me").exists());
+        assert!(!state_dir.join("volume.retry-me.inuse_attempts").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn clean_execution_handles_engines_that_reject_volume_label_filters() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -45812,6 +46132,17 @@ EOF
         [ "$1" = "-f" ] && shift
         volume_name="$1"
         [ -f "$state_dir/volume.$volume_name" ] || exit 1
+        attempts_file="$state_dir/volume.$volume_name.inuse_attempts"
+        if [ -f "$attempts_file" ]; then
+          attempts="$(cat "$attempts_file")"
+          if [ "${attempts:-0}" -gt 0 ] 2>/dev/null; then
+            attempts=$((attempts - 1))
+            printf "%s" "$attempts" > "$attempts_file"
+            printf "Error response from daemon: remove %s: volume is in use - [transient-holder]\n" "$volume_name" >&2
+            exit 1
+          fi
+          rm -f "$attempts_file"
+        fi
         holders=""
         for mount_file in "$state_dir"/*.mounts; do
           [ -e "$mount_file" ] || continue
@@ -46218,6 +46549,7 @@ tasks:
 
         let output = execute_task_command(
             Some(&fixture.contract),
+            Some(task),
             "setup:env-local",
             None,
             &PreparedTaskExecution::FileAction { action },

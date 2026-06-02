@@ -42033,6 +42033,104 @@ workflows:
     }
 
     #[test]
+    fn wait_for_proof_runtime_readiness_keeps_warning_only_doctor_reports_as_success() {
+        let _guard = cwd_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("listener should become nonblocking");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buffer = [0u8; 256];
+                        let _ = stream.read(&mut buffer);
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: proof-runtime-regression
+checks:
+  - name: advisory-warning
+    kind: file
+    severity: warn
+    path: missing-warning.txt
+    expect: file
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+  app:
+    run:
+      task: app
+    readiness:
+      probes:
+        - backend-ready
+      checks:
+        - advisory-warning
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:{port}/healthz/readiness
+      timeout: 1000
+"#
+            ),
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let mut child = if cfg!(windows) {
+            Command::new("cmd").args(["/C", "exit 0"]).spawn().unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap()
+        };
+
+        let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
+            &contract,
+            &contract_path,
+            Some("app"),
+            ExecutionOverrides::default(),
+            &mut child,
+            "ota up --stream",
+            None,
+        )
+        .unwrap();
+
+        let _ = child.wait();
+        server.join().expect("probe server should finish");
+
+        assert!(proof_ok);
+        assert_eq!(phase, "post-up diagnosis");
+        assert!(up_failure.is_none(), "{up_failure:?}");
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.findings.len(), 1, "{report:?}");
+        assert_eq!(report.findings[0].severity, FindingSeverity::Warn);
+    }
+
+    #[test]
     fn wait_for_proof_runtime_readiness_does_not_hide_probe_failure_when_service_run_exits_successfully()
      {
         let _guard = cwd_mutex_lock();
@@ -58796,6 +58894,53 @@ thrown: "Exceeded timeout of 9000 ms for a test.
     }
 
     #[test]
+    fn run_failure_text_prefers_prefixed_test_failures_over_passing_test_output() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: pnpm test
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "test",
+            "test",
+            None,
+            ExecutionOverrides::default(),
+            1,
+            "",
+            r#"
+tests/e2e test: ✓ |sqlite| tests/auth/mcp-oauth.test.ts (31 tests) 24590ms
+tests/e2e test: ✓ /mcp-oauth discovery endpoints > GET /.well-known/oauth-authorization-server  353ms
+tests/e2e test: ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+tests/e2e test:  FAIL  |sqlite| tests/auth/reset.test.ts > resetting passwort via email
+tests/e2e test: AssertionError: expected undefined to be defined
+tests/e2e test:  ❯ tests/auth/reset.test.ts:57:21
+"#,
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(
+            rendered.contains("FAIL |sqlite| tests/auth/reset.test.ts"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Failed Tests 2"), "{rendered}");
+        assert!(rendered.contains("AssertionError"), "{rendered}");
+    }
+
+    #[test]
     fn run_failure_text_preserves_container_mode_in_excerpt_rerun_hint() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -66115,8 +66260,11 @@ fn output_excerpt_relevance_score(line: &str) -> usize {
     {
         0
     } else if lower.starts_with("fail ")
+        || lower.contains(" fail ")
+        || lower.contains("failed tests")
         || lower.starts_with("summary of all failing tests")
         || lower.contains("● ")
+        || lower.contains("assertionerror:")
         || lower.contains("exceeded timeout of")
         || lower.contains("expected number of calls:")
     {
@@ -70373,7 +70521,7 @@ fn wait_for_proof_runtime_readiness(
         proof_runtime_readiness_strategy(contract, contract_path, workflow_name, overrides);
     let deadline = Instant::now()
         + wait_budget_override.unwrap_or_else(|| proof_runtime_wait_budget(&readiness_strategy));
-    let agent_verdict = crate::workspace::agent_verdict_from_agent(contract.agent.as_ref());
+    let _agent_verdict = crate::workspace::agent_verdict_from_agent(contract.agent.as_ref());
     let mut deferred_service_run_exit_failure = None;
     let mut service_exit_grace_deadline = None;
     loop {
@@ -70391,8 +70539,7 @@ fn wait_for_proof_runtime_readiness(
                         && selected_up_run_task_is_service(contract, workflow_name, overrides)
                         && exit_status.success();
                     if successful_service_run_exit {
-                        let summary = doctor_summary(&latest_report, agent_verdict);
-                        if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+                        if latest_report.ok {
                             return Ok((latest_report, "post-up diagnosis", true, None));
                         }
                         deferred_service_run_exit_failure = Some(
@@ -70405,11 +70552,7 @@ fn wait_for_proof_runtime_readiness(
                                 ),
                         );
                     } else {
-                        let summary = doctor_summary(&latest_report, agent_verdict);
-                        if exit_status.success()
-                            && latest_report.ok
-                            && summary.verdict == DoctorVerdict::Ready
-                        {
+                        if exit_status.success() && latest_report.ok {
                             return Ok((latest_report, "post-up diagnosis", true, None));
                         }
                         let up_process_failure = Some(proof_runtime_process_exit_failure(
@@ -70443,8 +70586,7 @@ fn wait_for_proof_runtime_readiness(
                 doctor_mode,
                 overrides.clone(),
             );
-            let summary = doctor_summary(&latest_report, agent_verdict);
-            if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+            if latest_report.ok {
                 match up_process.try_wait() {
                     Ok(Some(exit_status)) => {
                         if exit_status.success() {
@@ -70516,8 +70658,7 @@ fn wait_for_proof_runtime_readiness(
                 doctor_mode,
                 overrides.clone(),
             );
-            let summary = doctor_summary(&latest_report, agent_verdict);
-            if latest_report.ok && summary.verdict == DoctorVerdict::Ready {
+            if latest_report.ok {
                 match up_process.try_wait() {
                     Ok(Some(exit_status)) => {
                         if exit_status.success() {
@@ -70804,7 +70945,7 @@ fn proof_runtime_status_word(
     }
     match verdict {
         DoctorVerdict::Ready => "READY",
-        DoctorVerdict::Risky => "NOT READY",
+        DoctorVerdict::Risky => "READY",
         DoctorVerdict::NotReady => {
             if phase == "preconditions" {
                 "NOT READY"
