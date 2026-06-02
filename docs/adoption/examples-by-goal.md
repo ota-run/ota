@@ -60,11 +60,12 @@ What this proves:
 Use one of the minimal starters:
 
 - [Basic Node](../../examples/basic-node/ota.yaml) for Node / TypeScript repos
-- [Basic Python](../../examples/basic-python/ota.yaml) for Python repos
+- [Basic Python](../../examples/basic-python/ota.yaml) for uv-backed Python repos
 - [Basic Go](../../examples/basic-go/ota.yaml) for Go module repos
-- [Basic Java](../../examples/basic-java/ota.yaml) for Maven repos
+- [Basic Java](../../examples/basic-java/ota.yaml) for SDKMAN + Maven repos
+- [Basic Ruby](../../examples/basic-ruby/ota.yaml) for Ruby + Bundler repos
 - [Basic Rust](../../examples/basic-rust/ota.yaml) for Rustup-backed Cargo repos
-- [Basic .NET](../../examples/basic-dotnet/ota.yaml) for C# / .NET repos
+- [Basic .NET](../../examples/basic-dotnet/ota.yaml) for .NET toolchain repos
 - [Basic Script](../../examples/basic-script/ota.yaml) for script-only repos
 
 What this proves:

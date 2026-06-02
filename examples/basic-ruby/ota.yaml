@@ -23,41 +23,41 @@
 
 version: 1
 project:
-  name: basic-python
-  description: Minimal Python repo that shows uv-backed Python toolchain ownership plus setup and verification
+  name: basic-ruby
+  description: Basic Ruby repo with Ruby toolchain ownership plus Bundler-backed setup and test tasks
   type: application
 toolchains:
-  python:
-    provider: uv
-    version: "3.12"
+  ruby:
+    provider: ruby
+    version: "3.3.11"
+    package_managers:
+      bundler: "2.5"
 tasks:
   setup:
-    description: Install and sync Python dependencies with uv
-    run: uv sync
+    description: Install Ruby gem dependencies with Bundler
+    run: bundle install
     requirements:
       toolchains:
-        - python
+        - ruby
   test:
-    description: Run the Python test suite
-    run: uv run pytest
+    description: Run the default Ruby test suite
+    run: bundle exec rake test
     depends_on:
       - setup
     requirements:
       toolchains:
-        - python
+        - ruby
 workflows:
   default: verify
   verify:
-    description: Canonical Python toolchain setup and verification path
+    description: Canonical Ruby toolchain setup and verification path
     setup:
       task: setup
     run:
       task: test
     notes: |
-      Use this when the repo front door is setup plus verification rather than a long-running dev
-      server.
-      `toolchains.python` keeps Python ownership under uv instead of splitting it across
-      `runtimes.python` and ad hoc package-manager commands.
+      Use this when the repo front door is the standard Bundler install plus Ruby test loop.
+      `toolchains.ruby` keeps Ruby and Bundler governance under one provider-backed contract.
 agent:
   entrypoint: setup
   default_task: test
@@ -67,11 +67,13 @@ agent:
   verify_after_changes:
     - test
   writable_paths:
+    - app
+    - lib
+    - spec
+    - test
     - docs
-    - tests
   protected_paths:
     - ota.yaml
   notes: |
-    Use `ota validate` before changes and `ota workflows` to inspect the setup-plus-test path.
-    Keep Python ownership under `toolchains.python` and use `ota run test` to verify Python
-    changes.
+    Use `ota validate` before changes and `ota up --workflow verify` to prepare the repo path.
+    Keep Ruby ownership under `toolchains.ruby` and use `ota run test` to verify Ruby changes.

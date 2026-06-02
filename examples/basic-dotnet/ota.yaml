@@ -24,54 +24,46 @@
 version: 1
 project:
   name: basic-dotnet
-  description: Basic .NET repo with dotnet tasks
+  description: Basic .NET repo with toolchain-owned dotnet tasks
   type: application
-runtimes:
-  dotnet: "8.0"
-tools:
-  dotnet: "*"
+toolchains:
+  dotnet:
+    provider: dotnet
+    version: "9.0"
 tasks:
   setup:
     description: Restore .NET dependencies
     run: dotnet restore
     requirements:
-      runtimes:
-        dotnet: "8.0"
-      tools:
-        dotnet: "*"
-      checks:
-        - dotnet-installed
+      toolchains:
+        - dotnet
   build:
     description: Build the .NET repo
     run: dotnet build
     depends_on:
       - setup
     requirements:
-      tools:
-        dotnet: "*"
+      toolchains:
+        - dotnet
   test:
     description: Run the .NET test suite
     run: dotnet test
     depends_on:
       - setup
     requirements:
-      tools:
-        dotnet: "*"
+      toolchains:
+        - dotnet
 workflows:
   default: verify
   verify:
-    description: Canonical .NET restore and verification path
+    description: Canonical .NET toolchain restore and verification path
     setup:
       task: setup
     run:
       task: test
     notes: |
       Use this when you want one declared repo path instead of separate restore and test commands.
-checks:
-  - name: dotnet-installed
-    kind: precondition
-    severity: error
-    run: dotnet --version
+      `toolchains.dotnet` owns both the .NET runtime and the `dotnet` CLI.
 agent:
   entrypoint: setup
   default_task: test
@@ -89,4 +81,5 @@ agent:
     - ota.yaml
   notes: |
     Use `ota validate` before changes and `ota up --workflow verify` to prepare the repo path.
-    Use `ota run build` when you want to confirm the .NET toolchain still matches the contract.
+    Keep .NET ownership under `toolchains.dotnet` and use `ota run build` or `ota run test`
+    to verify C# changes.

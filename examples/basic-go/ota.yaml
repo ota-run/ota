@@ -24,47 +24,53 @@
 version: 1
 project:
   name: basic-go
-  description: Minimal Go repo that still shows workflow-scoped setup and verification
+  description: Minimal Go repo that shows Go toolchain ownership plus setup and verification tasks
   type: application
-runtimes:
-  go: "1.24"
+toolchains:
+  go:
+    provider: go
+    version: "1.24"
 tasks:
   setup:
-    description: Download module dependencies
+    description: Download Go module dependencies
     run: go mod download
     requirements:
-      runtimes:
-        go: "1.24"
-      checks:
-        - go-installed
+      toolchains:
+        - go
+  build:
+    description: Build the Go packages in this module
+    run: go build ./...
+    depends_on:
+      - setup
+    requirements:
+      toolchains:
+        - go
   test:
     description: Run the Go test suite
     run: go test ./...
     depends_on:
       - setup
     requirements:
-      runtimes:
-        go: "1.24"
+      toolchains:
+        - go
 workflows:
   default: verify
   verify:
-    description: Canonical Go setup and verification path
+    description: Canonical Go toolchain setup and verification path
     setup:
       task: setup
     run:
       task: test
     notes: |
       Use this when the repo front door is dependency preparation plus test verification.
-checks:
-  - name: go-installed
-    kind: precondition
-    severity: error
-    run: go version
+      `toolchains.go` keeps Go runtime ownership under one provider-backed contract instead of
+      splitting it across `runtimes`, `tools`, and duplicate checks.
 agent:
   entrypoint: setup
   default_task: test
   safe_tasks:
     - setup
+    - build
     - test
   verify_after_changes:
     - test
@@ -75,4 +81,5 @@ agent:
     - ota.yaml
   notes: |
     Use `ota validate` before changes and `ota up --workflow verify` to prepare the repo path.
-    Use `ota run test` as the main verification step for Go changes.
+    Keep Go ownership under `toolchains.go` and use `ota run test` as the main verification step
+    for Go changes.
