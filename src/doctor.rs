@@ -5531,7 +5531,10 @@ fn diagnose_toolchains(
         if !toolchain.active_for_os(target_os) {
             continue;
         }
-        let executable_candidates = vec![provider.primary_executable().to_string()];
+        let executable_candidates = runtime_executable_candidates(
+            provider.owned_runtime(),
+            toolchain.version_for_os(target_os),
+        );
 
         probe_started |= diagnose_command_version(
             "runtime",
@@ -9966,6 +9969,7 @@ where
 fn runtime_executable_candidates(name: &str, requirement: &str) -> Vec<String> {
     match name {
         "python" => python_runtime_executable_candidates(requirement),
+        "rust" => vec![String::from("rustc")],
         _ => vec![name.to_string()],
     }
 }
@@ -18261,6 +18265,241 @@ workflows:
                 .findings
                 .iter()
                 .all(|finding| finding.summary != "Version mismatch for runtime: python"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn toolchain_owned_python_runtime_probe_uses_python_candidates_in_native_mode() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "uv", "#!/bin/sh\necho uv 0.4.16\n");
+        write_fake_command(&bin_dir, "python3.12", "#!/bin/sh\necho Python 3.12.8\n");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", bin_dir.as_os_str().to_os_string());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: airflow
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+tasks:
+  test:
+    run: echo ready
+    requirements:
+      toolchains:
+        - python
+workflows:
+  default: verify
+  verify:
+    run:
+      task: test
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("verify"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing runtime: python"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Version mismatch for runtime: python"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn toolchain_owned_python_runtime_probe_uses_python_candidates_in_container_mode() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'python3.12'\" >nul && (\r\n    echo {started} 1>&2\r\n    exit /b 127\r\n  )\r\n  echo %* | findstr /C:\"command -v 'python3'\" >nul && (\r\n    echo Python 3.12.8\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/python3 1>&2\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER,
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'python3.12'\"*) echo '{started}' >&2; exit 127 ;;\n    *\"command -v 'python3'\"*) echo 'Python 3.12.8'; echo '{started}' >&2; echo '{path}/usr/local/bin/python3' >&2; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER,
+            )
+        };
+        write_fake_command(&bin_dir, "docker", &docker_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: airflow
+execution:
+  preferred: container
+  backends:
+    container:
+      image: python:3.12-bookworm
+      engines: [docker]
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+tasks:
+  test:
+    run: echo ready
+    requirements:
+      toolchains:
+        - python
+workflows:
+  default: verify
+  verify:
+    run:
+      task: test
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Container,
+            Some("verify"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing runtime: python"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Version mismatch for runtime: python"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn toolchain_owned_rust_runtime_probe_uses_rustc_candidate() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "rustc", "#!/bin/sh\necho rustc 1.94.0\n");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", bin_dir.as_os_str().to_os_string());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tasks:
+  test:
+    run: echo ready
+    requirements:
+      toolchains:
+        - rust
+workflows:
+  default: verify
+  verify:
+    run:
+      task: test
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("verify"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing runtime: rust"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Version mismatch for runtime: rust"),
             "{report:?}"
         );
     }

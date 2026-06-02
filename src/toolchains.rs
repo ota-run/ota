@@ -61,7 +61,6 @@ pub(crate) const RUSTUP_TOOLCHAIN_CONTRACT: ToolchainProviderContract = Toolchai
     toolchain_name: RUSTUP_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Rustup,
     label: "rustup",
-    primary_executable: "rustc",
     owned_runtime: "rust",
     provider_specific_fields: RUSTUP_PROVIDER_SPECIFIC_FIELDS,
     provider_specific_field_summary: RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY,
@@ -80,7 +79,6 @@ pub(crate) const COREPACK_TOOLCHAIN_CONTRACT: ToolchainProviderContract =
         toolchain_name: COREPACK_TOOLCHAIN_NAME,
         provider: ToolchainProvider::Corepack,
         label: "corepack",
-        primary_executable: "node",
         owned_runtime: "node",
         provider_specific_fields: COREPACK_PROVIDER_SPECIFIC_FIELDS,
         provider_specific_field_summary: COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY,
@@ -98,7 +96,6 @@ pub(crate) const SDKMAN_TOOLCHAIN_CONTRACT: ToolchainProviderContract = Toolchai
     toolchain_name: JAVA_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Sdkman,
     label: "sdkman",
-    primary_executable: "java",
     owned_runtime: JAVA_TOOLCHAIN_NAME,
     provider_specific_fields: &[],
     provider_specific_field_summary: "",
@@ -116,7 +113,6 @@ pub(crate) const UV_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainPro
     toolchain_name: PYTHON_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Uv,
     label: "uv",
-    primary_executable: "uv",
     owned_runtime: PYTHON_TOOLCHAIN_NAME,
     provider_specific_fields: &[],
     provider_specific_field_summary: "",
@@ -134,7 +130,6 @@ pub(crate) const GO_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainPro
     toolchain_name: GO_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Go,
     label: "go",
-    primary_executable: "go",
     owned_runtime: GO_TOOLCHAIN_NAME,
     provider_specific_fields: &[],
     provider_specific_field_summary: "",
@@ -152,7 +147,6 @@ pub(crate) const RUBY_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainP
     toolchain_name: RUBY_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Ruby,
     label: "ruby",
-    primary_executable: "ruby",
     owned_runtime: RUBY_TOOLCHAIN_NAME,
     provider_specific_fields: RUBY_PROVIDER_SPECIFIC_FIELDS,
     provider_specific_field_summary: RUBY_PROVIDER_SPECIFIC_FIELD_SUMMARY,
@@ -170,7 +164,6 @@ pub(crate) const DOTNET_TOOLCHAIN_CONTRACT: ToolchainProviderContract = Toolchai
     toolchain_name: DOTNET_TOOLCHAIN_NAME,
     provider: ToolchainProvider::Dotnet,
     label: "dotnet",
-    primary_executable: "dotnet",
     owned_runtime: DOTNET_TOOLCHAIN_NAME,
     provider_specific_fields: &[],
     provider_specific_field_summary: "",
@@ -450,7 +443,6 @@ pub(crate) struct ToolchainProviderContract {
     toolchain_name: &'static str,
     provider: ToolchainProvider,
     label: &'static str,
-    primary_executable: &'static str,
     owned_runtime: &'static str,
     provider_specific_fields: &'static [ToolchainProviderSpecificField],
     provider_specific_field_summary: &'static str,
@@ -487,10 +479,6 @@ impl ToolchainProviderContract {
 
     pub(crate) const fn label(self) -> &'static str {
         self.label
-    }
-
-    pub(crate) const fn primary_executable(self) -> &'static str {
-        self.primary_executable
     }
 
     pub(crate) const fn owned_runtime(self) -> &'static str {

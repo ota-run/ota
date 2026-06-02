@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed a Python toolchain trust bug in `ota doctor`: `toolchains.python` with `provider: uv`
+  now probes Python runtime candidates (`python3.12`, `python3`, `python`) instead of probing
+  the `uv` executable as if it were the runtime, so native/container diagnosis no longer reports
+  bogus `python@uv-version` mismatches or false missing-Python blockers on Python container images
 - fixed a trust bug in failed-task output excerpts: relevance ranking now prefers real test
   failure summaries/assertions over incidental package-manager noise containing words like
   `failed`, so captured failure excerpts point at the actual failing test surface instead of
