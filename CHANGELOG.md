@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added a contract advisory for container contexts that isolate `.yarn`/`.yarn/releases` while
+  Yarn tasks run in that same context, so `ota doctor` warns before runtime about container
+  isolation shadowing committed `.yarn/releases/yarn-*.cjs` artifacts
 - fixed dotnet remediation trust drift across doctor and provider-owned toolchain guidance:
   dotnet install commands are now requirement-first, use `global.json` only when it satisfies the
   declared contract requirement, and fall back to channel-based install guidance for broad or

@@ -21,6 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::{Component, Path};
 
 use semver::Version;
@@ -5261,6 +5262,7 @@ fn backend_mode_name(backend: Backend) -> &'static str {
 pub enum ContractAdvisory {
     DependsOnBoundary(DependsOnBoundaryAdvisory),
     LikelyUnusedAttachment(AttachmentUseAdvisory),
+    IsolatedYarnReleaseShadow(IsolatedYarnReleaseShadowAdvisory),
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
     LegacyNodeRuntimeToolSplit(LegacyNodeRuntimeToolSplitAdvisory),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
@@ -5292,6 +5294,14 @@ pub struct ManagedIsolatedPathMutationAdvisory {
     pub task_name: String,
     pub context_name: String,
     pub isolated_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsolatedYarnReleaseShadowAdvisory {
+    pub context_name: String,
+    pub isolated_path: String,
+    pub release_paths: Vec<String>,
+    pub task_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5352,6 +5362,18 @@ impl ContractAdvisory {
                 advisory.tool,
                 advisory.effective_path
             ),
+            ContractAdvisory::IsolatedYarnReleaseShadow(advisory) => {
+                let declared_paths = advisory
+                    .release_paths
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "context `{}` isolates `{}` and shadows declared Yarn release path(s): {}",
+                    advisory.context_name, advisory.isolated_path, declared_paths
+                )
+            }
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => format!(
                 "task `{}` mutates managed isolated path `{}`",
                 advisory.task_name, advisory.isolated_path
@@ -5395,6 +5417,17 @@ impl ContractAdvisory {
                 advisory.tool,
                 advisory.effective_path
             ),
+            ContractAdvisory::IsolatedYarnReleaseShadow(advisory) => format!(
+                "task(s) {} run Yarn in context `{}`, and mounting `{}` as an isolated path can hide committed `.yarn/releases/yarn-*.cjs` artifacts from `/workspace`, causing late container-mode install/verify failures",
+                advisory
+                    .task_names
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                advisory.context_name,
+                advisory.isolated_path
+            ),
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => format!(
                 "task `{}` appears to mutate `{}`, which is declared under `execution.contexts.{}.attachments.isolated_paths`",
                 advisory.task_name, advisory.isolated_path, advisory.context_name
@@ -5426,6 +5459,7 @@ impl ContractAdvisory {
                 "only durable external side effects carry across",
             )),
             ContractAdvisory::LikelyUnusedAttachment(_)
+            | ContractAdvisory::IsolatedYarnReleaseShadow(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
@@ -5442,6 +5476,7 @@ impl ContractAdvisory {
                 describe_boundary_differences(&advisory.parent, &advisory.dependency).join(", "),
             ),
             ContractAdvisory::LikelyUnusedAttachment(_)
+            | ContractAdvisory::IsolatedYarnReleaseShadow(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
@@ -5459,6 +5494,7 @@ impl ContractAdvisory {
                 "point {} at `{}`",
                 advisory.tool, advisory.effective_path
             )),
+            ContractAdvisory::IsolatedYarnReleaseShadow(_) => None,
             ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
@@ -5481,6 +5517,10 @@ impl ContractAdvisory {
                 advisory.effective_path,
                 advisory.context_name,
                 advisory.isolated_path
+            ),
+            ContractAdvisory::IsolatedYarnReleaseShadow(advisory) => format!(
+                "remove `{}` from `execution.contexts.{}.attachments.isolated_paths`, or narrow isolation to cache-only paths (for example `.yarn/cache`) so committed `.yarn/releases/*` stays visible to Yarn tasks in this container context",
+                advisory.isolated_path, advisory.context_name
             ),
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => format!(
                 "remove manual cleanup of `{}` from task `{}` and let the tool manage that isolated attachment inside context `{}`",
@@ -5576,9 +5616,19 @@ fn sensitive_agent_writable_path_next(advisory: &SensitiveAgentWritablePathAdvis
 }
 
 pub fn collect_contract_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    collect_contract_advisories_with_contract_path(contract, None)
+}
+
+pub fn collect_contract_advisories_with_contract_path(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+) -> Vec<ContractAdvisory> {
     let mut advisories = Vec::new();
     advisories.extend(collect_depends_on_boundary_advisories(contract));
     advisories.extend(collect_attachment_use_advisories(contract));
+    advisories.extend(
+        collect_isolated_yarn_release_shadow_advisories_with_contract_path(contract, contract_path),
+    );
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories.extend(collect_legacy_node_runtime_tool_split_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
@@ -5899,6 +5949,80 @@ fn collect_managed_isolated_path_mutation_advisories(contract: &Contract) -> Vec
                 &mut seen,
                 &mut advisories,
             );
+        }
+    }
+
+    advisories
+}
+
+fn collect_isolated_yarn_release_shadow_advisories_with_contract_path(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+) -> Vec<ContractAdvisory> {
+    let Some(execution) = contract.execution.as_ref() else {
+        return Vec::new();
+    };
+    let declared_release_paths = declared_yarn_release_paths(contract_path);
+    if declared_release_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut advisories = Vec::new();
+    for (context_name, context) in &execution.contexts {
+        if context.backend != Backend::Container {
+            continue;
+        }
+
+        let isolated_yarn_paths = crate::execution::context_dependency_isolation_paths(context)
+            .into_iter()
+            .filter_map(|path| {
+                let normalized = normalize_dependency_isolated_path(path.as_str())?;
+                let shadowed = declared_release_paths
+                    .iter()
+                    .filter(|release_path| {
+                        normalized_path_is_within(release_path, normalized.as_str())
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if shadowed.is_empty() {
+                    None
+                } else {
+                    Some((path, shadowed))
+                }
+            })
+            .collect::<Vec<_>>();
+        if isolated_yarn_paths.is_empty() {
+            continue;
+        }
+
+        let mut yarn_tasks = BTreeSet::new();
+        for (task_name, task) in &contract.tasks {
+            let Some(task_context_name) =
+                task_execution_context_name(contract, task, Backend::Container)
+            else {
+                continue;
+            };
+            if task_context_name != context_name {
+                continue;
+            }
+            if !task_uses_container_yarn_path(task, contract) {
+                continue;
+            }
+            yarn_tasks.insert(task_name.clone());
+        }
+        if yarn_tasks.is_empty() {
+            continue;
+        }
+
+        for (isolated_path, release_paths) in isolated_yarn_paths {
+            advisories.push(ContractAdvisory::IsolatedYarnReleaseShadow(
+                IsolatedYarnReleaseShadowAdvisory {
+                    context_name: context_name.clone(),
+                    isolated_path,
+                    release_paths,
+                    task_names: yarn_tasks.iter().cloned().collect(),
+                },
+            ));
         }
     }
 
@@ -6312,6 +6436,148 @@ fn attachment_path_expectation(path: &str) -> Option<(&'static str, &'static str
         ".pip-cache" => Some(("pip", "PIP_CACHE_DIR", "/workspace/.pip-cache")),
         ".pypoetry-cache" => Some(("Poetry", "POETRY_CACHE_DIR", "/workspace/.pypoetry-cache")),
         _ => None,
+    }
+}
+
+fn declared_yarn_release_paths(contract_path: Option<&Path>) -> BTreeSet<String> {
+    let Some(contract_path) = contract_path else {
+        return BTreeSet::new();
+    };
+    let Some(contract_root) = contract_path.parent() else {
+        return BTreeSet::new();
+    };
+
+    let mut declared = BTreeSet::new();
+    for file_name in [".yarnrc.yml", ".yarnrc.yaml", ".yarnrc"] {
+        let path = contract_root.join(file_name);
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for value in extract_yarn_path_entries(content.as_str()) {
+            let Some(normalized) = normalize_dependency_isolated_path(value.as_str()) else {
+                continue;
+            };
+            if normalized.contains("/.yarn/releases/") || normalized.starts_with(".yarn/releases/")
+            {
+                declared.insert(normalized);
+            }
+        }
+    }
+
+    declared
+}
+
+fn extract_yarn_path_entries(content: &str) -> Vec<String> {
+    let mut values = Vec::new();
+
+    if let Ok(document) = serde_yaml::from_str::<serde_yaml::Value>(content)
+        && let Some(mapping) = document.as_mapping()
+    {
+        for key in ["yarnPath", "yarn-path"] {
+            let key_value = serde_yaml::Value::String(String::from(key));
+            if let Some(value) = mapping.get(&key_value).and_then(|value| value.as_str()) {
+                let normalized = unquote_shell_token(value.trim());
+                if !normalized.is_empty() {
+                    values.push(normalized.to_string());
+                }
+            }
+        }
+    }
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if let Some(value) = trimmed.strip_prefix("yarnPath:") {
+            let normalized = unquote_shell_token(value.trim());
+            if !normalized.is_empty() {
+                values.push(normalized.to_string());
+            }
+            continue;
+        }
+
+        if let Some(value) = trimmed.strip_prefix("yarn-path ") {
+            let normalized = unquote_shell_token(value.trim());
+            if !normalized.is_empty() {
+                values.push(normalized.to_string());
+            }
+        }
+    }
+
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn unquote_shell_token(value: &str) -> &str {
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        return &value[1..value.len() - 1];
+    }
+    value
+}
+
+fn task_uses_container_yarn_path(task: &TaskSpec, contract: &Contract) -> bool {
+    if let Some(branch) = task.mode_execution_branch(Backend::Container) {
+        if branch
+            .execution_body()
+            .is_some_and(command_body_invokes_yarn)
+        {
+            return true;
+        }
+        if branch.launch.as_ref().is_some_and(launch_invokes_yarn) {
+            return true;
+        }
+    }
+
+    if task_execution_backend(contract, task, Backend::Native) == Backend::Container {
+        if task
+            .default_execution_body()
+            .is_some_and(command_body_invokes_yarn)
+        {
+            return true;
+        }
+        if task.launch.as_ref().is_some_and(launch_invokes_yarn) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn command_body_invokes_yarn(body: &str) -> bool {
+    let lowercase = body.to_ascii_lowercase();
+    lowercase
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && !matches!(ch, '/' | '.' | '_' | '-'))
+        .any(is_yarn_command_token)
+}
+
+fn is_yarn_command_token(token: &str) -> bool {
+    matches!(
+        token,
+        "yarn" | "yarn.cmd" | "yarn.js" | "yarnpkg" | "yarnpkg.cmd"
+    ) || token.ends_with("/yarn")
+        || token.ends_with("/yarn.cmd")
+}
+
+fn launch_invokes_yarn(launch: &crate::schema::TaskLaunchSpec) -> bool {
+    match launch {
+        crate::schema::TaskLaunchSpec::Command(command) => {
+            let exe = command.exe.to_ascii_lowercase();
+            if is_yarn_command_token(exe.as_str()) {
+                return true;
+            }
+            command.args.iter().any(|arg| {
+                let normalized = arg.to_ascii_lowercase();
+                normalized.contains(".yarn/releases/yarn-")
+                    || command_body_invokes_yarn(normalized.as_str())
+            })
+        }
+        crate::schema::TaskLaunchSpec::Container(_) => false,
     }
 }
 
@@ -8973,7 +9239,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        ContractAdvisory, collect_contract_advisories, task_shared_container_backend_shape,
+        ContractAdvisory, collect_contract_advisories,
+        collect_contract_advisories_with_contract_path, task_shared_container_backend_shape,
         validate_contract, validate_contract_with_path,
     };
 
@@ -11541,6 +11808,150 @@ tasks:
                     && value.isolated_path == ".pip-cache"
                     && value.effective_path == "/workspace/.pip-cache"
                     && value.expected_env == "PIP_CACHE_DIR"
+        )));
+    }
+
+    #[test]
+    fn collects_isolated_yarn_release_shadow_advisory_when_container_yarn_runs_in_context() {
+        let tempdir = TempDir::new().unwrap();
+        let contract_path = tempdir.path().join("ota.yaml");
+        fs::write(
+            tempdir.path().join(".yarnrc.yml"),
+            "yarnPath: .yarn/releases/yarn-4.12.0.cjs\n",
+        )
+        .unwrap();
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:22-bookworm
+      attachments:
+        isolated_paths:
+          - .yarn
+tasks:
+  setup:
+    context: app
+    run: yarn install --immutable
+"#,
+        )
+        .unwrap();
+
+        let advisories =
+            collect_contract_advisories_with_contract_path(&contract, Some(&contract_path));
+
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::IsolatedYarnReleaseShadow(value)
+                if value.context_name == "app"
+                    && value.isolated_path == ".yarn"
+                    && value.release_paths == vec![String::from(".yarn/releases/yarn-4.12.0.cjs")]
+                    && value.task_names == vec![String::from("setup")]
+        )));
+    }
+
+    #[test]
+    fn does_not_collect_isolated_yarn_release_shadow_advisory_without_yarn_task() {
+        let tempdir = TempDir::new().unwrap();
+        let contract_path = tempdir.path().join("ota.yaml");
+        fs::write(
+            tempdir.path().join(".yarnrc.yml"),
+            "yarnPath: .yarn/releases/yarn-4.12.0.cjs\n",
+        )
+        .unwrap();
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:22-bookworm
+      attachments:
+        isolated_paths:
+          - .yarn
+tasks:
+  setup:
+    context: app
+    run: npm ci
+"#,
+        )
+        .unwrap();
+
+        let advisories =
+            collect_contract_advisories_with_contract_path(&contract, Some(&contract_path));
+
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::IsolatedYarnReleaseShadow(value)
+                if value.context_name == "app" && value.isolated_path == ".yarn"
+        )));
+    }
+
+    #[test]
+    fn collects_isolated_yarn_release_shadow_advisory_for_command_launch_task() {
+        let tempdir = TempDir::new().unwrap();
+        let contract_path = tempdir.path().join("ota.yaml");
+        fs::write(
+            tempdir.path().join(".yarnrc.yml"),
+            "yarnPath: .yarn/releases/yarn-4.12.0.cjs\n",
+        )
+        .unwrap();
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:22-bookworm
+      attachments:
+        isolated_paths:
+          - .yarn
+tasks:
+  setup:
+    context: app
+    launch:
+      kind: command
+      exe: node
+      args:
+        - .yarn/releases/yarn-4.12.0.cjs
+        - install
+        - --immutable
+"#,
+        )
+        .unwrap();
+
+        let advisories =
+            collect_contract_advisories_with_contract_path(&contract, Some(&contract_path));
+
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::IsolatedYarnReleaseShadow(value)
+                if value.context_name == "app"
+                    && value.isolated_path == ".yarn"
+                    && value.release_paths == vec![String::from(".yarn/releases/yarn-4.12.0.cjs")]
+                    && value.task_names == vec![String::from("setup")]
         )));
     }
 

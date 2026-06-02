@@ -81,7 +81,9 @@ use crate::toolchains::{
     shipped_toolchain_contract_by_label, tool_versions_entry, toolchain_repo_signals,
     unsupported_toolchain_opportunity_context, unsupported_toolchain_opportunity_ecosystems,
 };
-use crate::validator::{ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories};
+use crate::validator::{
+    ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories_with_contract_path,
+};
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -3409,7 +3411,13 @@ fn diagnose_contract_with_scope(
     if scope == DoctorScope::All {
         diagnose_tasks_surface(contract, &mut findings);
         diagnose_agent_boundary_review(contract, &mut findings);
-        diagnose_contract_advisories(contract, &mut findings, overrides, workflow_name);
+        diagnose_contract_advisories(
+            contract,
+            contract_path,
+            &mut findings,
+            overrides,
+            workflow_name,
+        );
         diagnose_selected_task_effects(contract, workflow_name, &mut findings);
     }
     if scope == DoctorScope::All
@@ -3488,6 +3496,7 @@ fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
 
 fn diagnose_contract_advisories(
     contract: &Contract,
+    contract_path: &Path,
     findings: &mut Vec<Finding>,
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
@@ -3496,7 +3505,7 @@ fn diagnose_contract_advisories(
         .selected_workflow_task_closure_names(workflow_name)
         .into_iter()
         .collect::<BTreeSet<_>>();
-    for advisory in collect_contract_advisories(contract) {
+    for advisory in collect_contract_advisories_with_contract_path(contract, Some(contract_path)) {
         let advisory = match advisory {
             ContractAdvisory::DependsOnBoundary(advisory) => {
                 if let Some(advisory) =
@@ -3509,6 +3518,9 @@ fn diagnose_contract_advisories(
             }
             ContractAdvisory::LikelyUnusedAttachment(advisory) => {
                 ContractAdvisory::LikelyUnusedAttachment(advisory)
+            }
+            ContractAdvisory::IsolatedYarnReleaseShadow(advisory) => {
+                ContractAdvisory::IsolatedYarnReleaseShadow(advisory)
             }
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => {
                 ContractAdvisory::MutatesManagedIsolatedPath(advisory)
@@ -3561,6 +3573,15 @@ fn diagnose_contract_advisories(
                 ),
                 why: ContractAdvisory::LikelyUnusedAttachment(advisory.clone()).why(),
                 next: ContractAdvisory::LikelyUnusedAttachment(advisory).next(),
+            },
+            ContractAdvisory::IsolatedYarnReleaseShadow(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "Isolated path `{}` may shadow required Yarn release artifacts in context `{}`",
+                    advisory.isolated_path, advisory.context_name
+                ),
+                why: ContractAdvisory::IsolatedYarnReleaseShadow(advisory.clone()).why(),
+                next: ContractAdvisory::IsolatedYarnReleaseShadow(advisory).next(),
             },
             ContractAdvisory::MutatesManagedIsolatedPath(advisory) => Finding {
                 severity: FindingSeverity::Warn,
@@ -10922,6 +10943,7 @@ tasks:
         let mut findings = Vec::new();
         super::diagnose_contract_advisories(
             &contract,
+            synthetic_contract_path(),
             &mut findings,
             crate::runner::ExecutionOverrides::default(),
             None,
@@ -11027,6 +11049,7 @@ tasks:
         let mut findings = Vec::new();
         super::diagnose_contract_advisories(
             &contract,
+            synthetic_contract_path(),
             &mut findings,
             crate::runner::ExecutionOverrides::default(),
             None,
@@ -11068,6 +11091,7 @@ tasks:
         let mut findings = Vec::new();
         super::diagnose_contract_advisories(
             &contract,
+            synthetic_contract_path(),
             &mut findings,
             crate::runner::ExecutionOverrides::default(),
             None,
@@ -11080,6 +11104,57 @@ tasks:
                     .why
                     .contains("execution.contexts.verify:ctx.attachments.isolated_paths")
                 && finding.provenance().as_deref() == Some("repo contract")
+        }));
+    }
+
+    #[test]
+    fn doctor_warns_when_isolated_yarn_path_can_shadow_release_artifacts() {
+        let tempdir = TempDir::new().unwrap();
+        let contract_path = tempdir.path().join("ota.yaml");
+        fs::write(
+            tempdir.path().join(".yarnrc.yml"),
+            "yarnPath: .yarn/releases/yarn-4.12.0.cjs\n",
+        )
+        .unwrap();
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:22-bookworm
+      attachments:
+        isolated_paths:
+          - .yarn
+tasks:
+  setup:
+    context: app
+    run: yarn install --immutable
+"#,
+        )
+        .unwrap();
+
+        let mut findings = Vec::new();
+        super::diagnose_contract_advisories(
+            &contract,
+            &contract_path,
+            &mut findings,
+            crate::runner::ExecutionOverrides::default(),
+            None,
+        );
+
+        assert!(findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Warn
+                && finding.summary.contains("Isolated path `.yarn`")
+                && finding.summary.contains("Yarn release artifacts")
+                && finding.why.contains(".yarn/releases/yarn-*.cjs")
         }));
     }
 
@@ -11105,6 +11180,7 @@ tasks:
         let mut findings = Vec::new();
         super::diagnose_contract_advisories(
             &contract,
+            synthetic_contract_path(),
             &mut findings,
             crate::runner::ExecutionOverrides::default(),
             None,
@@ -11142,6 +11218,7 @@ tasks:
         let mut findings = Vec::new();
         super::diagnose_contract_advisories(
             &contract,
+            synthetic_contract_path(),
             &mut findings,
             crate::runner::ExecutionOverrides::default(),
             None,
@@ -11179,6 +11256,7 @@ tasks:
         let mut findings = Vec::new();
         super::diagnose_contract_advisories(
             &contract,
+            synthetic_contract_path(),
             &mut findings,
             crate::runner::ExecutionOverrides::default(),
             None,
