@@ -736,6 +736,11 @@ fn scoped_precondition_selection(
                     .native_prerequisite_requirement_surface_for_os(scoped_native, current_os()),
             );
         }
+        merge_effective_launch_command_tool_requirement(
+            &mut selection.requirement_surface,
+            task,
+            backend,
+        );
         if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
             && let Some(context) = contract
                 .execution
@@ -10516,7 +10521,9 @@ pub(crate) fn version_matches(requirement: &str, actual: &str) -> bool {
         return version_matches_caret(actual, compatible.trim());
     }
 
-    actual == requirement || actual.starts_with(&format!("{requirement}."))
+    actual == requirement
+        || actual.starts_with(&format!("{requirement}."))
+        || compare_version_tokens(actual, requirement).is_some_and(|ordering| ordering == 0)
 }
 
 fn version_matches_caret(actual: &str, base: &str) -> bool {
@@ -12702,6 +12709,46 @@ tasks:
                 .get("pnpm")
                 .map(|requirement| requirement.version().to_string()),
             Some(String::from("10"))
+        );
+    }
+
+    #[test]
+    fn container_mode_precondition_surface_infers_mode_selected_run_command_tool() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: python:3.12-bookworm
+tasks:
+  setup:
+    run: "true"
+    execution:
+      default_mode: native
+      modes:
+        container:
+          context: app
+          run: uv sync
+"#,
+        )
+        .unwrap();
+
+        let surface =
+            super::precondition_requirement_surface(&contract, DoctorMode::Container, None);
+        assert_eq!(
+            surface
+                .tools
+                .get("uv")
+                .map(|requirement| requirement.version().to_string()),
+            Some(String::from("*"))
         );
     }
 
@@ -17628,6 +17675,7 @@ tasks:
         assert!(version_matches(">21", "21.1"));
         assert!(!version_matches("<=21", "25.0.2"));
         assert!(version_matches(">=go1.2.1", "go1.24.2"));
+        assert!(version_matches("1.26.3", "go1.26.3"));
     }
 
     #[test]
@@ -18475,6 +18523,7 @@ project:
   name: airflow
 execution:
   preferred: container
+  lifecycle: ephemeral
   backends:
     container:
       image: python:3.12-bookworm
@@ -18527,6 +18576,99 @@ workflows:
                 .iter()
                 .all(|finding| finding.summary != "Version mismatch for runtime: python"),
             "{report:?}"
+        );
+    }
+
+    #[test]
+    fn toolchain_owned_uv_tool_is_required_in_container_mode() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'python3.12'\" >nul && (\r\n    echo Python 3.12.8\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/python3 1>&2\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"command -v 'uv'\" >nul && (\r\n    echo {started} 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER,
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'python3.12'\"*) echo 'Python 3.12.8'; echo '{started}' >&2; echo '{path}/usr/local/bin/python3' >&2; exit 0 ;;\n    *\"command -v 'uv'\"*) echo '{started}' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER,
+            )
+        };
+        write_fake_command(&bin_dir, "docker", &docker_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: airflow
+execution:
+  preferred: container
+  backends:
+    container:
+      image: python:3.12-bookworm
+      engines: [docker]
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+tasks:
+  setup:
+    run: uv sync
+    execution:
+      default_mode: container
+    requirements:
+      toolchains:
+        - python
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Container,
+            Some("verify"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Missing tool: uv")
+            .expect("expected missing uv finding");
+        assert!(
+            finding
+                .next
+                .contains("update `execution.backends.container.image`"),
+            "{finding:?}"
         );
     }
 

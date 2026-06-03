@@ -118,6 +118,12 @@
   so `ota validate`, `ota doctor`, and dry-run previews fail before task execution reaches env
   resolution
 - fixed `ota run <task> --dry-run` env reporting so mode-specific task env overrides are resolved
+- fixed selected-path toolchain trust across `ota doctor` and `ota run --dry-run`: Ota now
+  infers required executables from ordinary task `run:` / `script:` command bodies (not only
+  `launch` blocks), projects toolchain-owned commands such as `uv`, `go`, `dotnet`, and
+  `bundler` into the selected requirement surface, and blocks early when the chosen native or
+  container context does not actually provide that owned tool instead of incorrectly reporting the
+  path as runnable
   against the selected execution mode instead of the task's default/native path
 - added task `env_bindings.<NAME>.from_service` so contracts can derive task environment values
   from declared service endpoints, including container callers that need host-view services, and

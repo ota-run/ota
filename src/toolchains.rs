@@ -993,6 +993,32 @@ pub(crate) fn requirement_surface_with_toolchain_owned_tools_for_required_tools(
                 .unwrap_or(requirement);
             merged.tools.insert(tool_name, merged_requirement);
         }
+        for capability in provider
+            .owned_capabilities(toolchain)
+            .into_iter()
+            .filter(|capability| capability.kind == ToolchainOwnedCapabilityKind::Tool)
+        {
+            if capability.name == provider.owned_runtime() {
+                continue;
+            }
+            if let Some(required_tools) = required_tools
+                && !required_tools.contains(capability.name.as_str())
+            {
+                continue;
+            }
+            merged
+                .tools
+                .entry(capability.name.clone())
+                .or_insert_with(|| {
+                    ToolRequirement::Detailed(ToolDetail {
+                        version: String::from("*"),
+                        required: toolchain.required_for_os(target_os),
+                        only_on: toolchain.only_on.clone(),
+                        platforms: BTreeMap::new(),
+                        acquisition: None,
+                    })
+                });
+        }
     }
 
     merged
