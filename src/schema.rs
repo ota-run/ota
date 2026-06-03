@@ -3323,7 +3323,7 @@ impl TaskSpec {
                 tools.insert(name.clone(), merged);
             }
         }
-        for (name, requirement) in self.inferred_command_launch_tool_requirements() {
+        for (name, requirement) in self.inferred_command_tool_requirements() {
             tools.entry(name).or_insert(requirement);
         }
         RequirementSurface { runtimes, tools }
@@ -3461,33 +3461,150 @@ impl TaskSpec {
         names
     }
 
-    pub fn effective_command_launch_executable_for_backend(
+    pub fn effective_command_executable_for_backend(
         &self,
         backend: Backend,
         os: &str,
     ) -> Option<String> {
         let execution = self.resolved_execution_for_backend(backend, os)?;
-        let launch = execution.launch()?;
-        let TaskLaunchSpec::Command(command) = launch else {
-            return None;
-        };
-        let exe = command.exe.trim();
-        if exe.is_empty() {
-            return None;
+        if let Some(launch) = execution.launch() {
+            let TaskLaunchSpec::Command(command) = launch else {
+                return None;
+            };
+            let exe = command.exe.trim();
+            if exe.is_empty() {
+                return None;
+            }
+            return Some(exe.to_string());
         }
-        Some(exe.to_string())
+        execution
+            .shell_body()
+            .and_then(inferred_shell_command_executable)
     }
 
-    fn inferred_command_launch_tool_requirements(&self) -> BTreeMap<String, ToolRequirement> {
+    pub fn effective_command_launch_executable_for_backend(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Option<String> {
+        self.effective_command_executable_for_backend(backend, os)
+    }
+
+    fn inferred_command_tool_requirements(&self) -> BTreeMap<String, ToolRequirement> {
         let mut tools = BTreeMap::new();
-        if let Some(TaskLaunchSpec::Command(command)) = self.launch.as_ref() {
-            let exe = command.exe.trim();
-            if !exe.is_empty() {
-                tools.insert(exe.to_string(), ToolRequirement::Simple(String::from("*")));
-            }
+        if let Some(exe) = self
+            .launch
+            .as_ref()
+            .and_then(command_launch_executable)
+            .or_else(|| self.run.as_deref().and_then(inferred_shell_command_executable))
+            .or_else(|| self.script.as_deref().and_then(inferred_shell_command_executable))
+        {
+            tools.insert(exe, ToolRequirement::Simple(String::from("*")));
         }
         tools
     }
+}
+
+fn command_launch_executable(launch: &TaskLaunchSpec) -> Option<String> {
+    let TaskLaunchSpec::Command(command) = launch else {
+        return None;
+    };
+    let exe = command.exe.trim();
+    if exe.is_empty() {
+        return None;
+    }
+    Some(exe.to_string())
+}
+
+fn inferred_shell_command_executable(body: &str) -> Option<String> {
+    let mut tokens = body
+        .split_whitespace()
+        .map(|token| token.trim_matches('"').trim_matches('\''))
+        .peekable();
+
+    while let Some(token) = tokens.next() {
+        if token.is_empty() || token.starts_with('$') {
+            return None;
+        }
+        if token.contains(['|', '&', ';', '<', '>', '(', ')', '{', '}', '[', ']']) {
+            return None;
+        }
+        if token == "env" {
+            while matches!(tokens.peek(), Some(next) if next.contains('=') && !next.starts_with('$'))
+            {
+                tokens.next();
+            }
+            continue;
+        }
+        if matches!(token, "command" | "builtin" | "nohup" | "time") {
+            continue;
+        }
+        if token.contains('=') {
+            continue;
+        }
+        if matches!(
+            token,
+            "." | ":" | "alias"
+                | "bg"
+                | "break"
+                | "case"
+                | "cd"
+                | "continue"
+                | "dirs"
+                | "disown"
+                | "do"
+                | "done"
+                | "echo"
+                | "elif"
+                | "else"
+                | "esac"
+                | "eval"
+                | "exec"
+                | "exit"
+                | "export"
+                | "false"
+                | "fc"
+                | "fg"
+                | "fi"
+                | "for"
+                | "function"
+                | "getopts"
+                | "hash"
+                | "if"
+                | "jobs"
+                | "kill"
+                | "local"
+                | "popd"
+                | "printf"
+                | "pushd"
+                | "pwd"
+                | "read"
+                | "readonly"
+                | "return"
+                | "select"
+                | "set"
+                | "shift"
+                | "source"
+                | "test"
+                | "then"
+                | "times"
+                | "trap"
+                | "true"
+                | "type"
+                | "typeset"
+                | "ulimit"
+                | "umask"
+                | "unalias"
+                | "unset"
+                | "until"
+                | "wait"
+                | "while"
+        ) {
+            return None;
+        }
+        return Some(token.to_string());
+    }
+    None
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -5161,6 +5278,38 @@ workflows:
     }
 
     #[test]
+    fn task_requirement_surface_infers_run_command_tool_without_global_fallback() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  docker:
+    version: "*"
+tasks:
+  setup:
+    run: uv sync
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let surface = contract
+            .selected_workflow_task_requirement_surface(Some("verify"))
+            .expect("workflow requirement surface should resolve");
+
+        assert!(surface.tools.contains_key("uv"), "{surface:?}");
+        assert_eq!(surface.tools["uv"].version(), "*");
+        assert!(!surface.tools.contains_key("docker"));
+    }
+
+    #[test]
     fn declared_command_launch_executables_include_base_and_mode_branches() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -5255,6 +5404,72 @@ tasks:
             contract.tasks["app"]
                 .effective_command_launch_executable_for_backend(Backend::Container, "linux",),
             Some(String::from("docker"))
+        );
+    }
+
+    #[test]
+    fn effective_command_launch_executable_for_backend_infers_run_command_executable() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: uv sync
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.tasks["setup"]
+                .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
+            Some(String::from("uv"))
+        );
+    }
+
+    #[test]
+    fn effective_command_launch_executable_for_backend_ignores_shell_builtins() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  verify:
+    run: "true"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.tasks["verify"]
+                .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_command_launch_executable_for_backend_skips_env_wrapper() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: env FOO=bar uv sync
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.tasks["setup"]
+                .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
+            Some(String::from("uv"))
         );
     }
 

@@ -45668,6 +45668,100 @@ tasks:
     }
 
     #[test]
+    fn run_dry_run_blocks_when_selected_container_toolchain_owned_tool_is_missing() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        let docker_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'python3.12'\" >nul && (\r\n    echo Python 3.12.8\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/python3 1>&2\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"command -v 'uv'\" >nul && (\r\n    echo {started} 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                started = "__OTA_CONTAINER_PROBE_STARTED__",
+                path = "__OTA_RESOLVED_PATH__",
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'python3.12'\"*) echo 'Python 3.12.8'; echo '{started}' >&2; echo '{path}/usr/local/bin/python3' >&2; exit 0 ;;\n    *\"command -v 'uv'\"*) echo '{started}' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                started = "__OTA_CONTAINER_PROBE_STARTED__",
+                path = "__OTA_RESOLVED_PATH__",
+            )
+        };
+        write_executable_script(&fake_command_path(&bin_dir, "docker"), &docker_body);
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).expect("join fake path");
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: airflow
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: python:3.12-bookworm
+      engines: [docker]
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+tasks:
+  setup:
+    run: uv sync
+    requirements:
+      toolchains:
+        - python
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "setup",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(json["resolved"]["backend"], "container");
+        assert_eq!(json["summary"]["primary_blocker"]["summary"], "Missing tool: uv");
+    }
+
+    #[test]
     fn run_dry_run_blocks_when_effect_policy_denies_selected_task_path() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
