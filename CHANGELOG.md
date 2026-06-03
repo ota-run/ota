@@ -124,6 +124,10 @@
   `bundler` into the selected requirement surface, and blocks early when the chosen native or
   container context does not actually provide that owned tool instead of incorrectly reporting the
   path as runnable
+- extended `toolchains.python.provider: uv` so `package_managers.uv` declares the required uv
+  version explicitly; `ota doctor`, `ota run --dry-run`, and real `ota run` now block early when
+  the selected path resolves a uv binary outside that required version range instead of failing
+  later during `uv sync` / `uv run`
   against the selected execution mode instead of the task's default/native path
 - added task `env_bindings.<NAME>.from_service` so contracts can derive task environment values
   from declared service endpoints, including container callers that need host-view services, and

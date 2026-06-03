@@ -679,14 +679,15 @@ Rules:
 - ota validates and interprets toolchains through an explicit provider contract; Rustup currently
   owns which extra toolchain fields are legal, which capabilities belong to `toolchains.rust`, and
   how `doctor`, `up`, and `run` interpret fulfillment and managed surfaces, while Corepack-backed
-  Node toolchains allow provider-scoped `package_managers`, SDKMAN-backed Java toolchains own
-  `java` plus `javac`, and Ruby-backed toolchains allow provider-scoped `package_managers` for
-  Bundler version governance
+  Node toolchains allow provider-scoped `package_managers`, uv-backed Python toolchains allow
+  provider-scoped `package_managers.uv`, SDKMAN-backed Java toolchains own `java` plus `javac`,
+  and Ruby-backed toolchains allow provider-scoped `package_managers` for Bundler version
+  governance
 - provider-specific field shape checks also live there: empty Rustup `profile`, `components`, and
   `targets` entries fail because the Rustup provider contract rejects them, and Corepack-backed
   Node toolchains reject those Rust-shaped fields entirely while validating
-  `package_managers` tokens and shell-safe version constraints; `provider: ruby`
-  accepts only `bundler` under `package_managers`
+  `package_managers` tokens and shell-safe version constraints; `provider: uv` accepts only `uv`
+  under `package_managers`; `provider: ruby` accepts only `bundler` under `package_managers`
 - `only_on`, when set, scopes the toolchain to `linux`, `macos`, or `windows`
 - `profile`, `components`, and `targets` are currently Rustup-specific compatibility fields; Node
   via Corepack and Ruby via the built-in Ruby provider add provider-scoped `package_managers`;
