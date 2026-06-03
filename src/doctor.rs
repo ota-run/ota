@@ -18673,6 +18673,72 @@ workflows:
     }
 
     #[test]
+    fn toolchain_owned_uv_tool_version_mismatch_blocks_in_native_mode() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "uv", "#!/bin/sh\necho uv 0.4.16\n");
+        write_fake_command(&bin_dir, "python3.10", "#!/bin/sh\necho Python 3.10.18\n");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", bin_dir.as_os_str().to_os_string());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: airflow
+toolchains:
+  python:
+    provider: uv
+    version: "3.10"
+    package_managers:
+      uv: ">=0.11.8"
+tasks:
+  setup:
+    run: uv sync
+    requirements:
+      toolchains:
+        - python
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("verify"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Version mismatch for tool: uv")
+            .expect("expected uv version mismatch finding");
+        assert!(finding.why.contains(">=0.11.8"), "{finding:?}");
+        assert!(finding.why.contains("0.4.16"), "{finding:?}");
+    }
+
+    #[test]
     fn toolchain_owned_rust_runtime_probe_uses_rustc_candidate() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();

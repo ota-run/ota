@@ -101,6 +101,9 @@ Current parser boundary:
   schema drift
 - Corepack-backed Node toolchains currently support one provider-specific field:
   `package_managers` (plus `platforms.<os>.package_managers`)
+- uv-backed Python toolchains support that same provider-specific field shape, but only `uv` is
+  valid there; use `toolchains.python.package_managers.uv` when the contract needs an explicit uv
+  version boundary in addition to the Python runtime version
 - Ruby-backed toolchains support `package_managers` too, but only `bundler` is valid there; use it
   to make Bundler version governance explicit under `toolchains.ruby`
 - `profile`, `components`, and `targets` are Rustup-specific compatibility fields, not a generic

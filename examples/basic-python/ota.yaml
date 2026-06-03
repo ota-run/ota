@@ -30,6 +30,8 @@ toolchains:
   python:
     provider: uv
     version: "3.12"
+    package_managers:
+      uv: ">=0.7.0"
 tasks:
   setup:
     description: Install and sync Python dependencies with uv

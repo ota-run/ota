@@ -48,12 +48,16 @@ const RUSTUP_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] = &[
 ];
 const COREPACK_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] =
     &[ToolchainProviderSpecificField::PackageManagers];
+const UV_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] =
+    &[ToolchainProviderSpecificField::PackageManagers];
 const RUBY_PROVIDER_SPECIFIC_FIELDS: &[ToolchainProviderSpecificField] =
     &[ToolchainProviderSpecificField::PackageManagers];
 const RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`profile`, `components`, `targets`, and their `platforms.<os>.*` overrides";
 const COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`package_managers` and `platforms.<os>.package_managers`";
+const UV_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
+    "`package_managers` and `platforms.<os>.package_managers` (uv only)";
 const RUBY_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`package_managers` and `platforms.<os>.package_managers` (Bundler only)";
 const UNSUPPORTED_TOOLCHAIN_OPPORTUNITY_ECOSYSTEMS: &[&str] = &[];
@@ -114,9 +118,9 @@ pub(crate) const UV_TOOLCHAIN_CONTRACT: ToolchainProviderContract = ToolchainPro
     provider: ToolchainProvider::Uv,
     label: "uv",
     owned_runtime: PYTHON_TOOLCHAIN_NAME,
-    provider_specific_fields: &[],
-    provider_specific_field_summary: "",
-    requirement_detail_parts_fn: base_requirement_detail_parts,
+    provider_specific_fields: UV_PROVIDER_SPECIFIC_FIELDS,
+    provider_specific_field_summary: UV_PROVIDER_SPECIFIC_FIELD_SUMMARY,
+    requirement_detail_parts_fn: uv_requirement_detail_parts,
     owned_capabilities_fn: uv_owned_capabilities,
     owned_tool_requirements_fn: uv_owned_tool_requirements,
     fulfillment_commands_fn: uv_fulfillment_commands,
@@ -554,6 +558,7 @@ impl ToolchainProviderContract {
         toolchain: &ToolchainSpec,
     ) -> Vec<String> {
         match self.provider() {
+            ToolchainProvider::Uv => uv_package_manager_validation_errors(name, toolchain),
             ToolchainProvider::Ruby => ruby_package_manager_validation_errors(name, toolchain),
             _ => Vec::new(),
         }
@@ -1111,6 +1116,18 @@ fn ruby_requirement_detail_parts(
     parts
 }
 
+fn uv_requirement_detail_parts(
+    provider: ToolchainProviderContract,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<String> {
+    let mut parts = base_requirement_detail_parts(provider, toolchain, target_os);
+    if let Some(version) = toolchain.package_managers_for_os(target_os).get("uv") {
+        parts.push(format!("uv `{version}`"));
+    }
+    parts
+}
+
 fn rustup_owned_capabilities(
     provider: ToolchainProviderContract,
     toolchain: &ToolchainSpec,
@@ -1306,10 +1323,25 @@ fn sdkman_owned_tool_requirements(
 
 fn uv_owned_tool_requirements(
     _provider: ToolchainProviderContract,
-    _toolchain: &ToolchainSpec,
-    _target_os: &str,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
 ) -> BTreeMap<String, ToolRequirement> {
-    BTreeMap::new()
+    let required = toolchain.required_for_os(target_os);
+    let version = toolchain
+        .package_managers_for_os(target_os)
+        .get("uv")
+        .cloned()
+        .unwrap_or_else(|| String::from("*"));
+    BTreeMap::from([(
+        String::from("uv"),
+        ToolRequirement::Detailed(ToolDetail {
+            version,
+            required,
+            only_on: toolchain.only_on.clone(),
+            platforms: BTreeMap::<String, ToolPlatformDetail>::new(),
+            acquisition: None,
+        }),
+    )])
 }
 
 fn go_owned_tool_requirements(
@@ -1849,6 +1881,27 @@ fn ruby_package_manager_validation_errors(name: &str, toolchain: &ToolchainSpec)
     errors
 }
 
+fn uv_package_manager_validation_errors(name: &str, toolchain: &ToolchainSpec) -> Vec<String> {
+    let mut errors = Vec::new();
+    for package_name in toolchain.package_managers.keys() {
+        if package_name != "uv" {
+            errors.push(format!(
+                "toolchain `{name}` with `provider: uv` must only declare `uv` under `package_managers`; found `{package_name}`"
+            ));
+        }
+    }
+    for (platform, detail) in &toolchain.platforms {
+        for package_name in detail.package_managers.keys() {
+            if package_name != "uv" {
+                errors.push(format!(
+                    "toolchain `{name}` platform `{platform}` with `provider: uv` must only declare `uv` under `package_managers`; found `{package_name}`"
+                ));
+            }
+        }
+    }
+    errors
+}
+
 fn rustup_managed_surface_remediation_command(
     _provider: ToolchainProviderContract,
     kind: ToolchainManagedSurfaceKind,
@@ -2273,6 +2326,69 @@ toolchains:
             None
         );
         assert_eq!(provider.owned_runtime_remediation_command("3.3.11"), None);
+    }
+
+    #[test]
+    fn uv_contract_projects_uv_requirement_when_declared() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      uv: ">=0.11.8"
+"#,
+        );
+        let toolchain = contract.toolchains.get("python").unwrap();
+        let provider = declared_toolchain_contract("python", toolchain).unwrap();
+
+        assert_eq!(
+            provider.provider_specific_field_summary(),
+            UV_PROVIDER_SPECIFIC_FIELD_SUMMARY
+        );
+        assert!(
+            provider
+                .requirement_detail_parts(toolchain, "linux")
+                .iter()
+                .any(|part| part.contains("uv `>=0.11.8`"))
+        );
+        let tool_requirements = provider.owned_tool_requirements(toolchain, "linux");
+        assert_eq!(
+            tool_requirements
+                .get("uv")
+                .expect("projected uv requirement")
+                .version(),
+            ">=0.11.8"
+        );
+    }
+
+    #[test]
+    fn uv_contract_rejects_non_uv_package_manager_keys() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      pip: "25"
+"#,
+        );
+        let toolchain = contract.toolchains.get("python").unwrap();
+        let provider = declared_toolchain_contract("python", toolchain).unwrap();
+        assert_eq!(
+            provider.provider_specific_validation_errors("python", toolchain),
+            vec![String::from(
+                "toolchain `python` with `provider: uv` must only declare `uv` under `package_managers`; found `pip`"
+            )]
+        );
     }
 
     #[test]

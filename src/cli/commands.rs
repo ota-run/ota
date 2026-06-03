@@ -15383,6 +15383,24 @@ fn selected_task_requirement_surface(
             requirement_target_os_for_backend(effective.backend),
         ));
     }
+    let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
+    let mut toolchain_names = selected_task_scoped_toolchain_names(contract, task_name, overrides)
+        .into_iter()
+        .collect::<Vec<_>>();
+    if toolchain_names.is_empty() {
+        toolchain_names = contract
+            .task_required_toolchain_names(task_name)
+            .into_iter()
+            .collect::<Vec<_>>();
+    }
+    let toolchain_names = toolchain_names.into_iter().collect();
+    surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
+        contract,
+        &surface,
+        &toolchain_names,
+        requirement_target_os_for_backend(effective.backend),
+        Some(&required_tool_names),
+    );
     Some(surface)
 }
 
@@ -45762,6 +45780,181 @@ tasks:
     }
 
     #[test]
+    fn run_dry_run_blocks_when_selected_native_toolchain_owned_tool_version_mismatches() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "uv"),
+            if cfg!(windows) {
+                "@echo off\r\necho uv 0.4.16\r\n"
+            } else {
+                "#!/bin/sh\necho 'uv 0.4.16'\n"
+            },
+        );
+        write_executable_script(
+            &fake_command_path(&bin_dir, "python3.10"),
+            if cfg!(windows) {
+                "@echo off\r\necho Python 3.10.18\r\n"
+            } else {
+                "#!/bin/sh\necho 'Python 3.10.18'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).expect("join fake path");
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: airflow
+toolchains:
+  python:
+    provider: uv
+    version: "3.10"
+    package_managers:
+      uv: ">=0.11.8"
+tasks:
+  setup:
+    run: uv sync
+    requirements:
+      toolchains:
+        - python
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "setup",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(json["resolved"]["backend"], "native");
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            "Version mismatch for tool: uv"
+        );
+    }
+
+    #[test]
+    fn selected_requirement_surface_projects_owned_uv_tool_version() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: airflow
+toolchains:
+  python:
+    provider: uv
+    version: "3.10"
+    package_managers:
+      uv: ">=0.11.8"
+tasks:
+  setup:
+    run: uv sync
+    requirements:
+      toolchains:
+        - python
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let surface = super::selected_workflow_task_requirement_surface(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("verify"),
+        )
+        .expect("selected surface");
+
+        assert_eq!(
+            surface
+                .tools
+                .get("uv")
+                .expect("uv requirement")
+                .version(),
+            ">=0.11.8"
+        );
+    }
+
+    #[test]
+    fn selected_task_requirement_surface_projects_owned_uv_tool_version() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: airflow
+toolchains:
+  python:
+    provider: uv
+    version: "3.10"
+    package_managers:
+      uv: ">=0.11.8"
+tasks:
+  setup:
+    run: uv sync
+    requirements:
+      toolchains:
+        - python
+"#,
+        )
+        .unwrap();
+
+        let surface =
+            super::selected_task_requirement_surface(&contract, "setup", ExecutionOverrides::default())
+                .expect("selected task surface");
+
+        assert_eq!(
+            surface
+                .tools
+                .get("uv")
+                .expect("uv requirement")
+                .version(),
+            ">=0.11.8"
+        );
+    }
+
+    #[test]
     fn run_dry_run_blocks_when_effect_policy_denies_selected_task_path() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
@@ -75588,7 +75781,7 @@ fn selected_workflow_task_requirement_surface(
         })
     });
 
-    for task_name in task_names {
+    for task_name in &task_names {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
             continue;
         };
@@ -75659,6 +75852,31 @@ fn selected_workflow_task_requirement_surface(
         surface
             .tools
             .retain(|tool_name, _| selected_tool_names.contains(tool_name));
+    }
+
+    let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
+    for task_name in &task_names {
+        let task_name = task_name.as_str();
+        let target_os = requirement_target_os_for_backend(
+            effective_task_execution(contract, task_name, overrides).backend,
+        );
+        let mut toolchain_names = selected_task_scoped_toolchain_names(contract, task_name, overrides)
+            .into_iter()
+            .collect::<Vec<_>>();
+        if toolchain_names.is_empty() {
+            toolchain_names = contract
+                .task_required_toolchain_names(task_name)
+                .into_iter()
+                .collect::<Vec<_>>();
+        }
+        let toolchain_names = toolchain_names.into_iter().collect();
+        surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
+            contract,
+            &surface,
+            &toolchain_names,
+            target_os,
+            Some(&required_tool_names),
+        );
     }
 
     Some(surface)
