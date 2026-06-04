@@ -18739,6 +18739,68 @@ workflows:
     }
 
     #[test]
+    fn toolchain_owned_bundler_tool_version_mismatch_blocks_via_bundle_alias() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "bundle", "#!/bin/sh\necho Bundler version 2.5.3\n");
+        write_fake_command(&bin_dir, "ruby", "#!/bin/sh\necho ruby 3.4.1p0\n");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", bin_dir.as_os_str().to_os_string());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: discourse
+toolchains:
+  ruby:
+    provider: ruby
+    version: ">=3.4,<3.5"
+    package_managers:
+      bundler: "2.6.4"
+tasks:
+  test:
+    run: bundle --version
+    requirements:
+      toolchains:
+        - ruby
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_task_with_overrides(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            "test",
+            ExecutionOverrides::default(),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Version mismatch for tool: bundle")
+            .expect("expected bundle version mismatch finding");
+        assert!(finding.why.contains("2.6.4"), "{finding:?}");
+        assert!(finding.why.contains("2.5.3"), "{finding:?}");
+    }
+
+    #[test]
     fn toolchain_owned_rust_runtime_probe_uses_rustc_candidate() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();

@@ -45955,6 +45955,134 @@ tasks:
     }
 
     #[test]
+    fn run_dry_run_blocks_when_selected_native_bundler_alias_tool_version_mismatches() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "bundle"),
+            if cfg!(windows) {
+                "@echo off\r\necho Bundler version 2.5.3\r\n"
+            } else {
+                "#!/bin/sh\necho 'Bundler version 2.5.3'\n"
+            },
+        );
+        write_executable_script(
+            &fake_command_path(&bin_dir, "ruby"),
+            if cfg!(windows) {
+                "@echo off\r\necho ruby 3.4.1p0\r\n"
+            } else {
+                "#!/bin/sh\necho 'ruby 3.4.1p0'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).expect("join fake path");
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: discourse
+toolchains:
+  ruby:
+    provider: ruby
+    version: ">=3.4,<3.5"
+    package_managers:
+      bundler: "2.6.4"
+tasks:
+  test:
+    run: bundle --version
+    requirements:
+      toolchains:
+        - ruby
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "test",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            "Version mismatch for tool: bundle"
+        );
+    }
+
+    #[test]
+    fn selected_task_requirement_surface_projects_owned_bundler_version_via_bundle_alias() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: discourse
+toolchains:
+  ruby:
+    provider: ruby
+    version: ">=3.4,<3.5"
+    package_managers:
+      bundler: "2.6.4"
+tasks:
+  test:
+    run: bundle --version
+    requirements:
+      toolchains:
+        - ruby
+"#,
+        )
+        .unwrap();
+
+        let surface =
+            super::selected_task_requirement_surface(&contract, "test", ExecutionOverrides::default())
+                .expect("selected task surface");
+
+        assert_eq!(
+            surface
+                .tools
+                .get("bundle")
+                .expect("bundle requirement")
+                .version(),
+            "2.6.4"
+        );
+    }
+
+    #[test]
     fn run_dry_run_blocks_when_effect_policy_denies_selected_task_path() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");

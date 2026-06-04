@@ -3526,6 +3526,9 @@ fn inferred_shell_command_executable(body: &str) -> Option<String> {
         if token.is_empty() || token.starts_with('$') {
             return None;
         }
+        if token.contains('/') || token.contains('\\') {
+            return None;
+        }
         if token.contains(['|', '&', ';', '<', '>', '(', ')', '{', '}', '[', ']']) {
             return None;
         }
@@ -5470,6 +5473,28 @@ tasks:
             contract.tasks["setup"]
                 .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
             Some(String::from("uv"))
+        );
+    }
+
+    #[test]
+    fn effective_command_launch_executable_for_backend_ignores_repo_relative_executable() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: bin/bundle --version
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.tasks["setup"]
+                .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
+            None
         );
     }
 
