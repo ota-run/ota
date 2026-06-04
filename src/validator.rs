@@ -441,6 +441,7 @@ fn validate_execution(
             ));
         }
         validate_only_on("execution context", name, context.only_on.as_ref(), errors);
+        validate_only_arch("execution context", name, context.only_arch.as_ref(), errors);
 
         match context.backend {
             crate::schema::Backend::Native => {
@@ -1733,6 +1734,44 @@ fn validate_only_on(
         } else if !seen.insert(platform) {
             errors.push(ValidationError::new(format!(
                 "{label} `{name}` must not declare duplicate `only_on` platform `{platform}`"
+            )));
+        }
+    }
+}
+
+fn validate_only_arch(
+    label: &str,
+    name: &str,
+    only_arch: Option<&Vec<String>>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(only_arch) = only_arch else {
+        return;
+    };
+
+    if only_arch.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "{label} `{name}` must not declare an empty `only_arch` list"
+        )));
+        return;
+    }
+
+    let mut seen = BTreeSet::new();
+    for arch in only_arch {
+        if arch.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "{label} `{name}` must not declare empty `only_arch` values"
+            )));
+            continue;
+        }
+        if !is_shell_safe_activation_token(arch) {
+            errors.push(ValidationError::new(format!(
+                "{label} `{name}` has unsupported `only_arch` value `{arch}`; expected a shell-safe architecture token such as `x64` or `arm64`"
+            )));
+        }
+        if !seen.insert(arch.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "{label} `{name}` must not declare duplicate `only_arch` value `{arch}`"
             )));
         }
     }
@@ -19104,6 +19143,35 @@ tasks:
         assert!(errors.errors().iter().any(|error| {
             error.to_string()
                 == "execution context `host` has unsupported `only_on` platform `bsd`; expected one of: linux, macos, windows"
+        }));
+    }
+
+    #[test]
+    fn rejects_execution_context_only_arch_with_unsafe_token() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      only_arch:
+        - "x64 && bad"
+tasks:
+  dev:
+    run: echo hi
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string()
+                == "execution context `host` has unsupported `only_arch` value `x64 && bad`; expected a shell-safe architecture token such as `x64` or `arm64`"
         }));
     }
 

@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added host-architecture scoping for execution contexts: `execution.contexts.<name>.only_arch`
+  now lets contracts fail early in `ota doctor`, `ota run --dry-run`, and execution when a
+  selected context is not supported on the current host architecture, instead of falling through
+  to later container image manifest failures
 - hardened container runtime-proof cleanup for dependency-isolation volumes: Ota now retries
   transient Docker `volume is in use` cleanup races with backoff instead of turning a proven ready
   container proof into a cleanup failure on the first short release lag

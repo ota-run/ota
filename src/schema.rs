@@ -570,6 +570,8 @@ struct ExecutionContextWire {
     #[serde(default)]
     only_on: Option<Vec<String>>,
     #[serde(default)]
+    only_arch: Option<Vec<String>>,
+    #[serde(default)]
     lifecycle: Option<Lifecycle>,
     #[serde(default)]
     fulfillment: Option<ExecutionSharedBackendFulfillment>,
@@ -656,6 +658,7 @@ struct RemoteSshOptionsWire {
 struct ExecutionContextMerged {
     backend: Option<Backend>,
     only_on: Option<Vec<String>>,
+    only_arch: Option<Vec<String>>,
     lifecycle: Option<Lifecycle>,
     fulfillment: Option<ExecutionSharedBackendFulfillment>,
     env: BTreeMap<String, String>,
@@ -847,6 +850,9 @@ fn merge_execution_context(target: &mut ExecutionContextMerged, source: &Executi
     if let Some(only_on) = source.only_on.as_ref() {
         target.only_on = Some(only_on.clone());
     }
+    if let Some(only_arch) = source.only_arch.as_ref() {
+        target.only_arch = Some(only_arch.clone());
+    }
     if let Some(lifecycle) = source.lifecycle {
         target.lifecycle = Some(lifecycle);
     }
@@ -973,6 +979,7 @@ fn finalize_execution_context(
     Ok(ExecutionContext {
         backend,
         only_on: merged.only_on,
+        only_arch: merged.only_arch,
         lifecycle: merged.lifecycle,
         fulfillment: merged.fulfillment,
         env: merged.env,
@@ -988,6 +995,16 @@ impl ExecutionContext {
         self.only_on
             .as_ref()
             .is_none_or(|platforms| platforms.iter().any(|platform| platform == os))
+    }
+
+    pub fn active_for_arch(&self, arch: &str) -> bool {
+        self.only_arch
+            .as_ref()
+            .is_none_or(|architectures| architectures.iter().any(|value| value == arch))
+    }
+
+    pub fn active_for_host(&self, os: &str, arch: &str) -> bool {
+        self.active_for_os(os) && self.active_for_arch(arch)
     }
 }
 
@@ -1362,6 +1379,8 @@ pub struct ExecutionContext {
     pub backend: Backend,
     #[serde(default)]
     pub only_on: Option<Vec<String>>,
+    #[serde(default)]
+    pub only_arch: Option<Vec<String>>,
     #[serde(default)]
     pub lifecycle: Option<Lifecycle>,
     #[serde(default)]
@@ -5634,6 +5653,42 @@ tasks:
         assert_eq!(
             context.only_on,
             Some(vec![String::from("linux"), String::from("macos")])
+        );
+    }
+
+    #[test]
+    fn execution_context_extends_inherits_only_arch_scope() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: dev
+  contexts:
+    host:
+      backend: native
+      only_arch:
+        - x64
+        - arm64
+    dev:
+      extends: host
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        let context = contract
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.contexts.get("dev"))
+            .expect("extended context should exist");
+        assert_eq!(
+            context.only_arch,
+            Some(vec![String::from("x64"), String::from("arm64")])
         );
     }
 

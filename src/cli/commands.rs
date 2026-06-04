@@ -3367,12 +3367,14 @@ fn render_execution_plan_structured_error(
         RunError::UnsupportedHostPlatform {
             context,
             os,
+            arch,
             supported,
+            supported_arch,
             ..
         } => (
             "Unsupported host platform",
             vec![format!(
-                "the selected execution context `{context}` supports `{supported}`, but the current host is `{os}`"
+                "the selected execution context `{context}` supports `{supported}` on `{supported_arch}`, but the current host is `{os}/{arch}`"
             )],
             vec![
                 if os == "windows" && supported.split(", ").any(|platform| platform == "linux") {
@@ -14501,8 +14503,13 @@ fn render_run_preview_target(
         (!required_env_names.is_empty()).then_some(&required_env_names),
     );
     let applied_overrides = execution_plan_overrides(overrides);
-    let requested_task =
-        TaskSummary::from_spec(task_name.as_str(), task, current_os(), &target.contract);
+    let requested_task = TaskSummary::from_spec_with_overrides(
+        task_name.as_str(),
+        task,
+        current_os(),
+        &target.contract,
+        overrides,
+    );
     let env_report = match build_env_report_with_overrides(
         &target.contract,
         &target.contract_path,
@@ -14563,6 +14570,23 @@ fn render_run_preview_target(
             );
             let requested_context = requested_context.map(str::to_string);
             let selected_context = selected_context.map(str::to_string);
+            let toolchains =
+                selected_task_toolchain_summaries(&target.contract, task_name.as_str(), overrides);
+            let native_prerequisites = receipt_native_prerequisites(
+                &target.contract,
+                Some(task_name.as_str()),
+                effective_task_execution(&target.contract, task_name.as_str(), overrides).backend,
+                current_requirement_platform(),
+                false,
+            );
+            let plan = build_run_preview_plan(
+                &target.contract,
+                task_name.as_str(),
+                overrides,
+                &requested_task,
+                &unresolved_execution_plan,
+                persist_logs,
+            );
             let summary = DoctorSummary {
                 verdict: DoctorVerdict::NotReady,
                 agent_verdict: DoctorVerdict::Ready,
@@ -14588,9 +14612,9 @@ fn render_run_preview_target(
                 applied_overrides.as_ref(),
                 &requested_task,
                 &env_report,
-                &[],
-                &[],
-                &RunPreviewPlan::default(),
+                &toolchains,
+                &native_prerequisites,
+                &plan,
                 persist_logs,
             );
             return match format {
@@ -14615,9 +14639,9 @@ fn render_run_preview_target(
                         env_summary: env_report.summary,
                         sources: env_report.sources,
                         env: env_report.env,
-                        toolchains: Vec::new(),
-                        native_prerequisites: Vec::new(),
-                        plan: RunPreviewPlan::default(),
+                        toolchains,
+                        native_prerequisites,
+                        plan,
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -14870,11 +14894,21 @@ fn run_preview_execution_primary_blocker(
 ) -> DoctorPrimaryBlocker {
     let backend = effective_task_execution(contract, task_name, overrides).backend;
     let (summary, next) = match error {
-        RunError::UnsupportedHostPlatform { os, supported, .. } => (
+        RunError::UnsupportedHostPlatform {
+            os,
+            supported,
+            supported_arch,
+            ..
+        } => (
             String::from("Unsupported host platform"),
             if os == "windows" && supported.split(", ").any(|platform| platform == "linux") {
                 format!(
                     "use a supported host or WSL, then run `{}` to inspect the selected execution path before retrying task `{task_name}`",
+                    repo_execution_plan_command(contract_path, member, backend)
+                )
+            } else if supported_arch != "all architectures" {
+                format!(
+                    "use a supported host architecture, then run `{}` to inspect the selected execution path before retrying task `{task_name}`",
                     repo_execution_plan_command(contract_path, member, backend)
                 )
             } else {
@@ -46516,6 +46550,155 @@ tasks:
         let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("json preview");
         assert_eq!(json["requested_context"], "host");
         assert_eq!(json["selected_context"], "host");
+    }
+
+    #[test]
+    fn run_dry_run_text_keeps_mode_selected_context_when_arch_scope_blocks() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let unsupported_arch = if cfg!(target_arch = "aarch64") {
+            "x64"
+        } else {
+            "arm64"
+        };
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      only_arch:
+        - {unsupported_arch}
+      container:
+        image: python:3.12-bookworm
+tasks:
+  verify:
+    context: host
+    run: echo ok
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          run: echo ok
+        container:
+          context: app
+          run: echo ok
+"#
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Task Context: `app`"), "{stderr}");
+        assert!(stderr.contains("Execution Context: `app`"), "{stderr}");
+        assert!(stderr.contains("Resolved Context: `app`"), "{stderr}");
+        assert!(stderr.contains("Unsupported host platform"), "{stderr}");
+    }
+
+    #[test]
+    fn run_dry_run_json_keeps_mode_selected_context_when_arch_scope_blocks() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let unsupported_arch = if cfg!(target_arch = "aarch64") {
+            "x64"
+        } else {
+            "arm64"
+        };
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      only_arch:
+        - {unsupported_arch}
+      container:
+        image: python:3.12-bookworm
+tasks:
+  verify:
+    context: host
+    run: echo ok
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          run: echo ok
+        container:
+          context: app
+          run: echo ok
+"#
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value = serde_json::from_str(&output.stdout).expect("json preview");
+        assert_eq!(json["requested_context"], "app");
+        assert_eq!(json["selected_context"], "app");
+        assert_eq!(json["resolved"]["backend"], "container");
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            "Unsupported host platform"
+        );
     }
 
     #[test]

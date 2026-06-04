@@ -667,13 +667,15 @@ pub enum RunError {
     )]
     NoMatchingTaskVariant { task: String, os: String },
     #[error(
-        "task `{task}` resolves context `{context}` on unsupported host `{os}`; supported hosts: {supported}"
+        "task `{task}` resolves context `{context}` on unsupported host `{os}/{arch}`; supported hosts: {supported}; supported architectures: {supported_arch}"
     )]
     UnsupportedHostPlatform {
         task: String,
         context: String,
         os: String,
+        arch: String,
         supported: String,
+        supported_arch: String,
     },
     #[error("failed to start task `{task}`: {source}")]
     SpawnFailed {
@@ -14092,17 +14094,23 @@ pub(crate) fn resolve_execution_backend_with_contract_path(
     let effective = effective_task_execution(contract, task_name, overrides);
     if let Some(context_name) = effective.context_name
         && let Some((_, context)) = named_execution_context(contract, context_name)
-        && !context.active_for_os(current_os())
+        && !context.active_for_host(current_os(), current_arch())
     {
         return Err(RunError::UnsupportedHostPlatform {
             task: task_name.to_string(),
             context: context_name.to_string(),
             os: current_os().to_string(),
+            arch: current_arch().to_string(),
             supported: context
                 .only_on
                 .as_ref()
                 .map(|platforms| platforms.join(", "))
                 .unwrap_or_else(|| String::from("all hosts")),
+            supported_arch: context
+                .only_arch
+                .as_ref()
+                .map(|architectures| architectures.join(", "))
+                .unwrap_or_else(|| String::from("all architectures")),
         });
     }
     let preferred = effective.backend;
@@ -22328,6 +22336,14 @@ fn current_os() -> &'static str {
     match std::env::consts::OS {
         "macos" => "macos",
         "windows" => "windows",
+        other => other,
+    }
+}
+
+fn current_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" | "amd64" => "x64",
+        "aarch64" | "arm64" => "arm64",
         other => other,
     }
 }
@@ -40473,12 +40489,16 @@ tasks:
                 task,
                 context,
                 os,
+                arch,
                 supported,
+                supported_arch,
             } => {
                 assert_eq!(task, "dev");
                 assert_eq!(context, "host");
                 assert_eq!(os, current_os());
+                assert_eq!(arch, super::current_arch());
                 assert_eq!(supported, unsupported);
+                assert_eq!(supported_arch, "all architectures");
             }
             other => panic!("expected unsupported host error, got {other:?}"),
         }
