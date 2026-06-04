@@ -43,7 +43,7 @@ use serde_json::Value as JsonValue;
 
 use crate::execution::{
     container_backend_probe_failure, container_engine_candidates,
-    container_engine_candidates_from_backend, container_engine_command,
+    container_engine_candidates_from_backend,
     matching_declared_execution_context_name, preferred_container_backend_probe_failure,
     selected_container_engine, selected_container_engine_from_backend,
 };
@@ -3126,7 +3126,7 @@ fn diagnose_contract_with_scope(
         );
         let declared_env_sources = load_declared_env_sources(contract, contract_path);
         diagnose_env_sources(&declared_env_sources, &mut findings);
-        if mode == DoctorMode::Native {
+        if matches!(mode, DoctorMode::Native | DoctorMode::Container) {
             diagnose_env(
                 contract,
                 loaded_policy
@@ -3138,9 +3138,8 @@ fn diagnose_contract_with_scope(
                     .then_some(&precondition_selection.env_names),
                 &mut findings,
             );
-        } else if mode == DoctorMode::Container
-            && contract_has_host_bound_readiness_surfaces(contract)
-        {
+        }
+        if mode == DoctorMode::Container && contract_has_host_bound_readiness_surfaces(contract) {
             findings.push(container_mode_scope_note_finding(contract));
         }
         let container_probe_started = if mode == DoctorMode::Remote {
@@ -3321,7 +3320,7 @@ fn diagnose_contract_with_scope(
                             )
                     })
                     .unwrap_or_default();
-                if additional_mode == DoctorMode::Native {
+                if matches!(additional_mode, DoctorMode::Native | DoctorMode::Container) {
                     diagnose_env(
                         contract,
                         loaded_policy
@@ -4173,8 +4172,7 @@ fn remote_mode_not_configured_finding() -> Finding {
 }
 
 fn contract_has_host_bound_readiness_surfaces(contract: &Contract) -> bool {
-    !contract.env.vars.is_empty()
-        || !contract.checks.is_empty()
+    !contract.checks.is_empty()
         || contract
             .services
             .values()
@@ -4183,9 +4181,6 @@ fn contract_has_host_bound_readiness_surfaces(contract: &Contract) -> bool {
 
 fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
     let mut skipped = Vec::new();
-    if !contract.env.vars.is_empty() {
-        skipped.push("env requirements");
-    }
     if !contract.checks.is_empty() {
         skipped.push("checks");
     }
@@ -4314,7 +4309,7 @@ fn diagnose_services(
 
     for (name, service) in &contract.services {
         if let Some(selected) = selected_services.as_ref()
-            && !selected.contains(name.as_str())
+            && !selected.contains(name)
         {
             continue;
         }
@@ -4766,6 +4761,31 @@ fn run_service_readiness(
         return Ok(CheckStatus::Failed);
     };
     let backend = resolve_context_execution_backend(contract, from_context)?;
+
+    if matches!(
+        backend,
+        ResolvedExecutionBackend::Native {
+            shared_local_backend: _
+        }
+    ) && let Some(args) = service
+        .manager
+        .as_ref()
+        .and_then(|manager| manager.compose_ps_command_argv(name))
+    {
+        match run_backend_argv_command_captured(
+            &format!("service-manager:{name}"),
+            "docker",
+            &args,
+            working_dir,
+            &backend,
+        ) {
+            Ok(output) if output.exit_code != 0 || output.stdout.trim().is_empty() => {
+                return Ok(CheckStatus::Failed);
+            }
+            Ok(_) => {}
+            Err(error) => return Err(error),
+        }
+    }
 
     if let Some(probe_name) = readiness
         .probe
@@ -7155,13 +7175,14 @@ fn diagnose_command_version(
         let Some(container_probe) = container_probe else {
             return false;
         };
+        let backend = doctor_probe_backend(DoctorMode::Container, Some(container_probe), None)
+            .expect("container mode should produce a probe backend when container probe exists");
         Some(command_version_probe_candidates(
             executable_candidates,
             requirement,
             |candidate| {
                 command_version_probe_in_container(
-                    &container_probe.engine,
-                    &container_probe.image,
+                    &backend,
                     candidate,
                     contract_working_dir(contract_path),
                 )
@@ -7941,27 +7962,6 @@ fn compact_probe_failure_message(message: &str) -> String {
         .join(" ")
 }
 
-fn version_command_in_container(
-    engine: &str,
-    image: &str,
-    name: &str,
-    working_dir: &Path,
-) -> Command {
-    let container_name = crate::runner::ephemeral_container_name(working_dir, image, engine);
-    let mut command = container_engine_command(engine);
-    command
-        .arg("run")
-        .arg("--rm")
-        .arg("--name")
-        .arg(container_name)
-        .arg("--entrypoint")
-        .arg("sh")
-        .arg(image)
-        .arg("-c")
-        .arg(version_probe_command_string(name));
-    command
-}
-
 fn version_command_string(name: &str) -> String {
     if name == "go" {
         String::from("go version")
@@ -7984,18 +7984,22 @@ fn version_probe_command_string(name: &str) -> String {
 }
 
 fn command_version_probe_in_container(
-    engine: &str,
-    image: &str,
+    backend: &ResolvedExecutionBackend,
     name: &str,
     working_dir: &Path,
 ) -> CommandVersionProbe {
     let command = version_command_string(name);
-    let output = version_command_in_container(engine, image, name, working_dir).output();
+    let output = run_backend_command_captured(
+        &format!("doctor-probe:{name}"),
+        version_probe_command_string(name).as_str(),
+        working_dir,
+        backend,
+    );
     let (probe_started, resolved_path, outcome) = match output {
         Ok(output) => {
             let (probe_started, resolved_path, combined) =
-                extract_container_probe_output(&output.stdout, &output.stderr);
-            let outcome = if output.status.success() {
+                extract_container_probe_output(output.stdout.as_bytes(), output.stderr.as_bytes());
+            let outcome = if output.exit_code == 0 {
                 extract_version_token(&combined)
                     .map(CommandVersionProbeOutcome::Version)
                     .unwrap_or(CommandVersionProbeOutcome::Unparseable)
@@ -8003,7 +8007,7 @@ fn command_version_probe_in_container(
                 CommandVersionProbeOutcome::Missing
             } else {
                 CommandVersionProbeOutcome::ProbeFailed {
-                    exit_code: output.status.code(),
+                    exit_code: Some(output.exit_code),
                     error: Some(combined),
                 }
             };
@@ -8218,6 +8222,7 @@ fn diagnose_checks(
     overrides: ExecutionOverrides,
 ) {
     let working_dir = contract_working_dir(contract_path);
+    let finding_start_index = findings.len();
     let selected_checks = selected_workflow_check_names(contract, workflow_name, scope);
     let selected_signal_checks =
         selected_workflow_signal_check_names(contract, workflow_name, scope);
@@ -8398,6 +8403,14 @@ fn diagnose_checks(
                 }),
             }
         }
+    }
+
+    let has_blocking_workflow_gate = findings[finding_start_index..]
+        .iter()
+        .any(|finding| finding.severity == FindingSeverity::Error);
+
+    if has_blocking_workflow_gate {
+        return;
     }
 
     if let Some(selected_surface_names) = selected_surfaces {
@@ -8843,21 +8856,14 @@ fn selected_workflow_signal_surface_names<'a>(
     )
 }
 
-fn selected_workflow_service_names<'a>(
-    contract: &'a Contract,
+fn selected_workflow_service_names(
+    contract: &Contract,
     workflow_name: Option<&str>,
-) -> Option<BTreeSet<&'a str>> {
-    let (_, workflow) = contract.selected_workflow(workflow_name)?;
-    if workflow.services.required.is_empty() {
-        return None;
-    }
-
+) -> Option<BTreeSet<String>> {
+    let _ = contract.selected_workflow(workflow_name)?;
     Some(
-        workflow
-            .services
-            .required
-            .iter()
-            .map(|service| service.as_str())
+        contract.selected_workflow_required_service_names(workflow_name)
+            .into_iter()
             .collect(),
     )
 }
@@ -13316,6 +13322,106 @@ workflows:
     }
 
     #[test]
+    fn doctor_container_corepack_owned_tool_probe_uses_repo_workdir() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let repo_dir = fixture.path().join("repo");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            repo_dir.join("package.json"),
+            r#"{"name":"twenty","packageManager":"yarn@4.13.0"}"#,
+        )
+        .unwrap();
+
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo v24.15.0\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/node 1>&2\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"command -v 'yarn'\" >nul && (\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/yarn 1>&2\r\n    echo %* | findstr /C:\"/workspace\" >nul && (\r\n      echo 4.13.0\r\n      exit /b 0\r\n    )\r\n    echo 1.22.22\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER,
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) echo 'v24.15.0'; echo '{started}' >&2; echo '{path}/usr/local/bin/node' >&2; exit 0 ;;\n    *\"command -v 'yarn'\"*) echo '{started}' >&2; echo '{path}/usr/local/bin/yarn' >&2; case \"$*\" in *\"/workspace\"*) echo '4.13.0'; exit 0 ;; *) echo '1.22.22'; exit 0 ;; esac ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER,
+            )
+        };
+        write_fake_command(&bin_dir, "docker", &docker_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract_path = repo_dir.join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: twenty
+execution:
+  preferred: container
+  backends:
+    container:
+      image: node:24-bookworm
+      engines: [docker]
+toolchains:
+  node:
+    provider: corepack
+    version: "^24.5.0"
+    package_managers:
+      yarn: "4.13.0"
+tasks:
+  install:
+    run: yarn --immutable
+    execution:
+      default_mode: container
+    requirements:
+      toolchains:
+        - node
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: install
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            &contract_path,
+            DoctorMode::Container,
+            Some("verify"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Version mismatch for tool: yarn"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
     fn doctor_selected_workflow_infers_launch_command_tool_requirement() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -14797,6 +14903,69 @@ workflows:
     }
 
     #[test]
+    fn workflow_blocking_check_skips_surface_readiness_evaluation() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: workflow-surface-gate
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+surfaces:
+  web:
+    kind: http
+    port: 65530
+checks:
+  - name: env-ready
+    kind: file
+    severity: error
+    path: .env
+    expect: file
+tasks:
+  dev:
+    run: pnpm dev
+    requirements:
+      checks:
+        - env-ready
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - web
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            Some("app"),
+        );
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "File check failed: env-ready"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| !finding.summary.starts_with("Surface readiness failed:")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
     fn workflow_readiness_surfaces_retry_until_ready() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener.local_addr().unwrap().port();
@@ -15972,6 +16141,98 @@ workflows:
     }
 
     #[test]
+    fn container_workflow_doctor_blocks_on_missing_selected_env() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "docker",
+            if cfg!(windows) {
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+            } else {
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  backends:
+    container:
+      image: node:20-bookworm
+      engines: [docker]
+env:
+  vars:
+    REQUIRED_CONTAINER_ENV:
+      required: false
+tasks:
+  verify:
+    run: echo verify
+    execution:
+      default_mode: container
+    requirements:
+      env:
+        - REQUIRED_CONTAINER_ENV
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Container,
+            Some("verify"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok, "{report:?}");
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing environment variable: REQUIRED_CONTAINER_ENV"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Container readiness does not include host-only checks"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
     fn workflow_preconditions_with_scoped_requirements_do_not_run_unreferenced_global_checks() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -16450,6 +16711,11 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
 services:
   postgres:
     required: true
@@ -17168,6 +17434,11 @@ workflows:
 version: 1
 project:
   name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
 services:
   cache:
     required: false
@@ -17197,6 +17468,11 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
 services:
   postgres:
     required: true
@@ -17234,6 +17510,11 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
 services:
   postgres:
     required: true
@@ -17326,6 +17607,11 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
 services:
   postgres:
     required: true
@@ -17453,8 +17739,9 @@ fi\n\
 exit 1\n",
         );
 
+        let contract_path = temp_dir.path().join("ota.yaml");
         let contract = parse_contract_str(
-            synthetic_contract_path(),
+            &contract_path,
             r#"
 version: 1
 project:
@@ -17480,6 +17767,171 @@ tasks:
 
         let report = super::diagnose_service(&contract, synthetic_contract_path(), "worker");
         assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn diagnose_service_compose_manager_fails_fast_when_service_is_not_running() {
+        struct EnvPathGuard {
+            original: Option<std::ffi::OsString>,
+        }
+
+        impl Drop for EnvPathGuard {
+            fn drop(&mut self) {
+                match &self.original {
+                    Some(path) => unsafe {
+                        env::set_var("PATH", path);
+                    },
+                    None => unsafe {
+                        env::remove_var("PATH");
+                    },
+                }
+            }
+        }
+
+        let _guard = env_mutex_lock();
+        let temp_dir = TempDir::new().unwrap();
+        let bin_dir = temp_dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let original_path = env::var_os("PATH");
+        let new_path = match &original_path {
+            Some(path) => format!("{}:{}", bin_dir.display(), path.to_string_lossy()),
+            None => bin_dir.display().to_string(),
+        };
+        let _path_guard = EnvPathGuard {
+            original: original_path,
+        };
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        write_fake_command(
+            &bin_dir,
+            "docker",
+            "#!/bin/sh\n\
+if [ \"$1\" = \"compose\" ]; then\n\
+  exit 1\n\
+fi\n\
+exit 1\n",
+        );
+
+        let contract_path = temp_dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+    readiness:
+      kind: tcp
+      from: host
+      interval: 2s
+      retries: 50
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let started = std::time::Instant::now();
+        let report = super::diagnose_service(&contract, &contract_path, "postgres");
+        let elapsed = started.elapsed();
+
+        assert!(!report.ok, "{report:?}");
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary.starts_with("Service readiness"))
+            .expect("expected service readiness failure finding");
+        assert!(elapsed < Duration::from_secs(1), "elapsed: {elapsed:?}");
+        assert!(
+            finding
+                .next
+                .contains("docker compose -f 'compose.yaml' -p 'local' up -d 'postgres'"),
+            "{}",
+            finding.next
+        );
+    }
+
+    #[test]
+    fn workflow_scoped_services_ignore_unselected_global_services() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-services
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    readiness:
+      kind: tcp
+      from: host
+      interval: 1s
+      retries: 1
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+  redis:
+    readiness:
+      kind: tcp
+      from: host
+      interval: 1s
+      retries: 1
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 6379
+tasks:
+  selfhost:
+    run: docker compose up
+  dev:
+    run: pnpm dev
+    requires_services:
+      - postgres
+      - redis
+workflows:
+  default: dev
+  dev:
+    run:
+      task: dev
+  selfhost:
+    run:
+      task: selfhost
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_services_only_for_workflow(
+            &contract,
+            Path::new("ota.yaml"),
+            Some("selfhost"),
+        );
+
         assert!(report.findings.is_empty(), "{report:?}");
     }
 

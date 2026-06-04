@@ -26,6 +26,28 @@
 
 ## Unreleased
 
+- hardened selected-path command inference for shell wrappers: `ota doctor` and `ota run --dry-run`
+  no longer infer wrapper shells like `sh`, `bash`, or `zsh` from `run:` / `script:` bodies as
+  required tools, avoiding bogus shell-version probes on wrapper forms such as `sh -c '...'`
+- fixed Corepack-managed container tool probing in `ota doctor`: owned package-manager tools such
+  as `yarn` are now probed through the normal container backend in the repo workdir, so contracts
+  that rely on `packageManager` truth no longer drift to global image defaults during diagnosis
+- hardened ephemeral container cleanup after container-backed probes and dry-runs: Ota now retries
+  transient Docker `removal of container ... is already in progress` races instead of surfacing
+  them as spurious probe failures when the container cleanup path briefly lags
+- fixed a container workflow preflight trust gap in `ota doctor` and `ota up --dry-run`: selected
+  container task/workflow paths now evaluate required env the same way `ota run --dry-run` does,
+  instead of suppressing real env blockers behind the generic "host-only checks" note
+- hardened `ota doctor` for compose-managed services: when a required compose service is not
+  running, Ota now fails that service readiness path immediately from manager truth instead of
+  spending the full declared TCP/HTTP probe retry budget before reporting the same not-ready state
+- fixed workflow-scoped `ota doctor` service selection: selected workflows now diagnose only the
+  services required by their explicit workflow service list plus selected task closure, instead of
+  falling back to unrelated repo-global services whenever `workflows.<name>.services.required`
+  was empty
+- hardened workflow-scoped `ota doctor` gating: once selected workflow checks or probes produce a
+  blocking error, Ota now skips later workflow surface readiness evaluation instead of spending the
+  full surface retry budget on a path already proven invalid
 - added host-architecture scoping for execution contexts: `execution.contexts.<name>.only_arch`
   now lets contracts fail early in `ota doctor`, `ota run --dry-run`, and execution when a
   selected context is not supported on the current host architecture, instead of falling through
