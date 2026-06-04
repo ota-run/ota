@@ -128,7 +128,13 @@
   version explicitly; `ota doctor`, `ota run --dry-run`, and real `ota run` now block early when
   the selected path resolves a uv binary outside that required version range instead of failing
   later during `uv sync` / `uv run`
-  against the selected execution mode instead of the task's default/native path
+- fixed alias-aware selected-path owned-tool projection so Bundler version governance survives
+  task commands that invoke `bundle`; `ota doctor`, `ota run --dry-run`, and real `ota run` now
+  block early on mismatched Bundler versions instead of treating `bundle` as an unrelated wildcard
+  tool
+- stopped treating repo-local executables such as `bin/bundle` as host tool probes during selected
+  path inference; `ota doctor` and dry-run previews now let repo wrappers run inside the selected
+  working tree instead of incorrectly failing early on missing global `bin/...` commands
 - added task `env_bindings.<NAME>.from_service` so contracts can derive task environment values
   from declared service endpoints, including container callers that need host-view services, and
   added `password_env` for secret-safe service URL credentials while keeping literal `password`

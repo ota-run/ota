@@ -986,17 +986,19 @@ pub(crate) fn requirement_surface_with_toolchain_owned_tools_for_required_tools(
             continue;
         };
         for (tool_name, requirement) in provider.owned_tool_requirements(toolchain, target_os) {
-            if let Some(required_tools) = required_tools
-                && !required_tools.contains(tool_name.as_str())
-            {
+            let destination_names =
+                selected_requirement_surface_tool_names(&merged, required_tools, &tool_name);
+            if destination_names.is_empty() {
                 continue;
             }
-            let merged_requirement = merged
-                .tools
-                .get(tool_name.as_str())
-                .map(|base_requirement| base_requirement.merged_with_overlay(&requirement))
-                .unwrap_or(requirement);
-            merged.tools.insert(tool_name, merged_requirement);
+            for destination_name in destination_names {
+                let merged_requirement = merged
+                    .tools
+                    .get(destination_name.as_str())
+                    .map(|base_requirement| base_requirement.merged_with_overlay(&requirement))
+                    .unwrap_or_else(|| requirement.clone());
+                merged.tools.insert(destination_name, merged_requirement);
+            }
         }
         for capability in provider
             .owned_capabilities(toolchain)
@@ -1006,15 +1008,13 @@ pub(crate) fn requirement_surface_with_toolchain_owned_tools_for_required_tools(
             if capability.name == provider.owned_runtime() {
                 continue;
             }
-            if let Some(required_tools) = required_tools
-                && !required_tools.contains(capability.name.as_str())
-            {
+            let destination_names =
+                selected_requirement_surface_tool_names(&merged, required_tools, &capability.name);
+            if destination_names.is_empty() {
                 continue;
             }
-            merged
-                .tools
-                .entry(capability.name.clone())
-                .or_insert_with(|| {
+            for destination_name in destination_names {
+                merged.tools.entry(destination_name).or_insert_with(|| {
                     ToolRequirement::Detailed(ToolDetail {
                         version: String::from("*"),
                         required: toolchain.required_for_os(target_os),
@@ -1023,10 +1023,50 @@ pub(crate) fn requirement_surface_with_toolchain_owned_tools_for_required_tools(
                         acquisition: None,
                     })
                 });
+            }
         }
     }
 
     merged
+}
+
+fn selected_requirement_surface_tool_names(
+    base: &RequirementSurface,
+    required_tools: Option<&BTreeSet<String>>,
+    tool_name: &str,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(required_tools) = required_tools {
+        if required_tools.contains(tool_name) {
+            names.push(tool_name.to_string());
+        }
+        for alias in tool_requirement_executable_aliases(tool_name) {
+            if required_tools.contains(*alias) {
+                names.push((*alias).to_string());
+            }
+        }
+        return names;
+    }
+    if base.tools.contains_key(tool_name) {
+        names.push(tool_name.to_string());
+    }
+    for alias in tool_requirement_executable_aliases(tool_name) {
+        if base.tools.contains_key(*alias) {
+            names.push((*alias).to_string());
+        }
+    }
+    if names.is_empty() {
+        names.push(tool_name.to_string());
+    }
+    names
+}
+
+fn tool_requirement_executable_aliases(tool_name: &str) -> &'static [&'static str] {
+    match tool_name {
+        "bundler" => &["bundle"],
+        "maven" => &["mvn"],
+        _ => &[],
+    }
 }
 
 pub(crate) fn requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
