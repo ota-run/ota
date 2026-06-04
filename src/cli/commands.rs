@@ -3381,6 +3381,10 @@ fn render_execution_plan_structured_error(
                     String::from(
                         "run this path on a supported host or use WSL, then rerun `ota execution plan`",
                     )
+                } else if supported_arch != "all architectures" {
+                    String::from(
+                        "run this path on a supported host architecture, then rerun `ota execution plan`",
+                    )
                 } else {
                     String::from(
                         "run this path on a supported host, then rerun `ota execution plan`",
@@ -45622,6 +45626,60 @@ tasks:
         let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Unsupported host platform"), "{stderr}");
         assert!(stderr.contains("supported hosts"), "{stderr}");
+    }
+
+    #[test]
+    fn run_dry_run_preview_surfaces_unsupported_host_architecture_as_primary_blocker() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let unsupported = if cfg!(target_arch = "aarch64") {
+            "x64"
+        } else {
+            "arm64"
+        };
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      only_arch:
+        - {unsupported}
+tasks:
+  ci:
+    run: echo hi
+"#
+            ),
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "ci",
+            Some(repo.path()),
+            None,
+            OutputFormat::Text,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_ne!(output.exit_code, 0);
+        let stderr = strip_ansi_codes(output.stderr.as_deref().unwrap_or_default());
+        assert!(stderr.contains("Unsupported host platform"), "{stderr}");
+        assert!(stderr.contains("architectures:"), "{stderr}");
+        assert!(stderr.contains("supported host architecture"), "{stderr}");
     }
 
     #[test]
