@@ -2975,7 +2975,23 @@ impl<'a> TaskSummary<'a> {
         current_os: &str,
         contract: &'a Contract,
     ) -> Self {
-        let effective = effective_task_execution(contract, name, ExecutionOverrides::default());
+        Self::from_spec_with_overrides(
+            name,
+            task,
+            current_os,
+            contract,
+            ExecutionOverrides::default(),
+        )
+    }
+
+    pub fn from_spec_with_overrides(
+        name: &'a str,
+        task: &'a TaskSpec,
+        current_os: &str,
+        contract: &'a Contract,
+        overrides: ExecutionOverrides,
+    ) -> Self {
+        let effective = effective_task_execution(contract, name, overrides);
         let selected_backend = effective.backend;
         let resolved_execution = task
             .resolved_execution_for_backend(selected_backend, current_os)

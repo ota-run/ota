@@ -203,6 +203,14 @@ fn current_host_platform() -> &'static str {
     }
 }
 
+fn current_host_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" | "amd64" => "x64",
+        "aarch64" | "arm64" => "arm64",
+        other => other,
+    }
+}
+
 fn selected_context_names_for_mode(
     contract: &Contract,
     mode: DoctorMode,
@@ -248,6 +256,7 @@ fn unsupported_host_context_findings(
     overrides: ExecutionOverrides,
 ) -> Vec<Finding> {
     let current_os = current_host_platform();
+    let current_arch = current_host_arch();
     let mut findings = Vec::new();
 
     for context_name in
@@ -260,15 +269,20 @@ fn unsupported_host_context_findings(
         else {
             continue;
         };
-        if context.active_for_os(current_os) {
+        if context.active_for_host(current_os, current_arch) {
             continue;
         }
 
-        let supported = context
+        let supported_os = context
             .only_on
             .as_ref()
             .map(|platforms| platforms.join(", "))
             .unwrap_or_else(|| String::from("all hosts"));
+        let supported_arch = context
+            .only_arch
+            .as_ref()
+            .map(|architectures| architectures.join(", "))
+            .unwrap_or_else(|| String::from("all architectures"));
         let next = if current_os == "windows"
             && context
                 .only_on
@@ -276,21 +290,28 @@ fn unsupported_host_context_findings(
                 .is_some_and(|platforms| platforms.iter().any(|platform| platform == "linux"))
         {
             format!(
-                "run this path on a supported host ({supported}) or use WSL and rerun `{}`",
+                "run this path on a supported host ({supported_os}; {supported_arch}) or use WSL and rerun `{}`",
                 rerun_doctor_command_for_workflow(mode, lifecycle, workflow_name)
             )
         } else {
             format!(
-                "run this path on a supported host ({supported}) and rerun `{}`",
+                "run this path on a supported host ({supported_os}; {supported_arch}) and rerun `{}`",
                 rerun_doctor_command_for_workflow(mode, lifecycle, workflow_name)
             )
         };
+        let mut constraints = Vec::new();
+        if context.only_on.is_some() {
+            constraints.push(format!("`only_on: [{supported_os}]`"));
+        }
+        if context.only_arch.is_some() {
+            constraints.push(format!("`only_arch: [{supported_arch}]`"));
+        }
         findings.push(Finding {
             severity: FindingSeverity::Error,
             summary: format!("Unsupported host platform for context: {context_name}"),
             why: format!(
-                "the selected workflow/task path resolves `execution.contexts.{context_name}`, but that context declares `only_on: [{}]` and the current host is `{current_os}`",
-                supported
+                "the selected workflow/task path resolves `execution.contexts.{context_name}`, but that context declares {} and the current host is `{current_os}/{current_arch}`",
+                constraints.join(" and ")
             ),
             next,
         });
@@ -12863,6 +12884,58 @@ workflows:
         assert!(finding.why.contains("execution.contexts.host"));
         assert!(finding.why.contains("only_on"));
         assert!(finding.next.contains("ota doctor --workflow app"));
+    }
+
+    #[test]
+    fn doctor_blocks_selected_workflow_on_unsupported_host_arch_context() {
+        let unsupported = if super::current_host_arch() == "arm64" {
+            "x64"
+        } else {
+            "arm64"
+        };
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      only_arch:
+        - {unsupported}
+tasks:
+  dev:
+    run: echo hi
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#
+            ),
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("app"),
+        );
+
+        assert!(!report.ok);
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Unsupported host platform for context: host")
+            .expect("expected unsupported host finding");
+        assert!(finding.why.contains("execution.contexts.host"));
+        assert!(finding.why.contains("only_arch"));
+        assert!(finding.why.contains(super::current_host_arch()));
     }
 
     #[test]
