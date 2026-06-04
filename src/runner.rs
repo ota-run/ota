@@ -3894,7 +3894,7 @@ fn remove_persistent_container_if_present(
         return Ok(false);
     }
 
-    let remove = container_command_output(engine, &["rm", "-f", container_name], None, task_name)?;
+    let remove = remove_persistent_container(engine, container_name, task_name)?;
     if remove.exit_code == 0 {
         return Ok(true);
     }
@@ -19563,12 +19563,40 @@ fn container_network_already_connected(status: &ContainerCommandOutput) -> bool 
         || combined.contains("is already connected")
 }
 
+const EPHEMERAL_CONTAINER_REMOVE_MAX_ATTEMPTS: usize = 5;
+
+fn ephemeral_container_remove_retry_delay(attempt: usize) -> Duration {
+    let shift = attempt.min(4) as u32;
+    let millis = 100u64.saturating_mul(1u64 << shift).min(1_000);
+    Duration::from_millis(millis)
+}
+
+fn container_removal_already_in_progress(output: &ContainerCommandOutput) -> bool {
+    let combined = format!("{}\n{}", output.stdout, output.stderr).to_ascii_lowercase();
+    combined.contains("removal of container") && combined.contains("already in progress")
+}
+
 fn remove_persistent_container(
     engine: &str,
     container_name: &str,
     task_name: &str,
 ) -> Result<ContainerCommandOutput, RunError> {
-    container_command_output(engine, &["rm", "-f", container_name], None, task_name)
+    let args = ["rm", "-f", container_name];
+    for attempt in 0..EPHEMERAL_CONTAINER_REMOVE_MAX_ATTEMPTS {
+        let remove = container_command_output(engine, &args, None, task_name)?;
+        if remove.exit_code == 0 {
+            return Ok(remove);
+        }
+        if attempt + 1 < EPHEMERAL_CONTAINER_REMOVE_MAX_ATTEMPTS
+            && container_removal_already_in_progress(&remove)
+        {
+            thread::sleep(ephemeral_container_remove_retry_delay(attempt));
+            continue;
+        }
+        return Ok(remove);
+    }
+
+    container_command_output(engine, &args, None, task_name)
 }
 
 fn remove_ephemeral_container_and_note(
@@ -43219,6 +43247,71 @@ tasks:
 
     #[cfg(unix)]
     #[test]
+    fn ephemeral_container_cleanup_retries_removal_in_progress_races() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let state_dir = bin_dir.join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let container_name = "retrying-cleanup";
+        fs::write(
+            state_dir.join(format!("{container_name}.path")),
+            fixture.dir.path().display().to_string(),
+        )
+        .unwrap();
+        fs::write(
+            state_dir.join(format!("{container_name}.rm_in_progress_attempts")),
+            "2",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let note =
+            super::remove_ephemeral_container_and_note("doctor-probe:yarn", "docker", container_name);
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(note.is_none(), "{note:?}");
+        assert!(!state_dir.join(format!("{container_name}.path")).exists());
+        assert!(!state_dir.join(format!("{container_name}.rm_in_progress_attempts")).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn clean_execution_handles_engines_that_reject_volume_label_filters() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -46188,6 +46281,17 @@ EOF
     name="$1"
     [ -f "$state_dir/$name.path" ] || exit 1
     host_dir=$(cat "$state_dir/$name.path")
+    attempts_file="$state_dir/$name.rm_in_progress_attempts"
+    if [ -f "$attempts_file" ]; then
+      attempts="$(cat "$attempts_file")"
+      if [ "${attempts:-0}" -gt 0 ] 2>/dev/null; then
+        attempts=$((attempts - 1))
+        printf "%s" "$attempts" > "$attempts_file"
+        printf "Error response from daemon: removal of container %s is already in progress\n" "$name" >&2
+        exit 1
+      fi
+      rm -f "$attempts_file"
+    fi
     if [ -f "$state_dir/$name.pid" ]; then
       kill "$(cat "$state_dir/$name.pid")" >/dev/null 2>&1 || true
       rm -f "$state_dir/$name.pid"

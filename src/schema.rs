@@ -2906,6 +2906,25 @@ health=$(docker inspect --format '{{{{if .State.Health}}}}{{{{.State.Health.Stat
         ))
     }
 
+    pub fn compose_ps_command_argv(&self, service_name: &str) -> Option<Vec<String>> {
+        if self.kind != ServiceManagerKind::Compose {
+            return None;
+        }
+        let mut args = vec![String::from("compose")];
+        if let Some(file) = self.file.as_deref().filter(|value| !value.trim().is_empty()) {
+            args.push(String::from("-f"));
+            args.push(file.to_string());
+        }
+        if let Some(name) = self.name.as_deref().filter(|value| !value.trim().is_empty()) {
+            args.push(String::from("-p"));
+            args.push(name.to_string());
+        }
+        args.push(String::from("ps"));
+        args.push(String::from("-q"));
+        args.push(self.compose_service(service_name).to_string());
+        Some(args)
+    }
+
     fn compose_service<'a>(&'a self, service_name: &'a str) -> &'a str {
         self.service
             .as_deref()
@@ -3560,6 +3579,9 @@ fn inferred_shell_command_executable(body: &str) -> Option<String> {
         }
         if matches!(token, "command" | "builtin" | "nohup" | "time") {
             continue;
+        }
+        if matches!(token, "ash" | "bash" | "dash" | "ksh" | "sh" | "zsh") {
+            return None;
         }
         if token.contains('=') {
             continue;
@@ -5492,6 +5514,28 @@ tasks:
             contract.tasks["setup"]
                 .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
             Some(String::from("uv"))
+        );
+    }
+
+    #[test]
+    fn effective_command_launch_executable_for_backend_skips_shell_wrapper() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  verify:
+    run: sh -c 'yarn lint'
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.tasks["verify"]
+                .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
+            None
         );
     }
 
