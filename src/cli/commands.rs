@@ -128,16 +128,17 @@ use crate::runner::{
     ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
-    SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogTee, TaskExecutionRelation,
-    TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence, clean_execution_report,
-    clean_stale_execution, effective_execution, effective_task_env_for_backend,
-    effective_task_env_for_selection, effective_task_execution, env_resolution_source_label,
-    ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
-    load_policy_env_overlay, named_execution_context, persistent_container_name,
-    preflight_native_runtime_listener_binds, reported_task_context_for_backend,
-    resolve_declared_env_source_value, resolve_effective_task_container_backend,
-    resolve_execution_backend, resolve_execution_backend_with_contract_path,
-    resolve_named_readiness_probe, resolve_task_env_details, resolve_task_env_details_for_task,
+    SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogFile, StreamLogTee,
+    TaskExecutionRelation, TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence,
+    clean_execution_report, clean_stale_execution, effective_execution,
+    effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
+    env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
+    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
+    persistent_container_name, preflight_native_runtime_listener_binds,
+    reported_task_context_for_backend, resolve_declared_env_source_value,
+    resolve_effective_task_container_backend, resolve_execution_backend,
+    resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
+    resolve_task_env_details, resolve_task_env_details_for_task,
     resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
@@ -41448,8 +41449,8 @@ mod tests {
         CleanExecutionReport, CleanExecutionResourceKind, ExecutedTaskStep, ExecutionOverrides,
         RepoExecutionLockOwner, RunError, ServiceTermination, ServiceTerminationCause,
         ServiceTerminationKind, SharedLocalBackendEvidence, TaskExecutionRelation,
-        TaskTargetResolutionEvidence, TaskTargetResolutionSource,
-        ToolchainFulfillmentEvidence, simulate_run_interrupt_for_test,
+        TaskTargetResolutionEvidence, TaskTargetResolutionSource, ToolchainFulfillmentEvidence,
+        simulate_run_interrupt_for_test,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskInputSpec, TaskTargetAddressView, ToolAcquisitionProvider,
@@ -58096,13 +58097,22 @@ tasks:
             None,
         ));
 
-        assert!(rendered.contains("Active execution:"), "{rendered}");
+        assert!(rendered.contains("\n\nActive execution:"), "{rendered}");
         assert!(rendered.contains("task: `dev`"), "{rendered}");
-        assert!(rendered.contains("requested mode: `container`"), "{rendered}");
-        assert!(rendered.contains("execution mode: `container`"), "{rendered}");
+        assert!(
+            rendered.contains("requested mode: `container`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("execution mode: `container`"),
+            "{rendered}"
+        );
         assert!(rendered.contains("lifecycle: `persistent`"), "{rendered}");
         assert!(rendered.contains("pid: `48211`"), "{rendered}");
-        assert!(rendered.contains("started: `2026-06-05T22:14:03Z`"), "{rendered}");
+        assert!(
+            rendered.contains("started: `2026-06-05T22:14:03Z`"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains("then rerun `ota run build --mode native`"),
             "{rendered}"
@@ -64624,13 +64634,13 @@ fn prepare_streaming_durable_run_logs(
 
     match create_durable_run_log_paths(contract_path, task_name, member) {
         Ok((logs, stdout_path, stderr_path)) => {
-            let stdout = File::create(&stdout_path).map_err(|error| {
+            let stdout = StreamLogFile::create(&stdout_path).map_err(|error| {
                 format!(
                     "failed to create stdout log `{}`: {error}",
                     compact_path(&stdout_path, ".")
                 )
             });
-            let stderr = File::create(&stderr_path).map_err(|error| {
+            let stderr = StreamLogFile::create(&stderr_path).map_err(|error| {
                 format!(
                     "failed to create stderr log `{}`: {error}",
                     compact_path(&stderr_path, ".")
@@ -68430,6 +68440,7 @@ fn render_run_structured_error_text(
     let mut output =
         structured_error_text("RUN", &text_path_display, &summary, &why_lines, &next_steps);
     if !detail_lines.is_empty() {
+        output.push('\n');
         append_error_detail_section(&mut output, "Active execution:", &detail_lines, None);
     }
     if let Some(receipt_text) = receipt_text

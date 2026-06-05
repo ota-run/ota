@@ -310,7 +310,7 @@ pub(crate) fn stream_reader_to_sink<R, W>(
     mut sink: W,
     notifier: Option<StreamPhaseNotifier>,
     capture: bool,
-    live_log: Option<Arc<Mutex<File>>>,
+    live_log: Option<Arc<Mutex<StreamLogFile>>>,
 ) -> io::Result<String>
 where
     R: Read,
@@ -417,8 +417,55 @@ pub(crate) struct StreamingCommandOutput {
 
 #[derive(Clone, Debug)]
 pub(crate) struct StreamLogTee {
-    pub(crate) stdout: Arc<Mutex<File>>,
-    pub(crate) stderr: Arc<Mutex<File>>,
+    pub(crate) stdout: Arc<Mutex<StreamLogFile>>,
+    pub(crate) stderr: Arc<Mutex<StreamLogFile>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct StreamLogFile {
+    path: PathBuf,
+    file: File,
+}
+
+impl StreamLogFile {
+    pub(crate) fn create(path: &Path) -> io::Result<Self> {
+        let file = open_stream_log_file(path, true)?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+        })
+    }
+
+    fn reopen_if_missing(&mut self) -> io::Result<()> {
+        if self.path.exists() {
+            return Ok(());
+        }
+        self.file = open_stream_log_file(&self.path, false)?;
+        Ok(())
+    }
+
+    pub(crate) fn write_all(&mut self, buffer: &[u8]) -> io::Result<()> {
+        self.reopen_if_missing()?;
+        self.file.write_all(buffer)
+    }
+
+    pub(crate) fn flush(&mut self) -> io::Result<()> {
+        self.reopen_if_missing()?;
+        self.file.flush()
+    }
+}
+
+fn open_stream_log_file(path: &Path, truncate: bool) -> io::Result<File> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut options = fs::OpenOptions::new();
+    if truncate {
+        options.create(true).write(true).truncate(true);
+    } else {
+        options.create(true).append(true);
+    }
+    options.open(path)
 }
 
 pub(crate) fn run_streaming_command_with_capture_with_loader_options(
@@ -1572,7 +1619,9 @@ fn repo_execution_lock_owner_for_backend(
     };
     RepoExecutionLockOwner {
         task: task_name.to_string(),
-        requested_mode: overrides.backend.map(|backend| format_backend(backend).to_string()),
+        requested_mode: overrides
+            .backend
+            .map(|backend| format_backend(backend).to_string()),
         execution_mode: format_backend(resolved_execution_backend_kind(backend)).to_string(),
         lifecycle,
         pid: std::process::id(),
@@ -21754,24 +21803,22 @@ fn acquire_repo_execution_lock(
             path: lock_path.display().to_string(),
             details: source.to_string(),
         })?;
-    lock_file
-        .try_lock_exclusive()
-        .map_err(|source| {
-            if source.kind() == fs2::lock_contended_error().kind() {
-                RunError::RepoExecutionLockBusy {
-                    task: task_name.to_string(),
-                    path: lock_path.display().to_string(),
-                    owner: read_repo_execution_lock_owner(&mut lock_file),
-                }
-            } else {
-                RunError::RepoExecutionLockFailed {
-                    task: task_name.to_string(),
-                    action: String::from("lock"),
-                    path: lock_path.display().to_string(),
-                    details: source.to_string(),
-                }
+    lock_file.try_lock_exclusive().map_err(|source| {
+        if source.kind() == fs2::lock_contended_error().kind() {
+            RunError::RepoExecutionLockBusy {
+                task: task_name.to_string(),
+                path: lock_path.display().to_string(),
+                owner: read_repo_execution_lock_owner(&mut lock_file),
             }
-        })?;
+        } else {
+            RunError::RepoExecutionLockFailed {
+                task: task_name.to_string(),
+                action: String::from("lock"),
+                path: lock_path.display().to_string(),
+                details: source.to_string(),
+            }
+        }
+    })?;
     if let Some(owner) = owner {
         write_repo_execution_lock_owner(&mut lock_file, owner).map_err(|source| {
             RunError::RepoExecutionLockFailed {
@@ -22707,11 +22754,11 @@ mod tests {
         ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint, ResolvedTaskRuntimeHost,
         ResolvedTaskRuntimeListener, ResolvedTaskRuntimeResolution, RunError,
         RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind,
-        RuntimeReadinessTarget, StreamLogTee, TaskExecutionMode, TaskExecutionRelation,
-        TaskRunState, TaskTargetActivationEvidence, TaskTargetActivationStatus,
-        TaskTargetResolutionSource, acquire_repo_execution_lock, activation_loader_label,
-        backend_fulfillment_plan, clean_execution, clean_execution_report, container_identity_seed,
-        contract_working_dir, current_os, effective_task_env_for_backend,
+        RuntimeReadinessTarget, StreamLogFile, StreamLogTee, TaskExecutionMode,
+        TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
+        TaskTargetActivationStatus, TaskTargetResolutionSource, acquire_repo_execution_lock,
+        activation_loader_label, backend_fulfillment_plan, clean_execution, clean_execution_report,
+        container_identity_seed, contract_working_dir, current_os, effective_task_env_for_backend,
         effective_task_env_for_selection, effective_task_execution,
         ephemeral_container_stream_command, execute_task_command, execute_task_with_hooks,
         extract_probe_version_token, looks_like_posix_script, looks_like_powershell_script,
@@ -22770,8 +22817,8 @@ mod tests {
                 .expect("lock should acquire");
             assert!(lock_path.exists(), "{lock_path:?}");
         }
-        let _guard =
-            acquire_repo_execution_lock("build", fixture.path(), None).expect("lock should reacquire");
+        let _guard = acquire_repo_execution_lock("build", fixture.path(), None)
+            .expect("lock should reacquire");
     }
 
     #[test]
@@ -22804,6 +22851,27 @@ mod tests {
             Ok(_) => panic!("second acquisition should report busy"),
             Err(other) => panic!("expected busy lock with owner metadata, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn stream_log_file_recreates_deleted_log_path() {
+        let fixture = tempdir().expect("tempdir");
+        let log_path = fixture.path().join("stdout.log");
+        let mut log = StreamLogFile::create(&log_path).expect("create live log");
+
+        log.write_all(b"first line\n").expect("write initial log");
+        log.flush().expect("flush initial log");
+        fs::remove_file(&log_path).expect("delete live log path");
+
+        log.write_all(b"second line\n")
+            .expect("write recreated log");
+        log.flush().expect("flush recreated log");
+
+        assert!(log_path.exists(), "live log path should be recreated");
+        assert_eq!(
+            fs::read_to_string(&log_path).expect("read recreated log"),
+            "second line\n"
+        );
     }
 
     #[test]
@@ -30995,10 +31063,10 @@ tasks:
         let stderr_path = log_dir.path().join("stderr.log");
         let live_log = StreamLogTee {
             stdout: Arc::new(Mutex::new(
-                File::create(&stdout_path).expect("stdout log should create"),
+                StreamLogFile::create(&stdout_path).expect("stdout log should create"),
             )),
             stderr: Arc::new(Mutex::new(
-                File::create(&stderr_path).expect("stderr log should create"),
+                StreamLogFile::create(&stderr_path).expect("stderr log should create"),
             )),
         };
 
