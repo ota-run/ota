@@ -6971,10 +6971,7 @@ exit 1
     }
 
     #[cfg(unix)]
-    fn install_fake_container_probe_engine(
-        path: &std::path::Path,
-        missing_tool: Option<&str>,
-    ) {
+    fn install_fake_container_probe_engine(path: &std::path::Path, missing_tool: Option<&str>) {
         let missing = missing_tool.unwrap_or("__NONE__");
         let script_path = path
             .parent()
@@ -7080,10 +7077,10 @@ exit 1
             .expect("fake container probe engine metadata")
             .permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&script_path, permissions).expect("set fake container probe permissions");
+        fs::set_permissions(&script_path, permissions)
+            .expect("set fake container probe permissions");
         std::fs::hard_link(&script_path, path).unwrap_or_else(|_| {
-            fs::copy(&script_path, path)
-                .expect("copy fake container probe engine to engine name");
+            fs::copy(&script_path, path).expect("copy fake container probe engine to engine name");
             let mut permissions = fs::metadata(path)
                 .expect("fake container probe engine metadata copy")
                 .permissions();
