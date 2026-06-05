@@ -6438,11 +6438,20 @@ mod tests {
             dir,
             name,
             r#"#!/bin/sh
-state_dir="$(dirname "$0")/docker-state"
-mkdir -p "$state_dir"
-if [ -n "$OTA_FAKE_DOCKER_TRACE" ]; then
-  printf '%s\n' "$@" >> "$OTA_FAKE_DOCKER_TRACE"
-fi
+            script_path="$0"
+            case "$script_path" in
+              */*) ;;
+              *) script_path="$(command -v -- "$script_path" 2>/dev/null || printf '%s' "$script_path")" ;;
+            esac
+            script_dir="${script_path%/*}"
+            if [ "$script_dir" = "$script_path" ]; then
+              script_dir="."
+            fi
+            state_dir="$script_dir/docker-state"
+            /bin/mkdir -p "$state_dir"
+            if [ -n "$OTA_FAKE_DOCKER_TRACE" ]; then
+              printf '%s\n' "$@" >> "$OTA_FAKE_DOCKER_TRACE"
+            fi
 
 command="$1"
 shift
@@ -15250,8 +15259,17 @@ if [ "$1" = "create" ] || [ "$1" = "run" ]; then
   printf "Bind for 127.0.0.1:3000 failed: port is already allocated\n" >&2
   exit 1
 fi
-exec "$(dirname "$0")/docker-real" "$@"
-"#,
+            script_path="$0"
+            case "$script_path" in
+              */*) ;;
+              *) script_path="$(command -v -- "$script_path" 2>/dev/null || printf '%s' "$script_path")" ;;
+            esac
+            script_dir="${script_path%/*}"
+            if [ "$script_dir" = "$script_path" ]; then
+              script_dir="."
+            fi
+            exec "$script_dir/docker-real" "$@"
+            "#,
         )
         .unwrap();
         let mut wrapper_permissions = fs::metadata(&docker_wrapper).unwrap().permissions();
