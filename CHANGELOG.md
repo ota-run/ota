@@ -30,6 +30,9 @@
   requested execution mode overrides including `--mode native`, and lock-contention errors now
   surface the active task/mode/lifecycle/pid/start-time metadata for the live Ota execution that
   currently holds the repo lock
+- hardened streaming durable log capture for `ota run --log`: if the live stdout/stderr log path
+  is deleted while a task is still running, Ota now recreates the named log file and continues
+  writing there instead of silently writing only to the unlinked file handle
 - fixed Windows native proof CI: `where` (Windows) and `which` (Unix) are now excluded from
   inferred tool requirements so that `run: where cl` in a task or check no longer triggers a
   spurious `where --version` probe that exits with code 1 on Windows
