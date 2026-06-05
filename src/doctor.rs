@@ -10116,6 +10116,23 @@ fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
 }
 
 fn version_command(name: &str, program: &OsStr, working_dir: &Path) -> Command {
+    #[cfg(windows)]
+    let mut command = {
+        let is_wrapper = Path::new(program)
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| {
+                value.eq_ignore_ascii_case("cmd") || value.eq_ignore_ascii_case("bat")
+            });
+        if is_wrapper {
+            let mut command = Command::new("cmd");
+            command.arg("/C").arg(program);
+            command
+        } else {
+            Command::new(program)
+        }
+    };
+    #[cfg(not(windows))]
     let mut command = Command::new(program);
     command.current_dir(working_dir);
     if name == "go" {
@@ -13132,6 +13149,34 @@ workflows:
                 .all(|finding| !finding.summary.contains("docker")),
             "{report:?}"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn command_version_probe_in_working_dir_runs_cmd_wrappers() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "corepack.cmd", "@echo off\r\necho corepack 0.31.0\r\n");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let probe = super::command_version_probe_in_working_dir("corepack", fixture.path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(probe.version().as_deref(), Some("0.31.0"), "{probe:?}");
     }
 
     #[test]

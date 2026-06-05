@@ -48,6 +48,9 @@
 - hardened workflow-scoped `ota doctor` gating: once selected workflow checks or probes produce a
   blocking error, Ota now skips later workflow surface readiness evaluation instead of spending the
   full surface retry budget on a path already proven invalid
+- fixed Windows host tool probing for wrapper scripts such as `corepack.cmd`: `ota doctor` now
+  executes `.cmd` / `.bat` tool probes through `cmd /C` instead of failing with a generic
+  executable-not-found probe error when the tool is otherwise present on PATH
 - added host-architecture scoping for execution contexts: `execution.contexts.<name>.only_arch`
   now lets contracts fail early in `ota doctor`, `ota run --dry-run`, and execution when a
   selected context is not supported on the current host architecture, instead of falling through
