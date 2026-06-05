@@ -71,7 +71,7 @@ The shell installer also supports `OTA_RELEASE_BASE` if you host the release ass
 If a prebuilt release is not published for the detected target, the installer now says so explicitly before trying the cargo fallback.
 `--setup-path` is opt-in: ota will not silently modify shell startup files unless you ask it to.
 
-### Install the Ota skill
+### Install the Ota skill (PowerShell)
 
 ```bash
 npx skills add ota-run/skills --full-depth
