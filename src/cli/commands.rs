@@ -41446,9 +41446,10 @@ mod tests {
     use crate::runner::{
         CleanExecutionError, CleanExecutionFailure, CleanExecutionFailureReason,
         CleanExecutionReport, CleanExecutionResourceKind, ExecutedTaskStep, ExecutionOverrides,
-        RunError, ServiceTermination, ServiceTerminationCause, ServiceTerminationKind,
-        SharedLocalBackendEvidence, TaskExecutionRelation, TaskTargetResolutionEvidence,
-        TaskTargetResolutionSource, ToolchainFulfillmentEvidence, simulate_run_interrupt_for_test,
+        RepoExecutionLockOwner, RunError, ServiceTermination, ServiceTerminationCause,
+        ServiceTerminationKind, SharedLocalBackendEvidence, TaskExecutionRelation,
+        TaskTargetResolutionEvidence, TaskTargetResolutionSource,
+        ToolchainFulfillmentEvidence, simulate_run_interrupt_for_test,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskInputSpec, TaskTargetAddressView, ToolAcquisitionProvider,
@@ -58004,6 +58005,7 @@ tasks:
             &RunError::RepoExecutionLockBusy {
                 task: String::from("build"),
                 path: String::from("./.ota/state/run-execution.lock"),
+                owner: None,
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
             None,
@@ -58011,6 +58013,98 @@ tasks:
 
         assert!(
             rendered.contains("then rerun `ota run --member web build --mode container --lifecycle persistent --host-port 3002 --memory 4GiB --skip-deps`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_structured_error_text_preserves_explicit_native_mode_for_lock_rerun() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  deploy:cloudflare:
+    run: npm run deploy:cloudflare
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "deploy:cloudflare",
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+            &RunError::RepoExecutionLockBusy {
+                task: String::from("deploy:cloudflare"),
+                path: String::from("./.ota/state/run-execution.lock"),
+                owner: None,
+            },
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered.contains("then rerun `ota run deploy:cloudflare --mode native`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_structured_error_text_shows_active_lock_owner_details() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: cargo build
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "build",
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+            &RunError::RepoExecutionLockBusy {
+                task: String::from("build"),
+                path: String::from("./.ota/state/run-execution.lock"),
+                owner: Some(RepoExecutionLockOwner {
+                    task: String::from("dev"),
+                    requested_mode: Some(String::from("container")),
+                    execution_mode: String::from("container"),
+                    lifecycle: Some(String::from("persistent")),
+                    pid: 48211,
+                    started_at: String::from("2026-06-05T22:14:03Z"),
+                }),
+            },
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(rendered.contains("Active execution:"), "{rendered}");
+        assert!(rendered.contains("task: `dev`"), "{rendered}");
+        assert!(rendered.contains("requested mode: `container`"), "{rendered}");
+        assert!(rendered.contains("execution mode: `container`"), "{rendered}");
+        assert!(rendered.contains("lifecycle: `persistent`"), "{rendered}");
+        assert!(rendered.contains("pid: `48211`"), "{rendered}");
+        assert!(rendered.contains("started: `2026-06-05T22:14:03Z`"), "{rendered}");
+        assert!(
+            rendered.contains("then rerun `ota run build --mode native`"),
             "{rendered}"
         );
     }
@@ -67553,6 +67647,7 @@ fn render_run_structured_error_text(
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
     let rerun_command = repo_run_command_with_overrides(task_name, member, overrides);
     let rerun_stream_command = repo_run_stream_command_with_overrides(task_name, member, overrides);
+    let mut detail_lines = Vec::new();
     let (summary, mut why_lines, mut next_steps) = match error {
         RunError::RuntimeListenerResolutionFailed {
             task,
@@ -67592,16 +67687,30 @@ fn render_run_structured_error_text(
                 format!("rerun `{}` when ready", rerun_stream_command),
             ],
         ),
-        RunError::RepoExecutionLockBusy { path, .. } => (
-            String::from("Another ota execution is already active"),
-            vec![format!(
-                "ota could not acquire repo execution lock `{path}` because another ota run/up command is still running"
-            )],
-            vec![
-                String::from("wait for the active ota execution to finish"),
-                format!("then rerun `{}`", rerun_command),
-            ],
-        ),
+        RunError::RepoExecutionLockBusy { path, owner, .. } => {
+            if let Some(owner) = owner {
+                detail_lines.push(format!("task: `{}`", owner.task));
+                if let Some(requested_mode) = owner.requested_mode.as_deref() {
+                    detail_lines.push(format!("requested mode: `{requested_mode}`"));
+                }
+                detail_lines.push(format!("execution mode: `{}`", owner.execution_mode));
+                if let Some(lifecycle) = owner.lifecycle.as_deref() {
+                    detail_lines.push(format!("lifecycle: `{lifecycle}`"));
+                }
+                detail_lines.push(format!("pid: `{}`", owner.pid));
+                detail_lines.push(format!("started: `{}`", owner.started_at));
+            }
+            (
+                String::from("Another ota execution is already active"),
+                vec![format!(
+                    "ota could not acquire repo execution lock `{path}` because another ota run/up command is still running"
+                )],
+                vec![
+                    String::from("wait for the active ota execution to finish"),
+                    format!("then rerun `{}`", rerun_command),
+                ],
+            )
+        }
         RunError::RepoExecutionLockFailed {
             action,
             path,
@@ -68320,6 +68429,9 @@ fn render_run_structured_error_text(
 
     let mut output =
         structured_error_text("RUN", &text_path_display, &summary, &why_lines, &next_steps);
+    if !detail_lines.is_empty() {
+        append_error_detail_section(&mut output, "Active execution:", &detail_lines, None);
+    }
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()
     {

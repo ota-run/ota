@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- hardened repo execution lock guidance in `ota run`: rerun commands now preserve explicitly
+  requested execution mode overrides including `--mode native`, and lock-contention errors now
+  surface the active task/mode/lifecycle/pid/start-time metadata for the live Ota execution that
+  currently holds the repo lock
 - fixed Windows native proof CI: `where` (Windows) and `which` (Unix) are now excluded from
   inferred tool requirements so that `run: where cl` in a task or check no longer triggers a
   spurious `where --version` probe that exits with code 1 on Windows
