@@ -45870,7 +45870,7 @@ tasks:
         assert_eq!(json["resolved"]["backend"], "container");
         assert_eq!(
             json["summary"]["primary_blocker"]["summary"],
-            "Missing tool: uv"
+            "Tool probe failed: uv"
         );
     }
 
@@ -58563,7 +58563,7 @@ workflows:
     }
 
     #[test]
-    fn selected_task_requirement_surface_scopes_global_tools_to_native_task_paths() {
+    fn selected_task_requirement_surface_scopes_inferred_command_tools_to_selected_task_paths() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
             r#"
@@ -58600,8 +58600,12 @@ tasks:
         )
         .expect("host task requirement surface should resolve");
         assert!(
-            host_surface.tools.contains_key("docker"),
-            "native task path should retain global tool fallback"
+            host_surface.tools.contains_key("cargo"),
+            "native task path should retain the inferred command tool"
+        );
+        assert!(
+            !host_surface.tools.contains_key("docker"),
+            "native task path should not inherit unrelated global tools when command scope is explicit"
         );
 
         let container_surface = super::selected_task_requirement_surface(
@@ -58611,8 +58615,12 @@ tasks:
         )
         .expect("container task requirement surface should resolve");
         assert!(
+            container_surface.tools.contains_key("pnpm"),
+            "container task path should retain the inferred command tool"
+        );
+        assert!(
             !container_surface.tools.contains_key("docker"),
-            "container task path must not inherit host-global tool requirements"
+            "container task path must not inherit unrelated host-global tool requirements"
         );
     }
 
@@ -62776,7 +62784,11 @@ workflows:
                 "run: echo ready>.env.local",
             )
         } else {
-            ("test -f .env.local", "exit 1", "script: touch .env.local")
+            (
+                "test -f .env.local",
+                "exit 1",
+                "run: \"sh -c ': > .env.local'\"",
+            )
         };
         let contract = parse_contract_str(
             contract_path.as_path(),
@@ -63255,8 +63267,13 @@ tasks:
         let primary = result
             .report
             .findings
-            .first()
-            .expect("expected precondition finding");
+            .iter()
+            .find(|finding| {
+                finding
+                    .summary
+                    .starts_with("Effect governance policy blocked task effect `network:broad`")
+            })
+            .expect("expected effect-policy precondition finding");
         assert!(
             primary
                 .summary

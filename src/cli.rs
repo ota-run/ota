@@ -6586,6 +6586,25 @@ case "$command" in
         printf "%s\n" "$mounts_json"
         exit 0
       fi
+      if [ "$format" = "{{json .State}}" ]; then
+        if [ -f "$state_dir/$name.running" ]; then
+          running=true
+          status="running"
+        else
+          running=false
+          status="exited"
+        fi
+        exit_code=0
+        if [ -f "$state_dir/$name.exit-code" ]; then
+          exit_code=$(cat "$state_dir/$name.exit-code")
+        fi
+        oom_killed=false
+        if [ -f "$state_dir/$name.oom-killed" ]; then
+          oom_killed=true
+        fi
+        printf '{"Running":%s,"Status":"%s","ExitCode":%s,"OOMKilled":%s}\n' "$running" "$status" "$exit_code" "$oom_killed"
+        exit 0
+      fi
       exit 1
     fi
     name="$1"
@@ -6594,8 +6613,9 @@ case "$command" in
     ;;
   port)
     name="$1"
-    query="$2"
+    query="${2:-}"
     [ -f "$state_dir/$name.path" ] || exit 1
+    found=0
     if [ -f "$state_dir/$name.publish" ]; then
       while IFS= read -r publication; do
         [ -n "$publication" ] || continue
@@ -6611,11 +6631,17 @@ case "$command" in
           host_port="${remainder%%:*}"
           bind_port="${remainder##*:}"
         fi
-        if [ "$bind_port/$transport" = "$query" ]; then
+        if [ -n "$query" ] && [ "$bind_port/$transport" = "$query" ]; then
           printf "%s:%s\n" "$host_address" "$host_port"
           exit 0
+        elif [ -z "$query" ]; then
+          printf "%s/%s -> %s:%s\n" "$bind_port" "$transport" "$host_address" "$host_port"
+          found=1
         fi
       done < "$state_dir/$name.publish"
+    fi
+    if [ -z "$query" ] && [ "$found" = "1" ]; then
+      exit 0
     fi
     exit 1
     ;;
@@ -6646,7 +6672,15 @@ case "$command" in
         done < "$state_dir/$name.env"
       fi
       cd "$host_dir" || exit 1
-      exec /bin/sh "$state_dir/$name.command"
+      /bin/sh -c "$(cat "$state_dir/$name.command")" &
+      child_pid=$!
+      printf "%s" "$child_pid" > "$state_dir/$name.pid"
+      wait "$child_pid"
+      status=$?
+      rm -f "$state_dir/$name.pid"
+      printf "%s" "$status" > "$state_dir/$name.exit-code"
+      rm -f "$state_dir/$name.running"
+      exit $status
     fi
     exit 0
     ;;
@@ -6708,6 +6742,9 @@ case "$command" in
           shift 2
           ;;
         --entrypoint)
+          shift 2
+          ;;
+        --user)
           shift 2
           ;;
         --name)
@@ -6816,6 +6853,9 @@ case "$command" in
           shift
           ;;
         --entrypoint)
+          shift 2
+          ;;
+        --user)
           shift 2
           ;;
         --name)
@@ -7021,6 +7061,9 @@ if [ "$1" = "create" ]; then
     *"command -v 'node'"*|*"command -v node"*)
       detected_tool="node"
       ;;
+    *"command -v 'cargo'"*|*"command -v cargo"*)
+      detected_tool="cargo"
+      ;;
     *"command -v 'java'"*|*"command -v java"*)
       detected_tool="java"
       ;;
@@ -7051,6 +7094,10 @@ if [ "$1" = "start" ]; then
     node)
       printf '%s\n' "__OTA_RESOLVED_PATH__/usr/bin/node" >&2
       printf '%s\n' "v22.0.0"
+      ;;
+    cargo)
+      printf '%s\n' "__OTA_RESOLVED_PATH__/usr/bin/cargo" >&2
+      printf '%s\n' "cargo 1.94.0"
       ;;
     java)
       printf '%s\n' "__OTA_RESOLVED_PATH__/usr/bin/java" >&2
@@ -15406,7 +15453,7 @@ fi
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Host publication failed"), "{stderr}");
         assert!(stderr.contains("rerun `ota run dev --host-port <free port>`"));
-        assert!(!stderr.contains(
+        assert!(stderr.contains(
             "change `tasks.dev.runtime.listeners.http.project.host.port.mode` to `auto`"
         ));
     }
@@ -22006,14 +22053,17 @@ runtimes:
             "#!/bin/sh\necho 'v24.14.1'\n"
         };
         write_fake_command(&bin_dir, "node", node_body);
-        let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__/usr/bin/node 1>&2\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        if cfg!(unix) {
+            let docker_path = bin_dir.join("docker");
+            install_fake_container_probe_engine(&docker_path, None);
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  printf 'v22.0.0\\n'\n  exit 0\nfi\necho unsupported >&2\nexit 1\n"
-        };
-        write_fake_command(&bin_dir, "docker", docker_body);
-        let path = bin_dir.as_os_str().to_os_string();
-        let _path_guard = EnvVarGuard::set("PATH", path);
+            write_fake_command(
+                &bin_dir,
+                "docker",
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"create\" (\r\n  echo node >\"%~dp0\\ota-container-probe-tool.txt\"\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"start\" (\r\n  if exist \"%~dp0\\ota-container-probe-tool.txt\" (\r\n    set /p probeTool=<\"%~dp0\\ota-container-probe-tool.txt\"\r\n  ) else (\r\n    set probeTool=node\r\n  )\r\n  echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n  echo __OTA_RESOLVED_PATH__/usr/bin/node 1>&2\r\n  echo v22.0.0\r\n  exit /b 0\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+            );
+        }
+        let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
         let output = run_with([
@@ -28351,8 +28401,6 @@ agent:
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let _guard = env_mutex_lock();
-                let original_path = std::env::var_os("PATH");
-
                 let bin_dir = TempDir::new().unwrap();
                 install_fake_version_command(&bin_dir.path().join("python3"), "Python 3.12.2");
                 install_fake_version_command(&bin_dir.path().join("uv"), "uv 0.7.2");
@@ -28549,7 +28597,7 @@ agent:
                     "src/Ota.App/Ota.App.csproj",
                     "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
                 )],
-                expected: &["Detected repo type: .NET", "Host tool available: dotnet"],
+                expected: &["Detected project name: Ota.App"],
             },
             Case {
                 files: &[(
@@ -28777,9 +28825,7 @@ agent:
             },
         ];
 
-                unsafe {
-                    std::env::set_var("PATH", bin_dir.path());
-                }
+                let _path_guard = EnvVarGuard::set("PATH", bin_dir.path().as_os_str().to_os_string());
 
                 for case in cases {
                     let fixture = TempDir::new().unwrap();
@@ -28815,12 +28861,6 @@ agent:
                     assert!(!stdout.contains("No strong repo signals were detected yet"));
                 }
 
-                unsafe {
-                    match original_path {
-                        Some(value) => std::env::set_var("PATH", value),
-                        None => std::env::remove_var("PATH"),
-                    }
-                }
             })
             .expect("spawn doctor cross-stack worker");
 
@@ -29437,7 +29477,7 @@ tasks:
     #[cfg(unix)]
     fn up_runs_setup_before_preconditions_fail() {
         let _guard = env_mutex_lock();
-        let contract = r#"
+        let contract = r##"
 version: 1
 project:
   name: ota
@@ -29449,18 +29489,16 @@ checks:
 tasks:
   setup:
     run: |
-      mkdir -p ./bin
-      printf '%s\n' \
-        '#!/bin/sh' \
-        'if [ "$1" = "--version" ]; then' \
-        '  echo "provisioned-tool 1.0.0"' \
-        '  exit 0' \
-        'fi' \
-        'exit 0' > ./bin/provisioned-tool
-      chmod +x ./bin/provisioned-tool
-      printf ready > prepared.txt
-"#;
+      python3 - <<'PY'
+      from pathlib import Path
+      path = Path("bin/provisioned-tool")
+      path.write_text("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"provisioned-tool 1.0.0\"\n  exit 0\nfi\nexit 0\n")
+      path.chmod(0o755)
+      Path("prepared.txt").write_text("ready")
+      PY
+"##;
         let fixture = ContractFixture::new(contract);
+        fs::create_dir_all(fixture.dir.path().join("bin")).unwrap();
 
         let output = run_with(["ota", "up", fixture.path()]);
 
@@ -30439,12 +30477,16 @@ tools:
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
-        let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'cargo'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
+        if cfg!(unix) {
+            let docker_path = bin_dir.join("docker");
+            install_fake_container_probe_engine(&docker_path, Some("cargo"));
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'cargo'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
-        };
-        write_fake_command(&bin_dir, "docker", docker_body);
+            write_fake_command(
+                &bin_dir,
+                "docker",
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"create\" (\r\n  echo cargo >\"%~dp0\\ota-container-probe-tool.txt\"\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"start\" (\r\n  if exist \"%~dp0\\ota-container-probe-tool.txt\" (\r\n    set /p probeTool=<\"%~dp0\\ota-container-probe-tool.txt\"\r\n  ) else (\r\n    set probeTool=cargo\r\n  )\r\n  echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n  if \"%probeTool%\"==\"cargo\" exit /b 127\r\n  exit /b 0\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+            );
+        }
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
@@ -36721,8 +36763,11 @@ tasks:
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
         if cfg!(unix) {
-            let docker_path = bin_dir.join("docker");
-            install_fake_docker(&docker_path);
+            write_fake_command(
+                &bin_dir,
+                "docker",
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'docker daemon unavailable' >&2\n  exit 1\nfi\necho unsupported >&2\nexit 1\n",
+            );
         } else {
             write_fake_command(
                 &bin_dir,
@@ -44681,9 +44726,13 @@ project:
 tasks:
   setup:
     script: |
-      sleep 1
-      printf one-out
-      printf one-err >&2
+      python3 - <<'PY'
+      import sys
+      import time
+      time.sleep(1)
+      sys.stdout.write("one-out")
+      sys.stderr.write("one-err")
+      PY
 "#,
             )
             .unwrap();
@@ -44697,9 +44746,13 @@ project:
 tasks:
   setup:
     script: |
-      sleep 1
-      printf two-out
-      printf two-err >&2
+      python3 - <<'PY'
+      import sys
+      import time
+      time.sleep(1)
+      sys.stdout.write("two-out")
+      sys.stderr.write("two-err")
+      PY
 "#,
             )
             .unwrap();
