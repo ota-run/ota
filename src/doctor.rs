@@ -9929,14 +9929,7 @@ fn command_version_probe_in_working_dir(name: &str, working_dir: &Path) -> Comma
         .as_deref()
         .filter(|path| !should_probe_via_command_name(name, path))
         .map(Path::to_path_buf);
-    let program = if looks_like_command_path(name) {
-        resolved_path
-            .as_deref()
-            .unwrap_or_else(|| Path::new(name))
-            .as_os_str()
-    } else {
-        OsStr::new(name)
-    };
+    let program = version_probe_program(name, resolved_path.as_deref());
     let outcome = version_command(name, program, working_dir).output();
     let outcome = match outcome {
         Ok(output) if output.status.success() => {
@@ -10141,6 +10134,30 @@ fn version_command(name: &str, program: &OsStr, working_dir: &Path) -> Command {
         command.arg("--version");
     }
     command
+}
+
+fn version_probe_program<'a>(name: &'a str, resolved_path: Option<&'a Path>) -> &'a OsStr {
+    if looks_like_command_path(name) {
+        return resolved_path
+            .unwrap_or_else(|| Path::new(name))
+            .as_os_str();
+    }
+
+    #[cfg(windows)]
+    if let Some(path) = resolved_path
+        && is_cmd_wrapper_path(path)
+    {
+        return path.as_os_str();
+    }
+
+    OsStr::new(name)
+}
+
+#[cfg(windows)]
+fn is_cmd_wrapper_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("cmd") || value.eq_ignore_ascii_case("bat"))
 }
 
 fn should_probe_via_command_name(name: &str, resolved_path: &Path) -> bool {
@@ -13177,6 +13194,16 @@ workflows:
         }
 
         assert_eq!(probe.version().as_deref(), Some("0.31.0"), "{probe:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn version_probe_program_uses_resolved_cmd_wrapper_path() {
+        let wrapper = Path::new(r"C:\toolcache\corepack.CMD");
+        assert_eq!(
+            super::version_probe_program("corepack", Some(wrapper)),
+            wrapper.as_os_str()
+        );
     }
 
     #[test]
