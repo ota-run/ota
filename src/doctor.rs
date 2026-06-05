@@ -13198,7 +13198,11 @@ workflows:
             },
         }
 
-        assert_eq!(probe.version().as_deref(), Some("0.31.0"), "{probe:?}");
+        assert_eq!(
+            probe.clone().version().as_deref(),
+            Some("0.31.0"),
+            "{probe:?}"
+        );
     }
 
     #[cfg(windows)]
