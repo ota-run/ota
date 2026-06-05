@@ -23,7 +23,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
@@ -9080,16 +9080,18 @@ fn probe_native_backend_command_version(
     working_dir: &Path,
     command_name: &str,
 ) -> Result<Option<String>, String> {
-    if crate::doctor::resolve_command_path(command_name).is_none() {
+    let resolved_path = crate::doctor::resolve_command_path(command_name);
+    if resolved_path.is_none() {
         return Ok(None);
     }
 
     let mut attempted_exit_code = None;
     let mut attempted_error = None;
     let mut parseable_attempt_observed = false;
+    let probe_program = native_backend_probe_program(command_name, resolved_path.as_deref());
 
     for args in native_backend_version_probe_args(command_name) {
-        let output = native_backend_probe_output(command_name, args, working_dir);
+        let output = native_backend_probe_output(probe_program, args, working_dir);
         match output {
             Ok(output) => {
                 if output.status.success() {
@@ -9142,7 +9144,7 @@ fn native_backend_version_probe_args(command_name: &str) -> Vec<&'static str> {
 }
 
 fn native_backend_probe_output(
-    command_name: &str,
+    command_name: &OsStr,
     args: &str,
     working_dir: &Path,
 ) -> std::io::Result<std::process::Output> {
@@ -9157,7 +9159,7 @@ fn native_backend_probe_output(
 }
 
 #[cfg(windows)]
-fn native_backend_probe_command(command_name: &str) -> Command {
+fn native_backend_probe_command(command_name: &OsStr) -> Command {
     let is_wrapper = Path::new(command_name)
         .extension()
         .and_then(|value| value.to_str())
@@ -9173,8 +9175,30 @@ fn native_backend_probe_command(command_name: &str) -> Command {
 }
 
 #[cfg(not(windows))]
-fn native_backend_probe_command(command_name: &str) -> Command {
+fn native_backend_probe_command(command_name: &OsStr) -> Command {
     Command::new(command_name)
+}
+
+fn native_backend_probe_program<'a>(
+    command_name: &'a str,
+    resolved_path: Option<&'a Path>,
+) -> &'a OsStr {
+    #[cfg(windows)]
+    if let Some(path) = resolved_path
+        && path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| {
+                value.eq_ignore_ascii_case("cmd") || value.eq_ignore_ascii_case("bat")
+            })
+    {
+        return path.as_os_str();
+    }
+
+    #[cfg(not(windows))]
+    let _ = resolved_path;
+
+    OsStr::new(command_name)
 }
 
 fn backend_runtime_version_probe_command(
@@ -28999,6 +29023,42 @@ tasks:
         }
 
         assert_eq!(version.as_deref(), Some("24.8.0"));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn native_backend_requirement_probe_uses_resolved_cmd_wrapper_path() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "corepack", "@echo off\r\necho corepack 0.31.0\r\n");
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+        }
+
+        let version = super::probe_backend_command_version(
+            &super::ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            temp.path(),
+            "corepack",
+        )
+        .expect("native probe should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(version.as_deref(), Some("0.31.0"));
     }
 
     #[test]
