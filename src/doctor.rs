@@ -3039,6 +3039,7 @@ fn diagnose_contract_with_scope(
     let mut adapter_bootstrap = None;
     let mut execution_target = None;
     let selected_lifecycle = doctor_selected_lifecycle(mode, lifecycle_override);
+    let empty_env_names = BTreeSet::<String>::new();
     let backend_precondition_selections = if let Some(task_name) = task_name {
         selected_task_backend_precondition_selections(contract, task_name, overrides)
     } else {
@@ -3133,13 +3134,20 @@ fn diagnose_contract_with_scope(
                     .as_ref()
                     .map(|loaded| loaded.pack.env_values()),
                 &declared_env_sources,
-                precondition_selection
-                    .env_scoped
-                    .then_some(&precondition_selection.env_names),
+                if mode == DoctorMode::Container && !precondition_selection.env_scoped {
+                    Some(&empty_env_names)
+                } else {
+                    precondition_selection
+                        .env_scoped
+                        .then_some(&precondition_selection.env_names)
+                },
                 &mut findings,
             );
         }
-        if mode == DoctorMode::Container && contract_has_host_bound_readiness_surfaces(contract) {
+        if mode == DoctorMode::Container
+            && contract_has_host_bound_readiness_surfaces(contract)
+            && !precondition_selection.env_scoped
+        {
             findings.push(container_mode_scope_note_finding(contract));
         }
         let container_probe_started = if mode == DoctorMode::Remote {
@@ -3327,9 +3335,15 @@ fn diagnose_contract_with_scope(
                             .as_ref()
                             .map(|loaded| loaded.pack.env_values()),
                         &declared_env_sources,
-                        additional_selection
-                            .env_scoped
-                            .then_some(&additional_selection.env_names),
+                        if additional_mode == DoctorMode::Container
+                            && !additional_selection.env_scoped
+                        {
+                            Some(&empty_env_names)
+                        } else {
+                            additional_selection
+                                .env_scoped
+                                .then_some(&additional_selection.env_names)
+                        },
                         &mut findings,
                     );
                 }
@@ -4172,7 +4186,8 @@ fn remote_mode_not_configured_finding() -> Finding {
 }
 
 fn contract_has_host_bound_readiness_surfaces(contract: &Contract) -> bool {
-    !contract.checks.is_empty()
+    !contract.env.vars.is_empty()
+        || !contract.checks.is_empty()
         || contract
             .services
             .values()
