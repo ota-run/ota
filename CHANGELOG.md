@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- fixed Windows native proof CI: `where` (Windows) and `which` (Unix) are now excluded from
+  inferred tool requirements so that `run: where cl` in a task or check no longer triggers a
+  spurious `where --version` probe that exits with code 1 on Windows
 - hardened selected-path command inference for shell wrappers: `ota doctor` and `ota run --dry-run`
   no longer infer wrapper shells like `sh`, `bash`, or `zsh` from `run:` / `script:` bodies as
   required tools, avoiding bogus shell-version probes on wrapper forms such as `sh -c '...'`
