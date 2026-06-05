@@ -3599,6 +3599,12 @@ fn inferred_shell_command_executable(body: &str) -> Option<String> {
         if matches!(token, "ash" | "bash" | "dash" | "ksh" | "sh" | "zsh") {
             return None;
         }
+        // `where` (Windows) and `which` (Unix) are path-lookup utilities, not
+        // versioned tools.  Running `where --version` exits with code 1 on
+        // Windows, so skip them to avoid spurious tool-probe failures.
+        if matches!(token, "where" | "which") {
+            return None;
+        }
         if token.contains('=') {
             continue;
         }
@@ -5427,6 +5433,32 @@ tasks:
             !surface.tools.contains_key("docker"),
             "mode-specific launch requirements should be inferred from selected execution backend, not unconditional task scope"
         );
+    }
+
+    #[test]
+    fn scoped_requirement_surface_does_not_infer_where_or_which_as_tool_requirements() {
+        // `where` (Windows) and `which` (Unix) are path-lookup utilities and do
+        // not support `--version`, so they must never be inferred as tool
+        // requirements that would trigger a version probe.
+        for run_cmd in &["where cl", "which node"] {
+            let yaml = format!(
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: {run_cmd}
+"#
+            );
+            let contract =
+                parse_contract_str(Path::new("ota.yaml"), &yaml).expect("contract should parse");
+            let surface = contract.tasks["setup"].scoped_requirement_surface();
+            assert!(
+                !surface.tools.contains_key("where") && !surface.tools.contains_key("which"),
+                "`{run_cmd}` must not infer `where` or `which` as a tool requirement"
+            );
+        }
     }
 
     #[test]
