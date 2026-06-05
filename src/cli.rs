@@ -7459,6 +7459,13 @@ exec /bin/sh -lc "$1"
             );
         }
 
+        #[cfg(not(unix))]
+        fn install_fake_container_probe_engine(
+            _path: &std::path::Path,
+            _missing_tool: Option<&str>,
+        ) {
+        }
+
         if name == "explain_narrow_premium.txt" {
             // On Windows, write_fake_command creates `node.cmd`; resolve_command_path returns the
             // absolute path including the `.cmd` extension, which compact_path then renders as
