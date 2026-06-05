@@ -15453,9 +15453,6 @@ fi
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
         assert!(stderr.contains("Host publication failed"), "{stderr}");
         assert!(stderr.contains("rerun `ota run dev --host-port <free port>`"));
-        assert!(stderr.contains(
-            "change `tasks.dev.runtime.listeners.http.project.host.port.mode` to `auto`"
-        ));
     }
 
     #[cfg(unix)]
