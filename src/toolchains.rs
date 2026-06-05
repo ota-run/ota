@@ -1646,7 +1646,10 @@ fn normalize_short_version_requirement(value: &str) -> Option<String> {
         .chars()
         .all(|character| character.is_ascii_digit() || character == '.')
     {
-        let segments = value.split('.').filter(|segment| !segment.is_empty()).count();
+        let segments = value
+            .split('.')
+            .filter(|segment| !segment.is_empty())
+            .count();
         return match segments {
             1 => Some(format!(">={value}.0.0,<{value}.999.999")),
             2 => Some(format!(">={value}.0,<{value}.999")),

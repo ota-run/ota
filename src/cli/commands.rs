@@ -45868,7 +45868,10 @@ tasks:
         assert_eq!(json["ok"], false);
         assert_eq!(json["preview_status"], "BLOCKED");
         assert_eq!(json["resolved"]["backend"], "container");
-        assert_eq!(json["summary"]["primary_blocker"]["summary"], "Missing tool: uv");
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            "Missing tool: uv"
+        );
     }
 
     #[test]
@@ -45999,11 +46002,7 @@ workflows:
         .expect("selected surface");
 
         assert_eq!(
-            surface
-                .tools
-                .get("uv")
-                .expect("uv requirement")
-                .version(),
+            surface.tools.get("uv").expect("uv requirement").version(),
             ">=0.11.8"
         );
     }
@@ -46032,16 +46031,15 @@ tasks:
         )
         .unwrap();
 
-        let surface =
-            super::selected_task_requirement_surface(&contract, "setup", ExecutionOverrides::default())
-                .expect("selected task surface");
+        let surface = super::selected_task_requirement_surface(
+            &contract,
+            "setup",
+            ExecutionOverrides::default(),
+        )
+        .expect("selected task surface");
 
         assert_eq!(
-            surface
-                .tools
-                .get("uv")
-                .expect("uv requirement")
-                .version(),
+            surface.tools.get("uv").expect("uv requirement").version(),
             ">=0.11.8"
         );
     }
@@ -46160,9 +46158,12 @@ tasks:
         )
         .unwrap();
 
-        let surface =
-            super::selected_task_requirement_surface(&contract, "test", ExecutionOverrides::default())
-                .expect("selected task surface");
+        let surface = super::selected_task_requirement_surface(
+            &contract,
+            "test",
+            ExecutionOverrides::default(),
+        )
+        .expect("selected task surface");
 
         assert_eq!(
             surface
@@ -59544,7 +59545,8 @@ thrown: "Exceeded timeout of 9000 ms for a test.
             "{rendered}"
         );
         assert!(
-            !rendered.contains("must be built because it never has been before or the last one failed"),
+            !rendered
+                .contains("must be built because it never has been before or the last one failed"),
             "{rendered}"
         );
     }
@@ -65234,11 +65236,7 @@ fn run_single_contract_target_streaming(
                     listener,
                     kind,
                 } => runtime_listener_resolution_receipt_note(
-                    member,
-                    task,
-                    listener,
-                    kind,
-                    overrides,
+                    member, task, listener, kind, overrides,
                 ),
                 _ => format!(
                     "{}; {}",
@@ -65422,11 +65420,7 @@ fn run_single_contract_target_captured(
                 outcome.runtime.clone(),
                 Some(format!(
                     "inspect the task output excerpt and rerun `{}`",
-                    repo_run_stream_command_with_overrides(
-                        &failed_task_name,
-                        member,
-                        overrides,
-                    )
+                    repo_run_stream_command_with_overrides(&failed_task_name, member, overrides,)
                 )),
             );
             receipt.service_termination = outcome.service_termination.clone();
@@ -65489,11 +65483,7 @@ fn run_single_contract_target_captured(
                     listener,
                     kind,
                 } => runtime_listener_resolution_receipt_note(
-                    member,
-                    task,
-                    listener,
-                    kind,
-                    overrides,
+                    member, task, listener, kind, overrides,
                 ),
                 _ => format!(
                     "{}; {}",
@@ -66512,12 +66502,7 @@ fn render_service_startup_failure_text(
     let next_steps = [
         format!(
             "rerun `{}` for live task output",
-            repo_run_stream_command_for_execution(
-                requested_task_name,
-                member,
-                backend,
-                overrides,
-            )
+            repo_run_stream_command_for_execution(requested_task_name, member, backend, overrides,)
         ),
         task_use_details_step(Some(contract_path), member),
     ];
@@ -66805,8 +66790,7 @@ fn render_host_publication_failure_text(
         None,
     );
     let mut next_steps = next_steps.to_vec();
-    let rerun_command =
-        repo_run_command_with_overrides(requested_task_name, member, overrides);
+    let rerun_command = repo_run_command_with_overrides(requested_task_name, member, overrides);
     match host_port_mode {
         Some(TaskRuntimeHostPortMode::Auto) => {
             next_steps.push(format!(
@@ -66817,9 +66801,7 @@ fn render_host_publication_failure_text(
             let mut override_command =
                 repo_run_command_with_overrides(requested_task_name, member, overrides);
             override_command.push_str(" --host-port <free port>");
-            next_steps.push(format!(
-                "rerun `{override_command}`"
-            ));
+            next_steps.push(format!("rerun `{override_command}`"));
             next_steps.push(format!("or set `{field}.mode` to `auto`"));
         }
     }
@@ -67553,8 +67535,7 @@ fn render_run_structured_error_text(
 ) -> String {
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
     let rerun_command = repo_run_command_with_overrides(task_name, member, overrides);
-    let rerun_stream_command =
-        repo_run_stream_command_with_overrides(task_name, member, overrides);
+    let rerun_stream_command = repo_run_stream_command_with_overrides(task_name, member, overrides);
     let (summary, mut why_lines, mut next_steps) = match error {
         RunError::RuntimeListenerResolutionFailed {
             task,
@@ -67817,8 +67798,7 @@ fn render_run_structured_error_text(
                 .and_then(|runtime| runtime.listeners.get(listener.as_str()))
                 .and_then(|listener_spec| listener_spec.project.host.as_ref())
                 .is_some_and(|host| host.port.mode == TaskRuntimeHostPortMode::Auto);
-            let run_command =
-                repo_run_command_with_overrides(task.as_str(), member, overrides);
+            let run_command = repo_run_command_with_overrides(task.as_str(), member, overrides);
             let mut next_steps = vec![format!(
                 "stop the process or container currently using `{address}:{port}`"
             )];
@@ -76229,9 +76209,10 @@ fn selected_workflow_task_requirement_surface(
         let target_os = requirement_target_os_for_backend(
             effective_task_execution(contract, task_name, overrides).backend,
         );
-        let mut toolchain_names = selected_task_scoped_toolchain_names(contract, task_name, overrides)
-            .into_iter()
-            .collect::<Vec<_>>();
+        let mut toolchain_names =
+            selected_task_scoped_toolchain_names(contract, task_name, overrides)
+                .into_iter()
+                .collect::<Vec<_>>();
         if toolchain_names.is_empty() {
             toolchain_names = contract
                 .task_required_toolchain_names(task_name)

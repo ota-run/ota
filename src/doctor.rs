@@ -22,10 +22,10 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
 use std::net::TcpStream;
-use std::ffi::OsStr;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -43,9 +43,9 @@ use serde_json::Value as JsonValue;
 
 use crate::execution::{
     container_backend_probe_failure, container_engine_candidates,
-    container_engine_candidates_from_backend,
-    matching_declared_execution_context_name, preferred_container_backend_probe_failure,
-    selected_container_engine, selected_container_engine_from_backend,
+    container_engine_candidates_from_backend, matching_declared_execution_context_name,
+    preferred_container_backend_probe_failure, selected_container_engine,
+    selected_container_engine_from_backend,
 };
 use crate::policy_pack::{
     LoadPolicyPackError, LoadedOrgPolicyPack, ProvisioningAction, ProvisioningBackendRequest,
@@ -7169,7 +7169,9 @@ fn diagnose_command_version(
         Some(command_version_probe_candidates(
             executable_candidates,
             requirement,
-            |candidate| command_version_probe_in_working_dir(candidate, contract_working_dir(contract_path)),
+            |candidate| {
+                command_version_probe_in_working_dir(candidate, contract_working_dir(contract_path))
+            },
         ))
     } else if mode == DoctorMode::Container {
         let Some(container_probe) = container_probe else {
@@ -8862,7 +8864,8 @@ fn selected_workflow_service_names(
 ) -> Option<BTreeSet<String>> {
     let _ = contract.selected_workflow(workflow_name)?;
     Some(
-        contract.selected_workflow_required_service_names(workflow_name)
+        contract
+            .selected_workflow_required_service_names(workflow_name)
             .into_iter()
             .collect(),
     )
@@ -10138,9 +10141,7 @@ fn version_command(name: &str, program: &OsStr, working_dir: &Path) -> Command {
 
 fn version_probe_program<'a>(name: &'a str, resolved_path: Option<&'a Path>) -> &'a OsStr {
     if looks_like_command_path(name) {
-        return resolved_path
-            .unwrap_or_else(|| Path::new(name))
-            .as_os_str();
+        return resolved_path.unwrap_or_else(|| Path::new(name)).as_os_str();
     }
 
     #[cfg(windows)]
@@ -13175,7 +13176,11 @@ workflows:
         let fixture = TempDir::new().unwrap();
         let bin_dir = fixture.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        write_fake_command(&bin_dir, "corepack.cmd", "@echo off\r\necho corepack 0.31.0\r\n");
+        write_fake_command(
+            &bin_dir,
+            "corepack.cmd",
+            "@echo off\r\necho corepack 0.31.0\r\n",
+        );
 
         let original_path = env::var_os("PATH");
         unsafe {
@@ -16292,14 +16297,13 @@ workflows:
             report
                 .findings
                 .iter()
-                .any(|finding| finding.summary == "Missing environment variable: REQUIRED_CONTAINER_ENV"),
+                .any(|finding| finding.summary
+                    == "Missing environment variable: REQUIRED_CONTAINER_ENV"),
             "{report:?}"
         );
         assert!(
-            report
-                .findings
-                .iter()
-                .all(|finding| finding.summary != "Container readiness does not include host-only checks"),
+            report.findings.iter().all(|finding| finding.summary
+                != "Container readiness does not include host-only checks"),
             "{report:?}"
         );
     }
@@ -19341,7 +19345,11 @@ workflows:
         let fixture = TempDir::new().unwrap();
         let bin_dir = fixture.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        write_fake_command(&bin_dir, "bundle", "#!/bin/sh\necho Bundler version 2.5.3\n");
+        write_fake_command(
+            &bin_dir,
+            "bundle",
+            "#!/bin/sh\necho Bundler version 2.5.3\n",
+        );
         write_fake_command(&bin_dir, "ruby", "#!/bin/sh\necho ruby 3.4.1p0\n");
 
         let original_path = env::var_os("PATH");

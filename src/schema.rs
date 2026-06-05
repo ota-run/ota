@@ -2911,11 +2911,19 @@ health=$(docker inspect --format '{{{{if .State.Health}}}}{{{{.State.Health.Stat
             return None;
         }
         let mut args = vec![String::from("compose")];
-        if let Some(file) = self.file.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(file) = self
+            .file
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             args.push(String::from("-f"));
             args.push(file.to_string());
         }
-        if let Some(name) = self.name.as_deref().filter(|value| !value.trim().is_empty()) {
+        if let Some(name) = self
+            .name
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
             args.push(String::from("-p"));
             args.push(name.to_string());
         }
@@ -3534,8 +3542,16 @@ impl TaskSpec {
             .launch
             .as_ref()
             .and_then(command_launch_executable)
-            .or_else(|| self.run.as_deref().and_then(inferred_shell_command_executable))
-            .or_else(|| self.script.as_deref().and_then(inferred_shell_command_executable))
+            .or_else(|| {
+                self.run
+                    .as_deref()
+                    .and_then(inferred_shell_command_executable)
+            })
+            .or_else(|| {
+                self.script
+                    .as_deref()
+                    .and_then(inferred_shell_command_executable)
+            })
         {
             tools.insert(exe, ToolRequirement::Simple(String::from("*")));
         }
@@ -3588,7 +3604,8 @@ fn inferred_shell_command_executable(body: &str) -> Option<String> {
         }
         if matches!(
             token,
-            "." | ":" | "alias"
+            "." | ":"
+                | "alias"
                 | "bg"
                 | "break"
                 | "case"

@@ -3395,9 +3395,7 @@ fn task_command_output_reports_user_interruption(command_output: &TaskCommandOut
 const NATIVE_SERVICE_POST_EXIT_READINESS_GRACE_FLOOR_MILLIS: u64 = 5_000;
 const NATIVE_SERVICE_POST_EXIT_READINESS_GRACE_CEILING_SECS: u64 = 30;
 
-fn native_service_post_exit_readiness_grace(
-    runtime_spec: Option<&TaskRuntimeSpec>,
-) -> Duration {
+fn native_service_post_exit_readiness_grace(runtime_spec: Option<&TaskRuntimeSpec>) -> Duration {
     let floor = Duration::from_millis(NATIVE_SERVICE_POST_EXIT_READINESS_GRACE_FLOOR_MILLIS);
     let ceiling = Duration::from_secs(NATIVE_SERVICE_POST_EXIT_READINESS_GRACE_CEILING_SECS);
     let Some(readiness) = runtime_spec.and_then(|runtime| runtime.readiness.as_ref()) else {
@@ -3441,8 +3439,12 @@ fn final_runtime_readiness_probe_observed(
             .filter(|name| !name.is_empty())
             .or_else(|| runtime_spec.listeners.keys().next().map(String::as_str));
         if let Some(listener_name) = listener_name
-            && let Ok(probe) =
-                task_runtime_host_readiness_probe_for_backend(contract, task, backend, listener_name)
+            && let Ok(probe) = task_runtime_host_readiness_probe_for_backend(
+                contract,
+                task,
+                backend,
+                listener_name,
+            )
         {
             if host_runtime_readiness_observed(&probe, probe.default_timeout) {
                 return true;
@@ -3477,9 +3479,8 @@ fn collect_runtime_readiness_after_command_exit(
             && resolved_runtime.is_some_and(resolved_runtime_has_public_endpoint)
     });
     if service_requires_readiness && command_exit_code == 0 && !interrupted {
-        let observed = probe.wait_then_stop_and_collect(native_service_post_exit_readiness_grace(
-            runtime_spec,
-        ));
+        let observed = probe
+            .wait_then_stop_and_collect(native_service_post_exit_readiness_grace(runtime_spec));
         return observed
             || final_runtime_readiness_probe_observed(
                 contract,
@@ -29032,7 +29033,11 @@ tasks:
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
-        write_fake_bin(&bin_dir, "corepack", "@echo off\r\necho corepack 0.31.0\r\n");
+        write_fake_bin(
+            &bin_dir,
+            "corepack",
+            "@echo off\r\necho corepack 0.31.0\r\n",
+        );
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
@@ -43353,8 +43358,11 @@ tasks:
             env::set_var("PATH", &joined_path);
         }
 
-        let note =
-            super::remove_ephemeral_container_and_note("doctor-probe:yarn", "docker", container_name);
+        let note = super::remove_ephemeral_container_and_note(
+            "doctor-probe:yarn",
+            "docker",
+            container_name,
+        );
 
         match original_path {
             Some(path) => unsafe {
@@ -43367,7 +43375,11 @@ tasks:
 
         assert!(note.is_none(), "{note:?}");
         assert!(!state_dir.join(format!("{container_name}.path")).exists());
-        assert!(!state_dir.join(format!("{container_name}.rm_in_progress_attempts")).exists());
+        assert!(
+            !state_dir
+                .join(format!("{container_name}.rm_in_progress_attempts"))
+                .exists()
+        );
     }
 
     #[cfg(unix)]
