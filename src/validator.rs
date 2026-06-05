@@ -441,7 +441,12 @@ fn validate_execution(
             ));
         }
         validate_only_on("execution context", name, context.only_on.as_ref(), errors);
-        validate_only_arch("execution context", name, context.only_arch.as_ref(), errors);
+        validate_only_arch(
+            "execution context",
+            name,
+            context.only_arch.as_ref(),
+            errors,
+        );
 
         match context.backend {
             crate::schema::Backend::Native => {
