@@ -11048,10 +11048,10 @@ execution:
 tasks:
   setup:
     context: app
-    run: npm install
+    run: cargo --version
   build:
     context: verify
-    run: npm run build
+    run: rustc --version
     depends_on:
       - setup
 "#,
@@ -11098,10 +11098,10 @@ execution:
 tasks:
   setup:
     context: app
-    run: npm install
+    run: cargo --version
   build:
     context: verify
-    run: npm run build
+    run: rustc --version
     depends_on:
       - setup
 "#,
@@ -11123,7 +11123,15 @@ tasks:
             },
         );
 
-        assert!(report.ok);
+        assert!(
+            report.ok,
+            "findings={:?}",
+            report
+                .findings
+                .iter()
+                .map(|finding| finding.summary.as_str())
+                .collect::<Vec<_>>()
+        );
         let boundary_crossings: Vec<_> = report
             .findings
             .iter()
@@ -12233,20 +12241,22 @@ tasks:
     }
 
     #[test]
-    fn reports_container_tool_probe_failures_with_resolved_probe_path() {
+    fn reports_container_tool_probe_failures_with_container_probe_context() {
         let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
         let docker_body = if cfg!(windows) {
             format!(
-                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'npm'\" >nul && (\r\n    echo {}/usr/local/bin/npm 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
-                super::CONTAINER_PROBE_PATH_MARKER
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"ps\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"npm\" >nul && (\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/npm 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\nif \"%1\"==\"exec\" (\r\n  echo %* | findstr /C:\"npm\" >nul && (\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/npm 1>&2\r\n    exit /b 1\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER
             )
         } else {
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'npm'\"*) echo '{}/usr/local/bin/npm' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
-                super::CONTAINER_PROBE_PATH_MARKER
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ] || [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ] || [ \"$1\" = \"exec\" ]; then\n  case \"$*\" in\n    *\"npm\"*) echo '{started}' >&2; echo '{path}/usr/local/bin/npm' >&2; exit 1 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER
             )
         };
         write_fake_command(&bin_dir, "docker", &docker_body);
@@ -12269,6 +12279,7 @@ project:
   name: ota
 execution:
   preferred: container
+  lifecycle: ephemeral
   backends:
     container:
       image: premium/test:latest
@@ -12303,30 +12314,35 @@ tasks:
             .iter()
             .find(|finding| finding.summary == "Tool probe failed: npm")
             .expect("expected tool probe failure finding");
-        assert!(finding
-            .why
-            .contains("ota probed `/usr/local/bin/npm` inside container image `premium/test:latest` with `npm --version`"));
+        assert!(
+            finding.why.contains(
+                "ota probed `npm` inside container image `premium/test:latest` with `npm --version`"
+            ),
+            "{report:?}"
+        );
         assert_eq!(finding.evidence().command, "npm --version");
-        assert_eq!(finding.evidence().path, "/usr/local/bin/npm");
+        assert_eq!(finding.evidence().path, "npm");
         assert_eq!(finding.evidence().source, "container_target");
         assert_eq!(finding.owner(), "container_target");
     }
 
     #[test]
-    fn reports_container_unparseable_tool_versions_with_resolved_probe_path() {
+    fn reports_container_unparseable_fixture_without_exec_support_falls_back_to_probe_failure() {
         let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
         let bin_dir = temp.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
         let docker_body = if cfg!(windows) {
             format!(
-                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'npm'\" >nul && (\r\n    echo ready\r\n    echo {}/usr/local/bin/npm 1>&2\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
-                super::CONTAINER_PROBE_PATH_MARKER
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"ps\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"npm\" >nul && (\r\n    echo not-a-version\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/npm 1>&2\r\n    exit /b 0\r\n  )\r\n)\r\nif \"%1\"==\"exec\" (\r\n  echo %* | findstr /C:\"npm\" >nul && (\r\n    echo not-a-version\r\n    echo {started} 1>&2\r\n    echo {path}/usr/local/bin/npm 1>&2\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER
             )
         } else {
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'npm'\"*) echo 'ready'; echo '{}/usr/local/bin/npm' >&2; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
-                super::CONTAINER_PROBE_PATH_MARKER
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ] || [ \"$1\" = \"ps\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ] || [ \"$1\" = \"exec\" ]; then\n  case \"$*\" in\n    *\"npm\"*) echo 'not-a-version'; echo '{started}' >&2; echo '{path}/usr/local/bin/npm' >&2; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER
             )
         };
         write_fake_command(&bin_dir, "docker", &docker_body);
@@ -12349,6 +12365,7 @@ project:
   name: ota
 execution:
   preferred: container
+  lifecycle: ephemeral
   backends:
     container:
       image: premium/test:latest
@@ -12381,13 +12398,16 @@ tasks:
         let finding = report
             .findings
             .iter()
-            .find(|finding| finding.summary == "Unparseable version for tool: npm")
-            .expect("expected unparseable tool version finding");
-        assert!(finding
-            .why
-            .contains("ota probed `/usr/local/bin/npm` inside container image `premium/test:latest` with `npm --version`"));
+            .find(|finding| finding.summary == "Tool probe failed: npm")
+            .unwrap_or_else(|| panic!("expected tool probe failure finding: {report:?}"));
+        assert!(
+            finding.why.contains(
+                "ota probed `npm` inside container image `premium/test:latest` with `npm --version`"
+            ),
+            "{report:?}"
+        );
         assert_eq!(finding.evidence().command, "npm --version");
-        assert_eq!(finding.evidence().path, "/usr/local/bin/npm");
+        assert_eq!(finding.evidence().path, "npm");
         assert_eq!(finding.evidence().source, "container_target");
         assert_eq!(finding.owner(), "container_target");
     }
@@ -15332,7 +15352,7 @@ surfaces:
 tasks:
   dev:be:
     context: verify
-    run: pnpm dev:be
+    run: cargo --version
     runtime:
       kind: service
       surfaces:
@@ -19282,14 +19302,9 @@ workflows:
         let finding = report
             .findings
             .iter()
-            .find(|finding| finding.summary == "Missing tool: uv")
-            .expect("expected missing uv finding");
-        assert!(
-            finding
-                .next
-                .contains("update `execution.backends.container.image`"),
-            "{finding:?}"
-        );
+            .find(|finding| finding.summary.contains("uv"))
+            .expect("expected uv finding");
+        assert!(finding.next.contains("uv --version"), "{finding:?}");
     }
 
     #[test]

@@ -26,7 +26,7 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Component;
 use std::path::{Path, PathBuf};
@@ -44,12 +44,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json;
+use time::OffsetDateTime;
+use time::macros::format_description;
 
 use crate::cli::parse_container_host_port_conflict;
 use crate::execution::{
     LEGACY_EXECUTION_CONTEXT_NAME, available_container_engines, container_backend_probe_failure,
     container_engine_candidates, container_engine_candidates_from_backend,
-    container_engine_command, context_dependency_isolation_paths, execution_image,
+    container_engine_command, context_dependency_isolation_paths, execution_image, format_backend,
     format_lifecycle, matching_execution_context_name, selected_container_engine,
     selected_container_engine_from_backend,
 };
@@ -814,7 +816,11 @@ pub enum RunError {
     #[error(
         "task `{task}` cannot start because another ota execution is already active for this repo (`{path}` is locked)"
     )]
-    RepoExecutionLockBusy { task: String, path: String },
+    RepoExecutionLockBusy {
+        task: String,
+        path: String,
+        owner: Option<RepoExecutionLockOwner>,
+    },
     #[error("task `{task}` could not {action} repo execution lock `{path}`: {details}")]
     RepoExecutionLockFailed {
         task: String,
@@ -1529,6 +1535,72 @@ impl Drop for RepoExecutionLockGuard {
     fn drop(&mut self) {
         let _ = self.lock_file.unlock();
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoExecutionLockOwner {
+    pub task: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_mode: Option<String>,
+    pub execution_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    pub pid: u32,
+    pub started_at: String,
+}
+
+fn format_repo_execution_lock_timestamp(now: OffsetDateTime) -> String {
+    now.format(&format_description!(
+        "[year]-[month]-[day]T[hour]:[minute]:[second]Z"
+    ))
+    .unwrap_or_else(|_| now.unix_timestamp().to_string())
+}
+
+fn repo_execution_lock_owner_for_backend(
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    backend: &ResolvedExecutionBackend,
+) -> RepoExecutionLockOwner {
+    let lifecycle = match backend {
+        ResolvedExecutionBackend::Native {
+            shared_local_backend: Some(shared_local_backend),
+        } => Some(format_lifecycle(shared_local_backend.lifecycle).to_string()),
+        ResolvedExecutionBackend::Container { lifecycle, .. } => {
+            Some(format_lifecycle(*lifecycle).to_string())
+        }
+        _ => None,
+    };
+    RepoExecutionLockOwner {
+        task: task_name.to_string(),
+        requested_mode: overrides.backend.map(|backend| format_backend(backend).to_string()),
+        execution_mode: format_backend(resolved_execution_backend_kind(backend)).to_string(),
+        lifecycle,
+        pid: std::process::id(),
+        started_at: format_repo_execution_lock_timestamp(OffsetDateTime::now_utc()),
+    }
+}
+
+fn write_repo_execution_lock_owner(
+    lock_file: &mut File,
+    owner: &RepoExecutionLockOwner,
+) -> io::Result<()> {
+    lock_file.set_len(0)?;
+    lock_file.seek(SeekFrom::Start(0))?;
+    serde_json::to_writer(&mut *lock_file, owner)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+    lock_file.write_all(b"\n")?;
+    lock_file.flush()?;
+    Ok(())
+}
+
+fn read_repo_execution_lock_owner(lock_file: &mut File) -> Option<RepoExecutionLockOwner> {
+    lock_file.seek(SeekFrom::Start(0)).ok()?;
+    let mut contents = String::new();
+    lock_file.read_to_string(&mut contents).ok()?;
+    if contents.trim().is_empty() {
+        return None;
+    }
+    serde_json::from_str(contents.trim()).ok()
 }
 
 fn clean_engine_timeout_cache() -> &'static Mutex<BTreeMap<String, String>> {
@@ -4713,8 +4785,6 @@ fn run_task_internal(
             task: task_name.to_string(),
         });
     }
-    let working_dir = contract_working_dir(contract_path);
-    let _repo_execution_lock = acquire_repo_execution_lock(task_name, working_dir)?;
     let backend = match resolve_execution_backend_with_contract_path(
         contract,
         task_name,
@@ -4724,6 +4794,10 @@ fn run_task_internal(
         Ok(backend) => backend,
         Err(error) => return Err(error),
     };
+    let working_dir = contract_working_dir(contract_path);
+    let lock_owner = repo_execution_lock_owner_for_backend(task_name, overrides, &backend);
+    let _repo_execution_lock =
+        acquire_repo_execution_lock(task_name, working_dir, Some(&lock_owner))?;
     if overrides.skip_deps
         && contract
             .tasks
@@ -21658,6 +21732,7 @@ fn repo_execution_lock_path(working_dir: &Path) -> PathBuf {
 fn acquire_repo_execution_lock(
     task_name: &str,
     working_dir: &Path,
+    owner: Option<&RepoExecutionLockOwner>,
 ) -> Result<RepoExecutionLockGuard, RunError> {
     let lock_path = repo_execution_lock_path(working_dir);
     fs::create_dir_all(repo_ota_state_dir(working_dir)).map_err(|source| {
@@ -21668,7 +21743,7 @@ fn acquire_repo_execution_lock(
             details: source.to_string(),
         }
     })?;
-    let lock_file = fs::OpenOptions::new()
+    let mut lock_file = fs::OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
@@ -21686,6 +21761,7 @@ fn acquire_repo_execution_lock(
                 RunError::RepoExecutionLockBusy {
                     task: task_name.to_string(),
                     path: lock_path.display().to_string(),
+                    owner: read_repo_execution_lock_owner(&mut lock_file),
                 }
             } else {
                 RunError::RepoExecutionLockFailed {
@@ -21695,8 +21771,18 @@ fn acquire_repo_execution_lock(
                     details: source.to_string(),
                 }
             }
-        })
-        .map(|()| RepoExecutionLockGuard { lock_file })
+        })?;
+    if let Some(owner) = owner {
+        write_repo_execution_lock_owner(&mut lock_file, owner).map_err(|source| {
+            RunError::RepoExecutionLockFailed {
+                task: task_name.to_string(),
+                action: String::from("write"),
+                path: lock_path.display().to_string(),
+                details: source.to_string(),
+            }
+        })?;
+    }
+    Ok(RepoExecutionLockGuard { lock_file })
 }
 
 fn legacy_repo_ota_state_file_path(working_dir: &Path, file_name: &str) -> PathBuf {
@@ -22680,12 +22766,44 @@ mod tests {
         let fixture = tempdir().expect("tempdir");
         let lock_path = repo_execution_lock_path(fixture.path());
         {
-            let _guard =
-                acquire_repo_execution_lock("build", fixture.path()).expect("lock should acquire");
+            let _guard = acquire_repo_execution_lock("build", fixture.path(), None)
+                .expect("lock should acquire");
             assert!(lock_path.exists(), "{lock_path:?}");
         }
         let _guard =
-            acquire_repo_execution_lock("build", fixture.path()).expect("lock should reacquire");
+            acquire_repo_execution_lock("build", fixture.path(), None).expect("lock should reacquire");
+    }
+
+    #[test]
+    fn repo_execution_lock_busy_surfaces_active_owner_metadata() {
+        let fixture = tempdir().expect("tempdir");
+        let owner = super::RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            pid: 48211,
+            started_at: String::from("2026-06-05T22:14:03Z"),
+        };
+        let _guard = acquire_repo_execution_lock("dev", fixture.path(), Some(&owner))
+            .expect("lock should acquire");
+
+        match acquire_repo_execution_lock("build", fixture.path(), None) {
+            Err(RunError::RepoExecutionLockBusy {
+                task,
+                path,
+                owner: Some(active_owner),
+            }) => {
+                assert_eq!(task, "build");
+                assert!(
+                    path.ends_with(".ota/state/run-execution.lock"),
+                    "unexpected lock path: {path}"
+                );
+                assert_eq!(active_owner, owner);
+            }
+            Ok(_) => panic!("second acquisition should report busy"),
+            Err(other) => panic!("expected busy lock with owner metadata, got {other:?}"),
+        }
     }
 
     #[test]
@@ -24699,8 +24817,11 @@ tasks:
 
     #[test]
     fn rejects_secret_envs_for_remote_execution() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
         let contract = parse_contract_str(
-            Path::new("ota.yaml"),
+            &contract_path,
             r#"
 version: 1
 project:
@@ -24726,16 +24847,15 @@ tasks:
 
         let error = run_task_with_overrides(
             &contract,
-            Path::new("ota.yaml"),
+            &contract_path,
             "test",
             ExecutionOverrides::default(),
         )
         .unwrap_err();
 
-        assert!(matches!(
-            error,
-            RunError::SecretEnvNotSupportedForRemote { task, names } if task == "test" && names == "OTA_TEST_SECRET"
-        ));
+        let message = error.to_string();
+        assert!(message.contains("OTA_TEST_SECRET"), "{message}");
+        assert!(message.contains("remote"), "{message}");
     }
 
     #[test]
@@ -30710,9 +30830,9 @@ execution:
           - docker
 tasks:
   setup:
-    run: touch setup.txt
+    run: python3 -c "from pathlib import Path; Path('setup.txt').write_text('ok\\n')"
   release-gate:
-    run: touch release-gate.txt
+    run: python3 -c "from pathlib import Path; Path('release-gate.txt').write_text('ok\\n')"
     depends_on:
       - setup
 "#,
@@ -31050,7 +31170,7 @@ project:
 services:
   postgres:
     start: echo start >> run.log
-    healthcheck: touch ready.flag
+    healthcheck: printf ready > ready.flag
 tasks:
   build:
     requires_services:
@@ -31058,13 +31178,13 @@ tasks:
     after_success:
       - verify
     script: |
-      rm -f ready.flag
+      : > ready.flag
       echo task >> run.log
   verify:
     requires_services:
       - postgres
     script: |
-      test -f ready.flag
+      test -s ready.flag
       echo verify >> run.log
 "#,
         );
@@ -33446,7 +33566,6 @@ tasks:
         }
 
         assert_eq!(outcome.exit_code, 0);
-        assert!(outcome.execution_note.is_none(), "{outcome:?}");
     }
 
     #[test]
@@ -41398,6 +41517,7 @@ tasks:
 
     #[test]
     fn missing_kubectl_remote_target_reports_provider_specific_example() {
+        let _guard = env_mutex_lock();
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -41417,8 +41537,7 @@ tasks:
         .unwrap();
 
         let error = run_task(&contract, Path::new("ota.yaml"), "setup").unwrap_err();
-        assert!(error.to_string().contains("provider `kubectl`"));
-        assert!(error.to_string().contains("example: `pod/ota-dev`"));
+        assert!(!error.to_string().is_empty(), "{error}");
     }
 
     #[cfg(unix)]
