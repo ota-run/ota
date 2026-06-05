@@ -6971,6 +6971,129 @@ exit 1
     }
 
     #[cfg(unix)]
+    fn install_fake_container_probe_engine(
+        path: &std::path::Path,
+        missing_tool: Option<&str>,
+    ) {
+        let missing = missing_tool.unwrap_or("__NONE__");
+        let script_path = path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("container-probe-engine.sh");
+        let script_path = script_path.to_string_lossy().to_string();
+        let body = format!(
+            r#"#!/bin/sh
+script_dir="$(dirname "{script_path}")"
+state_dir="$script_dir/.ota-container-probe-state"
+mkdir -p "$state_dir"
+
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+
+if [ "$1" = "create" ]; then
+  shift
+  name=""
+  command=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --name)
+        name="$2"
+        shift 2
+        ;;
+      -c|-lc)
+        command="$2"
+        shift 2
+        ;;
+      sh)
+        if [ "$2" = "-c" ] || [ "$2" = "-lc" ]; then
+          command="$3"
+          shift 3
+        else
+          shift
+        fi
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  [ -z "$name" ] && name="ota-container-probe"
+  detected_tool="unknown"
+  case "$command" in
+    *"command -v 'node'"*|*"command -v node"*)
+      detected_tool="node"
+      ;;
+    *"command -v 'java'"*|*"command -v java"*)
+      detected_tool="java"
+      ;;
+  esac
+  printf '%s\n' "$detected_tool" > "$state_dir/$name.tool"
+  exit 0
+fi
+
+if [ "$1" = "start" ]; then
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -a|-i|-ai|-ia)
+        shift
+        ;;
+      *)
+        name="$1"
+        break
+        ;;
+    esac
+  done
+  detected_tool="$(cat "$state_dir/$name.tool" 2>/dev/null || echo unknown)"
+  printf '%s\n' "__OTA_CONTAINER_PROBE_STARTED__" >&2
+  if [ "$detected_tool" = "{missing}" ] && [ "{missing}" != "__NONE__" ]; then
+    exit 127
+  fi
+  case "$detected_tool" in
+    node)
+      printf '%s\n' "__OTA_RESOLVED_PATH__/usr/bin/node" >&2
+      printf '%s\n' "v22.0.0"
+      ;;
+    java)
+      printf '%s\n' "__OTA_RESOLVED_PATH__/usr/bin/java" >&2
+      printf '%s\n' "v21.0.0"
+      ;;
+    *)
+      printf '%s\n' "__OTA_RESOLVED_PATH__/$detected_tool" >&2
+      printf '%s\n' "v0.0.0"
+      ;;
+  esac
+  exit 0
+fi
+
+if [ "$1" = "ps" ] || [ "$1" = "run" ] || [ "$1" = "exec" ] || [ "$1" = "rm" ]; then
+  exit 0
+fi
+
+exit 1
+"#
+        );
+        fs::write(&script_path, body).expect("write fake container probe engine script");
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&script_path)
+            .expect("fake container probe engine metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("set fake container probe permissions");
+        std::fs::hard_link(&script_path, path).unwrap_or_else(|_| {
+            fs::copy(&script_path, path)
+                .expect("copy fake container probe engine to engine name");
+            let mut permissions = fs::metadata(path)
+                .expect("fake container probe engine metadata copy")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions)
+                .expect("set fake container probe permissions copy")
+        });
+    }
+
+    #[cfg(unix)]
     fn install_fake_docker_without_port_reporting(path: &std::path::Path) {
         let real_path = path.with_file_name("docker-real");
         install_fake_docker(&real_path);
@@ -34570,12 +34693,16 @@ runtimes:
             "#!/bin/sh\necho 'v24.14.1'\n"
         };
         write_fake_command(&bin_dir, "node", node_body);
-        let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__/usr/bin/node 1>&2\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        if cfg!(unix) {
+            let docker_path = bin_dir.join("docker");
+            install_fake_container_probe_engine(&docker_path, None);
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) echo 'v22.0.0'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
-        };
-        write_fake_command(&bin_dir, "docker", docker_body);
+            write_fake_command(
+                &bin_dir,
+                "docker",
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"create\" (\r\n  if not \"%*\"==\"\" (\r\n    echo %* | findstr /C:\"command -v 'java'\" >nul && (\r\n      echo java >\"%~dp0\\ota-container-probe-tool.txt\"\r\n      exit /b 0\r\n    )\r\n    echo %* | findstr /C:\"command -v java\" >nul && (\r\n      echo java >\"%~dp0\\ota-container-probe-tool.txt\"\r\n      exit /b 0\r\n    )\r\n    echo node >\"%~dp0\\ota-container-probe-tool.txt\"\r\n  )\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"start\" (\r\n  if exist \"%~dp0\\ota-container-probe-tool.txt\" (\r\n    set /p probeTool=<\"%~dp0\\ota-container-probe-tool.txt\"\r\n  ) else (\r\n    set probeTool=node\r\n  )\r\n  echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n  if \"%probeTool%\"==\"java\" (\r\n    exit /b 127\r\n  )\r\n  echo __OTA_RESOLVED_PATH__/usr/bin/node 1>&2\r\n  echo v22.0.0\r\n  exit /b 0\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+            );
+        }
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
@@ -34661,12 +34788,16 @@ runtimes:
 
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
-        let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'java'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    exit /b 127\r\n  )\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
+        if cfg!(unix) {
+            let docker_path = bin_dir.join("docker");
+            install_fake_container_probe_engine(&docker_path, Some("java"));
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'java'\"*) printf '%s\\n' '__OTA_CONTAINER_PROBE_STARTED__' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
-        };
-        write_fake_command(&bin_dir, "docker", docker_body);
+            write_fake_command(
+                &bin_dir,
+                "docker",
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"create\" (\r\n  echo java >\"%~dp0\\ota-container-probe-tool.txt\"\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"start\" (\r\n  if exist \"%~dp0\\ota-container-probe-tool.txt\" (\r\n    set /p probeTool=<\"%~dp0\\ota-container-probe-tool.txt\"\r\n  ) else (\r\n    set probeTool=java\r\n  )\r\n  echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n  if \"%probeTool%\"==\"java\" (\r\n    exit /b 127\r\n  )\r\n  echo __OTA_RESOLVED_PATH__/usr/bin/java 1>&2\r\n  echo v0.0.0\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+            );
+        }
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
@@ -35470,12 +35601,16 @@ agent:
             "#!/bin/sh\necho 'v24.14.1'\n"
         };
         write_fake_command(&bin_dir, "node", node_body);
-        let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported\r\nexit /b 1\r\n"
+        if cfg!(unix) {
+            let docker_path = bin_dir.join("docker");
+            install_fake_container_probe_engine(&docker_path, None);
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) echo 'v22.0.0'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
-        };
-        write_fake_command(&bin_dir, "docker", docker_body);
+            write_fake_command(
+                &bin_dir,
+                "docker",
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"create\" (\r\n  echo %* | findstr /C:\"command -v 'java'\" >nul && (\r\n    echo java >\"%~dp0\\ota-container-probe-tool.txt\"\r\n    exit /b 0\r\n  )\r\n  echo %* | findstr /C:\"command -v java\" >nul && (\r\n    echo java >\"%~dp0\\ota-container-probe-tool.txt\"\r\n    exit /b 0\r\n  )\r\n  echo node >\"%~dp0\\ota-container-probe-tool.txt\"\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"start\" (\r\n  if exist \"%~dp0\\ota-container-probe-tool.txt\" (\r\n    set /p probeTool=<\"%~dp0\\ota-container-probe-tool.txt\"\r\n  ) else (\r\n    set probeTool=node\r\n  )\r\n  echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n  if \"%probeTool%\"==\"java\" (\r\n    exit /b 127\r\n  )\r\n  echo __OTA_RESOLVED_PATH__/usr/bin/node 1>&2\r\n  echo v22.0.0\r\n  exit /b 0\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+            );
+        }
         let path = prepend_path(&bin_dir);
         let _path_guard = EnvVarGuard::set("PATH", path);
         let _columns_guard = EnvVarGuard::set("COLUMNS", OsString::from("160"));
@@ -35489,9 +35624,8 @@ agent:
         assert!(text.contains(
             "Why: container mode validated the selected execution image and container execution path"
         ));
-        assert!(text.contains("env requirements, checks"));
         assert!(text.contains("legacy service healthchecks remain host-bound"));
-        assert!(!text.contains("execution image;\n  env requirements"));
+        assert!(!text.contains("execution image;\n  checks"));
         assert!(!text.contains("Version mismatch for runtime: node"));
         assert!(!text.contains("Missing environment variable: OTA_CONTAINER_MODE_REQUIRED"));
         assert!(!text.contains("Check failed: failing-check"));
@@ -36589,12 +36723,16 @@ tasks:
 
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).expect("create bin dir");
-        let docker_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"info\" (\r\necho daemon unavailable 1>&2\r\nexit /b 1\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        if cfg!(unix) {
+            let docker_path = bin_dir.join("docker");
+            install_fake_docker(&docker_path);
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'daemon unavailable' >&2\n  exit 1\nfi\necho unsupported >&2\nexit 1\n"
-        };
-        write_fake_command(&bin_dir, "docker", docker_body);
+            write_fake_command(
+                &bin_dir,
+                "docker",
+                "@echo off\r\nif \"%1\"==\"info\" (\r\n  echo docker daemon unavailable 1>&2\r\n  exit /b 1\r\n)\r\nif \"%1\"==\"create\" exit /b 0\r\nif \"%1\"==\"start\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  if \"%*\"==\"\" exit /b 1\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul || echo %* | findstr /C:\"command -v node\" >nul && (\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+            );
+        }
         let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
@@ -36682,12 +36820,16 @@ tasks:
             "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  echo 'docker daemon unavailable' >&2\n  exit 1\nfi\necho unsupported >&2\nexit 1\n"
         };
         write_fake_command(&bin_dir, "docker", docker_body);
-        let podman_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n    echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n    echo __OTA_RESOLVED_PATH__/usr/bin/node 1>&2\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n"
+        if cfg!(unix) {
+            let podman_path = bin_dir.join("podman");
+            install_fake_container_probe_engine(&podman_path, None);
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"command -v 'node'\"*) echo 'v22.0.0'; exit 0 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n"
-        };
-        write_fake_command(&bin_dir, "podman", podman_body);
+            write_fake_command(
+                &bin_dir,
+                "podman",
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"create\" (\r\n  echo node >\"%~dp0\\ota-container-probe-tool.txt\"\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"start\" (\r\n  if exist \"%~dp0\\ota-container-probe-tool.txt\" (\r\n    set /p probeTool=<\"%~dp0\\ota-container-probe-tool.txt\"\r\n  ) else (\r\n    set probeTool=node\r\n  )\r\n  echo __OTA_CONTAINER_PROBE_STARTED__ 1>&2\r\n  if \"%probeTool%\"==\"java\" (\r\n    exit /b 127\r\n  )\r\n  echo __OTA_RESOLVED_PATH__/usr/bin/node 1>&2\r\n  echo v22.0.0\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"run\" (\r\n  if \"%*\"==\"\" exit /b 1\r\n  echo %* | findstr /C:\"command -v 'node'\" >nul || echo %* | findstr /C:\"command -v node\" >nul && (\r\n    echo v22.0.0\r\n    exit /b 0\r\n  )\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+            );
+        }
         let _path_guard = EnvVarGuard::set("PATH", prepend_path(&bin_dir));
         let _cwd = CurrentDirGuard::enter(fixture.dir.path());
 
