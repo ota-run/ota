@@ -481,20 +481,45 @@ pub(crate) fn run_streaming_command_with_capture_with_loader_options(
         echo_stderr,
         capture_output,
         live_log,
-        |_| {},
+        |_| None,
     )
+    .map(|(output, _)| output)
 }
 
-pub(crate) fn run_streaming_command_with_capture_with_loader_hook_options<F>(
+fn run_streaming_command_with_capture_with_loader_hook_options<F>(
     command: &mut Command,
     label: &str,
     echo_stderr: bool,
     capture_output: bool,
     live_log: Option<&StreamLogTee>,
     on_notifier_ready: F,
-) -> io::Result<StreamingCommandOutput>
+) -> io::Result<(StreamingCommandOutput, Option<RuntimeReadinessProbe>)>
 where
-    F: FnOnce(Option<StreamPhaseNotifier>),
+    F: FnOnce(Option<StreamPhaseNotifier>) -> Option<RuntimeReadinessProbe>,
+{
+    run_streaming_command_with_capture_with_loader_hook_and_timeout_options(
+        command,
+        label,
+        echo_stderr,
+        capture_output,
+        live_log,
+        on_notifier_ready,
+        None::<fn(&mut Child)>,
+    )
+}
+
+fn run_streaming_command_with_capture_with_loader_hook_and_timeout_options<F, G>(
+    command: &mut Command,
+    label: &str,
+    echo_stderr: bool,
+    capture_output: bool,
+    live_log: Option<&StreamLogTee>,
+    on_notifier_ready: F,
+    mut on_budget_exhausted: Option<G>,
+) -> io::Result<(StreamingCommandOutput, Option<RuntimeReadinessProbe>)>
+where
+    F: FnOnce(Option<StreamPhaseNotifier>) -> Option<RuntimeReadinessProbe>,
+    G: FnMut(&mut Child),
 {
     let loader = if capture_output {
         StreamPhaseLoader::start_immediate(label)
@@ -502,7 +527,7 @@ where
         StreamPhaseLoader::start(label)
     };
     let notifier = loader.as_ref().map(|loader| loader.notifier());
-    on_notifier_ready(notifier.clone());
+    let readiness_probe = on_notifier_ready(notifier.clone());
     let mut child = command
         .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
@@ -546,17 +571,51 @@ where
         })
     });
 
-    let status = child.wait()?;
+    let status = wait_for_child_with_runtime_readiness_budget(
+        &mut child,
+        readiness_probe.as_ref(),
+        |child| {
+            if let Some(callback) = on_budget_exhausted.as_mut() {
+                callback(child);
+            }
+        },
+    )?;
     let stdout = join_stream_reader(stdout_handle)?;
     let stderr = join_stream_reader(stderr_handle)?;
     if let Some(loader) = loader {
         loader.stop();
     }
-    Ok(StreamingCommandOutput {
-        exit_code: status.code().unwrap_or(1),
-        stdout,
-        stderr,
-    })
+    Ok((
+        StreamingCommandOutput {
+            exit_code: status.code().unwrap_or(1),
+            stdout,
+            stderr,
+        },
+        readiness_probe,
+    ))
+}
+
+fn wait_for_child_with_runtime_readiness_budget<F>(
+    child: &mut Child,
+    readiness_probe: Option<&RuntimeReadinessProbe>,
+    mut on_budget_exhausted: F,
+) -> io::Result<std::process::ExitStatus>
+where
+    F: FnMut(&mut Child),
+{
+    let mut handled_budget_exhaustion = false;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if !handled_budget_exhaustion
+            && readiness_probe.is_some_and(RuntimeReadinessProbe::budget_exhausted)
+        {
+            on_budget_exhausted(child);
+            handled_budget_exhaustion = true;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -1414,6 +1473,7 @@ pub enum ServiceTerminationKind {
 pub enum ServiceTerminationCause {
     OomKilled,
     Interrupted,
+    ReadinessTimedOut,
     ExitedNonZero,
     Exited,
     Unknown,
@@ -3503,6 +3563,7 @@ fn task_command_output_reports_user_interruption(command_output: &TaskCommandOut
         return match service_termination.cause {
             ServiceTerminationCause::Interrupted => true,
             ServiceTerminationCause::Exited => false,
+            ServiceTerminationCause::ReadinessTimedOut => false,
             ServiceTerminationCause::ExitedNonZero
             | ServiceTerminationCause::OomKilled
             | ServiceTerminationCause::Unknown => false,
@@ -3591,9 +3652,12 @@ fn collect_runtime_readiness_after_command_exit(
     resolved_runtime: Option<&ResolvedTaskRuntime>,
     command_exit_code: i32,
     interrupted: bool,
-) -> bool {
+) -> RuntimeReadinessProbeOutcome {
     let Some(probe) = readiness_probe else {
-        return false;
+        return RuntimeReadinessProbeOutcome {
+            observed: false,
+            budget_exhausted: false,
+        };
     };
     let service_requires_readiness = runtime_spec.is_some_and(|spec| {
         spec.kind == TaskRuntimeKind::Service
@@ -3602,14 +3666,17 @@ fn collect_runtime_readiness_after_command_exit(
     if service_requires_readiness && command_exit_code == 0 && !interrupted {
         let observed = probe
             .wait_then_stop_and_collect(native_service_post_exit_readiness_grace(runtime_spec));
-        return observed
-            || final_runtime_readiness_probe_observed(
-                contract,
-                task,
-                backend,
-                runtime_spec,
-                resolved_runtime,
-            );
+        return RuntimeReadinessProbeOutcome {
+            observed: observed.observed
+                || final_runtime_readiness_probe_observed(
+                    contract,
+                    task,
+                    backend,
+                    runtime_spec,
+                    resolved_runtime,
+                ),
+            budget_exhausted: observed.budget_exhausted,
+        };
     }
     probe.stop_and_collect()
 }
@@ -3624,14 +3691,33 @@ fn normalize_native_service_startup_exit_code(
     resolved_runtime: Option<&ResolvedTaskRuntime>,
     command_exit_code: i32,
     interrupted: bool,
-    readiness_observed: bool,
+    readiness_outcome: RuntimeReadinessProbeOutcome,
 ) -> (i32, Option<String>) {
     let interruption_note = interruption_execution_note(interrupted, command_exit_code);
     let service_requires_readiness = runtime_spec.is_some_and(|spec| {
         spec.kind == TaskRuntimeKind::Service
             && resolved_runtime.is_some_and(resolved_runtime_has_public_endpoint)
     });
-    if service_requires_readiness && !readiness_observed && command_exit_code == 0 && !interrupted {
+    if service_requires_readiness
+        && readiness_outcome.budget_exhausted
+        && !readiness_outcome.observed
+        && !interrupted
+    {
+        return (
+            1,
+            merge_execution_note(
+                interruption_note,
+                Some(String::from(
+                    "service failed to start; readiness budget exhausted before the declared runtime endpoint became reachable",
+                )),
+            ),
+        );
+    }
+    if service_requires_readiness
+        && !readiness_outcome.observed
+        && command_exit_code == 0
+        && !interrupted
+    {
         if task_effects_mutate_external_state(task) {
             return (
                 0,
@@ -4701,30 +4787,55 @@ struct RemoteReadinessProbeTarget {
 }
 
 struct RuntimeReadinessProbe {
-    observed: Arc<AtomicBool>,
+    state: Arc<RuntimeReadinessProbeState>,
     stop: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
+#[derive(Debug)]
+struct RuntimeReadinessProbeState {
+    observed: AtomicBool,
+    budget_exhausted: AtomicBool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RuntimeReadinessProbeOutcome {
+    observed: bool,
+    budget_exhausted: bool,
+}
+
 impl RuntimeReadinessProbe {
-    fn wait_then_stop_and_collect(mut self, grace: Duration) -> bool {
+    fn wait_then_stop_and_collect(mut self, grace: Duration) -> RuntimeReadinessProbeOutcome {
         let deadline = Instant::now() + grace;
-        while !self.observed.load(Ordering::Relaxed) && Instant::now() < deadline {
+        while !self.state.observed.load(Ordering::Relaxed)
+            && !self.state.budget_exhausted.load(Ordering::Relaxed)
+            && Instant::now() < deadline
+        {
             thread::sleep(Duration::from_millis(25));
         }
         self.stop.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
-        self.observed.load(Ordering::Relaxed)
+        RuntimeReadinessProbeOutcome {
+            observed: self.state.observed.load(Ordering::Relaxed),
+            budget_exhausted: self.state.budget_exhausted.load(Ordering::Relaxed),
+        }
     }
 
-    fn stop_and_collect(mut self) -> bool {
+    fn stop_and_collect(mut self) -> RuntimeReadinessProbeOutcome {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
-        self.observed.load(Ordering::Relaxed)
+        RuntimeReadinessProbeOutcome {
+            observed: self.state.observed.load(Ordering::Relaxed),
+            budget_exhausted: self.state.budget_exhausted.load(Ordering::Relaxed),
+        }
+    }
+
+    fn budget_exhausted(&self) -> bool {
+        self.state.budget_exhausted.load(Ordering::Relaxed)
     }
 }
 
@@ -5670,25 +5781,29 @@ fn execute_native_container_launch_command(
             ..
         } => {
             let interrupt_epoch = current_run_interrupt_epoch();
-            let mut readiness_probe = None;
-            let output_result = run_streaming_command_with_capture_with_loader_hook_options(
+            let output_result =
+                run_streaming_command_with_capture_with_loader_hook_and_timeout_options(
                 &mut start,
                 &running_loader_label_for_backend(task_name, Backend::Native),
                 true,
                 capture_output,
                 live_log.as_ref(),
                 |notifier| {
-                    readiness_probe = start_runtime_readiness_probe(
+                    start_runtime_readiness_probe(
                         contract,
                         Some(runtime),
                         resolved_runtime.as_ref(),
                         true,
                         notifier,
                         interrupt_epoch,
-                    );
+                    )
                 },
+                Some(|child: &mut Child| {
+                    let _ = remove_persistent_container(engine, &container_name, task_name);
+                    let _ = child.kill();
+                }),
             );
-            let output = match output_result {
+            let (output, readiness_probe) = match output_result {
                 Ok(output) => output,
                 Err(source) => {
                     return Err(RunError::SpawnFailed {
@@ -5698,15 +5813,19 @@ fn execute_native_container_launch_command(
                 }
             };
             let interrupted = interruption_observed_since(interrupt_epoch);
-            let readiness_observed = readiness_probe
+            let readiness_outcome = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
-                .unwrap_or(false);
+                .unwrap_or(RuntimeReadinessProbeOutcome {
+                    observed: false,
+                    budget_exhausted: false,
+                });
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
             let service_termination = classify_container_service_termination(
                 Some(runtime),
                 resolved_runtime.as_ref(),
-                readiness_observed,
+                readiness_outcome.observed,
+                readiness_outcome.budget_exhausted,
                 termination_state.as_ref(),
                 output.exit_code,
                 interrupted,
@@ -5734,7 +5853,7 @@ fn execute_native_container_launch_command(
         }
         TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let interrupt_epoch = current_run_interrupt_epoch();
-            let child = start
+            let mut child = start
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -5743,6 +5862,12 @@ fn execute_native_container_launch_command(
                     task: task_name.to_string(),
                     source,
                 })?;
+            let stdout_handle = child.stdout.take().map(|stdout| {
+                thread::spawn(move || stream_reader_to_sink(stdout, io::sink(), None, true, None))
+            });
+            let stderr_handle = child.stderr.take().map(|stderr| {
+                thread::spawn(move || stream_reader_to_sink(stderr, io::sink(), None, true, None))
+            });
             let readiness_probe = start_runtime_readiness_probe(
                 contract,
                 Some(runtime),
@@ -5751,23 +5876,43 @@ fn execute_native_container_launch_command(
                 None,
                 interrupt_epoch,
             );
-            let output = child
-                .wait_with_output()
-                .map_err(|source| RunError::SpawnFailed {
+            let status = wait_for_child_with_runtime_readiness_budget(
+                &mut child,
+                readiness_probe.as_ref(),
+                |child| {
+                    let _ = remove_persistent_container(engine, &container_name, task_name);
+                    let _ = child.kill();
+                },
+            )
+            .map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
+            let stdout =
+                join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let stderr =
+                join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?;
             let interrupted = interruption_observed_since(interrupt_epoch);
-            let readiness_observed = readiness_probe
+            let readiness_outcome = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
-                .unwrap_or(false);
-            let exit_code = output.status.code().unwrap_or(1);
+                .unwrap_or(RuntimeReadinessProbeOutcome {
+                    observed: false,
+                    budget_exhausted: false,
+                });
+            let exit_code = status.code().unwrap_or(1);
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
             let service_termination = classify_container_service_termination(
                 Some(runtime),
                 resolved_runtime.as_ref(),
-                readiness_observed,
+                readiness_outcome.observed,
+                readiness_outcome.budget_exhausted,
                 termination_state.as_ref(),
                 exit_code,
                 interrupted,
@@ -5779,8 +5924,8 @@ fn execute_native_container_launch_command(
                 } else {
                     exit_code
                 },
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                stdout,
+                stderr,
                 target: Some(container_name),
                 runtime: resolved_runtime,
                 service_termination: service_termination.clone(),
@@ -15450,7 +15595,16 @@ fn execute_native_task_command(
                     None,
                     interrupt_epoch,
                 );
-                let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                let status = wait_for_child_with_runtime_readiness_budget(
+                    &mut child,
+                    readiness_probe.as_ref(),
+                    |child| {
+                        let _ = child.kill();
+                        let _ =
+                            cleanup_interrupted_native_service_workload_and_note(task_name, runtime_spec);
+                    },
+                )
+                .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?;
@@ -15470,7 +15624,7 @@ fn execute_native_task_command(
 
                 let command_exit_code = status.code().unwrap_or(1);
                 let interrupted = interruption_observed_since(interrupt_epoch);
-                let readiness_observed = collect_runtime_readiness_after_command_exit(
+                let readiness_outcome = collect_runtime_readiness_after_command_exit(
                     contract,
                     task,
                     Backend::Native,
@@ -15486,7 +15640,7 @@ fn execute_native_task_command(
                     resolved_runtime.as_ref(),
                     command_exit_code,
                     interrupted,
-                    readiness_observed,
+                    readiness_outcome,
                 );
                 Ok(TaskCommandOutput {
                     exit_code,
@@ -15547,7 +15701,16 @@ fn execute_native_task_command(
                     None,
                     interrupt_epoch,
                 );
-                let status = child.wait().map_err(|source| RunError::SpawnFailed {
+                let status = wait_for_child_with_runtime_readiness_budget(
+                    &mut child,
+                    readiness_probe.as_ref(),
+                    |child| {
+                        let _ = child.kill();
+                        let _ =
+                            cleanup_interrupted_native_service_workload_and_note(task_name, runtime_spec);
+                    },
+                )
+                .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?;
@@ -15564,7 +15727,7 @@ fn execute_native_task_command(
 
                 let command_exit_code = status.code().unwrap_or(1);
                 let interrupted = interruption_observed_since(interrupt_epoch);
-                let readiness_observed = collect_runtime_readiness_after_command_exit(
+                let readiness_outcome = collect_runtime_readiness_after_command_exit(
                     contract,
                     task,
                     Backend::Native,
@@ -15580,7 +15743,7 @@ fn execute_native_task_command(
                     resolved_runtime.as_ref(),
                     command_exit_code,
                     interrupted,
-                    readiness_observed,
+                    readiness_outcome,
                 );
                 Ok(TaskCommandOutput {
                     exit_code,
@@ -17561,18 +17724,19 @@ fn start_runtime_readiness_probe(
     let ready_line = announce_ready_endpoint
         .then(|| ready_runtime_public_endpoint_line(runtime))
         .flatten();
-    let observed = Arc::new(AtomicBool::new(false));
+    let state = Arc::new(RuntimeReadinessProbeState {
+        observed: AtomicBool::new(false),
+        budget_exhausted: AtomicBool::new(false),
+    });
     let stop = Arc::new(AtomicBool::new(false));
-    let thread_observed = Arc::clone(&observed);
+    let thread_state = Arc::clone(&state);
     let thread_stop = Arc::clone(&stop);
-    // This probe is diagnostic only. It records whether the projected host endpoint
-    // ever became reachable while the workload was running; it must not tear the
-    // workload down or impose a fixed startup deadline on service execution.
     let probe_notifier = notifier;
     let thread_targets = readiness_targets.clone();
     let handle = thread::spawn(move || {
         let mut interrupt_grace_applied = false;
         let mut next_probe_at = Instant::now() + timing.start_period;
+        let mut failed_probes = 0u32;
         while !thread_stop.load(Ordering::Relaxed) {
             if Instant::now() >= next_probe_at
                 && readiness_targets_observed_with_timeout(
@@ -17580,7 +17744,7 @@ fn start_runtime_readiness_probe(
                     timing.timeout,
                 )
             {
-                thread_observed.store(true, Ordering::Relaxed);
+                thread_state.observed.store(true, Ordering::Relaxed);
                 if let Some(line) = ready_line.as_deref() {
                     if let Some(notifier) = probe_notifier.as_ref() {
                         notifier.wait_for_quiet_output(
@@ -17597,6 +17761,15 @@ fn start_runtime_readiness_probe(
                 break;
             }
             if Instant::now() >= next_probe_at {
+                failed_probes = failed_probes.saturating_add(1);
+                if let Some(retries) = timing.retries
+                    && failed_probes >= retries
+                {
+                    thread_state
+                        .budget_exhausted
+                        .store(true, Ordering::Relaxed);
+                    break;
+                }
                 next_probe_at = Instant::now() + timing.interval;
             }
             if !interrupt_grace_applied && interruption_observed_since(interrupt_epoch) {
@@ -17608,7 +17781,7 @@ fn start_runtime_readiness_probe(
                         thread_targets.as_slice(),
                         timing.timeout,
                     ) {
-                        thread_observed.store(true, Ordering::Relaxed);
+                        thread_state.observed.store(true, Ordering::Relaxed);
                         if let Some(line) = ready_line.as_deref() {
                             if let Some(notifier) = probe_notifier.as_ref() {
                                 notifier.wait_for_quiet_output(
@@ -17641,7 +17814,7 @@ fn start_runtime_readiness_probe(
         }
     });
     Some(RuntimeReadinessProbe {
-        observed,
+        state,
         stop,
         handle: Some(handle),
     })
@@ -17651,6 +17824,7 @@ fn classify_container_service_termination(
     runtime: Option<&TaskRuntimeSpec>,
     resolved_runtime: Option<&ResolvedTaskRuntime>,
     readiness_observed: bool,
+    readiness_budget_exhausted: bool,
     termination_state: Option<&ContainerTerminationState>,
     exit_code: i32,
     interrupted: bool,
@@ -17668,6 +17842,22 @@ fn classify_container_service_termination(
     let effective_exit_code = inspected_exit_code.unwrap_or(exit_code);
 
     if !readiness_observed {
+        if readiness_budget_exhausted {
+            return Some(ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ReadinessTimedOut,
+                after_readiness: false,
+                target: if termination_state.is_some() {
+                    String::from("container")
+                } else {
+                    String::from("service workload in persistent container")
+                },
+                container: container_name.to_string(),
+                exit_code: termination_state
+                    .and_then(|state| state.exit_code)
+                    .or(Some(exit_code)),
+            });
+        }
         // For pre-readiness exits, only classify as interruption when interruption evidence
         // is explicit. Real non-zero startup failures should remain generic task failures.
         let interrupted_before_readiness = if !interrupted {
@@ -17761,6 +17951,9 @@ fn service_termination_execution_note(service_termination: &ServiceTermination) 
         ServiceTerminationCause::Interrupted => {
             format!("{} was interrupted", service_termination.target)
         }
+        ServiceTerminationCause::ReadinessTimedOut => String::from(
+            "readiness budget exhausted before the declared runtime endpoint became reachable",
+        ),
         ServiceTerminationCause::ExitedNonZero => {
             format!("{} exited non-zero", service_termination.target)
         }
@@ -17975,25 +18168,29 @@ fn execute_ephemeral_container_task_command(
         } => {
             let interrupt_epoch = current_run_interrupt_epoch();
             let mut container = ephemeral_container_stream_command(engine, &container_name);
-            let mut readiness_probe = None;
-            let output_result = run_streaming_command_with_capture_with_loader_hook_options(
+            let output_result =
+                run_streaming_command_with_capture_with_loader_hook_and_timeout_options(
                 &mut container,
                 &running_loader_label_for_backend(task_name, Backend::Container),
                 true,
                 capture_output,
                 live_log.as_ref(),
                 |notifier| {
-                    readiness_probe = start_runtime_readiness_probe(
+                    start_runtime_readiness_probe(
                         contract,
                         runtime,
                         prepared_runtime.as_ref(),
                         true,
                         notifier,
                         interrupt_epoch,
-                    );
+                    )
                 },
+                Some(|child: &mut Child| {
+                    let _ = remove_persistent_container(engine, &container_name, task_name);
+                    let _ = child.kill();
+                }),
             );
-            let output = match output_result {
+            let (output, readiness_probe) = match output_result {
                 Ok(output) => output,
                 Err(source) => {
                     let _ = remove_persistent_container(engine, &container_name, task_name);
@@ -18004,22 +18201,29 @@ fn execute_ephemeral_container_task_command(
                 }
             };
             let interrupted_by_user = interruption_observed_since(interrupt_epoch);
-            let readiness_observed = readiness_probe
+            let readiness_outcome = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
-                .unwrap_or(false);
+                .unwrap_or(RuntimeReadinessProbeOutcome {
+                    observed: false,
+                    budget_exhausted: false,
+                });
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
             let service_termination = classify_container_service_termination(
                 runtime,
                 prepared_runtime.as_ref(),
-                readiness_observed,
+                readiness_outcome.observed,
+                readiness_outcome.budget_exhausted,
                 termination_state.as_ref(),
                 output.exit_code,
                 interrupted_by_user,
                 &container_name,
             );
-            let service_termination =
-                if readiness_observed || output.exit_code == 0 || interrupted_by_user {
+            let service_termination = if readiness_outcome.observed
+                || readiness_outcome.budget_exhausted
+                || output.exit_code == 0
+                || interrupted_by_user
+            {
                     service_termination
                 } else {
                     None
@@ -18062,7 +18266,7 @@ fn execute_ephemeral_container_task_command(
             let interrupt_epoch = current_run_interrupt_epoch();
             let mut container = container_engine_command(engine);
             container.arg("start").arg("-ai").arg(&container_name);
-            let child = container
+            let mut child = container
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -18071,6 +18275,12 @@ fn execute_ephemeral_container_task_command(
                     task: task_name.to_string(),
                     source,
                 })?;
+            let stdout_handle = child.stdout.take().map(|stdout| {
+                thread::spawn(move || stream_reader_to_sink(stdout, io::sink(), None, true, None))
+            });
+            let stderr_handle = child.stderr.take().map(|stderr| {
+                thread::spawn(move || stream_reader_to_sink(stderr, io::sink(), None, true, None))
+            });
             let readiness_probe = start_runtime_readiness_probe(
                 contract,
                 runtime,
@@ -18079,31 +18289,56 @@ fn execute_ephemeral_container_task_command(
                 None,
                 interrupt_epoch,
             );
-            let output = child.wait_with_output().map_err(|source| {
+            let status = wait_for_child_with_runtime_readiness_budget(
+                &mut child,
+                readiness_probe.as_ref(),
+                |child| {
+                    let _ = remove_persistent_container(engine, &container_name, task_name);
+                    let _ = child.kill();
+                },
+            )
+            .map_err(|source| {
                 let _ = remove_persistent_container(engine, &container_name, task_name);
                 RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 }
             })?;
-            let output_exit_code = output.status.code().unwrap_or(1);
+            let stdout =
+                join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let stderr =
+                join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let output_exit_code = status.code().unwrap_or(1);
             let interrupted_by_user = interruption_observed_since(interrupt_epoch);
-            let readiness_observed = readiness_probe
+            let readiness_outcome = readiness_probe
                 .map(RuntimeReadinessProbe::stop_and_collect)
-                .unwrap_or(false);
+                .unwrap_or(RuntimeReadinessProbeOutcome {
+                    observed: false,
+                    budget_exhausted: false,
+                });
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
             let service_termination = classify_container_service_termination(
                 runtime,
                 prepared_runtime.as_ref(),
-                readiness_observed,
+                readiness_outcome.observed,
+                readiness_outcome.budget_exhausted,
                 termination_state.as_ref(),
                 output_exit_code,
                 interrupted_by_user,
                 &container_name,
             );
-            let service_termination =
-                if readiness_observed || output_exit_code == 0 || interrupted_by_user {
+            let service_termination = if readiness_outcome.observed
+                || readiness_outcome.budget_exhausted
+                || output_exit_code == 0
+                || interrupted_by_user
+            {
                     service_termination
                 } else {
                     None
@@ -18133,8 +18368,8 @@ fn execute_ephemeral_container_task_command(
 
             Ok(TaskCommandOutput {
                 exit_code,
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                stdout,
+                stderr,
                 target: Some(container_name),
                 runtime: prepared_runtime,
                 service_termination,
@@ -18317,6 +18552,7 @@ fn execute_fulfilled_ephemeral_container_task_command(
         engine,
         mode,
         &container_name,
+        None,
     );
     let mut output = match output_result {
         Ok(output) => output,
@@ -18561,10 +18797,14 @@ fn execute_persistent_container_task_command(
         engine,
         mode.clone(),
         &container_name,
+        readiness_probe.as_ref(),
     )?;
-    let readiness_observed = readiness_probe
+    let readiness_outcome = readiness_probe
         .map(RuntimeReadinessProbe::stop_and_collect)
-        .unwrap_or(false);
+        .unwrap_or(RuntimeReadinessProbeOutcome {
+            observed: false,
+            budget_exhausted: false,
+        });
     let termination_state = (!runtime
         .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service))
     .then(|| inspect_container_termination_state(task_name, engine, &container_name))
@@ -18572,7 +18812,8 @@ fn execute_persistent_container_task_command(
     output.service_termination = classify_container_service_termination(
         runtime,
         resolved_runtime.as_ref(),
-        readiness_observed,
+        readiness_outcome.observed,
+        readiness_outcome.budget_exhausted,
         termination_state.as_ref(),
         output.exit_code,
         output.interrupted,
@@ -18655,10 +18896,14 @@ fn execute_persistent_container_task_command(
             engine,
             mode.clone(),
             &container_name,
+            readiness_probe.as_ref(),
         )?;
-        let readiness_observed = readiness_probe
+        let readiness_outcome = readiness_probe
             .map(RuntimeReadinessProbe::stop_and_collect)
-            .unwrap_or(false);
+            .unwrap_or(RuntimeReadinessProbeOutcome {
+                observed: false,
+                budget_exhausted: false,
+            });
         let termination_state = (!runtime
             .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service))
         .then(|| inspect_container_termination_state(task_name, engine, &container_name))
@@ -18666,7 +18911,8 @@ fn execute_persistent_container_task_command(
         output.service_termination = classify_container_service_termination(
             runtime,
             resolved_runtime.as_ref(),
-            readiness_observed,
+            readiness_outcome.observed,
+            readiness_outcome.budget_exhausted,
             termination_state.as_ref(),
             output.exit_code,
             output.interrupted,
@@ -20939,6 +21185,7 @@ fn exec_persistent_container_task_command(
     engine: &str,
     mode: TaskExecutionMode,
     container_name: &str,
+    readiness_probe: Option<&RuntimeReadinessProbe>,
 ) -> Result<TaskCommandOutput, RunError> {
     let mut container = container_engine_command(engine);
     container.arg("exec").arg("-i");
@@ -20967,27 +21214,72 @@ fn exec_persistent_container_task_command(
         } => {
             if capture_output {
                 let interrupt_epoch = current_run_interrupt_epoch();
-                let output = run_streaming_command_with_capture_with_loader_options(
-                    &mut container,
+                let loader = StreamPhaseLoader::start_immediate(
                     &running_loader_label_for_backend(task_name, Backend::Container),
-                    true,
-                    true,
-                    live_log.as_ref(),
+                );
+                let notifier = loader.as_ref().map(|loader| loader.notifier());
+                let mut child = container
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let stdout_log = live_log.as_ref().map(|tee| tee.stdout.clone());
+                let stdout_handle = child.stdout.take().map(|stdout| {
+                    thread::spawn(move || {
+                        stream_reader_to_sink(stdout, io::stdout(), notifier.clone(), true, stdout_log)
+                    })
+                });
+                let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
+                let stderr_handle = child.stderr.take().map(|stderr| {
+                    let stderr_notifier = loader.as_ref().map(|loader| loader.notifier());
+                    thread::spawn(move || {
+                        stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, true, stderr_log)
+                    })
+                });
+                let status = wait_for_child_with_runtime_readiness_budget(
+                    &mut child,
+                    readiness_probe,
+                    |child| {
+                        let _ = cleanup_interrupted_persistent_service_workload_and_note(
+                            task_name,
+                            engine,
+                            container_name,
+                            runtime,
+                        );
+                        let _ = child.kill();
+                    },
                 )
                 .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?;
+                let stdout =
+                    join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let stderr =
+                    join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                if let Some(loader) = loader {
+                    loader.stop();
+                }
                 let interrupted = interruption_observed_since(interrupt_epoch);
                 let exit_code = normalize_persistent_service_interrupt_exit_code(
                     runtime,
                     interrupted,
-                    output.exit_code,
+                    status.code().unwrap_or(1),
                 );
                 Ok(TaskCommandOutput {
                     exit_code,
-                    stdout: output.stdout,
-                    stderr: output.stderr,
+                    stdout,
+                    stderr,
                     target: Some(container_name.to_string()),
                     runtime: None,
                     service_termination: None,
@@ -20996,19 +21288,44 @@ fn exec_persistent_container_task_command(
                 })
             } else {
                 let interrupt_epoch = current_run_interrupt_epoch();
-                let exit_code = run_streaming_command_with_loader(
-                    &mut container,
-                    &running_loader_label_for_backend(task_name, Backend::Container),
+                let loader = StreamPhaseLoader::start(&running_loader_label_for_backend(
+                    task_name,
+                    Backend::Container,
+                ));
+                let mut child = container
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .spawn()
+                    .map_err(|source| RunError::SpawnFailed {
+                        task: task_name.to_string(),
+                        source,
+                    })?;
+                let status = wait_for_child_with_runtime_readiness_budget(
+                    &mut child,
+                    readiness_probe,
+                    |child| {
+                        let _ = cleanup_interrupted_persistent_service_workload_and_note(
+                            task_name,
+                            engine,
+                            container_name,
+                            runtime,
+                        );
+                        let _ = child.kill();
+                    },
                 )
                 .map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?;
+                if let Some(loader) = loader {
+                    loader.stop();
+                }
                 let interrupted = interruption_observed_since(interrupt_epoch);
                 let exit_code = normalize_persistent_service_interrupt_exit_code(
                     runtime,
                     interrupted,
-                    exit_code,
+                    status.code().unwrap_or(1),
                 );
 
                 Ok(TaskCommandOutput {
@@ -21025,13 +21342,45 @@ fn exec_persistent_container_task_command(
         }
         TaskExecutionMode::Capture | TaskExecutionMode::CaptureActivation => {
             let interrupt_epoch = current_run_interrupt_epoch();
-            let output = container
+            let mut child = container
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
-                .and_then(|child| child.wait_with_output())
                 .map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let stdout_handle = child.stdout.take().map(|stdout| {
+                thread::spawn(move || stream_reader_to_sink(stdout, io::sink(), None, true, None))
+            });
+            let stderr_handle = child.stderr.take().map(|stderr| {
+                thread::spawn(move || stream_reader_to_sink(stderr, io::sink(), None, true, None))
+            });
+            let status = wait_for_child_with_runtime_readiness_budget(
+                &mut child,
+                readiness_probe,
+                |child| {
+                    let _ = cleanup_interrupted_persistent_service_workload_and_note(
+                        task_name,
+                        engine,
+                        container_name,
+                        runtime,
+                    );
+                    let _ = child.kill();
+                },
+            )
+            .map_err(|source| RunError::SpawnFailed {
+                task: task_name.to_string(),
+                source,
+            })?;
+            let stdout =
+                join_stream_reader(stdout_handle).map_err(|source| RunError::SpawnFailed {
+                    task: task_name.to_string(),
+                    source,
+                })?;
+            let stderr =
+                join_stream_reader(stderr_handle).map_err(|source| RunError::SpawnFailed {
                     task: task_name.to_string(),
                     source,
                 })?;
@@ -21039,12 +21388,12 @@ fn exec_persistent_container_task_command(
             let exit_code = normalize_persistent_service_interrupt_exit_code(
                 runtime,
                 interrupted,
-                output.status.code().unwrap_or(1),
+                status.code().unwrap_or(1),
             );
             Ok(TaskCommandOutput {
                 exit_code,
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                stdout,
+                stderr,
                 target: Some(container_name.to_string()),
                 runtime: None,
                 service_termination: None,
@@ -32151,13 +32500,106 @@ tasks:
         super::simulate_run_interrupt_for_test();
         thread::sleep(std::time::Duration::from_millis(50));
         let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind listener");
-        let observed = {
+        let outcome = {
             let _listener = listener;
             thread::sleep(std::time::Duration::from_millis(300));
             probe.stop_and_collect()
         };
 
-        assert!(observed, "interrupt grace window should confirm readiness");
+        assert!(
+            outcome.observed,
+            "interrupt grace window should confirm readiness"
+        );
+        assert!(!outcome.budget_exhausted);
+    }
+
+    #[test]
+    fn readiness_probe_marks_budget_exhausted_when_retries_are_spent() {
+        let reserved = TcpListener::bind(("127.0.0.1", 0)).expect("reserve a local port");
+        let port = reserved
+            .local_addr()
+            .expect("reserved listener should have a local addr")
+            .port();
+        drop(reserved);
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      readiness:
+        start_period: 0s
+        interval: 50ms
+        timeout: 50ms
+        retries: 1
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {port}
+              primary: true
+              path: /
+"#
+            )
+            .as_str(),
+        )
+        .expect("contract should parse");
+        let runtime_spec = contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref())
+            .expect("dev runtime should exist");
+        let runtime = ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port,
+                    url: Some(format!("http://127.0.0.1:{port}/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+
+        let probe = super::start_runtime_readiness_probe(
+            Some(&contract),
+            Some(&runtime_spec),
+            Some(&runtime),
+            false,
+            None,
+            super::current_run_interrupt_epoch(),
+        )
+        .expect("probe should start");
+        thread::sleep(std::time::Duration::from_millis(150));
+        let outcome = probe.stop_and_collect();
+
+        assert!(!outcome.observed);
+        assert!(outcome.budget_exhausted);
     }
 
     #[cfg(unix)]
@@ -38895,6 +39337,7 @@ tasks:
             runtime,
             Some(&resolved_runtime),
             true,
+            false,
             Some(&super::ContainerTerminationState {
                 running: Some(false),
                 exit_code: Some(0),
@@ -38972,6 +39415,7 @@ tasks:
             runtime,
             Some(&resolved_runtime),
             true,
+            false,
             Some(&super::ContainerTerminationState {
                 running: Some(false),
                 exit_code: Some(1),
@@ -39049,6 +39493,7 @@ tasks:
             runtime,
             Some(&resolved_runtime),
             true,
+            false,
             None,
             130,
             true,
@@ -39122,6 +39567,7 @@ tasks:
             runtime,
             Some(&resolved_runtime),
             true,
+            false,
             Some(&super::ContainerTerminationState {
                 running: Some(false),
                 exit_code: Some(130),
@@ -39200,6 +39646,7 @@ tasks:
             runtime,
             Some(&resolved_runtime),
             false,
+            false,
             None,
             130,
             true,
@@ -39273,6 +39720,7 @@ tasks:
         let service_termination = super::classify_container_service_termination(
             runtime,
             Some(&resolved_runtime),
+            false,
             false,
             None,
             0,
@@ -39352,6 +39800,7 @@ tasks:
             runtime,
             Some(&resolved_runtime),
             false,
+            false,
             None,
             1,
             true,
@@ -39364,6 +39813,85 @@ tasks:
             super::ServiceTerminationCause::ExitedNonZero
         );
         assert!(!service_termination.after_readiness);
+    }
+
+    #[test]
+    fn container_service_classification_marks_pre_readiness_budget_exhaustion_as_timeout() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: pnpm dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+"#,
+        )
+        .expect("contract should parse");
+
+        let runtime = contract
+            .tasks
+            .get("dev")
+            .and_then(|task| task.runtime.as_ref());
+        let resolved_runtime = super::ResolvedTaskRuntime {
+            kind: TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: Some(super::ResolvedTaskRuntimeEndpoint {
+                listener: String::from("http"),
+                protocol: TaskRuntimeProtocol::Http,
+                bind: super::ResolvedTaskRuntimeBind {
+                    address: String::from("0.0.0.0"),
+                    port: 3000,
+                },
+                host: super::ResolvedTaskRuntimeHost {
+                    address: String::from("127.0.0.1"),
+                    port: 3000,
+                    url: Some(String::from("http://127.0.0.1:3000/")),
+                },
+                primary: true,
+            }),
+            exposed_endpoints: Vec::new(),
+        };
+
+        let service_termination = super::classify_container_service_termination(
+            runtime,
+            Some(&resolved_runtime),
+            false,
+            true,
+            None,
+            1,
+            false,
+            "ota-persistent-test",
+        )
+        .expect("service termination should classify");
+
+        assert_eq!(
+            service_termination.cause,
+            super::ServiceTerminationCause::ReadinessTimedOut
+        );
+        assert!(!service_termination.after_readiness);
+        assert_eq!(
+            super::service_termination_execution_note(&service_termination),
+            "service failed to start; readiness budget exhausted before the declared runtime endpoint became reachable"
+        );
     }
 
     #[test]
@@ -39427,6 +39955,7 @@ tasks:
             runtime,
             Some(&resolved_runtime),
             false,
+            false,
             None,
             130,
             false,
@@ -39481,6 +40010,7 @@ tasks:
         let service_termination = super::classify_container_service_termination(
             runtime,
             Some(&resolved_runtime),
+            false,
             false,
             None,
             130,
@@ -39809,6 +40339,7 @@ tasks:
             runtime,
             Some(&resolved_runtime),
             true,
+            false,
             None,
             0,
             true,
@@ -39888,6 +40419,7 @@ tasks:
             runtime,
             Some(&resolved_runtime),
             true,
+            false,
             None,
             1,
             true,
@@ -39967,6 +40499,7 @@ tasks:
             runtime,
             Some(&resolved_runtime),
             true,
+            false,
             None,
             0,
             false,

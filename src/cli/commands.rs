@@ -58067,6 +58067,43 @@ tasks:
     }
 
     #[test]
+    fn startup_failure_text_calls_out_readiness_budget_exhaustion() {
+        let rendered = strip_ansi_codes(&super::render_service_startup_failure_text(
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            Backend::Container,
+            ExecutionOverrides::default(),
+            &ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ReadinessTimedOut,
+                after_readiness: false,
+                target: String::from("service workload in persistent container"),
+                container: String::from("ota-deadbeef"),
+                exit_code: Some(1),
+            },
+            None,
+            "",
+            "startup failed",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered.contains("readiness budget was exhausted before readiness was observed"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Ota stopped startup after the configured readiness budget was exhausted"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_structured_error_text_preserves_explicit_overrides_for_lock_rerun() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -65848,6 +65885,7 @@ fn service_termination_reports_user_interruption(service_termination: &ServiceTe
     match service_termination.cause {
         ServiceTerminationCause::Interrupted => true,
         ServiceTerminationCause::Exited => false,
+        ServiceTerminationCause::ReadinessTimedOut => false,
         ServiceTerminationCause::ExitedNonZero
         | ServiceTerminationCause::OomKilled
         | ServiceTerminationCause::Unknown => false,
@@ -66522,6 +66560,11 @@ fn render_service_stopped_failure_text(
         None => format!("service task `{task_name}` became ready and then stopped"),
     }];
     let cause_detail = match service_termination.cause {
+        ServiceTerminationCause::ReadinessTimedOut => {
+            format!(
+                "Ota stopped startup after the configured readiness budget was exhausted for {subject}"
+            )
+        }
         ServiceTerminationCause::OomKilled => {
             format!("{subject} was OOM-killed by the container engine")
         }
@@ -66606,6 +66649,9 @@ fn service_termination_summary_note(service_termination: &ServiceTermination) ->
                 String::from("service interrupted by user before Ota confirmed readiness")
             }
         }
+        ServiceTerminationCause::ReadinessTimedOut => String::from(
+            "service failed to start; readiness budget exhausted before the declared runtime endpoint became reachable",
+        ),
         ServiceTerminationCause::ExitedNonZero => {
             if service_termination.exit_code == Some(137) {
                 format!("{prefix}; {target} was killed (exit 137, SIGKILL)")
@@ -66662,9 +66708,13 @@ fn render_service_startup_failure_text(
     let readiness_listener = runtime
         .and_then(|runtime| runtime.primary_listener.as_deref())
         .map(str::to_string);
-    let mut why_lines = vec![String::from(
-        "the workload exited before readiness was observed",
-    )];
+    let mut why_lines = vec![if service_termination.cause
+        == ServiceTerminationCause::ReadinessTimedOut
+    {
+        String::from("readiness budget was exhausted before readiness was observed")
+    } else {
+        String::from("the workload exited before readiness was observed")
+    }];
     if let Some(listener_name) = readiness_listener.as_deref() {
         why_lines.push(format!(
             "readiness was never reached for listener `{listener_name}`"
@@ -66678,6 +66728,9 @@ fn render_service_startup_failure_text(
         ServiceTerminationCause::Interrupted => format!(
             "{subject} was interrupted before readiness (exit code `{}`)",
             service_termination.exit_code.unwrap_or(130)
+        ),
+        ServiceTerminationCause::ReadinessTimedOut => String::from(
+            "Ota stopped startup after the configured readiness budget was exhausted",
         ),
         ServiceTerminationCause::ExitedNonZero => {
             if service_termination.exit_code == Some(137) {

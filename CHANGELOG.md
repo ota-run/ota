@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- made service-task readiness budgets authoritative during startup in `ota run`: when a service
+  task declares a projected runtime endpoint and the configured readiness `start_period` /
+  `interval` / `timeout` / `retries` budget is exhausted before that endpoint becomes reachable,
+  Ota now fails startup instead of waiting indefinitely until the workload exits or the user
+  interrupts it
+
 ## 1.6.19
 
 - hardened repo execution lock guidance in `ota run`: rerun commands now preserve explicitly
