@@ -841,6 +841,7 @@ mod tests {
             target: String::from("container"),
             container: String::from("ota-ephemeral-deadbeef"),
             exit_code: Some(130),
+            readiness: None,
         });
 
         let rendered = strip_ansi_codes(&render_execution_receipt_summary_block(

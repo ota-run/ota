@@ -56024,6 +56024,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(130),
+                readiness: None,
             }),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
@@ -56410,6 +56411,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(137),
+                readiness: None,
             }),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
@@ -56464,6 +56466,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-persistent-deadbeef"),
                 exit_code: Some(1),
+                readiness: None,
             }),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
@@ -56527,6 +56530,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-persistent-app"),
                 exit_code: None,
+                readiness: None,
             }),
         };
 
@@ -57397,6 +57401,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(137),
+                readiness: None,
             }),
             false,
             None,
@@ -57436,6 +57441,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(130),
+                readiness: None,
             }),
             false,
             None,
@@ -57470,6 +57476,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(130),
+                readiness: None,
             }),
             false,
             None,
@@ -57516,6 +57523,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(130),
+                readiness: None,
             }),
             false,
             None,
@@ -57558,6 +57566,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(1),
+                readiness: None,
             }),
             false,
             None,
@@ -57723,6 +57732,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(137),
+                readiness: None,
             }),
             false,
             None,
@@ -57772,6 +57782,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(130),
+                readiness: None,
             }),
             false,
             None,
@@ -57847,6 +57858,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(130),
+                readiness: None,
             }),
             false,
             None,
@@ -57940,6 +57952,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(1),
+                readiness: None,
             }),
             false,
             None,
@@ -57993,6 +58006,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(0),
+                readiness: None,
             }),
             false,
             None,
@@ -58051,6 +58065,7 @@ tasks:
                 target: String::from("service workload in persistent container"),
                 container: String::from("ota-deadbeef"),
                 exit_code: Some(1),
+                readiness: None,
             },
             None,
             "",
@@ -58083,6 +58098,17 @@ tasks:
                 target: String::from("service workload in persistent container"),
                 container: String::from("ota-deadbeef"),
                 exit_code: Some(1),
+                readiness: Some(crate::runner::ReadinessProbeReport {
+                    listener: Some(String::from("site")),
+                    target: String::from("http://127.0.0.1:3000/"),
+                    attempts_total: Some(1),
+                    attempts_used: 1,
+                    attempts_remaining: Some(0),
+                    timeout_ms: Some(3000),
+                    interval_ms: 2000,
+                    start_period_ms: 1000,
+                    last_failure: Some(String::from("connection refused")),
+                }),
             },
             None,
             "",
@@ -58099,6 +58125,61 @@ tasks:
             rendered.contains(
                 "Ota stopped startup after the configured readiness budget was exhausted"
             ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("attempts: 1/1"), "{rendered}");
+        assert!(rendered.contains("last failure: connection refused"), "{rendered}");
+    }
+
+    #[test]
+    fn startup_failure_text_prefers_readiness_report_listener_over_primary_listener() {
+        let runtime = crate::runner::ResolvedTaskRuntime {
+            kind: crate::schema::TaskRuntimeKind::Service,
+            listeners: BTreeMap::new(),
+            primary_listener: Some(String::from("http")),
+            primary_endpoint: None,
+            exposed_endpoints: Vec::new(),
+        };
+        let rendered = strip_ansi_codes(&super::render_service_startup_failure_text(
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "dev",
+            "dev",
+            None,
+            Backend::Container,
+            ExecutionOverrides::default(),
+            &ServiceTermination {
+                kind: ServiceTerminationKind::ServiceStopped,
+                cause: ServiceTerminationCause::ReadinessTimedOut,
+                after_readiness: false,
+                target: String::from("service workload in persistent container"),
+                container: String::from("ota-deadbeef"),
+                exit_code: Some(1),
+                readiness: Some(crate::runner::ReadinessProbeReport {
+                    listener: Some(String::from("site")),
+                    target: String::from("http://127.0.0.1:3000/"),
+                    attempts_total: Some(1),
+                    attempts_used: 1,
+                    attempts_remaining: Some(0),
+                    timeout_ms: Some(3000),
+                    interval_ms: 2000,
+                    start_period_ms: 1000,
+                    last_failure: Some(String::from("connection refused")),
+                }),
+            },
+            Some(&runtime),
+            "",
+            "",
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered.contains("readiness was never reached for listener `site`"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("readiness was never reached for listener `http`"),
             "{rendered}"
         );
     }
@@ -58279,6 +58360,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(0),
+                readiness: None,
             }),
             true,
             None,
@@ -58337,6 +58419,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(130),
+                readiness: None,
             }),
             true,
             None,
@@ -58383,6 +58466,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(137),
+                readiness: None,
             }),
             false,
             None,
@@ -59071,6 +59155,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(130),
+                readiness: None,
             }),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
@@ -59392,6 +59477,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(1),
+                readiness: None,
             }),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
@@ -59456,6 +59542,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(0),
+                readiness: None,
             }),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
@@ -61764,6 +61851,7 @@ project:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-deadbeef"),
                 exit_code: Some(1),
+                readiness: None,
             },
             None,
             "",
@@ -66674,6 +66762,29 @@ fn service_termination_subject(service_termination: &ServiceTermination) -> Stri
     )
 }
 
+fn append_readiness_report_why_lines(
+    why_lines: &mut Vec<String>,
+    readiness: Option<&crate::runner::ReadinessProbeReport>,
+) {
+    let Some(readiness) = readiness else {
+        return;
+    };
+    if readiness.attempts_used > 0 {
+        match readiness.attempts_total {
+            Some(total) => why_lines.push(format!("attempts: {}/{}", readiness.attempts_used, total)),
+            None => why_lines.push(format!("attempts: {}", readiness.attempts_used)),
+        }
+    }
+    if let Some(timeout_ms) = readiness.timeout_ms {
+        why_lines.push(format!("timeout per attempt: {}ms", timeout_ms));
+    }
+    why_lines.push(format!("interval: {}ms", readiness.interval_ms));
+    why_lines.push(format!("start period: {}ms", readiness.start_period_ms));
+    if let Some(last_failure) = readiness.last_failure.as_deref() {
+        why_lines.push(format!("last failure: {last_failure}"));
+    }
+}
+
 fn render_service_startup_failure_text(
     contract_path: &Path,
     where_value: &str,
@@ -66705,9 +66816,16 @@ fn render_service_startup_failure_text(
         paint_code(task_name)
     ));
 
-    let readiness_listener = runtime
-        .and_then(|runtime| runtime.primary_listener.as_deref())
-        .map(str::to_string);
+    let readiness_listener = service_termination
+        .readiness
+        .as_ref()
+        .and_then(|readiness| readiness.listener.as_deref())
+        .map(str::to_string)
+        .or_else(|| {
+            runtime
+                .and_then(|runtime| runtime.primary_listener.as_deref())
+                .map(str::to_string)
+        });
     let mut why_lines = vec![if service_termination.cause
         == ServiceTerminationCause::ReadinessTimedOut
     {
@@ -66750,6 +66868,7 @@ fn render_service_startup_failure_text(
         }
     };
     why_lines.push(cause_detail);
+    append_readiness_report_why_lines(&mut why_lines, service_termination.readiness.as_ref());
     append_error_detail_section(&mut out, "Why:", &why_lines, None);
 
     if let Some(excerpt) = run_output_excerpt(stdout, stderr, 20).as_ref() {

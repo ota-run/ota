@@ -1171,6 +1171,14 @@ Current behavior:
   `ota run <task> --dry-run --json`
 - by default, interactive terminals stream raw child output live, while non-interactive text runs buffer output into the final report for a cleaner failure/success surface
 - `--stream` forces raw live child output in text mode when you want the old firehose behavior explicitly
+- when the requested task is a service runtime with declared readiness, `--stream` also shows live
+  readiness probe progress while ota is still trying to prove startup
+- for service runtimes with declared readiness, ota now treats the declared startup readiness
+  budget as authoritative: if the configured `start_period` / `interval` / `timeout` /
+  `retries` budget is exhausted before the runtime endpoint becomes reachable, startup fails
+  instead of waiting indefinitely for the workload to exit or for the user to interrupt it
+- startup failure output now includes the final readiness-budget summary, including attempts used,
+  timeout per attempt, interval, start period, and the last probe failure
 - backend-configuration failures now point through `ota execution plan` first so the selected execution path can be inspected before you change contract execution settings or retry the task
 - declared env-source failures now point through `ota env --task <name>` first so source status and precedence stay visible before you repair files or rerun the task
 - when the selected task path uses `requirements.toolchains`, ota treats that toolchain as the owner for the selected path instead of describing its owned capabilities as standalone `runtimes` or `tools`

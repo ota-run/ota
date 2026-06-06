@@ -1488,6 +1488,26 @@ pub struct ServiceTermination {
     pub container: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<ReadinessProbeReport>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ReadinessProbeReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempts_total: Option<u32>,
+    pub attempts_used: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempts_remaining: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    pub interval_ms: u64,
+    pub start_period_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_failure: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -3657,6 +3677,7 @@ fn collect_runtime_readiness_after_command_exit(
         return RuntimeReadinessProbeOutcome {
             observed: false,
             budget_exhausted: false,
+            report: None,
         };
     };
     let service_requires_readiness = runtime_spec.is_some_and(|spec| {
@@ -3676,6 +3697,7 @@ fn collect_runtime_readiness_after_command_exit(
                     resolved_runtime,
                 ),
             budget_exhausted: observed.budget_exhausted,
+            report: observed.report,
         };
     }
     probe.stop_and_collect()
@@ -4796,12 +4818,14 @@ struct RuntimeReadinessProbe {
 struct RuntimeReadinessProbeState {
     observed: AtomicBool,
     budget_exhausted: AtomicBool,
+    report: Mutex<ReadinessProbeReport>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeReadinessProbeOutcome {
     observed: bool,
     budget_exhausted: bool,
+    report: Option<ReadinessProbeReport>,
 }
 
 impl RuntimeReadinessProbe {
@@ -4820,6 +4844,7 @@ impl RuntimeReadinessProbe {
         RuntimeReadinessProbeOutcome {
             observed: self.state.observed.load(Ordering::Relaxed),
             budget_exhausted: self.state.budget_exhausted.load(Ordering::Relaxed),
+            report: self.state.report.lock().ok().map(|report| report.clone()),
         }
     }
 
@@ -4831,11 +4856,120 @@ impl RuntimeReadinessProbe {
         RuntimeReadinessProbeOutcome {
             observed: self.state.observed.load(Ordering::Relaxed),
             budget_exhausted: self.state.budget_exhausted.load(Ordering::Relaxed),
+            report: self.state.report.lock().ok().map(|report| report.clone()),
         }
     }
 
     fn budget_exhausted(&self) -> bool {
         self.state.budget_exhausted.load(Ordering::Relaxed)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReadinessAttemptFailure {
+    target: String,
+    detail: String,
+}
+
+fn format_readiness_target(target: &RuntimeReadinessTarget) -> String {
+    match target {
+        RuntimeReadinessTarget::Tcp { address, port } => format!("tcp://{address}:{port}"),
+        RuntimeReadinessTarget::Http {
+            address,
+            port,
+            request,
+        } => format!("http://{address}:{port}{}", request.path),
+        RuntimeReadinessTarget::RemoteTcp { probe, port } => {
+            format!("remote:{}:{port}", probe.target)
+        }
+        RuntimeReadinessTarget::RemoteHttp {
+            probe,
+            address,
+            port,
+            request,
+        } => format!("remote:{} -> http://{address}:{port}{}", probe.target, request.path),
+    }
+}
+
+fn readiness_probe_report_template(
+    runtime_spec: &TaskRuntimeSpec,
+    runtime: &ResolvedTaskRuntime,
+    targets: &[RuntimeReadinessTarget],
+    timing: &ReadinessTimingPolicy,
+) -> ReadinessProbeReport {
+    ReadinessProbeReport {
+        listener: runtime_spec
+            .readiness
+            .as_ref()
+            .and_then(|readiness| readiness.listener.as_deref())
+            .map(str::trim)
+            .filter(|listener| !listener.is_empty())
+            .map(str::to_string)
+            .or_else(|| runtime.primary_listener.clone()),
+        target: targets
+            .first()
+            .map(format_readiness_target)
+            .unwrap_or_else(|| String::from("unknown")),
+        attempts_total: timing.retries,
+        attempts_used: 0,
+        attempts_remaining: timing.retries,
+        timeout_ms: timing.timeout.map(|timeout| timeout.as_millis().min(u64::MAX as u128) as u64),
+        interval_ms: timing.interval.as_millis().min(u64::MAX as u128) as u64,
+        start_period_ms: timing
+            .start_period
+            .as_millis()
+            .min(u64::MAX as u128) as u64,
+        last_failure: None,
+    }
+}
+
+fn record_readiness_probe_failure(
+    state: &RuntimeReadinessProbeState,
+    attempt: u32,
+    failure: &ReadinessAttemptFailure,
+) -> Option<ReadinessProbeReport> {
+    let mut report = state.report.lock().ok()?;
+    report.target = failure.target.clone();
+    report.attempts_used = attempt;
+    report.attempts_remaining = report
+        .attempts_total
+        .map(|total| total.saturating_sub(attempt));
+    report.last_failure = Some(failure.detail.clone());
+    Some(report.clone())
+}
+
+fn format_readiness_probe_progress(report: &ReadinessProbeReport) -> String {
+    let mut lines = vec![String::from("Readiness")];
+    if let Some(listener) = report.listener.as_deref() {
+        lines.push(format!("→ listener: `{listener}`"));
+    }
+    lines.push(format!("→ target: `{}`", report.target));
+    match report.attempts_total {
+        Some(total) => lines.push(format!("→ attempt: {}/{}", report.attempts_used, total)),
+        None => lines.push(format!("→ attempt: {}", report.attempts_used)),
+    }
+    if let Some(timeout_ms) = report.timeout_ms {
+        lines.push(format!("→ timeout: {}ms", timeout_ms));
+    }
+    if let Some(last_failure) = report.last_failure.as_deref() {
+        lines.push(format!("→ last result: {last_failure}"));
+    }
+    if let Some(remaining) = report.attempts_remaining {
+        lines.push(format!("→ remaining attempts: {remaining}"));
+    }
+    lines.join("\n")
+}
+
+fn emit_readiness_probe_progress(
+    notifier: Option<&StreamPhaseNotifier>,
+    stop: &AtomicBool,
+    report: &ReadinessProbeReport,
+) {
+    let progress = format_readiness_probe_progress(report);
+    if let Some(notifier) = notifier {
+        notifier.wait_for_quiet_output(Duration::from_millis(300), stop);
+        let _guard = notifier.begin_output();
+        eprintln!("{progress}");
     }
 }
 
@@ -5818,6 +5952,7 @@ fn execute_native_container_launch_command(
                 .unwrap_or(RuntimeReadinessProbeOutcome {
                     observed: false,
                     budget_exhausted: false,
+                    report: None,
                 });
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
@@ -5826,6 +5961,7 @@ fn execute_native_container_launch_command(
                 resolved_runtime.as_ref(),
                 readiness_outcome.observed,
                 readiness_outcome.budget_exhausted,
+                readiness_outcome.report.clone(),
                 termination_state.as_ref(),
                 output.exit_code,
                 interrupted,
@@ -5904,6 +6040,7 @@ fn execute_native_container_launch_command(
                 .unwrap_or(RuntimeReadinessProbeOutcome {
                     observed: false,
                     budget_exhausted: false,
+                    report: None,
                 });
             let exit_code = status.code().unwrap_or(1);
             let termination_state =
@@ -5913,6 +6050,7 @@ fn execute_native_container_launch_command(
                 resolved_runtime.as_ref(),
                 readiness_outcome.observed,
                 readiness_outcome.budget_exhausted,
+                readiness_outcome.report.clone(),
                 termination_state.as_ref(),
                 exit_code,
                 interrupted,
@@ -11266,17 +11404,32 @@ pub(crate) fn target_probe_endpoint_reachable_with_timeout(
     port: u16,
     timeout: Option<Duration>,
 ) -> bool {
+    target_probe_endpoint_result_with_timeout(address, port, timeout).is_ok()
+}
+
+fn target_probe_endpoint_result_with_timeout(
+    address: &str,
+    port: u16,
+    timeout: Option<Duration>,
+) -> Result<(), String> {
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
+    let mut last_error = None;
     for (index, socket) in probe_socket_candidates(address, port)
         .into_iter()
         .enumerate()
     {
         let effective_timeout = probe_connect_timeout_for_candidate(connect_timeout, index);
-        if TcpStream::connect_timeout(&socket, effective_timeout).is_ok() {
-            return true;
+        match TcpStream::connect_timeout(&socket, effective_timeout) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                last_error = Some(format!(
+                    "{} ({socket})",
+                    normalize_probe_io_error(&error)
+                ));
+            }
         }
     }
-    false
+    Err(last_error.unwrap_or_else(|| String::from("connection failed")))
 }
 
 pub(crate) fn probe_socket_candidates(address: &str, port: u16) -> Vec<std::net::SocketAddr> {
@@ -16821,24 +16974,35 @@ fn readiness_target_observed_with_timeout(
     target: &RuntimeReadinessTarget,
     timeout: Option<Duration>,
 ) -> bool {
+    readiness_target_observation_with_timeout(target, timeout).is_ok()
+}
+
+fn readiness_target_observation_with_timeout(
+    target: &RuntimeReadinessTarget,
+    timeout: Option<Duration>,
+) -> Result<(), String> {
     match target {
         RuntimeReadinessTarget::Tcp { address, port } => {
-            target_probe_endpoint_reachable_with_timeout(address.as_str(), *port, timeout)
+            target_probe_endpoint_result_with_timeout(address.as_str(), *port, timeout)
         }
         RuntimeReadinessTarget::Http {
             address,
             port,
             request,
-        } => http_readiness_endpoint_reachable(address.as_str(), *port, request, timeout),
+        } => http_readiness_endpoint_result(address.as_str(), *port, request, timeout),
         RuntimeReadinessTarget::RemoteTcp { probe, port } => {
             remote_target_probe_port_reachable(probe, *port)
+                .then_some(())
+                .ok_or_else(|| String::from("remote TCP readiness probe failed"))
         }
         RuntimeReadinessTarget::RemoteHttp {
             probe,
             address,
             port,
             request,
-        } => remote_target_probe_http_reachable(probe, address.as_str(), *port, request, timeout),
+        } => remote_target_probe_http_reachable(probe, address.as_str(), *port, request, timeout)
+            .then_some(())
+            .ok_or_else(|| String::from("remote HTTP readiness probe failed")),
     }
 }
 
@@ -16846,9 +17010,22 @@ fn readiness_targets_observed_with_timeout(
     targets: &[RuntimeReadinessTarget],
     timeout: Option<Duration>,
 ) -> bool {
-    targets
-        .iter()
-        .all(|target| readiness_target_observed_with_timeout(target, timeout))
+    readiness_targets_observation_with_timeout(targets, timeout).is_ok()
+}
+
+fn readiness_targets_observation_with_timeout(
+    targets: &[RuntimeReadinessTarget],
+    timeout: Option<Duration>,
+) -> Result<(), ReadinessAttemptFailure> {
+    for target in targets {
+        if let Err(detail) = readiness_target_observation_with_timeout(target, timeout) {
+            return Err(ReadinessAttemptFailure {
+                target: format_readiness_target(target),
+                detail,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn readiness_http_request(readiness: Option<&TaskRuntimeReadinessSpec>) -> HttpReadinessRequest {
@@ -17394,10 +17571,7 @@ pub(crate) fn http_readiness_endpoint_reachable(
     request: &HttpReadinessRequest,
     timeout: Option<Duration>,
 ) -> bool {
-    matches!(
-        http_readiness_endpoint_status(address, port, request, timeout),
-        HttpReadinessStatus::Passed
-    )
+    http_readiness_endpoint_result(address, port, request, timeout).is_ok()
 }
 
 pub(crate) fn http_readiness_endpoint_status(
@@ -17406,39 +17580,46 @@ pub(crate) fn http_readiness_endpoint_status(
     request: &HttpReadinessRequest,
     timeout: Option<Duration>,
 ) -> HttpReadinessStatus {
+    match http_readiness_endpoint_result(address, port, request, timeout) {
+        Ok(()) => HttpReadinessStatus::Passed,
+        Err(detail) if detail.contains("timed out") => HttpReadinessStatus::TimedOut,
+        Err(_) => HttpReadinessStatus::Failed,
+    }
+}
+
+fn http_readiness_endpoint_result(
+    address: &str,
+    port: u16,
+    request: &HttpReadinessRequest,
+    timeout: Option<Duration>,
+) -> Result<(), String> {
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
     let io_timeout = timeout.unwrap_or(Duration::from_millis(500));
     let addrs = probe_socket_candidates(address, port);
     if addrs.is_empty() {
-        return HttpReadinessStatus::Failed;
+        return Err(String::from("no socket candidates resolved"));
     }
-    let mut timed_out = false;
+    let mut last_error = None;
     for (index, socket) in addrs.into_iter().enumerate() {
         let effective_timeout = probe_connect_timeout_for_candidate(connect_timeout, index);
-        match http_readiness_socket_status(address, socket, request, effective_timeout, io_timeout)
+        match http_readiness_socket_result(address, socket, request, effective_timeout, io_timeout)
         {
-            HttpReadinessStatus::Passed => return HttpReadinessStatus::Passed,
-            HttpReadinessStatus::TimedOut => timed_out = true,
-            HttpReadinessStatus::Failed => {}
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = Some(error),
         }
     }
-    if timed_out {
-        HttpReadinessStatus::TimedOut
-    } else {
-        HttpReadinessStatus::Failed
-    }
+    Err(last_error.unwrap_or_else(|| String::from("HTTP readiness probe failed")))
 }
 
-fn http_readiness_socket_status(
+fn http_readiness_socket_result(
     address: &str,
     socket: std::net::SocketAddr,
     request: &HttpReadinessRequest,
     connect_timeout: Duration,
     io_timeout: Duration,
-) -> HttpReadinessStatus {
-    let Ok(mut stream) = TcpStream::connect_timeout(&socket, connect_timeout) else {
-        return HttpReadinessStatus::Failed;
-    };
+) -> Result<(), String> {
+    let mut stream = TcpStream::connect_timeout(&socket, connect_timeout)
+        .map_err(|error| format!("{} ({socket})", normalize_probe_io_error(&error)))?;
     let _ = stream.set_read_timeout(Some(io_timeout));
     let _ = stream.set_write_timeout(Some(io_timeout));
     let host_header = if address.contains(':') && !address.starts_with('[') {
@@ -17459,11 +17640,7 @@ fn http_readiness_socket_status(
     }
     request_text.push_str("\r\n");
     if let Err(error) = stream.write_all(request_text.as_bytes()) {
-        return if http_probe_io_timed_out(&error) {
-            HttpReadinessStatus::TimedOut
-        } else {
-            HttpReadinessStatus::Failed
-        };
+        return Err(normalize_probe_io_error(&error));
     }
     let mut response_bytes = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
@@ -17480,20 +17657,10 @@ fn http_readiness_socket_status(
                     break;
                 }
             }
-            Err(error) => {
-                return if http_probe_io_timed_out(&error) {
-                    HttpReadinessStatus::TimedOut
-                } else {
-                    HttpReadinessStatus::Failed
-                };
-            }
+            Err(error) => return Err(normalize_probe_io_error(&error)),
         }
     }
-    if response_matches_http_readiness(&response_bytes, request) {
-        HttpReadinessStatus::Passed
-    } else {
-        HttpReadinessStatus::Failed
-    }
+    response_matches_http_readiness(&response_bytes, request)
 }
 
 fn http_probe_io_timed_out(error: &std::io::Error) -> bool {
@@ -17501,6 +17668,14 @@ fn http_probe_io_timed_out(error: &std::io::Error) -> bool {
         error.kind(),
         std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
     )
+}
+
+fn normalize_probe_io_error(error: &std::io::Error) -> String {
+    if http_probe_io_timed_out(error) {
+        String::from("timed out")
+    } else {
+        error.to_string()
+    }
 }
 
 fn probe_connect_timeout_for_candidate(base: Duration, candidate_index: usize) -> Duration {
@@ -17511,21 +17686,24 @@ fn probe_connect_timeout_for_candidate(base: Duration, candidate_index: usize) -
     }
 }
 
-fn response_matches_http_readiness(response_bytes: &[u8], request: &HttpReadinessRequest) -> bool {
+fn response_matches_http_readiness(
+    response_bytes: &[u8],
+    request: &HttpReadinessRequest,
+) -> Result<(), String> {
     if response_bytes.is_empty() {
-        return false;
+        return Err(String::from("empty HTTP response"));
     }
     let response = String::from_utf8_lossy(response_bytes);
     let Some(status_line) = response.lines().next() else {
-        return false;
+        return Err(String::from("missing HTTP status line"));
     };
     let mut parts = status_line.split_whitespace();
     let _ = parts.next();
     let Some(status_code) = parts.next().and_then(|value| value.parse::<u16>().ok()) else {
-        return false;
+        return Err(String::from("invalid HTTP status line"));
     };
     if !request.success_statuses.contains(&status_code) {
-        return false;
+        return Err(format!("HTTP status `{status_code}` did not satisfy readiness"));
     }
     if let Some(contains) = request.body_contains.as_deref() {
         let body = response
@@ -17533,10 +17711,10 @@ fn response_matches_http_readiness(response_bytes: &[u8], request: &HttpReadines
             .map(|(_, body)| body)
             .unwrap_or("");
         if !body.contains(contains) {
-            return false;
+            return Err(format!("response body did not contain `{contains}`"));
         }
     }
-    true
+    Ok(())
 }
 
 fn remote_target_probe_port_reachable(probe: &RemoteReadinessProbeTarget, port: u16) -> bool {
@@ -17727,6 +17905,12 @@ fn start_runtime_readiness_probe(
     let state = Arc::new(RuntimeReadinessProbeState {
         observed: AtomicBool::new(false),
         budget_exhausted: AtomicBool::new(false),
+        report: Mutex::new(readiness_probe_report_template(
+            runtime_spec,
+            runtime,
+            readiness_targets.as_slice(),
+            &timing,
+        )),
     });
     let stop = Arc::new(AtomicBool::new(false));
     let thread_state = Arc::clone(&state);
@@ -17738,39 +17922,50 @@ fn start_runtime_readiness_probe(
         let mut next_probe_at = Instant::now() + timing.start_period;
         let mut failed_probes = 0u32;
         while !thread_stop.load(Ordering::Relaxed) {
-            if Instant::now() >= next_probe_at
-                && readiness_targets_observed_with_timeout(
+            if Instant::now() >= next_probe_at {
+                match readiness_targets_observation_with_timeout(
                     thread_targets.as_slice(),
                     timing.timeout,
-                )
-            {
-                thread_state.observed.store(true, Ordering::Relaxed);
-                if let Some(line) = ready_line.as_deref() {
-                    if let Some(notifier) = probe_notifier.as_ref() {
-                        notifier.wait_for_quiet_output(
-                            Duration::from_millis(300),
-                            thread_stop.as_ref(),
-                        );
-                        let _guard = notifier.begin_output();
-                        eprintln!("{line}");
-                    } else {
-                        clear_stream_phase_line();
-                        eprintln!("{line}");
+                ) {
+                    Ok(()) => {
+                        thread_state.observed.store(true, Ordering::Relaxed);
+                        if let Some(line) = ready_line.as_deref() {
+                            if let Some(notifier) = probe_notifier.as_ref() {
+                                notifier.wait_for_quiet_output(
+                                    Duration::from_millis(300),
+                                    thread_stop.as_ref(),
+                                );
+                                let _guard = notifier.begin_output();
+                                eprintln!("{line}");
+                            } else {
+                                clear_stream_phase_line();
+                                eprintln!("{line}");
+                            }
+                        }
+                        break;
+                    }
+                    Err(failure) => {
+                        failed_probes = failed_probes.saturating_add(1);
+                        if let Some(report) =
+                            record_readiness_probe_failure(&thread_state, failed_probes, &failure)
+                        {
+                            emit_readiness_probe_progress(
+                                probe_notifier.as_ref(),
+                                thread_stop.as_ref(),
+                                &report,
+                            );
+                        }
+                        if let Some(retries) = timing.retries
+                            && failed_probes >= retries
+                        {
+                            thread_state
+                                .budget_exhausted
+                                .store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        next_probe_at = Instant::now() + timing.interval;
                     }
                 }
-                break;
-            }
-            if Instant::now() >= next_probe_at {
-                failed_probes = failed_probes.saturating_add(1);
-                if let Some(retries) = timing.retries
-                    && failed_probes >= retries
-                {
-                    thread_state
-                        .budget_exhausted
-                        .store(true, Ordering::Relaxed);
-                    break;
-                }
-                next_probe_at = Instant::now() + timing.interval;
             }
             if !interrupt_grace_applied && interruption_observed_since(interrupt_epoch) {
                 let grace_deadline = std::time::Instant::now() + Duration::from_millis(300);
@@ -17825,6 +18020,7 @@ fn classify_container_service_termination(
     resolved_runtime: Option<&ResolvedTaskRuntime>,
     readiness_observed: bool,
     readiness_budget_exhausted: bool,
+    readiness_report: Option<ReadinessProbeReport>,
     termination_state: Option<&ContainerTerminationState>,
     exit_code: i32,
     interrupted: bool,
@@ -17856,6 +18052,7 @@ fn classify_container_service_termination(
                 exit_code: termination_state
                     .and_then(|state| state.exit_code)
                     .or(Some(exit_code)),
+                readiness: readiness_report,
             });
         }
         // For pre-readiness exits, only classify as interruption when interruption evidence
@@ -17892,6 +18089,7 @@ fn classify_container_service_termination(
             exit_code: termination_state
                 .and_then(|state| state.exit_code)
                 .or(Some(exit_code)),
+            readiness: readiness_report,
         });
     }
 
@@ -17940,6 +18138,7 @@ fn classify_container_service_termination(
         exit_code: termination_state
             .and_then(|state| state.exit_code)
             .or(Some(exit_code)),
+        readiness: None,
     })
 }
 
@@ -18206,6 +18405,7 @@ fn execute_ephemeral_container_task_command(
                 .unwrap_or(RuntimeReadinessProbeOutcome {
                     observed: false,
                     budget_exhausted: false,
+                    report: None,
                 });
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
@@ -18214,6 +18414,7 @@ fn execute_ephemeral_container_task_command(
                 prepared_runtime.as_ref(),
                 readiness_outcome.observed,
                 readiness_outcome.budget_exhausted,
+                readiness_outcome.report.clone(),
                 termination_state.as_ref(),
                 output.exit_code,
                 interrupted_by_user,
@@ -18321,6 +18522,7 @@ fn execute_ephemeral_container_task_command(
                 .unwrap_or(RuntimeReadinessProbeOutcome {
                     observed: false,
                     budget_exhausted: false,
+                    report: None,
                 });
             let termination_state =
                 inspect_container_termination_state(task_name, engine, &container_name);
@@ -18329,6 +18531,7 @@ fn execute_ephemeral_container_task_command(
                 prepared_runtime.as_ref(),
                 readiness_outcome.observed,
                 readiness_outcome.budget_exhausted,
+                readiness_outcome.report.clone(),
                 termination_state.as_ref(),
                 output_exit_code,
                 interrupted_by_user,
@@ -18804,6 +19007,7 @@ fn execute_persistent_container_task_command(
         .unwrap_or(RuntimeReadinessProbeOutcome {
             observed: false,
             budget_exhausted: false,
+            report: None,
         });
     let termination_state = (!runtime
         .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service))
@@ -18814,6 +19018,7 @@ fn execute_persistent_container_task_command(
         resolved_runtime.as_ref(),
         readiness_outcome.observed,
         readiness_outcome.budget_exhausted,
+        readiness_outcome.report.clone(),
         termination_state.as_ref(),
         output.exit_code,
         output.interrupted,
@@ -18903,6 +19108,7 @@ fn execute_persistent_container_task_command(
             .unwrap_or(RuntimeReadinessProbeOutcome {
                 observed: false,
                 budget_exhausted: false,
+                report: None,
             });
         let termination_state = (!runtime
             .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service))
@@ -18913,6 +19119,7 @@ fn execute_persistent_container_task_command(
             resolved_runtime.as_ref(),
             readiness_outcome.observed,
             readiness_outcome.budget_exhausted,
+            readiness_outcome.report.clone(),
             termination_state.as_ref(),
             output.exit_code,
             output.interrupted,
@@ -35210,11 +35417,13 @@ tasks:
         assert!(super::response_matches_http_readiness(
             b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"UP\"}",
             &request,
-        ));
-        assert!(!super::response_matches_http_readiness(
+        )
+        .is_ok());
+        assert!(super::response_matches_http_readiness(
             b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"DOWN\"}",
             &request,
-        ));
+        )
+        .is_err());
     }
 
     #[test]
@@ -35230,11 +35439,13 @@ tasks:
         assert!(super::response_matches_http_readiness(
             b"HTTP/1.1 204 No Content\r\n\r\n",
             &request,
-        ));
-        assert!(!super::response_matches_http_readiness(
+        )
+        .is_ok());
+        assert!(super::response_matches_http_readiness(
             b"HTTP/1.1 503 Service Unavailable\r\n\r\n",
             &request,
-        ));
+        )
+        .is_err());
     }
 
     #[test]
@@ -39338,6 +39549,7 @@ tasks:
             Some(&resolved_runtime),
             true,
             false,
+            None,
             Some(&super::ContainerTerminationState {
                 running: Some(false),
                 exit_code: Some(0),
@@ -39416,6 +39628,7 @@ tasks:
             Some(&resolved_runtime),
             true,
             false,
+            None,
             Some(&super::ContainerTerminationState {
                 running: Some(false),
                 exit_code: Some(1),
@@ -39495,6 +39708,7 @@ tasks:
             true,
             false,
             None,
+            None,
             130,
             true,
             "ota-ephemeral-test",
@@ -39568,6 +39782,7 @@ tasks:
             Some(&resolved_runtime),
             true,
             false,
+            None,
             Some(&super::ContainerTerminationState {
                 running: Some(false),
                 exit_code: Some(130),
@@ -39648,6 +39863,7 @@ tasks:
             false,
             false,
             None,
+            None,
             130,
             true,
             "ota-ephemeral-test",
@@ -39722,6 +39938,7 @@ tasks:
             Some(&resolved_runtime),
             false,
             false,
+            None,
             None,
             0,
             false,
@@ -39802,6 +40019,7 @@ tasks:
             false,
             false,
             None,
+            None,
             1,
             true,
             "ota-ephemeral-test",
@@ -39876,6 +40094,7 @@ tasks:
             Some(&resolved_runtime),
             false,
             true,
+            None,
             None,
             1,
             false,
@@ -39957,6 +40176,7 @@ tasks:
             false,
             false,
             None,
+            None,
             130,
             false,
             "ota-ephemeral-test",
@@ -40013,6 +40233,7 @@ tasks:
             false,
             false,
             None,
+            None,
             130,
             true,
             "ota-ephemeral-test",
@@ -40062,6 +40283,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-test"),
                 exit_code: Some(130),
+                readiness: None,
             }),
             execution_note: Some(String::from(
                 "service stopped after readiness; container was interrupted",
@@ -40098,6 +40320,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-test"),
                 exit_code: Some(1),
+                readiness: None,
             }),
             execution_note: None,
             interrupted: false,
@@ -40203,6 +40426,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-test"),
                 exit_code: Some(1),
+                readiness: None,
             }),
             execution_note: Some(String::from(
                 "service stopped after readiness; container exited non-zero",
@@ -40259,6 +40483,7 @@ tasks:
                 target: String::from("container"),
                 container: String::from("ota-ephemeral-test"),
                 exit_code: Some(0),
+                readiness: None,
             }),
             execution_note: Some(String::from(
                 "service stopped after readiness; container exited",
@@ -40341,6 +40566,7 @@ tasks:
             true,
             false,
             None,
+            None,
             0,
             true,
             "ota-persistent-test",
@@ -40421,6 +40647,7 @@ tasks:
             true,
             false,
             None,
+            None,
             1,
             true,
             "ota-persistent-test",
@@ -40500,6 +40727,7 @@ tasks:
             Some(&resolved_runtime),
             true,
             false,
+            None,
             None,
             0,
             false,

@@ -31,6 +31,10 @@
   `interval` / `timeout` / `retries` budget is exhausted before that endpoint becomes reachable,
   Ota now fails startup instead of waiting indefinitely until the workload exits or the user
   interrupts it
+- added structured readiness failure reporting for service startup in `ota run`: startup failures
+  now carry the real probe budget and last probe error through terminal output and JSON-facing
+  execution surfaces, and `--stream` readiness probes now emit live attempt progress instead of
+  only a final generic readiness failure
 
 ## 1.6.19
 
