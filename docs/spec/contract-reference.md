@@ -1965,6 +1965,17 @@ Task target binding semantics:
 
 Current `runtime.readiness` support for service tasks:
 
+- startup semantics:
+  - for `ota run` service tasks, the declared readiness budget is authoritative during startup
+  - ota now fails startup when the configured `start_period` / `interval` / `timeout` /
+    `retries` budget is exhausted before the declared runtime endpoint becomes reachable
+  - this is current runtime behavior, not a separate contract field such as
+    `readiness.enforcement`
+  - `ota run --stream` shows live readiness attempt progress while ota is still waiting
+  - all run modes keep the final readiness-budget summary on startup failure, including attempts,
+    timeout per attempt, interval, start period, and the last probe failure
+  - once readiness is observed, the service is considered started and normal long-running task
+    behavior resumes
 - `probe: <name>`
   - references one top-level `readiness.probes.<name>` declaration
   - reuses that probe's transport and timeout contract while the selected listener still determines the runtime endpoint
