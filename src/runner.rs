@@ -8085,27 +8085,25 @@ fn maybe_activate_corepack_shims_on_run_path(
             continue;
         }
 
-        let command_spec = ToolchainCommandSpec {
-            program: "corepack",
-            args: vec![String::from("enable")],
-        };
-        let command_display = render_toolchain_command(backend, command_spec.clone());
-        let task_label = format!("toolchain-activate:{toolchain_name}");
-        let output = run_backend_argv_command_captured(
-            &task_label,
-            command_spec.program,
-            &command_spec.args,
-            contract_working_dir(contract_path),
-            backend,
-        )?;
-        state.stdout.push_str(&output.stdout);
-        state.stderr.push_str(&output.stderr);
-        if output.exit_code != 0 {
-            return Err(RunError::ToolchainFulfillmentFailed {
-                task: task_name.to_string(),
-                toolchain: toolchain_name,
-                details: command_failure_detail(&command_display, &output),
-            });
+        for command_spec in corepack_activation_command_specs(toolchain, target_os) {
+            let command_display = render_toolchain_command(backend, command_spec.clone());
+            let task_label = format!("toolchain-activate:{toolchain_name}");
+            let output = run_backend_argv_command_captured(
+                &task_label,
+                command_spec.program,
+                &command_spec.args,
+                contract_working_dir(contract_path),
+                backend,
+            )?;
+            state.stdout.push_str(&output.stdout);
+            state.stderr.push_str(&output.stderr);
+            if output.exit_code != 0 {
+                return Err(RunError::ToolchainFulfillmentFailed {
+                    task: task_name.to_string(),
+                    toolchain: toolchain_name.clone(),
+                    details: command_failure_detail(&command_display, &output),
+                });
+            }
         }
     }
 
@@ -8146,31 +8144,28 @@ fn command_failure_detail(command_display: &str, output: &TaskCommandOutput) -> 
     detail
 }
 
-fn task_requires_corepack_activation(
-    contract: Option<&Contract>,
-    task_name: &str,
+fn corepack_activation_command_specs(
+    toolchain: &ToolchainSpec,
     target_os: &str,
-) -> bool {
-    let Some(contract) = contract else {
-        return false;
-    };
-
-    contract
-        .tasks
-        .get(task_name)
-        .map(|task| {
-            task.requirements
-                .toolchains
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|toolchain_name| contract.toolchains.get(toolchain_name.as_str()))
-        .any(|toolchain| {
-            toolchain.provider == ToolchainProvider::Corepack && toolchain.active_for_os(target_os)
-        })
+) -> Vec<ToolchainCommandSpec> {
+    let mut commands = vec![ToolchainCommandSpec {
+        program: "corepack",
+        args: vec![String::from("enable")],
+    }];
+    commands.extend(
+        toolchain
+            .package_managers_for_os(target_os)
+            .into_iter()
+            .map(|(package_name, version)| ToolchainCommandSpec {
+                program: "corepack",
+                args: vec![
+                    String::from("prepare"),
+                    format!("{package_name}@{version}"),
+                    String::from("--activate"),
+                ],
+            }),
+    );
+    commands
 }
 
 fn wrap_container_command_for_corepack_activation(
@@ -8178,13 +8173,36 @@ fn wrap_container_command_for_corepack_activation(
     task_name: &str,
     command: &str,
 ) -> String {
-    if !task_requires_corepack_activation(contract, task_name, "linux") {
+    let Some(contract) = contract else {
+        return command.to_string();
+    };
+    let Some(task) = contract.tasks.get(task_name) else {
+        return command.to_string();
+    };
+
+    let mut command_parts = Vec::new();
+    for toolchain_name in task.requirements.toolchains.iter().cloned() {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if toolchain.provider != ToolchainProvider::Corepack || !toolchain.active_for_os("linux") {
+            continue;
+        }
+        command_parts.push(String::from(
+            "mkdir -p \"$HOME/.local/bin\" && corepack enable --install-directory \"$HOME/.local/bin\" && export PATH=\"$HOME/.local/bin:$PATH\"",
+        ));
+        for (package_name, version) in toolchain.package_managers_for_os("linux") {
+            command_parts.push(format!(
+                "corepack prepare {package_name}@{version} --activate"
+            ));
+        }
+    }
+    if command_parts.is_empty() {
         return command.to_string();
     }
+    command_parts.push(command.to_string());
 
-    format!(
-        "mkdir -p \"$HOME/.local/bin\" && corepack enable --install-directory \"$HOME/.local/bin\" && export PATH=\"$HOME/.local/bin:$PATH\" && {command}"
-    )
+    command_parts.join(" && ")
 }
 
 fn toolchain_fulfillment_cache_key(
@@ -47331,7 +47349,7 @@ tasks:
 
         let log = fs::read_to_string(&log_path).unwrap();
         let lines = log.lines().collect::<Vec<_>>();
-        assert_eq!(lines, vec!["enable"], "{log}");
+        assert_eq!(lines, vec!["enable", "prepare pnpm@10.24.0 --activate"], "{log}");
     }
 
     #[test]
@@ -47591,6 +47609,7 @@ tasks:
         );
 
         assert!(wrapped.contains("corepack enable --install-directory"));
+        assert!(wrapped.contains("corepack prepare pnpm@10.24.0 --activate"));
         assert!(wrapped.ends_with("corepack pnpm install"));
     }
 
@@ -47665,7 +47684,7 @@ toolchains:
         write_fake_bin(&bin_dir, "pnpm", "#!/bin/sh\nexit 127\n");
         let pnpm_path = bin_dir.join("pnpm");
         let corepack_body = format!(
-            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\necho 10.24.0\nEOF\nchmod +x '{}'\nexit 0\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.24.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\necho 10.24.0\nEOF\nchmod +x '{}'\nexit 0\nfi\nexit 1\n",
             pnpm_path.display(),
             pnpm_path.display()
         );
