@@ -3184,6 +3184,8 @@ fn diagnose_contract_with_scope(
                         &mut findings,
                     );
                     diagnose_tools(
+                        contract,
+                        &precondition_selection.toolchain_names,
                         &requirement_surface_with_toolchain_owned_tools_for_required_tools(
                             contract,
                             &remote_probe.requirement_surface,
@@ -3244,6 +3246,8 @@ fn diagnose_contract_with_scope(
                 .cloned()
                 .collect::<BTreeSet<_>>();
             let tool_probe_started = diagnose_tools(
+                contract,
+                &precondition_selection.toolchain_names,
                 &requirement_surface_with_toolchain_owned_tools_for_required_tools(
                     contract,
                     &requirement_surface,
@@ -3367,6 +3371,8 @@ fn diagnose_contract_with_scope(
                     .cloned()
                     .collect::<BTreeSet<_>>();
                 diagnose_tools(
+                    contract,
+                    &additional_selection.toolchain_names,
                     &requirement_surface_with_toolchain_owned_tools_for_required_tools(
                         contract,
                         &additional_selection.requirement_surface,
@@ -5516,6 +5522,7 @@ fn diagnose_runtimes(
             contract_path,
             loaded_policy,
             target_os,
+            false,
             provisioning_actions,
             findings,
         );
@@ -5524,6 +5531,8 @@ fn diagnose_runtimes(
 }
 
 fn diagnose_tools(
+    contract: &Contract,
+    selected_toolchains: &BTreeSet<String>,
     tools: &BTreeMap<String, ToolRequirement>,
     target_os: &str,
     contract_path: &Path,
@@ -5547,6 +5556,12 @@ fn diagnose_tools(
         }
         let required = requirement.required_for_os(target_os);
         let executable_candidates = vec![tool_executable_name(name).to_string()];
+        let run_path_fulfillment_allowed = selected_toolchain_run_fulfillment_supports_tool(
+            contract,
+            selected_toolchains,
+            target_os,
+            name,
+        );
 
         container_probe_started |= diagnose_command_version(
             "tool",
@@ -5564,11 +5579,40 @@ fn diagnose_tools(
             contract_path,
             loaded_policy,
             target_os,
+            run_path_fulfillment_allowed,
             provisioning_actions,
             findings,
         );
     }
     container_probe_started
+}
+
+fn selected_toolchain_run_fulfillment_supports_tool(
+    contract: &Contract,
+    selected_toolchains: &BTreeSet<String>,
+    target_os: &str,
+    tool_name: &str,
+) -> bool {
+    selected_toolchains.iter().any(|toolchain_name| {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            return false;
+        };
+        if !toolchain.active_for_os(target_os)
+            || !matches!(
+                toolchain.fulfillment_mode(),
+                crate::schema::ToolchainFulfillmentMode::Run
+            )
+        {
+            return false;
+        }
+        let Some(provider) = declared_toolchain_contract(toolchain_name, toolchain) else {
+            return false;
+        };
+        provider
+            .owned_tool_requirements(toolchain, target_os)
+            .keys()
+            .any(|owned_tool_name| owned_tool_name == tool_name)
+    })
 }
 
 fn diagnose_toolchains(
@@ -5614,6 +5658,7 @@ fn diagnose_toolchains(
             contract_path,
             None,
             target_os,
+            false,
             &[],
             findings,
         );
@@ -7138,6 +7183,10 @@ fn dotnet_install_channel_command(channel: &str) -> String {
     }
 }
 
+fn corepack_activation_provider_probe_candidates() -> [String; 1] {
+    [String::from("corepack")]
+}
+
 fn diagnose_command_version(
     kind: &str,
     display_name: &str,
@@ -7154,6 +7203,7 @@ fn diagnose_command_version(
     contract_path: &Path,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
     target_os: &str,
+    run_path_fulfillment_allowed: bool,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
 ) -> bool {
@@ -7223,7 +7273,7 @@ fn diagnose_command_version(
     } else {
         None
     };
-    let probe_started = version_probe
+    let mut probe_started = version_probe
         .as_ref()
         .map(|probe| probe.probe_started)
         .unwrap_or(false);
@@ -7267,6 +7317,34 @@ fn diagnose_command_version(
                     tool_acquisition_command(acquisition)
                 ),
             });
+            return probe_started;
+        }
+
+        if run_path_fulfillment_allowed
+            && tool_acquisition.is_some_and(|acquisition| {
+                acquisition.provider == ToolAcquisitionProvider::Corepack
+            })
+        {
+            probe_started |= diagnose_command_version(
+                "tool",
+                "corepack",
+                &corepack_activation_provider_probe_candidates(),
+                "*",
+                required,
+                None,
+                None,
+                mode,
+                selected_lifecycle,
+                container_probe,
+                remote_probe,
+                remote_context_name,
+                contract_path,
+                loaded_policy,
+                target_os,
+                false,
+                provisioning_actions,
+                findings,
+            );
             return probe_started;
         }
 
@@ -7608,6 +7686,38 @@ fn diagnose_command_version(
                     ),
                 },
             });
+        }
+        return probe_started;
+    }
+
+    if run_path_fulfillment_allowed
+        && tool_acquisition.is_some_and(|acquisition| {
+            acquisition.provider == ToolAcquisitionProvider::Corepack
+        })
+    {
+        let finding_count = findings.len();
+        probe_started |= diagnose_command_version(
+            "tool",
+            "corepack",
+            &corepack_activation_provider_probe_candidates(),
+            "*",
+            required,
+            None,
+            None,
+            mode,
+            selected_lifecycle,
+            container_probe,
+            remote_probe,
+            remote_context_name,
+            contract_path,
+            loaded_policy,
+            target_os,
+            false,
+            provisioning_actions,
+            findings,
+        );
+        if findings.len() == finding_count {
+            return probe_started;
         }
         return probe_started;
     }
