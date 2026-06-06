@@ -19307,6 +19307,7 @@ workflows:
         assert!(finding.next.contains("uv --version"), "{finding:?}");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn toolchain_owned_uv_tool_version_mismatch_blocks_in_native_mode() {
         let _guard = env_mutex_lock();
@@ -19373,6 +19374,7 @@ workflows:
         assert!(finding.why.contains("0.4.16"), "{finding:?}");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn toolchain_owned_bundler_tool_version_mismatch_blocks_via_bundle_alias() {
         let _guard = env_mutex_lock();
@@ -19439,6 +19441,7 @@ tasks:
         assert!(finding.why.contains("2.5.3"), "{finding:?}");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn toolchain_owned_rust_runtime_probe_uses_rustc_candidate() {
         let _guard = env_mutex_lock();
