@@ -7010,6 +7010,9 @@ exit 1
         );
     }
 
+    #[cfg(not(unix))]
+    fn install_fake_container_probe_engine(_path: &std::path::Path, _missing_tool: Option<&str>) {}
+
     #[cfg(unix)]
     fn install_fake_container_probe_engine(path: &std::path::Path, missing_tool: Option<&str>) {
         let missing = missing_tool.unwrap_or("__NONE__");
@@ -7457,13 +7460,6 @@ exec /bin/sh -lc "$1"
                 "`./bin/node` with\n     `node --version`",
                 "`./bin/node` with `node --version`",
             );
-        }
-
-        #[cfg(not(unix))]
-        fn install_fake_container_probe_engine(
-            _path: &std::path::Path,
-            _missing_tool: Option<&str>,
-        ) {
         }
 
         if name == "explain_narrow_premium.txt" {
