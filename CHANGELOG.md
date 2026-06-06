@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.19
+
 - hardened repo execution lock guidance in `ota run`: rerun commands now preserve explicitly
   requested execution mode overrides including `--mode native`, and lock-contention errors now
   surface the active task/mode/lifecycle/pid/start-time metadata for the live Ota execution that
