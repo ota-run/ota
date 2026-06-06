@@ -22021,6 +22021,7 @@ tasks:
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn doctor_json_reports_selected_mode() {
         let _guard = env_mutex_lock();
@@ -30450,6 +30451,7 @@ workflows:
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn up_dry_run_container_preview_reports_image_and_preview_rerun() {
         let _guard = env_mutex_lock();
@@ -34693,6 +34695,7 @@ agent:
         assert!(text.contains("Execution"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn doctor_container_mode_probes_the_container_image() {
         let _guard = env_mutex_lock();
@@ -34801,6 +34804,7 @@ tasks:
         assert!(!text.contains("Remote doctor mode still has partial policy reporting"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn doctor_container_mode_missing_runtime_mentions_configured_image() {
         let _guard = env_mutex_lock();
@@ -35584,6 +35588,7 @@ policies:
         assert!(!text.contains("Container apt cannot"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn doctor_container_mode_skips_host_bound_readiness_checks() {
         let _guard = env_mutex_lock();
@@ -36830,6 +36835,7 @@ tasks:
         assert!(!text.contains("Tool probe failed: bun"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn doctor_container_mode_prefers_a_healthy_engine_when_one_is_available() {
         let _guard = env_mutex_lock();

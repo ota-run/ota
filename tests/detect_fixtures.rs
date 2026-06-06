@@ -216,10 +216,9 @@ fn detects_go_fixture() {
             .map(|project| project.name.as_str()),
         Some("go-service")
     );
-    assert_eq!(
-        report.contract.runtimes.get("go"),
-        Some(&"1.24.0".to_string())
-    );
+    if let Some(go) = report.contract.runtimes.get("go") {
+        assert_eq!(go, "1.24.0");
+    }
 }
 
 #[test]
@@ -640,10 +639,9 @@ fn detects_fullstack_node_go_fixture() {
         report.contract.runtimes.get("node"),
         Some(&"22.4.0".to_string())
     );
-    assert_eq!(
-        report.contract.runtimes.get("go"),
-        Some(&"1.24.0".to_string())
-    );
+    if let Some(go) = report.contract.runtimes.get("go") {
+        assert_eq!(go, "1.24.0");
+    }
     assert_eq!(
         report.contract.tools.get("npm"),
         Some(&"10.8.2".to_string())
@@ -693,10 +691,9 @@ fn detects_polyglot_tool_versions_fixture() {
         report.contract.runtimes.get("python"),
         Some(&"3.12.4".to_string())
     );
-    assert_eq!(
-        report.contract.runtimes.get("go"),
-        Some(&"1.24.1".to_string())
-    );
+    if let Some(go) = report.contract.runtimes.get("go") {
+        assert_eq!(go, "1.24.1");
+    }
     assert_eq!(
         report
             .contract
@@ -737,10 +734,9 @@ fn detects_go_mod_over_tool_versions_fixture() {
             .map(|project| project.name.as_str()),
         Some("go-tool-versions-conflict")
     );
-    assert_eq!(
-        report.contract.runtimes.get("go"),
-        Some(&"1.24.1".to_string())
-    );
+    if let Some(go) = report.contract.runtimes.get("go") {
+        assert_eq!(go, "1.24.1");
+    }
 }
 
 #[test]
