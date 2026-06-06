@@ -1554,6 +1554,10 @@ Task-effect rules:
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
   `ensure_file`, `ensure_directory`, or `ensure_bundle`
+- `action` is the first-class host file-preparation surface for deterministic repo mutations; in
+  the current shipped slice it is native-only because it mutates the host working tree directly
+  and Ota does not yet claim one cross-backend persistence/ownership model for container or remote
+  mutations
 - `action.kind: copy_if_missing`
   - `action.from`: required repo-relative source file
   - `action.to`: required repo-relative destination file
@@ -1587,6 +1591,11 @@ Task-effect rules:
 Use `action.kind: copy_if_missing` for setup steps like creating `.env.local` from
 `.env.example` without depending on POSIX `test` / `cp` or PowerShell conditionals. The action is
 idempotent: if `to` already exists, Ota leaves it untouched.
+
+Use `action` when the task is deterministic host repo preparation such as copying templates,
+seeding env files, creating bootstrap files, or creating directories. Do not use `action` for
+arbitrary command execution or backend-local mutation paths; use `run`, `script`, or `launch`
+there instead.
 
 Use `action.kind: ensure_env_file` when a setup path needs deterministic env bootstrap without a
 shell script. It creates `action.path` (optionally seeded from `action.template`) and appends only
