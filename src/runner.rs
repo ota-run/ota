@@ -1654,7 +1654,7 @@ const OTA_ISOLATED_FILE_MOUNTS_DIR: &str = "isolated-file-mounts";
 const OTA_RUN_EXECUTION_LOCK_FILE: &str = "run-execution.lock";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 const EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS: usize = 5;
-const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 8;
+const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 12;
 
 static RUN_INTERRUPT_REQUESTED: AtomicBool = AtomicBool::new(false);
 static RUN_INTERRUPT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -44850,7 +44850,7 @@ tasks:
         let state_dir = bin_dir.join("docker-state");
         fs::create_dir_all(&state_dir).unwrap();
         fs::write(state_dir.join("volume.retry-me"), "").unwrap();
-        fs::write(state_dir.join("volume.retry-me.inuse_attempts"), "2").unwrap();
+        fs::write(state_dir.join("volume.retry-me.inuse_attempts"), "8").unwrap();
 
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];

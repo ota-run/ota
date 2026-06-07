@@ -26,7 +26,10 @@
 
 ## Unreleased
 
-
+- hardened dependency-isolation volume cleanup after container-backed execution and proof:
+  Ota now gives container engines a longer retry window before surfacing `volume is in use`
+  cleanup failures, reducing false-negative proof tails when Docker lags briefly after
+  container removal
 - added first-class task preparation semantics through `tasks.<name>.prepare`: the shipped
   `prepare.kind: dependency_hydration` slices now model both docker image hydration and
   node package-manager dependency hydration structurally instead of forcing finite setup phases
