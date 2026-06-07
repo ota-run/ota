@@ -1577,11 +1577,17 @@ Task-effect rules:
 
 - `prepare.kind`: required preparation classifier; `dependency_hydration` is the first shipped slice
 - `prepare.kind: dependency_hydration`
-  - `prepare.medium`: required hydration medium; `container_images` is the first shipped value
-  - `prepare.source.kind`: required hydration source; `docker_compose` is the first shipped value
-  - `prepare.source.cwd`: required repo-relative working directory for the compose invocation
-  - `prepare.source.file`: required compose file path relative to `prepare.source.cwd`
-  - `prepare.targets`: required non-empty list of concrete dependencies ota should hydrate
+  - `prepare.medium: container_images`
+    - `prepare.source.kind: docker_compose`
+    - `prepare.source.cwd`: required repo-relative working directory for the compose invocation
+    - `prepare.source.file`: required compose file path relative to `prepare.source.cwd`
+    - `prepare.targets`: required non-empty list of concrete dependencies ota should hydrate
+  - `prepare.medium: package_dependencies`
+    - `prepare.source.kind: node_package_manager`
+    - `prepare.source.cwd`: required repo-relative working directory for the install invocation
+    - `prepare.source.manager`: required package manager; ota currently ships `npm` and `pnpm`
+    - `prepare.source.mode`: required install mode; ota currently ships `install` and `ci`
+    - `prepare.source.frozen_lockfile`: optional explicit lockfile strictness for `pnpm install`
 
 `prepare` rules:
 
@@ -1589,6 +1595,9 @@ Task-effect rules:
 - `prepare` is an executable task body, so a task may declare `prepare` without `run`
 - `prepare` still needs explicit `requirements` and `effects`; ota should understand both intent and side effects
 - `prepare.kind: dependency_hydration` currently requires `requirements.tools.docker`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
+- `prepare.source.manager: pnpm` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `pnpm install --frozen-lockfile`
+- `prepare.source.manager: npm` currently supports `mode: install` or `mode: ci`; use `mode: ci` when the repo truth is lockfile-strict npm hydration
 - `prepare` does not replace workflow `prepare.task`; workflow prepare is still the explicit host bootstrap lane that points at a native `action` task
 - `prepare` is not orchestrator-managed in the current shipped slice
 

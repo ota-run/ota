@@ -4128,13 +4128,21 @@ impl TaskPrepareSpec {
     pub fn preview(&self) -> String {
         match self {
             Self::DependencyHydration(spec) => {
-                let targets = spec.targets.join(", ");
                 match &spec.source {
-                    TaskDependencyHydrationSourceSpec::DockerCompose(source) => format!(
-                        "hydrate {} from docker compose `{}` for {}",
+                    TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
+                        let targets = spec.targets.join(", ");
+                        format!(
+                            "hydrate {} from docker compose `{}` for {}",
+                            spec.medium.label(),
+                            source.display_path(),
+                            targets
+                        )
+                    }
+                    TaskDependencyHydrationSourceSpec::NodePackageManager(source) => format!(
+                        "hydrate {} with {} in `{}`",
                         spec.medium.label(),
-                        source.display_path(),
-                        targets
+                        source.command_preview(),
+                        source.cwd.trim()
                     ),
                 }
             }
@@ -4155,12 +4163,14 @@ pub struct TaskDependencyHydrationPrepareSpec {
 #[serde(rename_all = "snake_case")]
 pub enum TaskDependencyHydrationMedium {
     ContainerImages,
+    PackageDependencies,
 }
 
 impl TaskDependencyHydrationMedium {
     pub const fn label(self) -> &'static str {
         match self {
             Self::ContainerImages => "container images",
+            Self::PackageDependencies => "package dependencies",
         }
     }
 }
@@ -4169,6 +4179,7 @@ impl TaskDependencyHydrationMedium {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskDependencyHydrationSourceSpec {
     DockerCompose(TaskDockerComposeHydrationSourceSpec),
+    NodePackageManager(TaskNodePackageManagerHydrationSourceSpec),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -4186,6 +4197,58 @@ impl TaskDockerComposeHydrationSourceSpec {
             file.to_string()
         } else {
             format!("{cwd}/{file}")
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskNodePackageManagerHydrationSourceSpec {
+    pub cwd: String,
+    pub manager: TaskNodePackageManagerKind,
+    pub mode: TaskNodePackageManagerHydrationMode,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub frozen_lockfile: bool,
+}
+
+impl TaskNodePackageManagerHydrationSourceSpec {
+    pub fn command_preview(&self) -> String {
+        let mut parts = vec![self.manager.label().to_string(), self.mode.label().to_string()];
+        if self.frozen_lockfile {
+            parts.push(String::from("--frozen-lockfile"));
+        }
+        parts.join(" ")
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskNodePackageManagerKind {
+    Npm,
+    Pnpm,
+}
+
+impl TaskNodePackageManagerKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Npm => "npm",
+            Self::Pnpm => "pnpm",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskNodePackageManagerHydrationMode {
+    Install,
+    Ci,
+}
+
+impl TaskNodePackageManagerHydrationMode {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Install => "install",
+            Self::Ci => "ci",
         }
     }
 }

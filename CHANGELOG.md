@@ -27,13 +27,14 @@
 ## Unreleased
 
 
-- added first-class task preparation semantics through `tasks.<name>.prepare`: the first shipped
-  slice models dependency hydration structurally (`prepare.kind: dependency_hydration`) instead
-  of forcing image-prefetch or similar finite setup phases to live inside opaque shell `run`
-  strings
+- added first-class task preparation semantics through `tasks.<name>.prepare`: the shipped
+  `prepare.kind: dependency_hydration` slices now model both docker image hydration and
+  node package-manager dependency hydration structurally instead of forcing finite setup phases
+  to live inside opaque shell `run` strings
 - added executable task support for the first shipped `prepare` slice in schema, validation,
   summaries, and runner execution, including mode-branch support and validation that keeps
-  docker-backed dependency hydration aligned with explicit `requirements` and `effects`
+  docker-backed and node package-manager dependency hydration aligned with explicit
+  `requirements` and `effects`
 - updated the full contract example and the widened `immich` pressure contract to use
   first-class `prepare` for registry-backed docker image hydration instead of repo-local shell
   glue

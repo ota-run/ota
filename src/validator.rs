@@ -3111,11 +3111,6 @@ fn validate_task_prepare(
 ) {
     match prepare {
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
-            if spec.targets.is_empty() {
-                errors.push(ValidationError::new(format!(
-                    "task `{task_name}` prepare `dependency_hydration` must declare at least one target in `prepare.targets`"
-                )));
-            }
             for (index, target) in spec.targets.iter().enumerate() {
                 if target.trim().is_empty() {
                     errors.push(ValidationError::new(format!(
@@ -3125,6 +3120,18 @@ fn validate_task_prepare(
             }
             match &spec.source {
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
+                    if spec.medium
+                        != crate::schema::TaskDependencyHydrationMedium::ContainerImages
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: docker_compose` must use `prepare.medium: container_images`"
+                        )));
+                    }
+                    if spec.targets.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: docker_compose` must declare at least one target in `prepare.targets`"
+                        )));
+                    }
                     if source.cwd.trim().is_empty() {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `docker_compose` must declare a non-empty `prepare.source.cwd`"
@@ -3164,6 +3171,68 @@ fn validate_task_prepare(
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
+                        )));
+                    }
+                }
+                crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
+                    if spec.medium
+                        != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: node_package_manager` must use `prepare.medium: package_dependencies`"
+                        )));
+                    }
+                    if !spec.targets.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: node_package_manager` must omit `prepare.targets`; ota executes the declared package-manager hydration lane structurally"
+                        )));
+                    }
+                    if source.cwd.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` must declare a non-empty `prepare.source.cwd`"
+                        )));
+                    } else {
+                        validate_repo_relative_file_action_path(
+                            task_name,
+                            "prepare.source.cwd",
+                            source.cwd.as_str(),
+                            errors,
+                        );
+                    }
+                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "node") {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: node_package_manager` must declare `requirements.toolchains: [node]`"
+                        )));
+                    }
+                    if !effects.network {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network: true`"
+                        )));
+                    }
+                    if effects.network_kind
+                        != Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
+                        )));
+                    }
+                    if effects.writes.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: node_package_manager` must declare at least one durable repo write in `effects.writes`"
+                        )));
+                    }
+                    if matches!(source.manager, crate::schema::TaskNodePackageManagerKind::Pnpm)
+                        && matches!(source.mode, crate::schema::TaskNodePackageManagerHydrationMode::Ci)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` must not use `manager: pnpm` with `mode: ci`; use `mode: install` and explicit lockfile policy instead"
+                        )));
+                    }
+                    if source.frozen_lockfile
+                        && matches!(source.manager, crate::schema::TaskNodePackageManagerKind::Npm)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` must not declare `frozen_lockfile: true` for `manager: npm`; use `mode: ci` for lockfile-strict npm hydration"
                         )));
                     }
                 }
@@ -14903,6 +14972,189 @@ tasks:
         assert!(rendered.contains(
             "must declare `effects.network_kind: dependency_hydration`"
         ));
+    }
+
+    #[test]
+    fn accepts_prepare_only_node_package_manager_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("node package-manager prepare should validate");
+    }
+
+    #[test]
+    fn rejects_node_package_manager_prepare_without_node_toolchain_and_writes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_contract(&contract).expect_err("node package-manager prepare should fail");
+        let rendered = errors.to_string();
+        assert!(rendered.contains("must declare `requirements.toolchains: [node]`"));
+        assert!(rendered.contains("must declare at least one durable repo write in `effects.writes`"));
+    }
+
+    #[test]
+    fn rejects_dependency_hydration_when_medium_and_source_kind_disagree() {
+        let docker_contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:docker:images:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: docker_compose
+        cwd: docker
+        file: docker-compose.dev.yml
+      targets: [redis]
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+        let docker_errors =
+            validate_contract(&docker_contract).expect_err("mismatched docker medium should fail");
+        assert!(docker_errors.to_string().contains(
+            "must use `prepare.medium: container_images`"
+        ));
+
+        let node_contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: container_images
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+        let node_errors =
+            validate_contract(&node_contract).expect_err("mismatched node medium should fail");
+        assert!(node_errors.to_string().contains(
+            "must use `prepare.medium: package_dependencies`"
+        ));
+    }
+
+    #[test]
+    fn rejects_node_package_manager_prepare_with_targets() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+      targets: [web]
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("node package-manager targets should be rejected");
+        assert!(errors
+            .to_string()
+            .contains("must omit `prepare.targets`"));
     }
 
     #[test]
