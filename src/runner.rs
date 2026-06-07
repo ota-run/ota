@@ -4555,6 +4555,9 @@ enum PreparedTaskExecution {
         exe: String,
         args: Vec<String>,
     },
+    Preparation {
+        prepare: crate::schema::TaskPrepareSpec,
+    },
     LaunchContainer {
         launch: crate::schema::TaskContainerLaunchSpec,
     },
@@ -6456,6 +6459,10 @@ fn execute_task_with_hooks(
         PreparedTaskExecution::FileAction {
             action: action.clone(),
         }
+    } else if let Some(prepare) = execution.prepare() {
+        PreparedTaskExecution::Preparation {
+            prepare: prepare.clone(),
+        }
     } else {
         match execution.launch() {
             Some(crate::schema::TaskLaunchSpec::Command(command)) => {
@@ -7274,6 +7281,21 @@ fn execute_task_command(
         (_, PreparedTaskExecution::FileAction { action }) => {
             execute_native_file_action_task(task_name, action, working_dir)
         }
+        (_, PreparedTaskExecution::Preparation { prepare }) => execute_prepare_task(
+            contract,
+            task,
+            task_name,
+            runtime,
+            prepare,
+            working_dir,
+            env_overrides,
+            path_export,
+            secret_env_names,
+            backend,
+            deferred_backend_fulfillment,
+            host_port_override,
+            mode,
+        ),
         (_, PreparedTaskExecution::Shell { command, .. }) => match backend {
             ResolvedExecutionBackend::Native { .. } => {
                 let mut resolved_env = env_overrides.clone();
@@ -7419,6 +7441,67 @@ fn execute_task_command(
         _ => Err(RunError::InvalidTaskExecution {
             task: task_name.to_string(),
         }),
+    }
+}
+
+fn execute_prepare_task(
+    contract: Option<&Contract>,
+    task: Option<&crate::schema::TaskSpec>,
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+    prepare: &crate::schema::TaskPrepareSpec,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    path_export: Option<&str>,
+    secret_env_names: &BTreeSet<String>,
+    backend: &ResolvedExecutionBackend,
+    deferred_backend_fulfillment: Option<&DeferredContainerBackendFulfillment>,
+    host_port_override: Option<u16>,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    let command = prepare_task_shell_command(task_name, prepare, backend)?;
+    execute_task_command(
+        contract,
+        task,
+        task_name,
+        runtime,
+        &PreparedTaskExecution::Shell { command },
+        working_dir,
+        env_overrides,
+        path_export,
+        secret_env_names,
+        backend,
+        deferred_backend_fulfillment,
+        host_port_override,
+        mode,
+    )
+}
+
+fn prepare_task_shell_command(
+    _task_name: &str,
+    prepare: &crate::schema::TaskPrepareSpec,
+    backend: &ResolvedExecutionBackend,
+) -> Result<String, RunError> {
+    let quote_style = shell_quote_style_for_backend(backend);
+    match prepare {
+        crate::schema::TaskPrepareSpec::DependencyHydration(spec) => match &spec.source {
+            crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
+                let cwd = source.cwd.trim();
+                let file = source.file.trim();
+                let targets = spec
+                    .targets
+                    .iter()
+                    .map(|target| shell_quote_command_word(target.trim(), quote_style))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                Ok(format!(
+                    "cd {} && docker compose -f {} pull {}",
+                    shell_quote_command_word(cwd, quote_style),
+                    shell_quote_command_word(file, quote_style),
+                    targets
+                ))
+            }
+        },
     }
 }
 
@@ -48376,6 +48459,107 @@ tasks:
                 .contains("ensured `.env.local`, appended 0 env key(s)"),
             "{}",
             second.stdout
+        );
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_executes_docker_compose_pull_from_declared_cwd() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:docker:images:
+    prepare:
+      kind: dependency_hydration
+      medium: container_images
+      source:
+        kind: docker_compose
+        cwd: docker
+        file: docker-compose.dev.yml
+      targets: [redis, database]
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("docker")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo Docker version 27.1.1, build test\r\n  exit /b 0\r\n)\r\n>> \"%OTA_DOCKER_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'Docker version 27.1.1, build test\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_DOCKER_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "docker", docker_body);
+        let log_path = fixture.dir.path().join("docker.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_DOCKER_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_DOCKER_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup:docker:images")
+            .expect("prepare task should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_DOCKER_LOG", value) },
+            None => unsafe { env::remove_var("OTA_DOCKER_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(
+            logged.contains("compose -f docker-compose.dev.yml pull redis database"),
+            "{logged}"
+        );
+        assert!(
+            logged.contains(fixture.dir.path().join("docker").display().to_string().as_str()),
+            "{logged}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dependency_hydration_prepare_uses_windows_cmd_quoting_on_native_backend() {
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let prepare = crate::schema::TaskPrepareSpec::DependencyHydration(
+            crate::schema::TaskDependencyHydrationPrepareSpec {
+                medium: crate::schema::TaskDependencyHydrationMedium::ContainerImages,
+                source: crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(
+                    crate::schema::TaskDockerComposeHydrationSourceSpec {
+                        cwd: String::from("docker dir"),
+                        file: String::from("docker compose.dev.yml"),
+                    },
+                ),
+                targets: vec![String::from("redis cache"), String::from("database")],
+            },
+        );
+
+        let command =
+            super::prepare_task_shell_command("setup:docker:images", &prepare, &backend).unwrap();
+
+        assert_eq!(
+            command,
+            r#"cd "docker dir" && docker compose -f "docker compose.dev.yml" pull "redis cache" database"#
         );
     }
 

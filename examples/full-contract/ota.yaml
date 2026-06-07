@@ -141,11 +141,34 @@ tasks:
     requirements:
       toolchains:
         - node
+  setup:docker:images:
+    context: host
+    description: Pre-pull registry-backed docker dependencies before service startup
+    category: setup
+    prepare:
+      kind: dependency_hydration
+      medium: container_images
+      source:
+        kind: docker_compose
+        cwd: .
+        file: docker-compose.yml
+      targets:
+        - postgres
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      network: true
+      network_kind: dependency_hydration
+      external_state:
+        - docker
   services:up:
     context: host
     description: Start the local service stack
     category: setup
     run: docker compose up -d postgres
+    depends_on:
+      - setup:docker:images
     effects:
       external_state:
         - docker

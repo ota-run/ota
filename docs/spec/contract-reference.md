@@ -1416,6 +1416,27 @@ Optional.
 
 ```yaml
 tasks:
+  setup:docker:images:
+    description: Pre-pull registry-backed docker dependencies
+    category: setup
+    prepare:
+      kind: dependency_hydration
+      medium: container_images
+      source:
+        kind: docker_compose
+        cwd: docker
+        file: docker-compose.dev.yml
+      targets:
+        - redis
+        - database
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      network: true
+      network_kind: dependency_hydration
+      external_state:
+        - docker
   setup:
     description: Install dependencies
     category: setup
@@ -1510,6 +1531,7 @@ Fields:
 - `context`: optional execution context name
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
+- `prepare`: optional first-class finite preparation body for machine-readable setup or dependency hydration
 - `launch`: optional structured launch source for inspectable command or packaged container starts
 - `action`: optional first-class native setup action for small cross-platform repo-file mutations
 - `effects`: optional structured side-effect metadata for the task body
@@ -1538,9 +1560,9 @@ Task-effect rules:
 - use `effects.writes` for durable repo paths the task mutates directly
 - use `effects.network: true` when the task depends on networked fetches or remote calls and that
   dependency should stay explicit for CI and agent execution
-- use `effects.network_kind: dependency_hydration` for lockfile-backed package-manager hydration
-  lanes; keep `effects.network_kind: broad` (or omit `network_kind`) for wider API/remote-call
-  execution
+- use `effects.network_kind: dependency_hydration` for finite dependency acquisition lanes such as
+  lockfile-backed package-manager install or first-class image hydration; keep
+  `effects.network_kind: broad` (or omit `network_kind`) for wider API/remote-call execution
 - use `effects.external_state` when the task mutates state outside the repo filesystem, such as
   Docker resources, databases, or hosted services
 - `effects.network_kind` requires `effects.network: true`
@@ -1551,6 +1573,25 @@ Task-effect rules:
 - when a task is agent-safe, declared writes should stay inside `agent.writable_paths` when that boundary is declared
 - agent-safe task writes must not overlap `agent.protected_paths`
 
+`prepare` fields:
+
+- `prepare.kind`: required preparation classifier; `dependency_hydration` is the first shipped slice
+- `prepare.kind: dependency_hydration`
+  - `prepare.medium`: required hydration medium; `container_images` is the first shipped value
+  - `prepare.source.kind`: required hydration source; `docker_compose` is the first shipped value
+  - `prepare.source.cwd`: required repo-relative working directory for the compose invocation
+  - `prepare.source.file`: required compose file path relative to `prepare.source.cwd`
+  - `prepare.targets`: required non-empty list of concrete dependencies ota should hydrate
+
+`prepare` rules:
+
+- use `prepare` when the task is a finite setup phase ota should understand structurally instead of as opaque shell glue
+- `prepare` is an executable task body, so a task may declare `prepare` without `run`
+- `prepare` still needs explicit `requirements` and `effects`; ota should understand both intent and side effects
+- `prepare.kind: dependency_hydration` currently requires `requirements.tools.docker`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
+- `prepare` does not replace workflow `prepare.task`; workflow prepare is still the explicit host bootstrap lane that points at a native `action` task
+- `prepare` is not orchestrator-managed in the current shipped slice
+
 `execution` fields:
 
 - `default_mode`: optional `native`, `container`, or `remote`
@@ -1560,6 +1601,7 @@ Task-effect rules:
 - `modes.<mode>.env`: optional env map merged over task-level `env`
 - `modes.<mode>.run`: optional single-line command override for that mode
 - `modes.<mode>.script`: optional multiline script override for that mode
+- `modes.<mode>.prepare`: optional structured preparation override for that mode
 - `modes.<mode>.launch`: optional structured launch override for that mode
 - `modes.<mode>.runtime`: optional runtime/listener override for that mode
 
@@ -1578,8 +1620,8 @@ Task-effect rules:
 
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
-- when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`launch`, and `runtime`
-- when a selected branch omits `run`/`script`/`launch`, ota falls back to the task-level execution body (including OS variants)
+- when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`prepare`/`launch`, and `runtime`
+- when a selected branch omits `run`/`script`/`prepare`/`launch`, ota falls back to the task-level execution body (including OS variants)
 - when a task declares `execution.modes`, an explicit `--mode` must resolve to a declared branch
   unless it matches `default_mode`; unsupported explicit overrides fail early with a mode-branch error
 - use `modes.<mode>` only for mode-specific overrides; you do not need an empty branch such as `modes.native: {}` just to pair with `default_mode: native`
