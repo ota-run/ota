@@ -6215,6 +6215,7 @@ fn execute_task_with_hooks(
         state,
     )?;
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
+    let prep_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
 
     maybe_activate_corepack_shims_on_run_path(
         contract,
@@ -6222,6 +6223,7 @@ fn execute_task_with_hooks(
         task_name,
         task,
         &backend,
+        &prep_env,
         current_os,
         state,
     )?;
@@ -6295,6 +6297,7 @@ fn execute_task_with_hooks(
         task,
         backend_kind,
         &backend,
+        &prep_env,
         state,
     )?;
 
@@ -6304,6 +6307,7 @@ fn execute_task_with_hooks(
         task_name,
         task,
         &backend,
+        &prep_env,
         mode.clone(),
         current_os,
         state,
@@ -7979,6 +7983,24 @@ pub(crate) fn run_backend_argv_command_captured(
     working_dir: &Path,
     backend: &ResolvedExecutionBackend,
 ) -> Result<TaskCommandOutput, RunError> {
+    run_backend_argv_command_captured_with_env(
+        task_name,
+        exe,
+        args,
+        working_dir,
+        &BTreeMap::new(),
+        backend,
+    )
+}
+
+pub(crate) fn run_backend_argv_command_captured_with_env(
+    task_name: &str,
+    exe: &str,
+    args: &[String],
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    backend: &ResolvedExecutionBackend,
+) -> Result<TaskCommandOutput, RunError> {
     let execution = match backend {
         ResolvedExecutionBackend::Native { .. } => PreparedTaskExecution::NativeCommand {
             exe: exe.to_string(),
@@ -7995,7 +8017,7 @@ pub(crate) fn run_backend_argv_command_captured(
         None,
         &execution,
         working_dir,
-        &BTreeMap::new(),
+        env_overrides,
         None,
         &BTreeSet::new(),
         backend,
@@ -8312,6 +8334,7 @@ fn maybe_fulfill_toolchains_on_run_path(
     task_name: &str,
     task: &TaskSpec,
     backend: &ResolvedExecutionBackend,
+    env_overrides: &BTreeMap<String, String>,
     _mode: TaskExecutionMode,
     current_os: &str,
     state: &mut TaskRunState,
@@ -8338,11 +8361,12 @@ fn maybe_fulfill_toolchains_on_run_path(
         {
             let command_display = render_toolchain_command(backend, command_spec.clone());
             let task_label = format!("toolchain-fulfill:{toolchain_name}");
-            let output = run_backend_argv_command_captured(
+            let output = run_backend_argv_command_captured_with_env(
                 &task_label,
                 command_spec.program,
                 &command_spec.args,
                 contract_working_dir(contract_path),
+                env_overrides,
                 backend,
             )?;
             state.stdout.push_str(&output.stdout);
@@ -8372,6 +8396,7 @@ fn maybe_activate_corepack_shims_on_run_path(
     task_name: &str,
     task: &TaskSpec,
     backend: &ResolvedExecutionBackend,
+    env_overrides: &BTreeMap<String, String>,
     current_os: &str,
     state: &mut TaskRunState,
 ) -> Result<(), RunError> {
@@ -8407,11 +8432,12 @@ fn maybe_activate_corepack_shims_on_run_path(
         for command_spec in corepack_activation_command_specs(toolchain, target_os) {
             let command_display = render_toolchain_command(backend, command_spec.clone());
             let task_label = format!("toolchain-activate:{toolchain_name}");
-            let output = run_backend_argv_command_captured(
+            let output = run_backend_argv_command_captured_with_env(
                 &task_label,
                 command_spec.program,
                 &command_spec.args,
                 contract_working_dir(contract_path),
+                env_overrides,
                 backend,
             )?;
             state.stdout.push_str(&output.stdout);
@@ -8419,7 +8445,7 @@ fn maybe_activate_corepack_shims_on_run_path(
             if output.exit_code != 0 {
                 return Err(RunError::ToolchainFulfillmentFailed {
                     task: task_name.to_string(),
-                    toolchain: toolchain_name.clone(),
+                    toolchain: toolchain_name,
                     details: command_failure_detail(&command_display, &output),
                 });
             }
@@ -8436,6 +8462,7 @@ fn maybe_prepare_task_orchestrator_on_run_path(
     task: &TaskSpec,
     backend_kind: Backend,
     backend: &ResolvedExecutionBackend,
+    env_overrides: &BTreeMap<String, String>,
     state: &mut TaskRunState,
 ) -> Result<(), RunError> {
     let Some(orchestrator_selection) = task.orchestrator_for_backend(backend_kind) else {
@@ -8460,11 +8487,12 @@ fn maybe_prepare_task_orchestrator_on_run_path(
     for command_spec in orchestrator_command_specs(orchestrator) {
         let command_display = render_toolchain_command(backend, command_spec.clone());
         let step_label = format!("orchestrator-prepare:{}", orchestrator_selection.ref_name);
-        let output = run_backend_argv_command_captured(
+        let output = run_backend_argv_command_captured_with_env(
             &step_label,
             command_spec.program,
             &command_spec.args,
             contract_working_dir(contract_path),
+            env_overrides,
             backend,
         )?;
         state.stdout.push_str(&output.stdout);
@@ -37795,6 +37823,98 @@ esac
 
     #[cfg(unix)]
     #[test]
+    fn container_orchestrator_preparation_uses_backend_context_env() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      env:
+        MISE_CACHE_DIR: /workspace/.ota/mise/cache
+      container:
+        image: ghcr.io/ota/test:latest
+        engines:
+          - docker
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+    fulfillment:
+      source: mise
+      mode: run
+orchestrators:
+  mise:
+    kind: mise
+    required: true
+    config_files:
+      - mise.toml
+    activation:
+      trust: true
+tasks:
+  setup:
+    context: app
+    run: "true"
+    execution:
+      default_mode: container
+      orchestrator:
+        ref: mise
+        mode: exec
+      modes:
+        container:
+          context: app
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
+        let bin_dir = fixture.dir.path().join("bin");
+        let mise_path = bin_dir.join("mise");
+        fs::write(
+            &mise_path,
+            r#"#!/bin/sh
+set -eu
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+printf '%s|%s\n' "${1:-}" "${MISE_CACHE_DIR:-missing}" >> "$script_dir/mise-env.log"
+case "${1:-}" in
+  trust|install|exec)
+    [ "${MISE_CACHE_DIR:-}" = "/workspace/.ota/mise/cache" ] || exit 1
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&mise_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&mise_path, permissions).unwrap();
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("container orchestrator prep should inherit context env");
+
+        assert_eq!(outcome.exit_code, 0);
+        let mise_log = fs::read_to_string(bin_dir.join("mise-env.log")).unwrap();
+        assert!(mise_log.contains("trust|/workspace/.ota/mise/cache"), "{mise_log}");
+        assert!(mise_log.contains("install|/workspace/.ota/mise/cache"), "{mise_log}");
+        assert!(mise_log.contains("exec|/workspace/.ota/mise/cache"), "{mise_log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn native_setup_uses_mise_exec_for_source_managed_tool_actions() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -48317,6 +48437,7 @@ tasks:
             "setup",
             fixture.contract.tasks.get("setup").unwrap(),
             &backend,
+            &BTreeMap::new(),
             TaskExecutionMode::Capture,
             current_os(),
             &mut state,
@@ -48346,6 +48467,7 @@ tasks:
             "setup",
             fixture.contract.tasks.get("setup").unwrap(),
             &backend,
+            &BTreeMap::new(),
             TaskExecutionMode::Capture,
             current_os(),
             &mut state,
@@ -48486,6 +48608,7 @@ tasks:
             "setup",
             fixture.contract.tasks.get("setup").unwrap(),
             &backend,
+            &BTreeMap::new(),
             current_os(),
             &mut state,
         )
@@ -48496,6 +48619,7 @@ tasks:
             "setup",
             fixture.contract.tasks.get("setup").unwrap(),
             &backend,
+            &BTreeMap::new(),
             current_os(),
             &mut state,
         )
@@ -48576,6 +48700,7 @@ tasks:
             "setup",
             fixture.contract.tasks.get("setup").unwrap(),
             &backend,
+            &BTreeMap::new(),
             current_os(),
             &mut state,
         )
@@ -48654,6 +48779,7 @@ tasks:
             "verify",
             fixture.contract.tasks.get("verify").unwrap(),
             &backend,
+            &BTreeMap::new(),
             current_os(),
             &mut state,
         )
