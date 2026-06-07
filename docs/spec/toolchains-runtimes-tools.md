@@ -238,6 +238,20 @@ Meaning:
 - `mode: run` means ota may fulfill the selected toolchain on the selected execution path
 - `source` says which fulfillment source ota should use when fulfillment is allowed
 
+Use:
+
+- `mode: none` when the repo requires a toolchain version to exist, but ota should only check and
+  report it. This is the right default for repos that rely on host-owned installation, CI runner
+  setup, or prebuilt base images.
+- `mode: run` when the selected `ota up` or `ota run` path should be allowed to activate or
+  provision the toolchain on that path. Use this only when the repo truth is that ota can own that
+  fulfillment lane through the declared source.
+
+Supported modes today are only:
+
+- `none`
+- `run`
+
 Rules:
 
 - `source` is optional when the toolchain uses its canonical shipped fulfillment path
