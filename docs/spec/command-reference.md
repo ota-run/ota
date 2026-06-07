@@ -1182,8 +1182,8 @@ Current behavior:
 - backend-configuration failures now point through `ota execution plan` first so the selected execution path can be inspected before you change contract execution settings or retry the task
 - declared env-source failures now point through `ota env --task <name>` first so source status and precedence stay visible before you repair files or rerun the task
 - when the selected task path uses `requirements.toolchains`, ota treats that toolchain as the owner for the selected path instead of describing its owned capabilities as standalone `runtimes` or `tools`
-- toolchain run-path fulfillment is opt-in: `toolchains.<name>.fulfillment: none` keeps `ota run` on diagnosis/check-only behavior, while `fulfillment: run` lets ota attempt provider-backed run-path provisioning for the selected toolchain only
-- when toolchain fulfillment fails, run output names the selected toolchain, the owning provider, the declared requirement slice ota checked, and the rerun lane instead of reducing the failure to a generic tool install error
+- toolchain run-path fulfillment is opt-in: `toolchains.<name>.fulfillment.mode: none` keeps `ota run` on diagnosis/check-only behavior, while `fulfillment.mode: run` lets ota attempt run-path provisioning for the selected toolchain only
+- when toolchain fulfillment fails, run output names the selected toolchain, the chosen fulfillment source, the declared requirement slice ota checked, and the rerun lane instead of reducing the failure to a generic tool install error
 - `ota run <task> --dry-run --json` exposes additive `toolchains[]` evidence for the selected
   preview path, including provider, backend, target OS, version, fulfillment mode, owned runtime,
   and any owned tools/components/targets ota selected on that path
@@ -1350,7 +1350,7 @@ ota doctor --member api --member web --json [PATH]
 - when the selected path resolves through `requirements.toolchains`, doctor diagnoses the selected
   toolchain/provider/components/targets as one owned surface and does not restate owned capabilities
   such as `cargo` or `rustfmt` as standalone selected-path tools
-- doctor never provisions toolchains: `toolchains.<name>.fulfillment: none` and `fulfillment: run`
+- doctor never provisions toolchains: `toolchains.<name>.fulfillment.mode: none` and `fulfillment.mode: run`
   both stay diagnosis-only here; duplicate ownership between `toolchains`, `runtimes`, and `tools`
   fails early as an invalid contract instead of degrading into an advisory finding
 - org-policy version/provisioning reasoning now sees the selected toolchain-owned runtime lane too,
@@ -1772,10 +1772,10 @@ Current behavior:
 - when the selected or default workflow task closure declares `tasks.<name>.requirements`, `ota up`
   evaluates and provisions that merged prerequisite surface before setup instead of unrelated
   task-local quickstart or packaged-runtime requirements elsewhere in the repo
-- `ota up --dry-run` now lists selected toolchains explicitly: `fulfillment: none` means ota will
-  diagnose/check that toolchain on the selected path without provisioning it, while
-  `fulfillment: run` means ota may provision that selected toolchain on the selected run path if
-  the provider and policy allow it
+- `ota up --dry-run` now lists selected toolchains explicitly: `fulfillment.mode: none` means ota
+  will diagnose/check that toolchain on the selected path without provisioning it, while
+  `fulfillment.mode: run` means ota may provision that selected toolchain on the selected run path
+  if the chosen fulfillment source and policy allow it
 - mixed-backend workflows now keep selected prerequisites on their own execution boundary during
   `ota up` preflight, so a native run task is diagnosed on the host while a container setup task is
   diagnosed in the selected container lane instead of flattening both into one doctor mode
@@ -2416,9 +2416,9 @@ Current write behavior:
   canonical `toolchains.node` Corepack ownership so a detected Node contract does not silently omit
   the runtime or generate legacy split ownership
 - detected Go, Ruby, and .NET runtime/tool lanes now converge to canonical toolchain ownership on
-  write/merge (`toolchains.go` with `provider: go`, `toolchains.ruby` with `provider: ruby`,
-  `toolchains.dotnet` with `provider: dotnet`), and detected `tools.bundler` ownership folds into
-  `toolchains.ruby.package_managers.bundler` instead of remaining split
+  write/merge (`toolchains.go`, `toolchains.ruby`, and `toolchains.dotnet` with structured
+  fulfillment instead of legacy split ownership), and detected `tools.bundler` ownership folds
+  into `toolchains.ruby.package_managers.bundler` instead of remaining split
 - Docker Compose service `start`, `stop`, and declared `healthcheck.test` commands are high
   confidence and can be written with the inferred service block
 - detect preview, exact starter preview, and detect write now keep the same derived starter `agent` block that init uses, while detect-owned field metadata remains scoped to actually inferred fields and writable-path inference can include broader common directories plus bounded custom source roots

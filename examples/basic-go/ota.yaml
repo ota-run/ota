@@ -28,7 +28,6 @@ project:
   type: application
 toolchains:
   go:
-    provider: go
     version: "1.24"
 tasks:
   setup:
@@ -63,7 +62,7 @@ workflows:
       task: test
     notes: |
       Use this when the repo front door is dependency preparation plus test verification.
-      `toolchains.go` keeps Go runtime ownership under one provider-backed contract instead of
+      `toolchains.go` keeps Go runtime ownership under one toolchain contract instead of
       splitting it across `runtimes`, `tools`, and duplicate checks.
 agent:
   entrypoint: setup

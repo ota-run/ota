@@ -24,11 +24,10 @@
 version: 1
 project:
   name: basic-python
-  description: Minimal Python repo that shows uv-backed Python toolchain ownership plus setup and verification
+  description: Minimal Python repo that shows Python toolchain ownership plus setup and verification
   type: application
 toolchains:
   python:
-    provider: uv
     version: "3.12"
     package_managers:
       uv: ">=0.7.0"
@@ -58,7 +57,7 @@ workflows:
     notes: |
       Use this when the repo front door is setup plus verification rather than a long-running dev
       server.
-      `toolchains.python` keeps Python ownership under uv instead of splitting it across
+      `toolchains.python` keeps Python ownership under one toolchain contract instead of splitting it across
       `runtimes.python` and ad hoc package-manager commands.
 agent:
   entrypoint: setup

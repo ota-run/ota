@@ -24,11 +24,10 @@
 version: 1
 project:
   name: basic-java
-  description: Basic Java repo with SDKMAN-owned Java plus Maven tasks
+  description: Basic Java repo with toolchain-owned Java plus Maven tasks
   type: application
 toolchains:
   java:
-    provider: sdkman
     version: "22"
 tools:
   maven: "3.9"

@@ -72,11 +72,12 @@ use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     NativePrerequisiteActivationShell, ReadinessProbeSpec, RequirementSurface, RuntimeRequirement,
     ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec, TaskNetworkEffectKind,
-    ToolAcquisitionProvider, ToolAcquisitionSpec, ToolRequirement,
+    ToolAcquisitionProvider, ToolAcquisitionSpec, ToolRequirement, ToolchainFulfillmentSource,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{
     ToolchainManagedSurfaceKind, ToolchainOpportunityContext, declared_toolchain_contract,
+    declared_toolchain_source_label, toolchain_fulfillment_source_label,
     requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
     requirement_surface_with_toolchain_owned_tools_for_required_tools,
     shipped_toolchain_contract_by_label, tool_versions_entry, toolchain_repo_signals,
@@ -5556,12 +5557,13 @@ fn diagnose_tools(
         }
         let required = requirement.required_for_os(target_os);
         let executable_candidates = vec![tool_executable_name(name).to_string()];
-        let run_path_fulfillment_allowed = selected_toolchain_run_fulfillment_supports_tool(
-            contract,
-            selected_toolchains,
-            target_os,
-            name,
-        );
+        let run_path_fulfillment_source =
+            selected_toolchain_run_fulfillment_source_for_tool(
+                contract,
+                selected_toolchains,
+                target_os,
+                name,
+            );
 
         container_probe_started |= diagnose_command_version(
             "tool",
@@ -5569,7 +5571,7 @@ fn diagnose_tools(
             &executable_candidates,
             requirement.version_for_os(target_os),
             required,
-            None,
+            run_path_fulfillment_source.map(toolchain_fulfillment_source_label),
             requirement.acquisition(),
             mode,
             selected_lifecycle,
@@ -5579,7 +5581,7 @@ fn diagnose_tools(
             contract_path,
             loaded_policy,
             target_os,
-            run_path_fulfillment_allowed,
+            run_path_fulfillment_source.is_some(),
             provisioning_actions,
             findings,
         );
@@ -5587,31 +5589,29 @@ fn diagnose_tools(
     container_probe_started
 }
 
-fn selected_toolchain_run_fulfillment_supports_tool(
+fn selected_toolchain_run_fulfillment_source_for_tool(
     contract: &Contract,
     selected_toolchains: &BTreeSet<String>,
     target_os: &str,
     tool_name: &str,
-) -> bool {
-    selected_toolchains.iter().any(|toolchain_name| {
-        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
-            return false;
-        };
+) -> Option<ToolchainFulfillmentSource> {
+    selected_toolchains.iter().find_map(|toolchain_name| {
+        let toolchain = contract.toolchains.get(toolchain_name.as_str())?;
         if !toolchain.active_for_os(target_os)
             || !matches!(
                 toolchain.fulfillment_mode(),
                 crate::schema::ToolchainFulfillmentMode::Run
             )
         {
-            return false;
+            return None;
         }
-        let Some(provider) = declared_toolchain_contract(toolchain_name, toolchain) else {
-            return false;
-        };
+        let provider = declared_toolchain_contract(toolchain_name, toolchain)?;
         provider
             .owned_tool_requirements(toolchain, target_os)
             .keys()
             .any(|owned_tool_name| owned_tool_name == tool_name)
+            .then(|| toolchain.fulfillment_source())
+            .flatten()
     })
 }
 
@@ -5642,13 +5642,18 @@ fn diagnose_toolchains(
             toolchain.version_for_os(target_os),
         );
 
+        let run_path_fulfillment_source = (toolchain.fulfillment_mode()
+            == crate::schema::ToolchainFulfillmentMode::Run
+            && toolchain.fulfillment_source() == Some(ToolchainFulfillmentSource::Mise))
+            .then_some(ToolchainFulfillmentSource::Mise);
+
         probe_started |= diagnose_command_version(
             "runtime",
             toolchain_name,
             &executable_candidates,
             toolchain.version_for_os(target_os),
             toolchain.required_for_os(target_os),
-            Some(provider.provider_hint()),
+            Some(declared_toolchain_source_label(toolchain_name, toolchain)),
             None,
             mode,
             None,
@@ -5658,7 +5663,7 @@ fn diagnose_toolchains(
             contract_path,
             None,
             target_os,
-            false,
+            run_path_fulfillment_source.is_some(),
             &[],
             findings,
         );
@@ -7317,6 +7322,59 @@ fn diagnose_command_version(
                     tool_acquisition_command(acquisition)
                 ),
             });
+            return probe_started;
+        }
+
+        if run_path_fulfillment_allowed
+            && kind == "tool"
+            && provider_hint.is_some_and(|provider| provider == "corepack")
+        {
+            probe_started |= diagnose_command_version(
+                "tool",
+                "corepack",
+                &corepack_activation_provider_probe_candidates(),
+                "*",
+                required,
+                None,
+                None,
+                mode,
+                selected_lifecycle,
+                container_probe,
+                remote_probe,
+                remote_context_name,
+                contract_path,
+                loaded_policy,
+                target_os,
+                false,
+                provisioning_actions,
+                findings,
+            );
+            return probe_started;
+        }
+
+        if run_path_fulfillment_allowed
+            && provider_hint.is_some_and(|provider| provider == "mise")
+        {
+            probe_started |= diagnose_command_version(
+                "tool",
+                "mise",
+                &[String::from("mise")],
+                "*",
+                required,
+                None,
+                None,
+                mode,
+                selected_lifecycle,
+                container_probe,
+                remote_probe,
+                remote_context_name,
+                contract_path,
+                loaded_policy,
+                target_os,
+                false,
+                provisioning_actions,
+                findings,
+            );
             return probe_started;
         }
 

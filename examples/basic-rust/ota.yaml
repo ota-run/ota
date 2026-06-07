@@ -27,7 +27,6 @@ project:
   type: application
 toolchains:
   rust:
-    provider: rustup
     version: "1.94.0"
     components:
       - rustfmt

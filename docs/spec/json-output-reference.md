@@ -2830,11 +2830,11 @@ When the repo clearly looks like a managed ecosystem that ota does not ship as a
 text stays user-safe and only says to keep the current `runtimes` / `tools` fallback model for
 now; provider-candidate detail stays in JSON. When ota already ships the ecosystem owner, the
 starter `config` uses `toolchains.<name>` directly instead of adding a fallback opportunity. For
-example, Python repos with `uv.lock` now converge directly on `toolchains.python` with
-`provider: uv`, so they no longer emit fallback Python opportunity guidance. The same ownership
-promotion now applies to detected Go, Ruby, and .NET ecosystems, yielding `toolchains.go`
-(`provider: go`), `toolchains.ruby` (`provider: ruby`), and `toolchains.dotnet`
-(`provider: dotnet`) instead of split runtime/tool declarations.
+example, Python repos with `uv.lock` now converge directly on `toolchains.python` with the
+canonical structured fulfillment model, so they no longer emit fallback Python opportunity
+guidance. The same ownership promotion now applies to detected Go, Ruby, and .NET ecosystems,
+yielding `toolchains.go`, `toolchains.ruby`, and `toolchains.dotnet` instead of split
+runtime/tool declarations.
 
 `provenance` is the per-field source map for the starter contract:
 

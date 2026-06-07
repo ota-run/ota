@@ -22,114 +22,252 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Toolchains, Runtimes, and Tools
+# Toolchains, Runtimes, Tools, and Orchestrators
 
-Use this page when you need to decide whether a prerequisite belongs under a managed toolchain,
-a simple runtime, a standalone tool, or an OS-native prerequisite.
+Use this page when you need to decide where prerequisite truth belongs.
 
-Current shipped scope:
+The canonical ownership model is:
 
-- top-level `toolchains`
-- task-scoped `requirements.toolchains`
-- Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
-- Corepack-backed diagnosis plus policy-governed run-path fulfillment for Node toolchains
-- SDKMAN-backed diagnosis plus policy-governed run-path fulfillment for Java toolchains
-- uv-backed diagnosis and run-path fulfillment for Python toolchains
-- Go-backed diagnosis plus policy-governed run-path fulfillment for Go toolchains
-- Ruby-backed diagnosis plus policy-governed run-path fulfillment for Ruby toolchains
-- dotnet-backed diagnosis plus policy-governed run-path fulfillment for .NET toolchains
-- hard validation errors when the same prerequisite is declared under both `toolchains` and
-  `runtimes` or `tools`
-- seven supported contract shapes today:
-  - `toolchains.rust` with `provider: rustup`
-  - `toolchains.node` with `provider: corepack`
-  - `toolchains.java` with `provider: sdkman`
-  - `toolchains.python` with `provider: uv`
-  - `toolchains.go` with `provider: go`
-  - `toolchains.ruby` with `provider: ruby`
-  - `toolchains.dotnet` with `provider: dotnet`
+- `toolchains` for required ecosystem capability truth
+- `orchestrators` for repo-level trust, prepare, and mediated task execution
+- `runtimes` for simple unmanaged runtime checks
+- `tools` for standalone commands on PATH
+- `native_prerequisites` for host-native build bundles and shell activation
+
+The goal is one owner per capability. If the same truth is declared twice, the contract is weaker,
+not safer.
+
+## Canonical toolchain model
+
+`toolchains` are capability-first.
+
+They answer:
+
+- what runtime or ecosystem the repo actually needs
+- what package-manager versions that toolchain owns
+- whether ota may fulfill that toolchain on the selected run path
+
+Canonical direction:
+
+```yaml
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+    fulfillment:
+      source: mise
+      mode: run
+
+  go:
+    version: "1.26.0"
+```
+
+Use this when ota must understand more than "does this executable exist?"
+
+Examples:
+
+- Rust plus `rustfmt` and target triples
+- Node plus declared Corepack package-manager ownership
+- Java plus `javac`
+- Python plus declared `uv`
+- Ruby plus declared Bundler
+
+Do not use `toolchains` when the repo only needs a plain runtime version check and no managed
+ecosystem ownership matters.
+
+## Canonical orchestrator model
+
+`orchestrators` capture repo-level mediation such as `mise`.
+
+They answer:
+
+- what repo-level manager exists
+- what config files define it
+- whether trust is part of readiness
+- whether install/prepare is part of readiness
+- whether selected tasks should run through that manager
+
+Canonical shape:
+
+```yaml
+orchestrators:
+  mise:
+    kind: mise
+    required: true
+    config_files:
+      - mise.toml
+    activation:
+      trust: true
+    prepare:
+      install: true
+```
+
+Use `orchestrators` when the repo truth is not just "install node" or "install python", but
+"trust this manager, install through it, and run selected tasks through it."
+
+Do not force that truth into `run: mise ...` shell strings if ota can model it directly.
+
+## Task mediation through an orchestrator
+
+Tasks can declare orchestrator-mediated execution directly:
+
+```yaml
+tasks:
+  server:verify:
+    context: host
+    run: //server:ci-unit
+    execution:
+      orchestrator:
+        ref: mise
+        mode: task
+
+  setup:
+    context: host
+    run: pnpm install
+    execution:
+      orchestrator:
+        ref: mise
+        mode: exec
+```
+
+Use `mode: task` when the task body is the orchestrator task name.
+Use `mode: exec` when the task body is a normal command that should run inside the orchestrated
+environment.
 
 ## Ownership rule
 
 Pick the highest useful owner and do not repeat the same capability below it.
 
-- `toolchains` own managed ecosystem environments
+- `toolchains` own managed ecosystem capability truth
+- `orchestrators` own repo-level trust, prepare, and mediated task execution
 - `runtimes` own simple unmanaged runtime version checks
 - `tools` own standalone commands on PATH
-- `native_prerequisites` own host-native build bundles and shell activations
-- current shipped ownership is provider-defined, not free-form: today Ota derives Rust capability
-  ownership from `toolchains.rust` with `provider: rustup` and Node runtime/executable plus
-  declared Corepack package-manager ownership from `toolchains.node` with `provider: corepack`
+- `native_prerequisites` own OS-native bundles
 
-If a declared toolchain owns the capability, require the toolchain. Do not also require the same
-runtime or tool unless it is deliberately standalone outside that toolchain.
+If a declared toolchain owns the capability, do not also declare it under `runtimes` or `tools`.
+
+Examples of invalid duplication:
+
+- `toolchains.node` plus `runtimes.node`
+- `toolchains.node` plus `tools.node`
+- `toolchains.python` plus `runtimes.python`
+- `toolchains.rust.components: [rustfmt]` plus `tools.rustfmt`
+- `toolchains.ruby.package_managers.bundler` plus `tools.bundler`
+
+Treat duplicate ownership as cleanup work, not extra safety.
 
 ## When to use each layer
 
-Use `toolchains` when Ota must understand more than "does this executable exist?"
+### `toolchains`
+
+Use when ota should understand ecosystem truth.
 
 Examples:
 
-- Rust via Rustup, including components such as `rustfmt`
-- Node via Corepack, when the repo wants one owner for the Node runtime, `node` executable, and
-  declared Corepack package-manager activation
-- Python via uv, when the repo wants one owner for the Python runtime while tools such as Poetry
-  remain standalone under `tools`
-- Go via the built-in Go provider, when the repo wants one owner for the Go runtime boundary
-- Ruby via the built-in Ruby provider, when the repo wants one owner for the Ruby runtime boundary
-- .NET via the built-in dotnet provider, when the repo wants one owner for the .NET runtime/CLI
-  boundary
+- Rust via rustup
+- Node plus declared package-manager ownership
+- Java plus `javac`
+- Python plus `uv`
+- Ruby plus Bundler
 
-Current parser boundary:
+Do not use when the repo only needs a plain runtime check.
 
-- the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup`,
-  `toolchains.node` with `provider: corepack`, `toolchains.java` with `provider: sdkman`,
-  `toolchains.python` with `provider: uv`, `toolchains.go` with `provider: go`, and
-  `toolchains.ruby` with `provider: ruby`, plus `toolchains.dotnet` with `provider: dotnet`
-- those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use `provider: rustup`,
-  `toolchains.node` must use `provider: corepack`, `toolchains.java` must use `provider: sdkman`,
-  `toolchains.python` must use `provider: uv`, `toolchains.go` must use `provider: go`, and
-  `toolchains.ruby` must use `provider: ruby`, and `toolchains.dotnet` must use `provider: dotnet`
-- the shared provider-agnostic toolchain fields are currently `provider`, `version`,
-  `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
-- validation and command behavior read from a provider contract, not from free-form capability
-  text; today those contracts are the shipped Rustup/Corepack/sdkman/uv/Go/Ruby/dotnet slices behind
-  `toolchains.rust`, `toolchains.node`, `toolchains.java`, `toolchains.python`,
-  `toolchains.go`, `toolchains.ruby`, and `toolchains.dotnet`
-- that provider contract also owns Rustup field-shape validation, so empty `profile`,
-  `components`, or `targets` entries fail as provider-contract violations rather than generic
-  schema drift
-- Corepack-backed Node toolchains currently support one provider-specific field:
-  `package_managers` (plus `platforms.<os>.package_managers`)
-- uv-backed Python toolchains support that same provider-specific field shape, but only `uv` is
-  valid there; use `toolchains.python.package_managers.uv` when the contract needs an explicit uv
-  version boundary in addition to the Python runtime version
-- Ruby-backed toolchains support `package_managers` too, but only `bundler` is valid there; use it
-  to make Bundler version governance explicit under `toolchains.ruby`
-- `profile`, `components`, and `targets` are Rustup-specific compatibility fields, not a generic
-  ecosystem-wide toolchain schema
-Use `runtimes` when the requirement is simply "this runtime must exist at this version."
+### `orchestrators`
+
+Use when one repo-level manager mediates trust, install, or execution.
+
+Examples:
+
+- `mise trust`
+- `mise install`
+- `mise run //server:ci-unit`
+- `mise exec -- pnpm lint`
+
+Do not use as a substitute for `toolchains`. `orchestrators` do not own language capability truth.
+
+### `runtimes`
+
+Use when the repo only needs a simple unmanaged runtime version check.
 
 Examples:
 
 - `node >=24`
 - `python >=3.12`
+- `pwsh 7.6.0` on Windows only
 
-Use `tools` for standalone commands that are not owned by a declared toolchain.
+Do not use when a declared toolchain already owns that runtime.
+
+### `tools`
+
+Use for standalone commands on PATH that are not owned by a declared toolchain.
 
 Examples:
 
 - `docker`
-- `jq`
 - `gh`
+- `jq`
+- `maven` when Java stays under `toolchains.java`
 
-Use `native_prerequisites` for host-native build bundles and shell activation.
+Do not use for `node`, `python`, `cargo`, `uv`, `bundler`, or similar toolchain-owned surfaces
+when the corresponding toolchain is declared.
+
+### `native_prerequisites`
+
+Use for host-native bundles or shell activation that are not just one runtime or one CLI.
 
 Examples:
 
-- Visual Studio Build Tools
 - Xcode Command Line Tools
+- Visual Studio Build Tools
 - Linux compiler packages
+
+## Fulfillment model
+
+`toolchains.<name>.fulfillment` is now structured:
+
+```yaml
+fulfillment:
+  source: corepack
+  mode: run
+```
+
+Meaning:
+
+- `mode: none` means diagnose only
+- `mode: run` means ota may fulfill the selected toolchain on the selected execution path
+- `source` says which fulfillment source ota should use when fulfillment is allowed
+
+Rules:
+
+- `source` is optional when the toolchain uses its canonical shipped fulfillment path
+- `source: mise` is the current non-canonical supported source for repos whose selected path is
+  mediated by `mise`
+- legacy flat `fulfillment: run` is still accepted for compatibility, but it is not the canonical
+  public model
+- legacy `provider` is still accepted for compatibility, but it is not the canonical public model
+
+Canonical shipped fulfillment sources today are:
+
+- `rustup`
+- `corepack`
+- `sdkman`
+- `uv`
+- `go`
+- `ruby`
+- `dotnet`
+
+## Compatibility policy
+
+Public docs, examples, and new contracts should use:
+
+- structured `fulfillment`
+- no legacy toolchain `provider`
+- explicit `orchestrators` when repo-level mediation exists
+
+Runtime compatibility still accepts the old provider-based shape temporarily.
+
+That compatibility is a migration lane, not the permanent public truth.
 
 ## Before and after
 
@@ -137,160 +275,61 @@ Before:
 
 ```yaml
 tools:
-  cargo: "*"
+  mise: "*"
 
 tasks:
   setup:
-    run: cargo fetch && (rustup component add rustfmt 2>/dev/null || true)
+    run: mise trust && mise install
+  server:verify:
+    run: mise run //server:ci-unit
 ```
 
 After:
 
 ```yaml
 toolchains:
-  rust:
-    provider: rustup
-    version: "1.94.0"
-    components:
-      - rustfmt
-    fulfillment: run
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+    fulfillment:
+      source: mise
+      mode: run
+
+orchestrators:
+  mise:
+    kind: mise
+    required: true
+    config_files:
+      - mise.toml
+    activation:
+      trust: true
+    prepare:
+      install: true
 
 tasks:
-  setup:
-    requirements:
-      toolchains:
-        - rust
-    run: cargo fetch
+  server:verify:
+    run: //server:ci-unit
+    execution:
+      orchestrator:
+        ref: mise
+        mode: task
 ```
 
-## Task selection rules
+The second shape is better because the repo truth is machine-readable instead of hidden in shell
+strings.
 
-Use the owner that actually applies to the selected task path.
+## Current shipped slice
 
-```yaml
-tasks:
-  setup:
-    requirements:
-      toolchains:
-        - rust
-```
+Today ota ships:
 
-```yaml
-tasks:
-  start:
-    requirements:
-      runtimes:
-        node: ">=24"
-```
+- top-level `toolchains`
+- top-level `orchestrators`
+- task-scoped `requirements.toolchains`
+- task-scoped `execution.orchestrator`
+- structured `toolchains.<name>.fulfillment`
+- canonical fulfillment for Rust, Node, Java, Python, Go, Ruby, and .NET
+- non-canonical `fulfillment.source: mise`
+- `orchestrators.mise`
 
-```yaml
-tasks:
-  docker:proof:
-    requirements:
-      tools:
-        docker: ">=27"
-```
-
-```yaml
-tasks:
-  install:
-    requirements:
-      native:
-        - node-native-build-tools
-```
-
-## Duplication rules
-
-Ota now rejects the same requirement when it is split across multiple ownership layers.
-
-Current Rustup-first invalid combinations include:
-
-- `toolchains.rust` plus `runtimes.rust`
-- `toolchains.rust` plus `tools.cargo`
-- `toolchains.rust.components: [rustfmt]` plus `tools.rustfmt`
-- `toolchains.python` plus `runtimes.python`
-
-Treat those validation errors as contract cleanup signals, not as extra truth to maintain.
-
-## Fulfillment rules
-
-Toolchain fulfillment is strict:
-
-- `ota doctor` never mutates
-- run-path fulfillment only happens when the toolchain declares `fulfillment: run`
-- the current shipped fulfillment surface is:
-  - provider-command fulfillment for `provider: rustup` and `provider: uv`
-  - policy-governed selected-path fulfillment lanes for `provider: corepack`, `provider: sdkman`,
-    `provider: go`, `provider: ruby`, and `provider: dotnet`
-
-For Rustup-backed fulfillment:
-
-- `toolchains.<name>.version` must be an installable Rustup toolchain reference when
-  `fulfillment: run` is enabled
-- examples: `stable`, `beta`, `nightly`, `1.94.0`
-- comparator-style ranges such as `>=1.94` are valid for plain diagnosis elsewhere in Ota, but not
-  for Rustup fulfillment because Rustup needs one concrete toolchain reference to install
-
-For uv-backed Python fulfillment:
-
-- `toolchains.python.version` must be one installable uv Python reference when
-  `fulfillment: run` is enabled
-- examples: `3.12`, `3.12.10`, `3.13`
-- comparator-style ranges such as `>=3.12,<3.14` are valid for plain diagnosis elsewhere in Ota,
-  but not for uv fulfillment because `uv python install` needs one concrete Python reference to
-  install
-
-For the policy-governed fulfillment providers:
-
-- `provider: corepack`, `provider: sdkman`, `provider: go`, `provider: ruby`, and
-  `provider: dotnet` can all declare `fulfillment: run`
-- those providers validate as selected-path run intent instead of hard check-only contracts
-- provisioning authority stays with org policy and backend requirement fulfillment rather than a
-  provider-owned install command surface
-- duplicate ownership rules still apply:
-  - `toolchains.node` must not be duplicated under `tools.node`
-  - `toolchains.java` keeps `java` / `javac` ownership while Maven and Gradle remain standalone
-    under `tools`
-  - `toolchains.ruby` keeps Bundler governance under
-    `toolchains.ruby.package_managers.bundler`
-  - `toolchains.dotnet` must not be duplicated under `runtimes.dotnet` or `tools.dotnet`
-
-## Current shipped limits
-
-This slice is intentionally narrow:
-
-- shipped toolchain contracts today are:
-  - `toolchains.rust` with `provider: rustup`
-  - `toolchains.node` with `provider: corepack`
-  - `toolchains.java` with `provider: sdkman`
-  - `toolchains.python` with `provider: uv`
-  - `toolchains.go` with `provider: go`
-  - `toolchains.ruby` with `provider: ruby`
-  - `toolchains.dotnet` with `provider: dotnet`
-- toolchains are selected at the task path, not through execution-context requirements
-- duplicate ownership is invalid and fails validation
-- Rustup currently owns diagnosis plus run-path fulfillment for the declared toolchain and its
-  components/targets
-- uv currently owns diagnosis plus run-path fulfillment for the declared Python runtime version
-- Corepack-backed Node toolchains now allow `fulfillment: run` as a policy-governed fulfillment
-  lane for the selected task path; `tools.node` is still invalid duplicate ownership, and package
-  managers declared under `toolchains.node.package_managers` must not be redeclared under `tools`
-- SDKMAN-backed Java toolchains now allow `fulfillment: run` as a policy-governed fulfillment
-  lane for the selected task path while Maven and Gradle remain standalone tool surfaces
-- Go-backed toolchains now allow `fulfillment: run` as a policy-governed fulfillment lane for the
-  selected task path; there is no provider-specific install command, so provisioning stays governed
-  by org policy and backend requirement fulfillment
-- Ruby-backed toolchains now allow `fulfillment: run` as a policy-governed fulfillment lane for
-  the selected task path; `tools.bundler` is still invalid duplicate ownership and Bundler should
-  be modeled under `toolchains.ruby.package_managers.bundler`
-- dotnet-backed toolchains now allow `fulfillment: run` as a policy-governed fulfillment lane for
-  the selected task path; `tools.dotnet` remains invalid duplicate ownership and install source
-  governance remains policy-owned
-- org-policy version/provisioning reasoning now sees the selected toolchain-owned runtime lane too,
-  so approved runtime versions and approved install sources can govern `toolchains.rust`,
-  `toolchains.node`, `toolchains.java`, `toolchains.python`, `toolchains.go`,
-  `toolchains.ruby`, and `toolchains.dotnet` without re-declaring duplicate runtime ownership
-- contracts that declare any other toolchain/provider combination fail validation today
-
-That is enough to remove shell-based Rust component workarounds cleanly without introducing a new
-parallel provisioning system.
+This slice is intentionally narrow, but it is the canonical direction.

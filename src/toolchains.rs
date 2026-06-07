@@ -28,11 +28,11 @@ use semver::{Op, VersionReq};
 use crate::schema::{
     Contract, RequirementSurface, RuntimeDetail, RuntimePlatformDetail, RuntimeRequirement,
     ToolAcquisitionProvider, ToolAcquisitionSpec, ToolDetail, ToolPlatformDetail, ToolRequirement,
-    ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
+    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainProvider, ToolchainSpec,
 };
 
 pub(crate) const SHARED_TOOLCHAIN_CORE_SUMMARY: &str =
-    "`provider`, `version`, `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`";
+    "`version`, `fulfillment`, `required`, `only_on`, and `platforms.<os>.version` (legacy `provider` is still accepted for compatibility)";
 pub(crate) const UNKNOWN_TOOLCHAIN_PROVIDER_LABEL: &str = "toolchain provider";
 pub(crate) const RUSTUP_TOOLCHAIN_NAME: &str = "rust";
 pub(crate) const COREPACK_TOOLCHAIN_NAME: &str = "node";
@@ -493,10 +493,6 @@ impl ToolchainProviderContract {
         (self.owned_runtime_remediation_command_fn)(self, requirement)
     }
 
-    pub(crate) const fn provider_hint(self) -> &'static str {
-        self.label
-    }
-
     pub(crate) const fn shared_core_summary(self) -> &'static str {
         SHARED_TOOLCHAIN_CORE_SUMMARY
     }
@@ -758,18 +754,78 @@ pub(crate) fn shipped_toolchain_contracts_summary() -> String {
 
 pub(crate) fn declared_toolchain_contract(
     name: &str,
-    toolchain: &ToolchainSpec,
+    _toolchain: &ToolchainSpec,
 ) -> Option<ToolchainProviderContract> {
-    toolchain_provider_contract(name, toolchain.provider)
+    shipped_toolchain_contract_by_name(name)
 }
 
-pub(crate) fn declared_toolchain_provider_label(
+fn declared_toolchain_fulfillment_contract(
+    name: &str,
+    toolchain: &ToolchainSpec,
+) -> Option<ToolchainProviderContract> {
+    if let Some(source) = toolchain.fulfillment_source()
+        && let Some(provider) = fulfillment_source_legacy_provider(source)
+        && let Some(contract) = toolchain_provider_contract(name, provider)
+    {
+        return Some(contract);
+    }
+
+    declared_toolchain_contract(name, toolchain)
+}
+
+pub(crate) fn toolchain_fulfillment_source_label(
+    source: ToolchainFulfillmentSource,
+) -> &'static str {
+    match source {
+        ToolchainFulfillmentSource::Rustup => "rustup",
+        ToolchainFulfillmentSource::Corepack => "corepack",
+        ToolchainFulfillmentSource::Sdkman => "sdkman",
+        ToolchainFulfillmentSource::Uv => "uv",
+        ToolchainFulfillmentSource::Go => "go",
+        ToolchainFulfillmentSource::Ruby => "ruby",
+        ToolchainFulfillmentSource::Dotnet => "dotnet",
+        ToolchainFulfillmentSource::Mise => "mise",
+    }
+}
+
+pub(crate) fn fulfillment_source_legacy_provider(
+    source: ToolchainFulfillmentSource,
+) -> Option<ToolchainProvider> {
+    match source {
+        ToolchainFulfillmentSource::Rustup => Some(ToolchainProvider::Rustup),
+        ToolchainFulfillmentSource::Corepack => Some(ToolchainProvider::Corepack),
+        ToolchainFulfillmentSource::Sdkman => Some(ToolchainProvider::Sdkman),
+        ToolchainFulfillmentSource::Uv => Some(ToolchainProvider::Uv),
+        ToolchainFulfillmentSource::Go => Some(ToolchainProvider::Go),
+        ToolchainFulfillmentSource::Ruby => Some(ToolchainProvider::Ruby),
+        ToolchainFulfillmentSource::Dotnet => Some(ToolchainProvider::Dotnet),
+        ToolchainFulfillmentSource::Mise => None,
+    }
+}
+
+pub(crate) fn declared_toolchain_source_label(
     name: &str,
     toolchain: &ToolchainSpec,
 ) -> &'static str {
+    if let Some(source) = toolchain.fulfillment_source() {
+        return toolchain_fulfillment_source_label(source);
+    }
     declared_toolchain_contract(name, toolchain)
         .map(|provider| provider.label())
         .unwrap_or(UNKNOWN_TOOLCHAIN_PROVIDER_LABEL)
+}
+
+pub(crate) fn declared_toolchain_fulfillment_commands(
+    name: &str,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<ToolchainCommandSpec> {
+    match toolchain.fulfillment_source() {
+        Some(ToolchainFulfillmentSource::Mise) => mise_fulfillment_commands(name, toolchain, target_os),
+        _ => declared_toolchain_fulfillment_contract(name, toolchain)
+            .map(|provider| provider.fulfillment_commands(toolchain, target_os))
+            .unwrap_or_default(),
+    }
 }
 
 pub(crate) fn declared_toolchain_requirement_clause(
@@ -780,7 +836,7 @@ pub(crate) fn declared_toolchain_requirement_clause(
     let parts = declared_toolchain_requirement_clause_parts(name, toolchain, target_os, None);
     format!(
         "check toolchain `{name}` via `{}` ({})",
-        declared_toolchain_provider_label(name, toolchain),
+        declared_toolchain_source_label(name, toolchain),
         parts.join(", ")
     )
 }
@@ -799,7 +855,7 @@ pub(crate) fn declared_toolchain_requirement_clause_for_required_tools(
     );
     format!(
         "check toolchain `{name}` via `{}` ({})",
-        declared_toolchain_provider_label(name, toolchain),
+        declared_toolchain_source_label(name, toolchain),
         parts.join(", ")
     )
 }
@@ -852,11 +908,11 @@ pub(crate) fn declared_toolchain_fulfillment_attempt_summary(
     toolchain: &ToolchainSpec,
     target_os: &str,
 ) -> ToolchainFulfillmentAttemptSummary {
-    let provider_label = declared_toolchain_provider_label(name, toolchain).to_string();
+    let provider_label = declared_toolchain_source_label(name, toolchain).to_string();
     ToolchainFulfillmentAttemptSummary {
         requirement_clause: declared_toolchain_requirement_clause(name, toolchain, target_os),
         allowance_clause: format!(
-            "`toolchains.{name}.fulfillment: run` allowed ota to attempt run-path provisioning via `{provider_label}`"
+            "`toolchains.{name}.fulfillment.mode: run` allowed ota to attempt run-path provisioning via `{provider_label}`"
         ),
         provider_label,
     }
@@ -897,7 +953,7 @@ pub(crate) fn fallback_toolchain_fulfillment_attempt_summary(
             "check toolchain `{toolchain_name}` via `{UNKNOWN_TOOLCHAIN_PROVIDER_LABEL}`"
         ),
         allowance_clause: format!(
-            "`toolchains.{toolchain_name}.fulfillment: run` allowed ota to attempt run-path provisioning via `{UNKNOWN_TOOLCHAIN_PROVIDER_LABEL}`"
+            "`toolchains.{toolchain_name}.fulfillment.mode: run` allowed ota to attempt run-path provisioning via `{UNKNOWN_TOOLCHAIN_PROVIDER_LABEL}`"
         ),
     }
 }
@@ -1504,6 +1560,32 @@ fn dotnet_fulfillment_commands(
     _target_os: &str,
 ) -> Vec<ToolchainCommandSpec> {
     Vec::new()
+}
+
+fn mise_fulfillment_commands(
+    name: &str,
+    toolchain: &ToolchainSpec,
+    target_os: &str,
+) -> Vec<ToolchainCommandSpec> {
+    let mut commands = vec![ToolchainCommandSpec {
+        program: "mise",
+        args: vec![
+            String::from("install"),
+            format!("{name}@{}", toolchain.version_for_os(target_os)),
+        ],
+    }];
+
+    commands.extend(
+        toolchain
+            .package_managers_for_os(target_os)
+            .into_iter()
+            .map(|(package_name, version)| ToolchainCommandSpec {
+                program: "mise",
+                args: vec![String::from("install"), format!("{package_name}@{version}")],
+            }),
+    );
+
+    commands
 }
 
 fn rustup_owned_runtime_remediation_command(
@@ -2688,9 +2770,40 @@ toolchains:
         );
         assert!(
             summary.allowance_clause.contains(
-                "`toolchains.rust.fulfillment: run` allowed ota to attempt run-path provisioning via `rustup`"
+                "`toolchains.rust.fulfillment.mode: run` allowed ota to attempt run-path provisioning via `rustup`"
             ),
             "{summary:?}"
+        );
+    }
+
+    #[test]
+    fn declared_toolchain_fulfillment_commands_support_mise_source() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+    fulfillment:
+      source: mise
+      mode: run
+"#,
+        );
+        let toolchain = contract.toolchains.get("node").unwrap();
+        let commands = declared_toolchain_fulfillment_commands("node", toolchain, "linux");
+
+        assert_eq!(commands[0].program, "mise");
+        assert_eq!(
+            commands[0].args,
+            vec![String::from("install"), String::from("node@24.15.0")]
+        );
+        assert_eq!(
+            commands[1].args,
+            vec![String::from("install"), String::from("pnpm@10.33.4")]
         );
     }
 

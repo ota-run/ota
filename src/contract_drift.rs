@@ -262,7 +262,7 @@ pub(crate) fn collect_detect_changes(
             existing,
             &inference_index,
             &format!("toolchains.{name}.provider"),
-            existing_toolchain.map(|value| toolchain_provider_name(value.provider)),
+            existing_toolchain.and_then(|value| value.provider.map(toolchain_provider_name)),
             Some(provider),
         );
         push_detect_change(
@@ -288,14 +288,14 @@ pub(crate) fn collect_detect_changes(
                 Some(version.as_str()),
             );
         }
-        if let Some(fulfillment) = toolchain.fulfillment {
+        if let Some(fulfillment) = toolchain.fulfillment.as_ref().map(|value| value.mode) {
             push_detect_change(
                 &mut changes,
                 existing,
                 &inference_index,
                 &format!("toolchains.{name}.fulfillment"),
                 existing_toolchain
-                    .and_then(|value| value.fulfillment)
+                    .map(|value| value.fulfillment_mode())
                     .map(toolchain_fulfillment_name),
                 Some(toolchain_fulfillment_name(fulfillment)),
             );
@@ -507,12 +507,14 @@ pub(crate) fn collect_detect_removals(
         }
         let detected_toolchain = detected.toolchains.get(name);
         if detected_toolchain.is_none() {
-            push_detect_removal(
-                &mut removals,
-                existing,
-                format!("toolchains.{name}.provider"),
-                toolchain_provider_name(toolchain.provider).to_string(),
-            );
+            if let Some(provider) = toolchain.provider {
+                push_detect_removal(
+                    &mut removals,
+                    existing,
+                    format!("toolchains.{name}.provider"),
+                    toolchain_provider_name(provider).to_string(),
+                );
+            }
             push_detect_removal(
                 &mut removals,
                 existing,
@@ -532,7 +534,8 @@ pub(crate) fn collect_detect_removals(
                 );
             }
         }
-        if let Some(fulfillment) = toolchain.fulfillment
+        let fulfillment = toolchain.fulfillment_mode();
+        if fulfillment != ToolchainFulfillmentMode::None
             && !detected_toolchain.is_some_and(|value| value.fulfillment.is_some())
         {
             push_detect_removal(

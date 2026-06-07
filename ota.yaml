@@ -50,9 +50,9 @@ env:
 tools:
 toolchains:
   rust:
-    provider: rustup
     version: "1.95.0"
-    fulfillment: run
+    fulfillment:
+      mode: run
 checks:
   - name: repository-readme
     kind: file
@@ -68,7 +68,7 @@ tasks:
       prepares the workspace without compiling the crate.
     category: setup
     internal: true
-    run: cargo fetch && rustup component add rustfmt
+    run: cargo fetch
     safe_for_agent: true
   build:
     description: Compile the CLI

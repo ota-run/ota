@@ -28,7 +28,6 @@ project:
   type: application
 toolchains:
   dotnet:
-    provider: dotnet
     version: "9.0"
 tasks:
   setup:

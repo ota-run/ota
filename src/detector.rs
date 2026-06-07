@@ -32,7 +32,7 @@ use toml::Value as TomlValue;
 
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, TaskActionSpec,
-    ToolchainFulfillmentMode, ToolchainProvider,
+    ToolchainFulfillmentMode, ToolchainFulfillmentSpec, ToolchainProvider,
 };
 use crate::toolchains::{
     COREPACK_TOOLCHAIN_NAME, DOTNET_TOOLCHAIN_NAME, GO_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME,
@@ -218,12 +218,13 @@ pub struct DetectContract {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectToolchainSpec {
+    #[serde(skip_serializing)]
     pub provider: ToolchainProvider,
     pub version: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub package_managers: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fulfillment: Option<ToolchainFulfillmentMode>,
+    pub fulfillment: Option<ToolchainFulfillmentSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -429,9 +430,15 @@ impl DetectReport {
                     }
                     "fulfillment" => {
                         toolchain.fulfillment = match inference.value.as_str() {
-                            "run" => Some(ToolchainFulfillmentMode::Run),
-                            "none" => Some(ToolchainFulfillmentMode::None),
-                            _ => toolchain.fulfillment,
+                            "run" => Some(ToolchainFulfillmentSpec {
+                                source: None,
+                                mode: ToolchainFulfillmentMode::Run,
+                            }),
+                            "none" => Some(ToolchainFulfillmentSpec {
+                                source: None,
+                                mode: ToolchainFulfillmentMode::None,
+                            }),
+                            _ => toolchain.fulfillment.clone(),
                         };
                     }
                     _ => {}
