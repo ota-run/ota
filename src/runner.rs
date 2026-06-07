@@ -78,9 +78,9 @@ use crate::schema::{
     task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
-use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_fulfillment_commands};
 #[cfg(test)]
 use crate::toolchains::declared_toolchain_contract;
+use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_fulfillment_commands};
 use crate::workspace::{load_contract_for_workspace_repo, load_contract_for_workspace_repo_ref};
 
 #[derive(Clone)]
@@ -4895,7 +4895,10 @@ fn format_readiness_target(target: &RuntimeReadinessTarget) -> String {
             address,
             port,
             request,
-        } => format!("remote:{} -> http://{address}:{port}{}", probe.target, request.path),
+        } => format!(
+            "remote:{} -> http://{address}:{port}{}",
+            probe.target, request.path
+        ),
     }
 }
 
@@ -4921,12 +4924,11 @@ fn readiness_probe_report_template(
         attempts_total: timing.retries,
         attempts_used: 0,
         attempts_remaining: timing.retries,
-        timeout_ms: timing.timeout.map(|timeout| timeout.as_millis().min(u64::MAX as u128) as u64),
+        timeout_ms: timing
+            .timeout
+            .map(|timeout| timeout.as_millis().min(u64::MAX as u128) as u64),
         interval_ms: timing.interval.as_millis().min(u64::MAX as u128) as u64,
-        start_period_ms: timing
-            .start_period
-            .as_millis()
-            .min(u64::MAX as u128) as u64,
+        start_period_ms: timing.start_period.as_millis().min(u64::MAX as u128) as u64,
         last_failure: None,
     }
 }
@@ -5925,26 +5927,26 @@ fn execute_native_container_launch_command(
             let interrupt_epoch = current_run_interrupt_epoch();
             let output_result =
                 run_streaming_command_with_capture_with_loader_hook_and_timeout_options(
-                &mut start,
-                &running_loader_label_for_backend(task_name, Backend::Native),
-                true,
-                capture_output,
-                live_log.as_ref(),
-                |notifier| {
-                    start_runtime_readiness_probe(
-                        contract,
-                        Some(runtime),
-                        resolved_runtime.as_ref(),
-                        true,
-                        notifier,
-                        interrupt_epoch,
-                    )
-                },
-                Some(|child: &mut Child| {
-                    let _ = remove_persistent_container(engine, &container_name, task_name);
-                    let _ = child.kill();
-                }),
-            );
+                    &mut start,
+                    &running_loader_label_for_backend(task_name, Backend::Native),
+                    true,
+                    capture_output,
+                    live_log.as_ref(),
+                    |notifier| {
+                        start_runtime_readiness_probe(
+                            contract,
+                            Some(runtime),
+                            resolved_runtime.as_ref(),
+                            true,
+                            notifier,
+                            interrupt_epoch,
+                        )
+                    },
+                    Some(|child: &mut Child| {
+                        let _ = remove_persistent_container(engine, &container_name, task_name);
+                        let _ = child.kill();
+                    }),
+                );
             let (output, readiness_probe) = match output_result {
                 Ok(output) => output,
                 Err(source) => {
@@ -6419,14 +6421,14 @@ fn execute_task_with_hooks(
         Some(crate::schema::TaskLaunchSpec::Container(_)) => None,
         None => execution.shell_body().map(str::to_string),
     };
-    let orchestrator_execution = task
-        .orchestrator_for_backend(backend_kind)
-        .and_then(|selection| {
-            contract
-                .orchestrators
-                .get(selection.ref_name.as_str())
-                .map(|spec| (selection, spec))
-        });
+    let orchestrator_execution =
+        task.orchestrator_for_backend(backend_kind)
+            .and_then(|selection| {
+                contract
+                    .orchestrators
+                    .get(selection.ref_name.as_str())
+                    .map(|spec| (selection, spec))
+            });
     if let Some(command) = shell_command.as_mut()
         && orchestrator_execution.is_none()
         && !backend_fulfillment_preparation
@@ -8438,7 +8440,9 @@ fn maybe_prepare_task_orchestrator_on_run_path(
     let Some(orchestrator_selection) = task.orchestrator_for_backend(backend_kind) else {
         return Ok(());
     };
-    let Some(orchestrator) = contract.orchestrators.get(orchestrator_selection.ref_name.as_str())
+    let Some(orchestrator) = contract
+        .orchestrators
+        .get(orchestrator_selection.ref_name.as_str())
     else {
         return Ok(());
     };
@@ -11630,10 +11634,7 @@ fn target_probe_endpoint_result_with_timeout(
         match TcpStream::connect_timeout(&socket, effective_timeout) {
             Ok(_) => return Ok(()),
             Err(error) => {
-                last_error = Some(format!(
-                    "{} ({socket})",
-                    normalize_probe_io_error(&error)
-                ));
+                last_error = Some(format!("{} ({socket})", normalize_probe_io_error(&error)));
             }
         }
     }
@@ -15961,8 +15962,10 @@ fn execute_native_task_command(
                     readiness_probe.as_ref(),
                     |child| {
                         let _ = child.kill();
-                        let _ =
-                            cleanup_interrupted_native_service_workload_and_note(task_name, runtime_spec);
+                        let _ = cleanup_interrupted_native_service_workload_and_note(
+                            task_name,
+                            runtime_spec,
+                        );
                     },
                 )
                 .map_err(|source| RunError::SpawnFailed {
@@ -16067,8 +16070,10 @@ fn execute_native_task_command(
                     readiness_probe.as_ref(),
                     |child| {
                         let _ = child.kill();
-                        let _ =
-                            cleanup_interrupted_native_service_workload_and_note(task_name, runtime_spec);
+                        let _ = cleanup_interrupted_native_service_workload_and_note(
+                            task_name,
+                            runtime_spec,
+                        );
                     },
                 )
                 .map_err(|source| RunError::SpawnFailed {
@@ -17911,7 +17916,9 @@ fn response_matches_http_readiness(
         return Err(String::from("invalid HTTP status line"));
     };
     if !request.success_statuses.contains(&status_code) {
-        return Err(format!("HTTP status `{status_code}` did not satisfy readiness"));
+        return Err(format!(
+            "HTTP status `{status_code}` did not satisfy readiness"
+        ));
     }
     if let Some(contains) = request.body_contains.as_deref() {
         let body = response
@@ -18166,9 +18173,7 @@ fn start_runtime_readiness_probe(
                         if let Some(retries) = timing.retries
                             && failed_probes >= retries
                         {
-                            thread_state
-                                .budget_exhausted
-                                .store(true, Ordering::Relaxed);
+                            thread_state.budget_exhausted.store(true, Ordering::Relaxed);
                             break;
                         }
                         next_probe_at = Instant::now() + timing.interval;
@@ -18577,26 +18582,26 @@ fn execute_ephemeral_container_task_command(
             let mut container = ephemeral_container_stream_command(engine, &container_name);
             let output_result =
                 run_streaming_command_with_capture_with_loader_hook_and_timeout_options(
-                &mut container,
-                &running_loader_label_for_backend(task_name, Backend::Container),
-                true,
-                capture_output,
-                live_log.as_ref(),
-                |notifier| {
-                    start_runtime_readiness_probe(
-                        contract,
-                        runtime,
-                        prepared_runtime.as_ref(),
-                        true,
-                        notifier,
-                        interrupt_epoch,
-                    )
-                },
-                Some(|child: &mut Child| {
-                    let _ = remove_persistent_container(engine, &container_name, task_name);
-                    let _ = child.kill();
-                }),
-            );
+                    &mut container,
+                    &running_loader_label_for_backend(task_name, Backend::Container),
+                    true,
+                    capture_output,
+                    live_log.as_ref(),
+                    |notifier| {
+                        start_runtime_readiness_probe(
+                            contract,
+                            runtime,
+                            prepared_runtime.as_ref(),
+                            true,
+                            notifier,
+                            interrupt_epoch,
+                        )
+                    },
+                    Some(|child: &mut Child| {
+                        let _ = remove_persistent_container(engine, &container_name, task_name);
+                        let _ = child.kill();
+                    }),
+                );
             let (output, readiness_probe) = match output_result {
                 Ok(output) => output,
                 Err(source) => {
@@ -18633,10 +18638,10 @@ fn execute_ephemeral_container_task_command(
                 || output.exit_code == 0
                 || interrupted_by_user
             {
-                    service_termination
-                } else {
-                    None
-                };
+                service_termination
+            } else {
+                None
+            };
             let mut exit_code = output.exit_code;
             if service_termination.is_some() && exit_code == 0 {
                 exit_code = 1;
@@ -18750,10 +18755,10 @@ fn execute_ephemeral_container_task_command(
                 || output_exit_code == 0
                 || interrupted_by_user
             {
-                    service_termination
-                } else {
-                    None
-                };
+                service_termination
+            } else {
+                None
+            };
             let mut exit_code = output_exit_code;
             if service_termination.is_some() && exit_code == 0 {
                 exit_code = 1;
@@ -21629,9 +21634,10 @@ fn exec_persistent_container_task_command(
         } => {
             if capture_output {
                 let interrupt_epoch = current_run_interrupt_epoch();
-                let loader = StreamPhaseLoader::start_immediate(
-                    &running_loader_label_for_backend(task_name, Backend::Container),
-                );
+                let loader = StreamPhaseLoader::start_immediate(&running_loader_label_for_backend(
+                    task_name,
+                    Backend::Container,
+                ));
                 let notifier = loader.as_ref().map(|loader| loader.notifier());
                 let mut child = container
                     .stdin(Stdio::inherit())
@@ -21645,14 +21651,26 @@ fn exec_persistent_container_task_command(
                 let stdout_log = live_log.as_ref().map(|tee| tee.stdout.clone());
                 let stdout_handle = child.stdout.take().map(|stdout| {
                     thread::spawn(move || {
-                        stream_reader_to_sink(stdout, io::stdout(), notifier.clone(), true, stdout_log)
+                        stream_reader_to_sink(
+                            stdout,
+                            io::stdout(),
+                            notifier.clone(),
+                            true,
+                            stdout_log,
+                        )
                     })
                 });
                 let stderr_log = live_log.as_ref().map(|tee| tee.stderr.clone());
                 let stderr_handle = child.stderr.take().map(|stderr| {
                     let stderr_notifier = loader.as_ref().map(|loader| loader.notifier());
                     thread::spawn(move || {
-                        stream_reader_to_sink(stderr, io::stderr(), stderr_notifier, true, stderr_log)
+                        stream_reader_to_sink(
+                            stderr,
+                            io::stderr(),
+                            stderr_notifier,
+                            true,
+                            stderr_log,
+                        )
                     })
                 });
                 let status = wait_for_child_with_runtime_readiness_budget(
@@ -35622,16 +35640,20 @@ tasks:
             body_contains: Some(String::from("\"status\":\"UP\"")),
         };
 
-        assert!(super::response_matches_http_readiness(
-            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"UP\"}",
-            &request,
-        )
-        .is_ok());
-        assert!(super::response_matches_http_readiness(
-            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"DOWN\"}",
-            &request,
-        )
-        .is_err());
+        assert!(
+            super::response_matches_http_readiness(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"UP\"}",
+                &request,
+            )
+            .is_ok()
+        );
+        assert!(
+            super::response_matches_http_readiness(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"DOWN\"}",
+                &request,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -35644,16 +35666,17 @@ tasks:
             body_contains: None,
         };
 
-        assert!(super::response_matches_http_readiness(
-            b"HTTP/1.1 204 No Content\r\n\r\n",
-            &request,
-        )
-        .is_ok());
-        assert!(super::response_matches_http_readiness(
-            b"HTTP/1.1 503 Service Unavailable\r\n\r\n",
-            &request,
-        )
-        .is_err());
+        assert!(
+            super::response_matches_http_readiness(b"HTTP/1.1 204 No Content\r\n\r\n", &request,)
+                .is_ok()
+        );
+        assert!(
+            super::response_matches_http_readiness(
+                b"HTTP/1.1 503 Service Unavailable\r\n\r\n",
+                &request,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -46759,11 +46782,8 @@ tasks:
         let backend = ResolvedExecutionBackend::Native {
             shared_local_backend: None,
         };
-        let wrapped = super::wrap_mise_exec_argv_command(
-            &backend,
-            "pnpm",
-            &[String::from("--version")],
-        );
+        let wrapped =
+            super::wrap_mise_exec_argv_command(&backend, "pnpm", &[String::from("--version")]);
 
         assert!(wrapped.contains("mise"), "{wrapped}");
         assert!(wrapped.contains(" exec -- "), "{wrapped}");
@@ -48348,7 +48368,11 @@ tasks:
 
         let log = fs::read_to_string(&log_path).unwrap();
         let lines = log.lines().collect::<Vec<_>>();
-        assert_eq!(lines, vec!["enable", "prepare pnpm@10.24.0 --activate"], "{log}");
+        assert_eq!(
+            lines,
+            vec!["enable", "prepare pnpm@10.24.0 --activate"],
+            "{log}"
+        );
     }
 
     #[test]

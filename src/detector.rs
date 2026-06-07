@@ -218,7 +218,6 @@ pub struct DetectContract {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectToolchainSpec {
-    #[serde(skip_serializing)]
     pub provider: ToolchainProvider,
     pub version: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

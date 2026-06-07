@@ -31,8 +31,7 @@ use crate::schema::{
     ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainProvider, ToolchainSpec,
 };
 
-pub(crate) const SHARED_TOOLCHAIN_CORE_SUMMARY: &str =
-    "`version`, `fulfillment`, `required`, `only_on`, and `platforms.<os>.version` (legacy `provider` is still accepted for compatibility)";
+pub(crate) const SHARED_TOOLCHAIN_CORE_SUMMARY: &str = "`version`, `fulfillment`, `required`, `only_on`, and `platforms.<os>.version` (legacy `provider` is still accepted for compatibility)";
 pub(crate) const UNKNOWN_TOOLCHAIN_PROVIDER_LABEL: &str = "toolchain provider";
 pub(crate) const RUSTUP_TOOLCHAIN_NAME: &str = "rust";
 pub(crate) const COREPACK_TOOLCHAIN_NAME: &str = "node";
@@ -821,7 +820,9 @@ pub(crate) fn declared_toolchain_fulfillment_commands(
     target_os: &str,
 ) -> Vec<ToolchainCommandSpec> {
     match toolchain.fulfillment_source() {
-        Some(ToolchainFulfillmentSource::Mise) => mise_fulfillment_commands(name, toolchain, target_os),
+        Some(ToolchainFulfillmentSource::Mise) => {
+            mise_fulfillment_commands(name, toolchain, target_os)
+        }
         _ => declared_toolchain_fulfillment_contract(name, toolchain)
             .map(|provider| provider.fulfillment_commands(toolchain, target_os))
             .unwrap_or_default(),
