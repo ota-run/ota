@@ -77,11 +77,12 @@ use crate::schema::{
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{
     ToolchainManagedSurfaceKind, ToolchainOpportunityContext, declared_toolchain_contract,
-    declared_toolchain_source_label, toolchain_fulfillment_source_label,
+    declared_toolchain_source_label,
     requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
     requirement_surface_with_toolchain_owned_tools_for_required_tools,
-    shipped_toolchain_contract_by_label, tool_versions_entry, toolchain_repo_signals,
-    unsupported_toolchain_opportunity_context, unsupported_toolchain_opportunity_ecosystems,
+    shipped_toolchain_contract_by_label, tool_versions_entry, toolchain_fulfillment_source_label,
+    toolchain_repo_signals, unsupported_toolchain_opportunity_context,
+    unsupported_toolchain_opportunity_ecosystems,
 };
 use crate::validator::{
     ContractAdvisory, TaskExecutionBoundary, collect_contract_advisories_with_contract_path,
@@ -5557,13 +5558,12 @@ fn diagnose_tools(
         }
         let required = requirement.required_for_os(target_os);
         let executable_candidates = vec![tool_executable_name(name).to_string()];
-        let run_path_fulfillment_source =
-            selected_toolchain_run_fulfillment_source_for_tool(
-                contract,
-                selected_toolchains,
-                target_os,
-                name,
-            );
+        let run_path_fulfillment_source = selected_toolchain_run_fulfillment_source_for_tool(
+            contract,
+            selected_toolchains,
+            target_os,
+            name,
+        );
 
         container_probe_started |= diagnose_command_version(
             "tool",
@@ -5645,7 +5645,7 @@ fn diagnose_toolchains(
         let run_path_fulfillment_source = (toolchain.fulfillment_mode()
             == crate::schema::ToolchainFulfillmentMode::Run
             && toolchain.fulfillment_source() == Some(ToolchainFulfillmentSource::Mise))
-            .then_some(ToolchainFulfillmentSource::Mise);
+        .then_some(ToolchainFulfillmentSource::Mise);
 
         probe_started |= diagnose_command_version(
             "runtime",
@@ -7352,8 +7352,7 @@ fn diagnose_command_version(
             return probe_started;
         }
 
-        if run_path_fulfillment_allowed
-            && provider_hint.is_some_and(|provider| provider == "mise")
+        if run_path_fulfillment_allowed && provider_hint.is_some_and(|provider| provider == "mise")
         {
             probe_started |= diagnose_command_version(
                 "tool",
@@ -7749,9 +7748,8 @@ fn diagnose_command_version(
     }
 
     if run_path_fulfillment_allowed
-        && tool_acquisition.is_some_and(|acquisition| {
-            acquisition.provider == ToolAcquisitionProvider::Corepack
-        })
+        && tool_acquisition
+            .is_some_and(|acquisition| acquisition.provider == ToolAcquisitionProvider::Corepack)
     {
         let finding_count = findings.len();
         probe_started |= diagnose_command_version(

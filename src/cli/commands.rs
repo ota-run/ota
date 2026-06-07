@@ -160,9 +160,8 @@ use crate::schema::{
 };
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
-    declared_toolchain_source_label,
     declared_toolchain_fulfillment_attempt_summary,
-    declared_toolchain_preview_action_for_required_tools,
+    declared_toolchain_preview_action_for_required_tools, declared_toolchain_source_label,
     fallback_toolchain_fulfillment_attempt_summary,
     requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
     requirement_surface_with_toolchain_owned_tools_for_required_tools,
@@ -58133,7 +58132,10 @@ tasks:
             "{rendered}"
         );
         assert!(rendered.contains("attempts: 1/1"), "{rendered}");
-        assert!(rendered.contains("last failure: connection refused"), "{rendered}");
+        assert!(
+            rendered.contains("last failure: connection refused"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -66817,7 +66819,9 @@ fn append_readiness_report_why_lines(
     };
     if readiness.attempts_used > 0 {
         match readiness.attempts_total {
-            Some(total) => why_lines.push(format!("attempts: {}/{}", readiness.attempts_used, total)),
+            Some(total) => {
+                why_lines.push(format!("attempts: {}/{}", readiness.attempts_used, total))
+            }
             None => why_lines.push(format!("attempts: {}", readiness.attempts_used)),
         }
     }
@@ -66893,9 +66897,9 @@ fn render_service_startup_failure_text(
             "{subject} was interrupted before readiness (exit code `{}`)",
             service_termination.exit_code.unwrap_or(130)
         ),
-        ServiceTerminationCause::ReadinessTimedOut => String::from(
-            "Ota stopped startup after the configured readiness budget was exhausted",
-        ),
+        ServiceTerminationCause::ReadinessTimedOut => {
+            String::from("Ota stopped startup after the configured readiness budget was exhausted")
+        }
         ServiceTerminationCause::ExitedNonZero => {
             if service_termination.exit_code == Some(137) {
                 format!(

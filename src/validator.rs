@@ -40,14 +40,13 @@ use crate::schema::{
     ServiceSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
     TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
     TaskTargetActivationMode, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
-    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec,
-    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
+    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec, parse_memory_size_bytes,
+    parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
     declared_toolchain_contract, fulfillment_source_legacy_provider,
-    known_provider_specific_field_owner_groups,
-    shipped_toolchain_contract_by_name, shipped_toolchain_contracts_summary,
-    toolchain_provider_label,
+    known_provider_specific_field_owner_groups, shipped_toolchain_contract_by_name,
+    shipped_toolchain_contracts_summary, toolchain_provider_label,
 };
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
