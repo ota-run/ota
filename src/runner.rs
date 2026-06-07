@@ -8557,7 +8557,7 @@ fn mise_command_prefix() -> String {
 #[cfg(windows)]
 fn mise_command_prefix() -> String {
     String::from(
-        r#"set "__OTA_MISE=mise" && if exist "%LOCALAPPDATA%\mise\bin\mise.exe" set "__OTA_MISE=%LOCALAPPDATA%\mise\bin\mise.exe" && if exist "%USERPROFILE%\.local\bin\mise.exe" set "__OTA_MISE=%USERPROFILE%\.local\bin\mise.exe" && "%__OTA_MISE%""#,
+        r#"cmd /C set "__OTA_MISE=mise" && if exist "%LOCALAPPDATA%\mise\bin\mise.exe" set "__OTA_MISE=%LOCALAPPDATA%\mise\bin\mise.exe" && if exist "%USERPROFILE%\.local\bin\mise.exe" set "__OTA_MISE=%USERPROFILE%\.local\bin\mise.exe" && "%__OTA_MISE%""#,
     )
 }
 
@@ -10149,7 +10149,7 @@ fn wrap_command_for_source_managed_actions(
     }
 
     let mut wrapped = String::from(
-        r#"set "__OTA_MISE=mise" && if exist "%LOCALAPPDATA%\mise\bin\mise.exe" set "__OTA_MISE=%LOCALAPPDATA%\mise\bin\mise.exe" && if exist "%USERPROFILE%\.local\bin\mise.exe" set "__OTA_MISE=%USERPROFILE%\.local\bin\mise.exe" && "%__OTA_MISE%" exec"#,
+        r#"cmd /C set "__OTA_MISE=mise" && if exist "%LOCALAPPDATA%\mise\bin\mise.exe" set "__OTA_MISE=%LOCALAPPDATA%\mise\bin\mise.exe" && if exist "%USERPROFILE%\.local\bin\mise.exe" set "__OTA_MISE=%USERPROFILE%\.local\bin\mise.exe" && "%__OTA_MISE%" exec"#,
     );
     for target in &mise_targets {
         wrapped.push(' ');
@@ -23694,6 +23694,12 @@ mod tests {
         let script = "env | grep FOO";
         assert!(looks_like_posix_script(script));
         assert!(!looks_like_powershell_script(script));
+    }
+
+    #[test]
+    fn windows_shell_detection_keeps_cmd_wrapped_mise_out_of_posix_path() {
+        let script = r#"cmd /C set "__OTA_MISE=mise" && if exist "%LOCALAPPDATA%\mise\bin\mise.exe" set "__OTA_MISE=%LOCALAPPDATA%\mise\bin\mise.exe" && "%__OTA_MISE%" run "//server:ci-unit""#;
+        assert!(!looks_like_posix_script(script));
     }
 
     #[test]
