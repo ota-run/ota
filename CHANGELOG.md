@@ -26,7 +26,6 @@
 
 ## Unreleased
 
-## 1.6.21
 
 - added a canonical orchestration model for repo-mediated execution: contracts can now declare
   top-level `orchestrators`, selected tasks can opt into `execution.orchestrator.ref` /
