@@ -58621,7 +58621,9 @@ tasks:
             "{rendered}"
         );
         assert!(
-            rendered.contains("`toolchains.rust.fulfillment: run` allowed ota to attempt run-path provisioning via `rustup`"),
+            rendered.contains(
+                "`toolchains.rust.fulfillment.mode: run` allowed ota to attempt run-path provisioning via `rustup`"
+            ),
             "{rendered}"
         );
         assert!(

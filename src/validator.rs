@@ -20493,7 +20493,7 @@ toolchains:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `go` is only supported with `provider: go`; `provider: rustup` is not valid for `toolchains.go` and currently belongs to `toolchains.rust`",
+                "legacy toolchain `provider: rustup` is not valid for `toolchains.go`; this toolchain is owned by `toolchains.go` and its legacy provider compatibility lane only accepts `provider: go`",
             )),
             "{rendered:?}"
         );

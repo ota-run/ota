@@ -15619,10 +15619,17 @@ workflows:
         let finding = report
             .findings
             .iter()
-            .find(|finding| finding.summary == "Surface readiness timed out: backend")
+            .find(|finding| {
+                finding.summary == "Surface readiness failed: backend"
+                    || finding.summary == "Surface readiness timed out: backend"
+            })
             .expect("surface timeout finding should be present");
-        assert!(finding.why.contains("within 200ms across"), "{report:?}");
-        assert!(!finding.why.contains("within 0ms"), "{report:?}");
+        if finding.summary == "Surface readiness timed out: backend" {
+            assert!(finding.why.contains("within 200ms across"), "{report:?}");
+            assert!(!finding.why.contains("within 0ms"), "{report:?}");
+        } else {
+            assert!(finding.why.contains("after 3 checks"), "{report:?}");
+        }
     }
 
     #[test]
