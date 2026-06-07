@@ -1319,6 +1319,8 @@ pub struct WorkspaceTaskSummary {
     pub launch: Option<WorkspaceTaskLaunchSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<WorkspaceTaskActionSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<WorkspaceTaskPrepareSummary>,
     #[serde(default, skip_serializing_if = "TaskEffectsSummary::is_empty")]
     pub effects: TaskEffectsSummary,
     pub depends_on: Vec<String>,
@@ -2916,6 +2918,8 @@ pub struct TaskSummary<'a> {
     pub launch: Option<TaskLaunchSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<TaskActionSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<TaskPrepareSummary<'a>>,
     #[serde(default, skip_serializing_if = "TaskEffectsSummary::is_empty")]
     pub effects: TaskEffectsSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3014,6 +3018,7 @@ impl<'a> TaskSummary<'a> {
                 .flatten(),
             launch: summarize_task_launch(resolved_execution.launch()),
             action: summarize_task_action(resolved_execution.action()),
+            prepare: summarize_task_prepare(resolved_execution.prepare()),
             effects: TaskEffectsSummary::from_spec(&task.effects),
             selected_variant_os: resolved_execution.os,
             depends_on: task.depends_on.clone(),
@@ -3071,6 +3076,7 @@ impl<'a> TaskSummary<'a> {
                                     .launch
                                     .as_ref()
                                     .and_then(|launch| summarize_task_launch(Some(launch))),
+                                prepare: summarize_task_prepare(branch.prepare.as_ref()),
                                 has_runtime: branch.runtime.is_some(),
                             }
                         })
@@ -3113,6 +3119,8 @@ pub struct TaskModeView<'a> {
     pub script: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch: Option<TaskLaunchSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<TaskPrepareSummary<'a>>,
     pub has_runtime: bool,
 }
 
@@ -3133,6 +3141,36 @@ pub struct TaskLaunchSummary<'a> {
     pub remove: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub volumes: Vec<TaskLaunchVolumeSummary<'a>>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TaskPrepareSummary<'a> {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub medium: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<&'a str>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct WorkspaceTaskPrepareSummary {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub medium: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -3286,6 +3324,60 @@ pub fn summarize_task_action_owned(
             from: None,
             to: None,
         }),
+    }
+}
+
+pub fn summarize_task_prepare(
+    prepare: Option<&crate::schema::TaskPrepareSpec>,
+) -> Option<TaskPrepareSummary<'_>> {
+    match prepare? {
+        crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
+            let (source_kind, cwd, file) = match &spec.source {
+                crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
+                    ("docker_compose", Some(source.cwd.as_str()), Some(source.file.as_str()))
+                }
+            };
+            Some(TaskPrepareSummary {
+                kind: "dependency_hydration",
+                medium: Some(match spec.medium {
+                    crate::schema::TaskDependencyHydrationMedium::ContainerImages => {
+                        "container_images"
+                    }
+                }),
+                source_kind: Some(source_kind),
+                cwd,
+                file,
+                targets: spec.targets.iter().map(String::as_str).collect(),
+            })
+        }
+    }
+}
+
+pub fn summarize_task_prepare_owned(
+    prepare: Option<&crate::schema::TaskPrepareSpec>,
+) -> Option<WorkspaceTaskPrepareSummary> {
+    match prepare? {
+        crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
+            let (source_kind, cwd, file) = match &spec.source {
+                crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
+                    "docker_compose",
+                    Some(source.cwd.clone()),
+                    Some(source.file.clone()),
+                ),
+            };
+            Some(WorkspaceTaskPrepareSummary {
+                kind: "dependency_hydration",
+                medium: Some(match spec.medium {
+                    crate::schema::TaskDependencyHydrationMedium::ContainerImages => {
+                        "container_images"
+                    }
+                }),
+                source_kind: Some(source_kind),
+                cwd,
+                file,
+                targets: spec.targets.clone(),
+            })
+        }
     }
 }
 

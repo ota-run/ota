@@ -105,8 +105,8 @@ use crate::output::{
     WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
     WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
     WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskLaunchSummary, WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary,
-    WorkspaceUpSuccess,
+    WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary, WorkspaceTaskSummary,
+    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -9323,6 +9323,7 @@ fn build_assist_add_task_proposal(
         targets: BTreeMap::new(),
         run: None,
         script: None,
+        prepare: None,
         launch: None,
         action: None,
         effects: crate::schema::TaskEffectsSpec::default(),
@@ -27078,6 +27079,9 @@ pub fn workspace_tasks(
                                 action: crate::output::summarize_task_action_owned(
                                     execution.action(),
                                 ),
+                                prepare: crate::output::summarize_task_prepare_owned(
+                                    execution.prepare(),
+                                ),
                                 effects: crate::output::TaskEffectsSummary::from_spec(
                                     &task.effects,
                                 ),
@@ -34252,6 +34256,13 @@ fn render_tasks_text(
                 render_task_launch_text(launch)
             ));
         }
+        if let Some(prepare) = task.prepare.as_ref() {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Prepare:"),
+                render_task_prepare_text(prepare)
+            ));
+        }
         if let Some(action) = task.action.as_ref() {
             output.push_str(&format!(
                 "\n  {} {}",
@@ -34400,6 +34411,7 @@ fn render_task_command_preview(task: &TaskSummary<'_>) -> String {
         })
         .or_else(|| task.launch.as_ref().map(render_task_launch_preview))
         .or_else(|| task.action.as_ref().map(render_task_action_text))
+        .or_else(|| task.prepare.as_ref().map(render_task_prepare_text))
         .unwrap_or_else(|| String::from("-"))
 }
 
@@ -34495,6 +34507,32 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
     }
 }
 
+fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> String {
+    match prepare.kind {
+        "dependency_hydration" => {
+            let medium = prepare.medium.unwrap_or("dependencies").replace('_', " ");
+            let source = match prepare.source_kind {
+                Some("docker_compose") => match (prepare.cwd, prepare.file) {
+                    (Some(cwd), Some(file)) => format!("docker compose `{cwd}/{file}`"),
+                    (None, Some(file)) => format!("docker compose `{file}`"),
+                    _ => String::from("docker compose"),
+                },
+                Some(other) => other.replace('_', " "),
+                None => String::from("declared source"),
+            };
+            if prepare.targets.is_empty() {
+                format!("hydrate {medium} from {source}")
+            } else {
+                format!(
+                    "hydrate {medium} from {source} for {}",
+                    prepare.targets.join(", ")
+                )
+            }
+        }
+        _ => String::from("-"),
+    }
+}
+
 fn render_workspace_task_launch_text(launch: &WorkspaceTaskLaunchSummary) -> String {
     match launch.kind {
         "command" => {
@@ -34517,6 +34555,32 @@ fn render_workspace_task_launch_text(launch: &WorkspaceTaskLaunchSummary) -> Str
                 parts.push(format!("volumes={}", launch.volumes.len()));
             }
             parts.join(" ")
+        }
+        _ => String::from("-"),
+    }
+}
+
+fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> String {
+    match prepare.kind {
+        "dependency_hydration" => {
+            let medium = prepare.medium.unwrap_or("dependencies").replace('_', " ");
+            let source = match prepare.source_kind {
+                Some("docker_compose") => match (prepare.cwd.as_deref(), prepare.file.as_deref()) {
+                    (Some(cwd), Some(file)) => format!("docker compose `{cwd}/{file}`"),
+                    (None, Some(file)) => format!("docker compose `{file}`"),
+                    _ => String::from("docker compose"),
+                },
+                Some(other) => other.replace('_', " "),
+                None => String::from("declared source"),
+            };
+            if prepare.targets.is_empty() {
+                format!("hydrate {medium} from {source}")
+            } else {
+                format!(
+                    "hydrate {medium} from {source} for {}",
+                    prepare.targets.join(", ")
+                )
+            }
         }
         _ => String::from("-"),
     }
@@ -34585,6 +34649,13 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
                 "\n  {} {}",
                 paint_key("Launch:"),
                 render_task_launch_text(launch)
+            ));
+        }
+        if let Some(prepare) = task.prepare.as_ref() {
+            output.push_str(&format!(
+                "\n  {} {}",
+                paint_key("Prepare:"),
+                render_task_prepare_text(prepare)
             ));
         }
         output.push_str(&format!(
@@ -43568,6 +43639,7 @@ tasks:
             script: Some("./scripts/api/run-api-tests.sh"),
             launch: None,
             action: None,
+            prepare: None,
             effects: crate::output::TaskEffectsSummary::default(),
             selected_variant_os: None,
             depends_on: Vec::new(),
@@ -43637,6 +43709,7 @@ tasks:
             script: Some("./scripts/api/run-api-tests.sh"),
             launch: None,
             action: None,
+            prepare: None,
             effects: crate::output::TaskEffectsSummary::default(),
             selected_variant_os: None,
             depends_on: Vec::new(),
@@ -43710,6 +43783,7 @@ tasks:
             script: None,
             launch: None,
             action: None,
+            prepare: None,
             effects: crate::output::TaskEffectsSummary::default(),
             selected_variant_os: None,
             depends_on: Vec::new(),
@@ -43782,6 +43856,7 @@ tasks:
             script: Some("pnpm install"),
             launch: None,
             action: None,
+            prepare: None,
             effects: crate::output::TaskEffectsSummary {
                 writes: vec![String::from("node_modules")],
                 network: true,
@@ -44125,6 +44200,7 @@ workflows:
                     volumes: Vec::new(),
                 }),
                 action: None,
+                prepare: None,
                 effects: crate::output::TaskEffectsSummary::default(),
                 selected_variant_os: None,
                 depends_on: Vec::new(),
@@ -44204,6 +44280,7 @@ workflows:
                         volumes: Vec::new(),
                     }),
                     action: None,
+                    prepare: None,
                     effects: crate::output::TaskEffectsSummary {
                         writes: vec![String::from("node_modules")],
                         network: true,
@@ -73298,6 +73375,13 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                     "\n  {} {}",
                     paint_key("Launch:"),
                     render_workspace_task_launch_text(launch)
+                ));
+            }
+            if let Some(prepare) = task.prepare.as_ref() {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Prepare:"),
+                    render_workspace_task_prepare_text(prepare)
                 ));
             }
         }

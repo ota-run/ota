@@ -3193,6 +3193,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub script: Option<String>,
     #[serde(default)]
+    pub prepare: Option<TaskPrepareSpec>,
+    #[serde(default)]
     pub launch: Option<TaskLaunchSpec>,
     #[serde(default)]
     pub action: Option<TaskActionSpec>,
@@ -3229,13 +3231,15 @@ impl TaskSpec {
         match (
             self.run.as_ref(),
             self.script.as_ref(),
+            self.prepare.as_ref(),
             self.launch.as_ref(),
             self.action.as_ref(),
         ) {
-            (Some(_), None, None, None) => Some("run"),
-            (None, Some(_), None, None) => Some("script"),
-            (None, None, Some(launch), None) => Some(launch.kind_str()),
-            (None, None, None, Some(action)) => Some(action.kind_str()),
+            (Some(_), None, None, None, None) => Some("run"),
+            (None, Some(_), None, None, None) => Some("script"),
+            (None, None, Some(prepare), None, None) => Some(prepare.kind_str()),
+            (None, None, None, Some(launch), None) => Some(launch.kind_str()),
+            (None, None, None, None, Some(action)) => Some(action.kind_str()),
             _ => None,
         }
     }
@@ -3244,11 +3248,12 @@ impl TaskSpec {
         match (
             self.run.as_deref(),
             self.script.as_deref(),
+            self.prepare.as_ref(),
             self.launch.as_ref(),
             self.action.as_ref(),
         ) {
-            (Some(run), None, None, None) => Some(run),
-            (None, Some(script), None, None) => Some(script),
+            (Some(run), None, None, None, None) => Some(run),
+            (None, Some(script), None, None, None) => Some(script),
             _ => None,
         }
     }
@@ -3264,6 +3269,7 @@ impl TaskSpec {
                     body: self.default_execution_body(),
                     launch: self.launch.as_ref(),
                     action: self.action.as_ref(),
+                    prepare: self.prepare.as_ref(),
                     os: None,
                 })
             })
@@ -3918,6 +3924,8 @@ pub struct TaskModeBranchSpec {
     #[serde(default)]
     pub script: Option<String>,
     #[serde(default)]
+    pub prepare: Option<TaskPrepareSpec>,
+    #[serde(default)]
     pub launch: Option<TaskLaunchSpec>,
     #[serde(default)]
     pub runtime: Option<TaskRuntimeSpec>,
@@ -3928,11 +3936,13 @@ impl TaskModeBranchSpec {
         match (
             self.run.as_ref(),
             self.script.as_ref(),
+            self.prepare.as_ref(),
             self.launch.as_ref(),
         ) {
-            (Some(_), None, None) => Some("run"),
-            (None, Some(_), None) => Some("script"),
-            (None, None, Some(launch)) => Some(launch.kind_str()),
+            (Some(_), None, None, None) => Some("run"),
+            (None, Some(_), None, None) => Some("script"),
+            (None, None, Some(prepare), None) => Some(prepare.kind_str()),
+            (None, None, None, Some(launch)) => Some(launch.kind_str()),
             _ => None,
         }
     }
@@ -3941,10 +3951,11 @@ impl TaskModeBranchSpec {
         match (
             self.run.as_deref(),
             self.script.as_deref(),
+            self.prepare.as_ref(),
             self.launch.as_ref(),
         ) {
-            (Some(run), None, None) => Some(run),
-            (None, Some(script), None) => Some(script),
+            (Some(run), None, None, None) => Some(run),
+            (None, Some(script), None, None) => Some(script),
             _ => None,
         }
     }
@@ -3955,6 +3966,7 @@ impl TaskModeBranchSpec {
             body: self.execution_body(),
             launch: self.launch.as_ref(),
             action: None,
+            prepare: self.prepare.as_ref(),
             os: None,
         })
     }
@@ -4096,6 +4108,84 @@ impl TaskActionSpec {
                     action.steps.len()
                 )
             }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskPrepareSpec {
+    DependencyHydration(TaskDependencyHydrationPrepareSpec),
+}
+
+impl TaskPrepareSpec {
+    pub const fn kind_str(&self) -> &'static str {
+        match self {
+            Self::DependencyHydration(_) => "dependency_hydration",
+        }
+    }
+
+    pub fn preview(&self) -> String {
+        match self {
+            Self::DependencyHydration(spec) => {
+                let targets = spec.targets.join(", ");
+                match &spec.source {
+                    TaskDependencyHydrationSourceSpec::DockerCompose(source) => format!(
+                        "hydrate {} from docker compose `{}` for {}",
+                        spec.medium.label(),
+                        source.display_path(),
+                        targets
+                    ),
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDependencyHydrationPrepareSpec {
+    pub medium: TaskDependencyHydrationMedium,
+    pub source: TaskDependencyHydrationSourceSpec,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub targets: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskDependencyHydrationMedium {
+    ContainerImages,
+}
+
+impl TaskDependencyHydrationMedium {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ContainerImages => "container images",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskDependencyHydrationSourceSpec {
+    DockerCompose(TaskDockerComposeHydrationSourceSpec),
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDockerComposeHydrationSourceSpec {
+    pub cwd: String,
+    pub file: String,
+}
+
+impl TaskDockerComposeHydrationSourceSpec {
+    pub fn display_path(&self) -> String {
+        let cwd = self.cwd.trim().trim_end_matches('/');
+        let file = self.file.trim().trim_start_matches("./");
+        if cwd.is_empty() || cwd == "." {
+            file.to_string()
+        } else {
+            format!("{cwd}/{file}")
         }
     }
 }
@@ -4722,6 +4812,7 @@ impl TaskVariantSpec {
             body: self.execution_body(),
             launch: None,
             action: None,
+            prepare: None,
             os: self.when.os.as_deref(),
         })
     }
@@ -4757,6 +4848,7 @@ pub struct TaskExecution<'a> {
     pub body: Option<&'a str>,
     pub launch: Option<&'a TaskLaunchSpec>,
     pub action: Option<&'a TaskActionSpec>,
+    pub prepare: Option<&'a TaskPrepareSpec>,
     pub os: Option<&'a str>,
 }
 
@@ -4773,11 +4865,16 @@ impl<'a> TaskExecution<'a> {
         self.action
     }
 
+    pub fn prepare(&self) -> Option<&'a TaskPrepareSpec> {
+        self.prepare
+    }
+
     pub fn preview(&self) -> String {
         self.body
             .map(ToOwned::to_owned)
             .or_else(|| self.launch.map(TaskLaunchSpec::preview))
             .or_else(|| self.action.map(TaskActionSpec::preview))
+            .or_else(|| self.prepare.map(TaskPrepareSpec::preview))
             .unwrap_or_else(|| String::from("-"))
     }
 }
