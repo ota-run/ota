@@ -129,15 +129,34 @@ tasks:
     safe_for_agent: true
   setup:container:
     context: app
-    description: Install project dependencies in the container context
+    description: Generate Prisma client after dependency hydration in the container context
     category: setup
-    script: |
-      pnpm install
-      pnpm exec prisma generate
+    run: pnpm exec prisma generate
+    depends_on:
+      - setup:container:deps
+    effects:
+      writes:
+        - node_modules
+    requirements:
+      toolchains:
+        - node
+  setup:container:deps:
+    context: app
+    description: Hydrate project dependencies in the container context
+    category: setup
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
     effects:
       writes:
         - node_modules
       network: true
+      network_kind: dependency_hydration
     requirements:
       toolchains:
         - node

@@ -34510,24 +34510,16 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
 fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> String {
     match prepare.kind {
         "dependency_hydration" => {
-            let medium = prepare.medium.unwrap_or("dependencies").replace('_', " ");
-            let source = match prepare.source_kind {
-                Some("docker_compose") => match (prepare.cwd, prepare.file) {
-                    (Some(cwd), Some(file)) => format!("docker compose `{cwd}/{file}`"),
-                    (None, Some(file)) => format!("docker compose `{file}`"),
-                    _ => String::from("docker compose"),
-                },
-                Some(other) => other.replace('_', " "),
-                None => String::from("declared source"),
-            };
-            if prepare.targets.is_empty() {
-                format!("hydrate {medium} from {source}")
-            } else {
-                format!(
-                    "hydrate {medium} from {source} for {}",
-                    prepare.targets.join(", ")
-                )
-            }
+            render_dependency_hydration_prepare_text(
+                prepare.medium,
+                prepare.source_kind,
+                prepare.cwd,
+                prepare.file,
+                prepare.manager,
+                prepare.mode,
+                prepare.frozen_lockfile,
+                &prepare.targets,
+            )
         }
         _ => String::from("-"),
     }
@@ -34563,26 +34555,64 @@ fn render_workspace_task_launch_text(launch: &WorkspaceTaskLaunchSummary) -> Str
 fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> String {
     match prepare.kind {
         "dependency_hydration" => {
-            let medium = prepare.medium.unwrap_or("dependencies").replace('_', " ");
-            let source = match prepare.source_kind {
-                Some("docker_compose") => match (prepare.cwd.as_deref(), prepare.file.as_deref()) {
-                    (Some(cwd), Some(file)) => format!("docker compose `{cwd}/{file}`"),
-                    (None, Some(file)) => format!("docker compose `{file}`"),
-                    _ => String::from("docker compose"),
-                },
-                Some(other) => other.replace('_', " "),
-                None => String::from("declared source"),
+            render_dependency_hydration_prepare_text(
+                prepare.medium,
+                prepare.source_kind,
+                prepare.cwd.as_deref(),
+                prepare.file.as_deref(),
+                prepare.manager,
+                prepare.mode,
+                prepare.frozen_lockfile,
+                &prepare.targets,
+            )
+        }
+        _ => String::from("-"),
+    }
+}
+
+fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
+    medium: Option<&str>,
+    source_kind: Option<&str>,
+    cwd: Option<&str>,
+    file: Option<&str>,
+    manager: Option<&str>,
+    mode: Option<&str>,
+    frozen_lockfile: bool,
+    targets: &[T],
+) -> String {
+    let medium = medium.unwrap_or("dependencies").replace('_', " ");
+    match source_kind {
+        Some("docker_compose") => {
+            let source = match (cwd, file) {
+                (Some(cwd), Some(file)) => format!("docker compose `{cwd}/{file}`"),
+                (None, Some(file)) => format!("docker compose `{file}`"),
+                _ => String::from("docker compose"),
             };
-            if prepare.targets.is_empty() {
+            if targets.is_empty() {
                 format!("hydrate {medium} from {source}")
             } else {
                 format!(
                     "hydrate {medium} from {source} for {}",
-                    prepare.targets.join(", ")
+                    targets
+                        .iter()
+                        .map(AsRef::as_ref)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )
             }
         }
-        _ => String::from("-"),
+        Some("node_package_manager") => {
+            let cwd = cwd.unwrap_or(".");
+            let manager = manager.unwrap_or("package manager");
+            let mode = mode.unwrap_or("install");
+            let mut command = format!("{manager} {mode}");
+            if frozen_lockfile {
+                command.push_str(" --frozen-lockfile");
+            }
+            format!("hydrate {medium} with `{command}` in `{cwd}`")
+        }
+        Some(other) => format!("hydrate {medium} from {}", other.replace('_', " ")),
+        None => format!("hydrate {medium} from declared source"),
     }
 }
 
