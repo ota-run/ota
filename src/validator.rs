@@ -20376,7 +20376,7 @@ toolchains:
         assert!(
             rendered.iter().any(|error| {
                 error.contains(
-                    "toolchain `java` is only supported with `provider: sdkman`; `provider: rustup` is not valid for `toolchains.java` and currently belongs to `toolchains.rust`",
+                    "legacy toolchain `provider: rustup` is not valid for `toolchains.java`; this toolchain is owned by `toolchains.java` and its legacy provider compatibility lane only accepts `provider: sdkman`",
                 )
             }),
             "{rendered:?}"
@@ -20716,7 +20716,7 @@ toolchains:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `rust` is only supported with `provider: rustup`; `provider: corepack` is not valid for `toolchains.rust` and currently belongs to `toolchains.node`",
+                "legacy toolchain `provider: corepack` is not valid for `toolchains.rust`; this toolchain is owned by `toolchains.rust` and its legacy provider compatibility lane only accepts `provider: rustup`",
             )),
             "{rendered:?}"
         );
@@ -20747,7 +20747,7 @@ toolchains:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "toolchain `node` is only supported with `provider: corepack`; `provider: rustup` is not valid for `toolchains.node` and currently belongs to `toolchains.rust`",
+                "legacy toolchain `provider: rustup` is not valid for `toolchains.node`; this toolchain is owned by `toolchains.node` and its legacy provider compatibility lane only accepts `provider: corepack`",
             )),
             "{rendered:?}"
         );
