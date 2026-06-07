@@ -701,8 +701,12 @@ Rules:
 - ota validates and interprets toolchains through a shipped ownership contract for each toolchain
   name; the canonical shipped fulfillment sources are `rustup`, `corepack`, `sdkman`, `uv`, `go`,
   `ruby`, and `dotnet`
+- supported `fulfillment.mode` values today are only `none` and `run`
+- `fulfillment.mode: none` is the default diagnose-only lane; use it when ota should check the
+  toolchain truth but not provision or activate it on the selected path
 - `fulfillment.mode: run` allows selected `ota run` / workflow `ota up` execution paths to
-  provision the declared toolchain on the run path
+  provision the declared toolchain on the run path; use it only when the selected repo path should
+  let ota own fulfillment through the declared source
 - `fulfillment.source` is optional when the toolchain uses its canonical shipped fulfillment path
 - `fulfillment.source: mise` is the current non-canonical supported source for repos whose selected
   path is mediated by `mise`
