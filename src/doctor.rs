@@ -7778,6 +7778,34 @@ fn diagnose_command_version(
         return probe_started;
     }
 
+    if run_path_fulfillment_allowed && provider_hint.is_some_and(|provider| provider == "mise") {
+        let finding_count = findings.len();
+        probe_started |= diagnose_command_version(
+            "tool",
+            "mise",
+            &[String::from("mise")],
+            "*",
+            required,
+            None,
+            None,
+            mode,
+            selected_lifecycle,
+            container_probe,
+            remote_probe,
+            remote_context_name,
+            contract_path,
+            loaded_policy,
+            target_os,
+            false,
+            provisioning_actions,
+            findings,
+        );
+        if findings.len() == finding_count {
+            return probe_started;
+        }
+        return probe_started;
+    }
+
     if mode == DoctorMode::Container
         && let Some(failure) = container_installability_failure(
             target_kind,

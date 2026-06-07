@@ -31,6 +31,15 @@
   top-level `orchestrators`, selected tasks can opt into `execution.orchestrator.ref` /
   `execution.orchestrator.mode`, and Ota ships `mise` as the first orchestrator for trust,
   install, and mediated task execution on the selected path
+- fixed run-path preparation env parity for selected backends: orchestrator preparation,
+  toolchain fulfillment, and Corepack activation now inherit the effective backend/task env
+  before execution, so container-scoped repo-manager paths such as `mise trust` / `mise install`
+  can use declared context env (for example writable `MISE_*` paths) instead of failing under
+  backend-default locations
+- fixed native `ota doctor` / `ota up --dry-run` mismatch handling for `toolchains.<name>.fulfillment.source: mise`
+  with `mode: run`: when the selected path declares `mise` as the run-path authority, Ota now
+  checks `mise` itself instead of blocking on an ambient host runtime version mismatch before
+  selected-path fulfillment can occur
 - upgraded `toolchains` to the canonical capability-first model: public contracts now use
   structured `fulfillment` (`source` + `mode`) instead of teaching legacy provider-coupled
   toolchain shapes, while runtime compatibility still accepts legacy `provider` and flat
