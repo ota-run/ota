@@ -24,11 +24,10 @@
 version: 1
 project:
   name: basic-node
-  description: Minimal Node repo that shows the check-only Node toolchain boundary plus provider-owned Corepack package managers
+  description: Minimal Node repo that shows the check-only Node toolchain boundary plus declared package-manager ownership
   type: application
 toolchains:
   node:
-    provider: corepack
     version: "22"
     package_managers:
       pnpm: "10.0.0"
@@ -66,8 +65,8 @@ workflows:
       task: dev
     notes: |
       Use this when you want the repo front door, not just one command.
-      `toolchains.node` keeps the Node runtime, `node` executable, and declared Corepack package
-      managers under one owner.
+      `toolchains.node` keeps the Node runtime, `node` executable, and declared package managers
+      under one owner.
 agent:
   entrypoint: setup
   default_task: test

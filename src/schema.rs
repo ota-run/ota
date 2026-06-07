@@ -131,6 +131,8 @@ pub struct Contract {
     #[serde(default)]
     pub toolchains: BTreeMap<String, ToolchainSpec>,
     #[serde(default)]
+    pub orchestrators: BTreeMap<String, OrchestratorSpec>,
+    #[serde(default)]
     pub native_prerequisites: BTreeMap<String, NativePrerequisiteSpec>,
     #[serde(default)]
     pub env: EnvConfig,
@@ -1450,7 +1452,8 @@ pub struct ExecutionContextRequirements {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ToolchainSpec {
-    pub provider: ToolchainProvider,
+    #[serde(default)]
+    pub provider: Option<ToolchainProvider>,
     pub version: String,
     #[serde(default = "default_required")]
     pub required: bool,
@@ -1465,7 +1468,7 @@ pub struct ToolchainSpec {
     #[serde(default)]
     pub targets: Vec<String>,
     #[serde(default)]
-    pub fulfillment: Option<ToolchainFulfillmentMode>,
+    pub fulfillment: ToolchainFulfillmentSpec,
     #[serde(default)]
     pub platforms: BTreeMap<String, ToolchainPlatformSpec>,
 }
@@ -1540,7 +1543,11 @@ impl ToolchainSpec {
     }
 
     pub fn fulfillment_mode(&self) -> ToolchainFulfillmentMode {
-        self.fulfillment.unwrap_or(ToolchainFulfillmentMode::None)
+        self.fulfillment.mode()
+    }
+
+    pub fn fulfillment_source(&self) -> Option<ToolchainFulfillmentSource> {
+        self.fulfillment.source.or(self.provider.map(Into::into))
     }
 }
 
@@ -1576,6 +1583,148 @@ pub enum ToolchainProvider {
 pub enum ToolchainFulfillmentMode {
     None,
     Run,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolchainFulfillmentSource {
+    Rustup,
+    Corepack,
+    Sdkman,
+    Uv,
+    Go,
+    Ruby,
+    Dotnet,
+    Mise,
+}
+
+impl From<ToolchainProvider> for ToolchainFulfillmentSource {
+    fn from(value: ToolchainProvider) -> Self {
+        match value {
+            ToolchainProvider::Rustup => Self::Rustup,
+            ToolchainProvider::Corepack => Self::Corepack,
+            ToolchainProvider::Sdkman => Self::Sdkman,
+            ToolchainProvider::Uv => Self::Uv,
+            ToolchainProvider::Go => Self::Go,
+            ToolchainProvider::Ruby => Self::Ruby,
+            ToolchainProvider::Dotnet => Self::Dotnet,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(from = "ToolchainFulfillmentWire")]
+pub struct ToolchainFulfillmentSpec {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<ToolchainFulfillmentSource>,
+    pub mode: ToolchainFulfillmentMode,
+}
+
+impl ToolchainFulfillmentSpec {
+    pub fn mode(&self) -> ToolchainFulfillmentMode {
+        self.mode
+    }
+}
+
+impl Default for ToolchainFulfillmentMode {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(untagged)]
+enum ToolchainFulfillmentWire {
+    LegacyMode(ToolchainFulfillmentMode),
+    Structured(ToolchainFulfillmentSpecWire),
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct ToolchainFulfillmentSpecWire {
+    #[serde(default)]
+    source: Option<ToolchainFulfillmentSource>,
+    #[serde(default)]
+    mode: ToolchainFulfillmentMode,
+}
+
+impl Default for ToolchainFulfillmentSpecWire {
+    fn default() -> Self {
+        Self {
+            source: None,
+            mode: ToolchainFulfillmentMode::None,
+        }
+    }
+}
+
+impl From<ToolchainFulfillmentWire> for ToolchainFulfillmentSpec {
+    fn from(value: ToolchainFulfillmentWire) -> Self {
+        match value {
+            ToolchainFulfillmentWire::LegacyMode(mode) => Self { source: None, mode },
+            ToolchainFulfillmentWire::Structured(spec) => Self {
+                source: spec.source,
+                mode: spec.mode,
+            },
+        }
+    }
+}
+
+impl Default for ToolchainFulfillmentSpec {
+    fn default() -> Self {
+        Self {
+            source: None,
+            mode: ToolchainFulfillmentMode::None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrchestratorKind {
+    Mise,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OrchestratorActivationSpec {
+    #[serde(default)]
+    pub trust: bool,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OrchestratorPrepareSpec {
+    #[serde(default)]
+    pub install: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OrchestratorSpec {
+    pub kind: OrchestratorKind,
+    #[serde(default = "default_required")]
+    pub required: bool,
+    #[serde(default)]
+    pub config_files: Vec<String>,
+    #[serde(default)]
+    pub activation: OrchestratorActivationSpec,
+    #[serde(default)]
+    pub prepare: OrchestratorPrepareSpec,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskExecutionOrchestratorMode {
+    Task,
+    Exec,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskExecutionOrchestratorSpec {
+    #[serde(rename = "ref")]
+    pub ref_name: String,
+    pub mode: TaskExecutionOrchestratorMode,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -3161,6 +3310,19 @@ impl TaskSpec {
             .and_then(|execution| execution.modes.branch_for_backend(backend))
     }
 
+    pub fn orchestrator_for_backend(
+        &self,
+        backend: Backend,
+    ) -> Option<&TaskExecutionOrchestratorSpec> {
+        self.mode_execution_branch(backend)
+            .and_then(|branch| branch.orchestrator.as_ref())
+            .or_else(|| {
+                self.execution
+                    .as_ref()
+                    .and_then(|execution| execution.orchestrator.as_ref())
+            })
+    }
+
     pub fn resolved_execution_for_backend(
         &self,
         backend: Backend,
@@ -3371,6 +3533,11 @@ impl TaskSpec {
         }
         for (name, requirement) in self.inferred_command_tool_requirements() {
             tools.entry(name).or_insert(requirement);
+        }
+        if let Some(orchestrator) = self.orchestrator_for_backend(backend) {
+            tools
+                .entry(orchestrator.ref_name.clone())
+                .or_insert(ToolRequirement::Simple(String::from("*")));
         }
         RequirementSurface { runtimes, tools }
     }
@@ -3693,6 +3860,8 @@ pub struct TaskModeExecutionSpec {
     #[serde(default)]
     pub default_mode: Option<Backend>,
     #[serde(default)]
+    pub orchestrator: Option<TaskExecutionOrchestratorSpec>,
+    #[serde(default)]
     pub modes: TaskModeBranchesSpec,
 }
 
@@ -3736,6 +3905,8 @@ impl TaskModeBranchesSpec {
 pub struct TaskModeBranchSpec {
     #[serde(default)]
     pub context: Option<String>,
+    #[serde(default)]
+    pub orchestrator: Option<TaskExecutionOrchestratorSpec>,
     #[serde(default)]
     pub lifecycle: Option<Lifecycle>,
     #[serde(default)]

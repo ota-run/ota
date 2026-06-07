@@ -28,7 +28,6 @@ project:
   type: application
 toolchains:
   ruby:
-    provider: ruby
     version: "3.3.11"
     package_managers:
       bundler: "2.5"
@@ -57,7 +56,7 @@ workflows:
       task: test
     notes: |
       Use this when the repo front door is the standard Bundler install plus Ruby test loop.
-      `toolchains.ruby` keeps Ruby and Bundler governance under one provider-backed contract.
+      `toolchains.ruby` keeps Ruby and Bundler governance under one toolchain contract.
 agent:
   entrypoint: setup
   default_task: test

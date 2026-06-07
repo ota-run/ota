@@ -44,7 +44,8 @@ In practice, most useful contracts also define tasks, runtimes, toolchains, or c
 
 - `version` (required): schema version for the contract itself. Today this is `1`.
 - `project` (required): stable repo identity and high-level classification.
-- `toolchains`: managed ecosystem environments such as Rust via Rustup.
+- `toolchains`: managed ecosystem capabilities such as Rust, Node, Java, or Python.
+- `orchestrators`: repo-level task and environment mediation such as `mise`.
 - `runtimes`: required language/runtime versions for the repo to be runnable.
 - `tools`: external CLI and tool dependencies the repo expects on PATH.
 - `env`: required environment variables, defaults, allowed values, and provenance-aware resolution.
@@ -78,20 +79,29 @@ extensions:
     api_version: 1
 toolchains:
   rust:
-    provider: rustup
     version: "1.94.0"
     components:
       - rustfmt
-    fulfillment: run
-runtimes:
-  node: "22"
-tools:
-  pnpm:
-    version: "10"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.0.0"
+    fulfillment:
+      mode: run
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      pnpm: "10.0.0"
+    fulfillment:
+      source: mise
+      mode: run
+orchestrators:
+  mise:
+    kind: mise
+    required: true
+    config_files:
+      - mise.toml
+    activation:
+      trust: true
+    prepare:
+      install: true
 env:
   vars:
     OTA_ENV:
@@ -617,20 +627,18 @@ Current behavior:
 Optional.
 
 Use `toolchains` when ota must understand more than "does this executable exist?" This is the
-managed ecosystem layer. It owns provider-backed language environments such as Rust via Rustup,
-including components and targets, without forcing those details into shell setup.
+managed ecosystem layer. It owns capability truth for language environments such as Rust, Node,
+Java, Python, Go, Ruby, and .NET, without forcing that truth into ad hoc shell setup.
 
 Current shipped scope is intentionally narrow:
 
 - top-level `toolchains`
+- top-level `orchestrators`
 - task-scoped `requirements.toolchains`
-- Rustup-backed diagnosis and run-path fulfillment for Rust toolchains
-- Corepack-backed diagnosis plus policy-governed run-path fulfillment for Node toolchains
-- SDKMAN-backed diagnosis plus policy-governed run-path fulfillment for Java toolchains
-- uv-backed diagnosis and run-path fulfillment for Python toolchains
-- Go-backed diagnosis plus policy-governed run-path fulfillment for Go toolchains
-- Ruby-backed diagnosis plus policy-governed run-path fulfillment for Ruby toolchains
-- dotnet-backed diagnosis plus policy-governed run-path fulfillment for .NET toolchains
+- canonical shipped fulfillment paths for Rust, Node, Java, Python, Go, Ruby, and .NET toolchains
+- explicit non-canonical run-path fulfillment when `fulfillment.source` points at another shipped
+  source such as `mise`
+- task execution mediation through `tasks.<name>.execution.orchestrator`
 - duplicate ownership is invalid when the same prerequisite is declared under both `toolchains`
   and `runtimes` or `tools`
 
@@ -639,14 +647,32 @@ Example:
 ```yaml
 toolchains:
   rust:
-    provider: rustup
     version: "1.94.0"
     profile: minimal
     components:
       - rustfmt
     targets:
       - x86_64-unknown-linux-musl
-    fulfillment: run
+    fulfillment:
+      mode: run
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+    fulfillment:
+      source: mise
+      mode: run
+
+orchestrators:
+  mise:
+    kind: mise
+    required: true
+    config_files:
+      - mise.toml
+    activation:
+      trust: true
+    prepare:
+      install: true
 
 tasks:
   setup:
@@ -654,64 +680,54 @@ tasks:
       toolchains:
         - rust
     run: cargo fetch
+  server:verify:
+    run: //server:ci-unit
+    execution:
+      orchestrator:
+        ref: mise
+        mode: task
 ```
 
 Rules:
 
 - toolchain names must not be empty
 - `version` must not be empty
-- shared provider-agnostic toolchain fields are currently `provider`, `version`,
-  `fulfillment`, `required`, `only_on`, and `platforms.<os>.version`
-- shipped providers are currently `rustup` for `toolchains.rust`, `corepack` for
-  `toolchains.node`, `sdkman` for `toolchains.java`, `uv` for `toolchains.python`,
-  `go` for `toolchains.go`, `ruby` for `toolchains.ruby`, and `dotnet` for
-  `toolchains.dotnet`
+- shared toolchain fields are `version`, `fulfillment`, `required`, `only_on`, and
+  `platforms.<os>.version`; legacy `provider` is still accepted for compatibility, but it is no
+  longer the canonical public shape
+- shipped toolchain names are fixed: `toolchains.rust`, `toolchains.node`, `toolchains.java`,
+  `toolchains.python`, `toolchains.go`, `toolchains.ruby`, and `toolchains.dotnet`
 - `required` defaults to `true` and controls whether missing or mismatched toolchains are blocking
-- the shipped toolchain contracts today are `toolchains.rust` with `provider: rustup`,
-  `toolchains.node` with `provider: corepack`, `toolchains.java` with `provider: sdkman`,
-  `toolchains.python` with `provider: uv`, `toolchains.go` with `provider: go`, and
-  `toolchains.ruby` with `provider: ruby`, and `toolchains.dotnet` with
-  `provider: dotnet`
-- those shipped contracts are fixed name/provider pairs: `toolchains.rust` must use
-  `provider: rustup`, `toolchains.node` must use `provider: corepack`, `toolchains.java` must
-  use `provider: sdkman`, `toolchains.python` must use `provider: uv`, `toolchains.go` must use
-  `provider: go`, `toolchains.ruby` must use `provider: ruby`, and `toolchains.dotnet` must use
-  `provider: dotnet`
-- ota validates and interprets toolchains through an explicit provider contract; Rustup currently
-  owns which extra toolchain fields are legal, which capabilities belong to `toolchains.rust`, and
-  how `doctor`, `up`, and `run` interpret fulfillment and managed surfaces, while Corepack-backed
-  Node toolchains allow provider-scoped `package_managers`, uv-backed Python toolchains allow
-  provider-scoped `package_managers.uv`, SDKMAN-backed Java toolchains own `java` plus `javac`,
-  and Ruby-backed toolchains allow provider-scoped `package_managers` for Bundler version
-  governance
-- provider-specific field shape checks also live there: empty Rustup `profile`, `components`, and
-  `targets` entries fail because the Rustup provider contract rejects them, and Corepack-backed
-  Node toolchains reject those Rust-shaped fields entirely while validating
-  `package_managers` tokens and shell-safe version constraints; `provider: uv` accepts only `uv`
-  under `package_managers`; `provider: ruby` accepts only `bundler` under `package_managers`
+- ota validates and interprets toolchains through a shipped ownership contract for each toolchain
+  name; the canonical shipped fulfillment sources are `rustup`, `corepack`, `sdkman`, `uv`, `go`,
+  `ruby`, and `dotnet`
+- `fulfillment.mode: run` allows selected `ota run` / workflow `ota up` execution paths to
+  provision the declared toolchain on the run path
+- `fulfillment.source` is optional when the toolchain uses its canonical shipped fulfillment path
+- `fulfillment.source: mise` is the current non-canonical supported source for repos whose selected
+  path is mediated by `mise`
+- legacy `provider` must match the shipped canonical source for that toolchain name; mismatched
+  legacy providers fail validation
+- `profile`, `components`, and `targets` remain Rust-specific managed-surface fields
+- `package_managers` remains the toolchain-owned package-manager surface for Node, Python, and
+  Ruby where applicable
 - `only_on`, when set, scopes the toolchain to `linux`, `macos`, or `windows`
-- `profile`, `components`, and `targets` are currently Rustup-specific compatibility fields; Node
-  via Corepack and Ruby via the built-in Ruby provider add provider-scoped `package_managers`;
-  these are not a generic ecosystem-wide toolchain schema
 - `platforms` may override `version`, `profile`, `components`, `package_managers`, and `targets`
   per OS using `linux`, `macos`, or `windows`
 - `platforms` entries must also appear in `only_on` when `only_on` is declared
 - `profile`, when set, must not be empty
 - `components` and `targets` entries must not be empty
-- `fulfillment` defaults to `none`; `run` allows selected `ota run` / workflow `ota up` execution
-  paths to provision the declared toolchain on the run path
-- for `provider: rustup` with `fulfillment: run`, `version` must be one installable Rustup
+- for canonical Rust fulfillment with `fulfillment.mode: run`, `version` must be one installable Rustup
   toolchain reference such as `stable`, `beta`, `nightly`, or `1.94.0`
-- `provider: corepack` supports `fulfillment: run` as a policy-governed selected-path lane; ota
-  still diagnoses Node through `toolchains.node`, and declared `package_managers` surface Corepack
-  activation through that same toolchain owner
-- `provider: sdkman` supports `fulfillment: run` as a policy-governed selected-path lane; ota
-  still keeps Maven and Gradle outside the Java toolchain boundary under `tools`
-- for `provider: uv` with `fulfillment: run`, `version` must be one installable uv Python
+- for canonical Python fulfillment with `fulfillment.mode: run`, `version` must be one installable uv Python
   reference such as `3.12`, `3.12.10`, or `3.13`
-- `provider: go`, `provider: ruby`, and `provider: dotnet` also support `fulfillment: run` as
-  policy-governed selected-path lanes; provisioning authority stays with org policy and backend
-  requirement fulfillment rather than provider-owned install commands
+- canonical Node, Java, Go, Ruby, and .NET fulfillment all support `fulfillment.mode: run` on the
+  selected path; provisioning authority still stays with org policy and backend requirement
+  fulfillment
+- `fulfillment.source: mise` with `fulfillment.mode: run` allows ota to use `mise install` for the
+  selected toolchain and any declared package-manager entries on that path
+- `fulfillment.source: mise` must not be combined with managed-surface fields such as
+  `components` or `targets`
 - duplicate ownership is invalid; if the same Rust capability is also declared under `runtimes`
   or `tools`, validation fails and the duplicate must be removed; the same applies to
   `toolchains.node` versus `runtimes.node` or `tools.node`, and `toolchains.python` versus
@@ -721,23 +737,54 @@ Rules:
 Ownership boundary:
 
 - use `toolchains` for managed ecosystems
+- use `orchestrators` when the repo has one declared manager that mediates trust, install, and
+  task execution on the selected path
 - use `runtimes` for simple unmanaged runtime version checks
 - use `tools` for standalone commands on PATH
 - use `native_prerequisites` for host-native build bundles and shell activation
-- current shipped ownership is provider-defined, not free-form: today Ota derives Rust capability
-  ownership from `toolchains.rust` with `provider: rustup` and Node runtime/executable plus
-  declared Corepack package-manager ownership from `toolchains.node` with `provider: corepack`,
-  Java plus `javac` ownership from `toolchains.java` with `provider: sdkman`, and Python runtime
-  ownership from `toolchains.python` with `provider: uv`, Go runtime ownership from
-  `toolchains.go` with `provider: go`, and Ruby runtime plus Bundler ownership from
-  `toolchains.ruby` with `provider: ruby`, plus .NET runtime/CLI ownership from
-  `toolchains.dotnet` with `provider: dotnet`
+- current shipped ownership is name-defined, not free-form: ota derives Rust capability ownership
+  from `toolchains.rust`, Node runtime/executable plus declared package-manager ownership from
+  `toolchains.node`, Java plus `javac` ownership from `toolchains.java`, Python runtime ownership
+  from `toolchains.python`, Go runtime ownership from `toolchains.go`, Ruby runtime plus Bundler
+  ownership from `toolchains.ruby`, and .NET runtime/CLI ownership from `toolchains.dotnet`
 
 If a declared toolchain owns the capability, require the toolchain. Do not also require the same
 runtime or tool unless it is deliberately standalone outside that toolchain.
 
 For the full ownership model and migration examples, see
 [toolchains-runtimes-tools.md](toolchains-runtimes-tools.md).
+
+## `orchestrators`
+
+Optional.
+
+Use `orchestrators` when the repo has one declared manager that owns selected-path trust,
+environment preparation, and mediated task execution.
+
+Example:
+
+```yaml
+orchestrators:
+  mise:
+    kind: mise
+    required: true
+    config_files:
+      - mise.toml
+    activation:
+      trust: true
+    prepare:
+      install: true
+```
+
+Rules:
+
+- orchestrator names must not be empty
+- shipped orchestrator kinds are currently `mise`
+- `config_files` entries must not be empty
+- `activation.trust: true` tells ota to run the orchestrator trust step on the selected path
+- `prepare.install: true` tells ota to run the orchestrator install step on the selected path
+- orchestrators do not replace `toolchains`; use `toolchains` for capability truth and
+  `tasks.<name>.execution.orchestrator` when the selected task body must run through that manager
 
 ## `runtimes`
 
@@ -855,8 +902,9 @@ Rules:
   selected task/workflow requires it
 - `acquisition.provider`: supported values are `corepack` and `command`
 - `acquisition.package` and `acquisition.version` are required for `provider: corepack`
-- `tool node` cannot use `provider: corepack`; declare Node under `toolchains.node` with
-  `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks.
+- `tool node` cannot use `provider: corepack`; declare Node under `toolchains.node` instead, and
+  use structured `fulfillment` there when ota should own package-manager activation on the
+  selected path.
 - `acquisition.shell` and `acquisition.run` are required for `provider: command`
 - `provider: corepack` activates package-manager-managed tools such as `pnpm` through
   `corepack enable && corepack prepare <package>@<version> --activate`

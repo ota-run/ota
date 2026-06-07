@@ -41,7 +41,6 @@ execution:
             minimum: 2GiB
             default: 3GiB
 runtimes:
-  node: "22"
   python: ">=3.12"
   java:
     version: "21"
@@ -53,13 +52,15 @@ runtimes:
     platforms:
       windows:
         distribution: zulu
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      pnpm: "10.0.0"
+    fulfillment:
+      source: corepack
+      mode: run
 tools:
-  pnpm:
-    version: "10"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.0.0"
   uv: "0.6.0"
   pwsh:
     version: "7.6.0"
@@ -121,8 +122,8 @@ tasks:
         - node_modules
       network: true
     requirements:
-      tools:
-        pnpm: "10"
+      toolchains:
+        - node
       checks:
         - node-installed
     safe_for_agent: true
@@ -137,6 +138,9 @@ tasks:
       writes:
         - node_modules
       network: true
+    requirements:
+      toolchains:
+        - node
   services:up:
     context: host
     description: Start the local service stack
@@ -151,8 +155,8 @@ tasks:
     category: dev
     run: pnpm dev --host 127.0.0.1 --port 3000
     requirements:
-      tools:
-        pnpm: "10"
+      toolchains:
+        - node
     depends_on:
       - setup
     runtime:
@@ -164,6 +168,9 @@ tasks:
     description: Start the local development server in a container context
     category: dev
     run: pnpm dev --host 0.0.0.0 --port 3000
+    requirements:
+      toolchains:
+        - node
     depends_on:
       - setup:container
     runtime:
@@ -197,8 +204,8 @@ tasks:
         - --port
         - "3000"
     requirements:
-      runtimes:
-        node: "22"
+      toolchains:
+        - node
       tools:
         npx: "*"
       checks:
@@ -245,8 +252,8 @@ tasks:
     category: test
     run: pnpm test
     requirements:
-      tools:
-        pnpm: "10"
+      toolchains:
+        - node
     depends_on:
       - setup
     safe_for_agent: true

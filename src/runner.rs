@@ -73,12 +73,14 @@ use crate::schema::{
     TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind,
     TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskServiceEnvBindingFormat,
     TaskServiceEnvBindingSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
-    TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode, ToolchainProvider, ToolchainSpec,
+    TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec,
     format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
     task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
-use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_contract};
+use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_fulfillment_commands};
+#[cfg(test)]
+use crate::toolchains::declared_toolchain_contract;
 use crate::workspace::{load_contract_for_workspace_repo, load_contract_for_workspace_repo_ref};
 
 #[derive(Clone)]
@@ -1091,6 +1093,12 @@ pub enum RunError {
     ToolchainFulfillmentFailed {
         task: String,
         toolchain: String,
+        details: String,
+    },
+    #[error("task `{task}` orchestrator `{orchestrator}` failed run-path preparation: {details}")]
+    OrchestratorPreparationFailed {
+        task: String,
+        orchestrator: String,
         details: String,
     },
 }
@@ -6366,6 +6374,15 @@ fn execute_task_with_hooks(
         current_os,
         state,
     )?;
+    maybe_prepare_task_orchestrator_on_run_path(
+        contract,
+        contract_path,
+        task_name,
+        task,
+        backend_kind,
+        &backend,
+        state,
+    )?;
     let mut path_export = match backend {
         ResolvedExecutionBackend::Container { .. } => env_details
             .get("PATH")
@@ -6402,7 +6419,16 @@ fn execute_task_with_hooks(
         Some(crate::schema::TaskLaunchSpec::Container(_)) => None,
         None => execution.shell_body().map(str::to_string),
     };
+    let orchestrator_execution = task
+        .orchestrator_for_backend(backend_kind)
+        .and_then(|selection| {
+            contract
+                .orchestrators
+                .get(selection.ref_name.as_str())
+                .map(|spec| (selection, spec))
+        });
     if let Some(command) = shell_command.as_mut()
+        && orchestrator_execution.is_none()
         && !backend_fulfillment_preparation
             .source_managed_actions
             .is_empty()
@@ -6444,6 +6470,11 @@ fn execute_task_with_hooks(
                 command: shell_command.expect("shell execution should provide a command"),
             },
         }
+    };
+    let prepared_execution = if let Some((selection, spec)) = orchestrator_execution {
+        wrap_prepared_execution_for_orchestrator(prepared_execution, &backend, selection, spec)?
+    } else {
+        prepared_execution
     };
     if requested_relation {
         state.requested_task_interrupt_cleanup =
@@ -8349,7 +8380,9 @@ fn maybe_activate_corepack_shims_on_run_path(
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
-        if toolchain.provider != ToolchainProvider::Corepack {
+        if toolchain.fulfillment_source()
+            != Some(crate::schema::ToolchainFulfillmentSource::Corepack)
+        {
             continue;
         }
         let target_os = target_os_for_toolchain_backend(backend, current_os);
@@ -8391,6 +8424,180 @@ fn maybe_activate_corepack_shims_on_run_path(
     }
 
     Ok(())
+}
+
+fn maybe_prepare_task_orchestrator_on_run_path(
+    contract: &Contract,
+    contract_path: &Path,
+    task_name: &str,
+    task: &TaskSpec,
+    backend_kind: Backend,
+    backend: &ResolvedExecutionBackend,
+    state: &mut TaskRunState,
+) -> Result<(), RunError> {
+    let Some(orchestrator_selection) = task.orchestrator_for_backend(backend_kind) else {
+        return Ok(());
+    };
+    let Some(orchestrator) = contract.orchestrators.get(orchestrator_selection.ref_name.as_str())
+    else {
+        return Ok(());
+    };
+
+    let cache_key = format!(
+        "orchestrator:{}:{}",
+        orchestrator_selection.ref_name,
+        toolchain_fulfillment_cache_key(orchestrator_selection.ref_name.as_str(), backend)
+    );
+    if !state.fulfilled_toolchain_keys.insert(cache_key) {
+        return Ok(());
+    }
+
+    for command_spec in orchestrator_command_specs(orchestrator) {
+        let command_display = render_toolchain_command(backend, command_spec.clone());
+        let step_label = format!("orchestrator-prepare:{}", orchestrator_selection.ref_name);
+        let output = run_backend_argv_command_captured(
+            &step_label,
+            command_spec.program,
+            &command_spec.args,
+            contract_working_dir(contract_path),
+            backend,
+        )?;
+        state.stdout.push_str(&output.stdout);
+        state.stderr.push_str(&output.stderr);
+        if output.exit_code != 0 {
+            return Err(RunError::OrchestratorPreparationFailed {
+                task: task_name.to_string(),
+                orchestrator: orchestrator_selection.ref_name.clone(),
+                details: command_failure_detail(&command_display, &output),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn orchestrator_command_specs(
+    orchestrator: &crate::schema::OrchestratorSpec,
+) -> Vec<ToolchainCommandSpec> {
+    match orchestrator.kind {
+        crate::schema::OrchestratorKind::Mise => {
+            let mut commands = Vec::new();
+            if orchestrator.activation.trust {
+                commands.push(ToolchainCommandSpec {
+                    program: "mise",
+                    args: vec![String::from("trust")],
+                });
+            }
+            if orchestrator.prepare.install {
+                commands.push(ToolchainCommandSpec {
+                    program: "mise",
+                    args: vec![String::from("install")],
+                });
+            }
+            commands
+        }
+    }
+}
+
+fn wrap_prepared_execution_for_orchestrator(
+    execution: PreparedTaskExecution,
+    backend: &ResolvedExecutionBackend,
+    selection: &crate::schema::TaskExecutionOrchestratorSpec,
+    orchestrator: &crate::schema::OrchestratorSpec,
+) -> Result<PreparedTaskExecution, RunError> {
+    match orchestrator.kind {
+        crate::schema::OrchestratorKind::Mise => {
+            wrap_prepared_execution_for_mise(execution, backend, selection)
+        }
+    }
+}
+
+fn wrap_prepared_execution_for_mise(
+    execution: PreparedTaskExecution,
+    backend: &ResolvedExecutionBackend,
+    selection: &crate::schema::TaskExecutionOrchestratorSpec,
+) -> Result<PreparedTaskExecution, RunError> {
+    match selection.mode {
+        crate::schema::TaskExecutionOrchestratorMode::Task => match execution {
+            PreparedTaskExecution::Shell { command } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_mise_task_command(backend, command.as_str()),
+            }),
+            _ => Err(RunError::InvalidTaskExecution {
+                task: selection.ref_name.clone(),
+            }),
+        },
+        crate::schema::TaskExecutionOrchestratorMode::Exec => match execution {
+            PreparedTaskExecution::Shell { command } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_mise_exec_shell_command(command.as_str()),
+            }),
+            PreparedTaskExecution::NativeCommand { exe, args } => {
+                Ok(PreparedTaskExecution::Shell {
+                    command: wrap_mise_exec_argv_command(backend, exe.as_str(), &args),
+                })
+            }
+            _ => Err(RunError::InvalidTaskExecution {
+                task: selection.ref_name.clone(),
+            }),
+        },
+    }
+}
+
+#[cfg(unix)]
+fn mise_command_prefix() -> String {
+    String::from(
+        r#"if command -v mise >/dev/null 2>&1; then __ota_mise="$(command -v mise)"; elif [ -x "$HOME/.local/bin/mise" ]; then __ota_mise="$HOME/.local/bin/mise"; else __ota_mise="mise"; fi; "$__ota_mise""#,
+    )
+}
+
+#[cfg(windows)]
+fn mise_command_prefix() -> String {
+    String::from(
+        r#"set "__OTA_MISE=mise" && if exist "%LOCALAPPDATA%\mise\bin\mise.exe" set "__OTA_MISE=%LOCALAPPDATA%\mise\bin\mise.exe" && if exist "%USERPROFILE%\.local\bin\mise.exe" set "__OTA_MISE=%USERPROFILE%\.local\bin\mise.exe" && "%__OTA_MISE%""#,
+    )
+}
+
+fn wrap_mise_task_command(backend: &ResolvedExecutionBackend, task_name: &str) -> String {
+    let mut wrapped = mise_command_prefix();
+    wrapped.push_str(" run ");
+    wrapped.push_str(&shell_quote_command_word(
+        task_name,
+        shell_quote_style_for_backend(backend),
+    ));
+    wrapped
+}
+
+fn wrap_mise_exec_shell_command(command: &str) -> String {
+    let mut wrapped = mise_command_prefix();
+    #[cfg(windows)]
+    {
+        wrapped.push_str(" exec -- cmd /C ");
+        wrapped.push_str(&cmd_quote(command));
+    }
+    #[cfg(not(windows))]
+    {
+        wrapped.push_str(" exec -- sh -lc ");
+        wrapped.push_str(&shell_quote(command));
+    }
+    wrapped
+}
+
+fn wrap_mise_exec_argv_command(
+    backend: &ResolvedExecutionBackend,
+    exe: &str,
+    args: &[String],
+) -> String {
+    let mut wrapped = mise_command_prefix();
+    wrapped.push_str(" exec -- ");
+    wrapped.push_str(&shell_quote_command_argv(backend, exe, args));
+    wrapped
+}
+
+fn shell_quote_style_for_backend(backend: &ResolvedExecutionBackend) -> ShellQuoteStyle {
+    match backend {
+        #[cfg(windows)]
+        ResolvedExecutionBackend::Native { .. } => ShellQuoteStyle::WindowsCmd,
+        _ => ShellQuoteStyle::Posix,
+    }
 }
 
 fn task_invokes_corepack_directly(task: &TaskSpec, backend: Backend, current_os: &str) -> bool {
@@ -8468,7 +8675,10 @@ fn wrap_container_command_for_corepack_activation(
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
-        if toolchain.provider != ToolchainProvider::Corepack || !toolchain.active_for_os("linux") {
+        if toolchain.fulfillment_source()
+            != Some(crate::schema::ToolchainFulfillmentSource::Corepack)
+            || !toolchain.active_for_os("linux")
+        {
             continue;
         }
         command_parts.push(String::from(
@@ -8550,9 +8760,7 @@ fn toolchain_fulfillment_command_specs(
     toolchain: &ToolchainSpec,
     target_os: &str,
 ) -> Vec<ToolchainCommandSpec> {
-    declared_toolchain_contract(toolchain_name, toolchain)
-        .map(|provider| provider.fulfillment_commands(toolchain, target_os))
-        .unwrap_or_default()
+    declared_toolchain_fulfillment_commands(toolchain_name, toolchain, target_os)
 }
 
 fn render_toolchain_command(
@@ -46530,6 +46738,36 @@ tasks:
         assert!(wrapped.contains("yq@4.52.5"), "{wrapped}");
         assert!(wrapped.contains("sh -lc"), "{wrapped}");
         assert!(wrapped.contains("'yq --version'"), "{wrapped}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wrap_mise_task_command_uses_task_mode_shape() {
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let wrapped = super::wrap_mise_task_command(&backend, "//server:ci-unit");
+
+        assert!(wrapped.contains("mise"), "{wrapped}");
+        assert!(wrapped.contains(" run "), "{wrapped}");
+        assert!(wrapped.contains("'//server:ci-unit'"), "{wrapped}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wrap_mise_exec_argv_command_uses_exec_shape() {
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let wrapped = super::wrap_mise_exec_argv_command(
+            &backend,
+            "pnpm",
+            &[String::from("--version")],
+        );
+
+        assert!(wrapped.contains("mise"), "{wrapped}");
+        assert!(wrapped.contains(" exec -- "), "{wrapped}");
+        assert!(wrapped.contains("'pnpm' '--version'"), "{wrapped}");
     }
 
     #[cfg(windows)]

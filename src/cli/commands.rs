@@ -160,6 +160,7 @@ use crate::schema::{
 };
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
+    declared_toolchain_source_label,
     declared_toolchain_fulfillment_attempt_summary,
     declared_toolchain_preview_action_for_required_tools,
     fallback_toolchain_fulfillment_attempt_summary,
@@ -33454,15 +33455,17 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
         fields.push(String::from("project.name"));
     }
     for (name, toolchain) in &contract.toolchains {
-        fields.push(format!("toolchains.{name}.provider"));
         fields.push(format!("toolchains.{name}.version"));
         for package_manager in toolchain.package_managers.keys() {
             fields.push(format!(
                 "toolchains.{name}.package_managers.{package_manager}"
             ));
         }
-        if toolchain.fulfillment.is_some() {
-            fields.push(format!("toolchains.{name}.fulfillment"));
+        if let Some(fulfillment) = toolchain.fulfillment.as_ref() {
+            if fulfillment.source.is_some() {
+                fields.push(format!("toolchains.{name}.fulfillment.source"));
+            }
+            fields.push(format!("toolchains.{name}.fulfillment.mode"));
         }
     }
     for name in contract.runtimes.keys() {
@@ -33618,13 +33621,6 @@ fn init_contract_provenance(
             &mut provenance,
             &inference_map,
             &detected_fields,
-            format!("toolchains.{name}.provider"),
-            "ota.detect#toolchain_provider",
-        );
-        push_init_field_provenance(
-            &mut provenance,
-            &inference_map,
-            &detected_fields,
             format!("toolchains.{name}.version"),
             starter_contract_source,
         );
@@ -33637,12 +33633,21 @@ fn init_contract_provenance(
                 starter_contract_source,
             );
         }
-        if toolchain.fulfillment.is_some() {
+        if let Some(fulfillment) = toolchain.fulfillment.as_ref() {
+            if fulfillment.source.is_some() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("toolchains.{name}.fulfillment.source"),
+                    "ota.detect#toolchain_provider",
+                );
+            }
             push_init_field_provenance(
                 &mut provenance,
                 &inference_map,
                 &detected_fields,
-                format!("toolchains.{name}.fulfillment"),
+                format!("toolchains.{name}.fulfillment.mode"),
                 "ota.detect#toolchain_fulfillment",
             );
         }
@@ -61075,6 +61080,47 @@ policies:
     }
 
     #[test]
+    fn preview_receipt_toolchains_use_selected_fulfillment_source_label() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: target-test
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+    fulfillment:
+      source: mise
+      mode: run
+tasks:
+  verify:
+    run: pnpm test
+    requirements:
+      toolchains:
+        - node
+"#,
+        )
+        .unwrap();
+
+        let receipt = super::preview_receipt(
+            &contract,
+            Path::new("ota.yaml"),
+            ExecutionOverrides::default(),
+            None,
+            "READY",
+            &[],
+        );
+
+        assert_eq!(receipt.toolchains.len(), 1);
+        assert_eq!(receipt.toolchains[0].name, "node");
+        assert_eq!(receipt.toolchains[0].provider, "mise");
+        assert_eq!(receipt.toolchains[0].fulfillment, "run");
+    }
+
+    #[test]
     fn execution_receipt_text_renders_selected_toolchains_section() {
         let receipt = ExecutionReceipt {
             ok: true,
@@ -67462,7 +67508,7 @@ fn selected_toolchain_summary(
 
     Some(ToolchainSelectionSummary {
         name: toolchain_name.to_string(),
-        provider: provider.label().to_string(),
+        provider: declared_toolchain_source_label(toolchain_name, toolchain).to_string(),
         backend: format_backend(backend).to_string(),
         target_os: target_os.to_string(),
         version: toolchain.version_for_os(target_os).to_string(),

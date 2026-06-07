@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- added a canonical orchestration model for repo-mediated execution: contracts can now declare
+  top-level `orchestrators`, selected tasks can opt into `execution.orchestrator.ref` /
+  `execution.orchestrator.mode`, and Ota ships `mise` as the first orchestrator for trust,
+  install, and mediated task execution on the selected path
+- upgraded `toolchains` to the canonical capability-first model: public contracts now use
+  structured `fulfillment` (`source` + `mode`) instead of teaching legacy provider-coupled
+  toolchain shapes, while runtime compatibility still accepts legacy `provider` and flat
+  `fulfillment: run` input during migration
+- updated Ota's own contract, examples, and spec docs to the new canonical model, including
+  removal of managed-surface shell glue that duplicated declared toolchain truth
 - made service-task readiness budgets authoritative during startup in `ota run`: when a service
   task declares a projected runtime endpoint and the configured readiness `start_period` /
   `interval` / `timeout` / `retries` budget is exhausted before that endpoint becomes reachable,

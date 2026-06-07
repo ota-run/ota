@@ -36,16 +36,18 @@ use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path}
 use crate::schema::{
     AgentPosture, Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
-    ExtensionKind, Lifecycle, RuntimeRequirement, ServiceProducerSpec, ServiceSpec,
-    TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
-    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolchainFulfillmentMode,
-    ToolchainSpec, parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
+    ExtensionKind, Lifecycle, OrchestratorKind, RuntimeRequirement, ServiceProducerSpec,
+    ServiceSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
+    TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
+    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
+    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec,
+    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
-    declared_toolchain_contract, known_provider_specific_field_owner_groups,
-    shipped_toolchain_contract_by_name, shipped_toolchain_contract_by_provider,
-    shipped_toolchain_contracts_summary, toolchain_provider_label,
+    declared_toolchain_contract, fulfillment_source_legacy_provider,
+    known_provider_specific_field_owner_groups,
+    shipped_toolchain_contract_by_name, shipped_toolchain_contracts_summary,
+    toolchain_provider_label,
 };
 use crate::workspace::load_contract_for_workspace_repo_ref;
 
@@ -116,6 +118,7 @@ pub fn validate_contract_with_path(
     });
     validate_tool_details(&contract.tools, &mut errors);
     validate_toolchains(&contract.toolchains, &mut errors);
+    validate_orchestrators(contract, &mut errors);
     validate_duplicate_requirement_ownership(contract, &mut errors);
     validate_native_prerequisites(contract, &mut errors);
     validate_policies(contract, &mut errors);
@@ -1090,11 +1093,34 @@ fn validate_toolchains(
                     .map(ValidationError::new),
             );
 
-            if toolchain.fulfillment == Some(ToolchainFulfillmentMode::Run)
-                && let Some(message) =
+            if toolchain.fulfillment_mode() == ToolchainFulfillmentMode::Run {
+                if let Some(source) = toolchain.fulfillment_source() {
+                    match source {
+                        ToolchainFulfillmentSource::Mise => {
+                            if !toolchain.components.is_empty()
+                                || !toolchain.targets.is_empty()
+                                || toolchain.platforms.values().any(|platform| {
+                                    !platform.components.is_empty() || !platform.targets.is_empty()
+                                })
+                            {
+                                errors.push(ValidationError::new(format!(
+                                    "toolchain `{name}` uses `fulfillment.source: mise` with `fulfillment.mode: run`, but managed surfaces like `components` and `targets` still require the canonical shipped fulfillment source for that toolchain"
+                                )));
+                            }
+                        }
+                        _ => {
+                            if let Some(message) =
+                                provider_contract.run_fulfillment_validation_error(name, toolchain)
+                            {
+                                errors.push(ValidationError::new(message));
+                            }
+                        }
+                    }
+                } else if let Some(message) =
                     provider_contract.run_fulfillment_validation_error(name, toolchain)
-            {
-                errors.push(ValidationError::new(message));
+                {
+                    errors.push(ValidationError::new(message));
+                }
             }
         }
     }
@@ -1106,26 +1132,34 @@ fn validate_supported_toolchain(
     errors: &mut Vec<ValidationError>,
 ) {
     if declared_toolchain_contract(name, toolchain).is_some() {
+        if let Some(expected_contract) = shipped_toolchain_contract_by_name(name) {
+            if let Some(provider) = toolchain.provider
+                && provider != expected_contract.provider()
+            {
+                let actual_provider = toolchain_provider_label(provider);
+                errors.push(ValidationError::new(format!(
+                    "legacy toolchain `provider: {actual_provider}` is not valid for `toolchains.{name}`; this toolchain is owned by `toolchains.{name}` and its legacy provider compatibility lane only accepts `provider: {}`. Remove `provider` entirely or keep the matching legacy value while migrating to the new fulfillment model",
+                    expected_contract.label(),
+                )));
+            }
+            if let Some(source) = toolchain.fulfillment.source
+                && source != ToolchainFulfillmentSource::Mise
+                && fulfillment_source_legacy_provider(source) != Some(expected_contract.provider())
+            {
+                errors.push(ValidationError::new(format!(
+                    "`toolchains.{name}.fulfillment.source: {}` is not valid for `toolchains.{name}`; use `fulfillment.source: {}` for the canonical shipped fulfillment path or `fulfillment.source: mise` when this repo is mediated by `mise`",
+                    crate::toolchains::toolchain_fulfillment_source_label(source),
+                    expected_contract.label(),
+                )));
+            }
+        }
         return;
     }
 
     let shipped_summary = shipped_toolchain_contracts_summary();
-    if let Some(expected_contract) = shipped_toolchain_contract_by_name(name) {
-        let actual_provider = toolchain_provider_label(toolchain.provider);
-        let actual_owner = shipped_toolchain_contract_by_provider(toolchain.provider)
-            .map(|contract| format!("`toolchains.{}`", contract.toolchain_name()))
-            .unwrap_or_else(|| String::from("another shipped toolchain"));
-        errors.push(ValidationError::new(format!(
-            "toolchain `{name}` is only supported with `provider: {}`; `provider: {actual_provider}` is not valid for `toolchains.{name}` and currently belongs to {actual_owner}. Keep the shared provider-agnostic fields on `toolchains.{name}` with `provider: {}` or move this capability back to `runtimes` / `tools` until ota ships another provider contract",
-            expected_contract.label(),
-            expected_contract.label(),
-        )));
-        return;
-    }
-
     let shared_core_summary = shipped_toolchain_contract_by_name("rust")
         .map(|contract| contract.shared_core_summary())
-        .unwrap_or("`provider`, `version`, and `fulfillment`");
+        .unwrap_or("`version` and `fulfillment`");
     let declared_provider_fields = known_provider_specific_field_owner_groups(toolchain);
     if declared_provider_fields.is_empty() {
         errors.push(ValidationError::new(format!(
@@ -1154,6 +1188,27 @@ fn validate_supported_toolchain(
     errors.push(ValidationError::new(format!(
         "toolchain `{name}` is not supported today; the shared provider-agnostic toolchain fields are {shared_core_summary}, and {declared_fields}",
     )));
+}
+
+fn validate_orchestrators(contract: &Contract, errors: &mut Vec<ValidationError>) {
+    for (name, orchestrator) in &contract.orchestrators {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`orchestrators` must not declare an empty orchestrator name",
+            ));
+            continue;
+        }
+        match orchestrator.kind {
+            OrchestratorKind::Mise => {}
+        }
+        for config_file in &orchestrator.config_files {
+            if config_file.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "orchestrator `{name}` must not declare an empty `config_files` entry"
+                )));
+            }
+        }
+    }
 }
 
 fn validate_native_prerequisites(contract: &Contract, errors: &mut Vec<ValidationError>) {
@@ -2580,7 +2635,10 @@ fn validate_task_mode_execution(
     mode_execution: &crate::schema::TaskModeExecutionSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    if mode_execution.default_mode.is_none() && !mode_execution.modes.any() {
+    if mode_execution.default_mode.is_none()
+        && !mode_execution.modes.any()
+        && mode_execution.orchestrator.is_none()
+    {
         errors.push(ValidationError::new(format!(
             "task `{task_name}` `execution` must declare `default_mode` or at least one mode branch under `execution.modes`"
         )));
@@ -2602,6 +2660,21 @@ fn validate_task_mode_execution(
             backend_mode_name(default_mode),
             backend_mode_name(default_mode)
         )));
+    }
+
+    if let Some(orchestrator) = mode_execution.orchestrator.as_ref() {
+        validate_task_execution_orchestrator(
+            contract,
+            task_name,
+            "task",
+            has_fallback_execution,
+            task.run.is_some(),
+            task.script.is_some(),
+            task.launch.is_some(),
+            task.action.is_some(),
+            orchestrator,
+            errors,
+        );
     }
 
     for (mode, branch) in mode_execution.modes.iter() {
@@ -2659,6 +2732,22 @@ fn validate_task_mode_execution(
             ))),
             _ => {}
         }
+        if let Some(orchestrator) = branch.orchestrator.as_ref() {
+            validate_task_execution_orchestrator(
+                contract,
+                task_name,
+                &format!("task mode `{mode_name}`"),
+                has_fallback_execution,
+                branch.run.is_some() || (!has_mode_execution_body(branch) && task.run.is_some()),
+                branch.script.is_some()
+                    || (!has_mode_execution_body(branch) && task.script.is_some()),
+                branch.launch.is_some()
+                    || (!has_mode_execution_body(branch) && task.launch.is_some()),
+                task.action.is_some() && !has_mode_execution_body(branch),
+                orchestrator,
+                errors,
+            );
+        }
         if let Some(launch) = branch.launch.as_ref() {
             validate_task_launch(
                 contract,
@@ -2674,6 +2763,66 @@ fn validate_task_mode_execution(
         if let Some(runtime) = branch.runtime.as_ref() {
             let backend = task_execution_backend(contract, task, mode);
             validate_task_runtime(contract, task_name, runtime, backend, errors);
+        }
+    }
+}
+
+fn has_mode_execution_body(branch: &crate::schema::TaskModeBranchSpec) -> bool {
+    branch.run.is_some() || branch.script.is_some() || branch.launch.is_some()
+}
+
+fn validate_task_execution_orchestrator(
+    contract: &Contract,
+    task_name: &str,
+    scope: &str,
+    has_fallback_execution: bool,
+    has_run: bool,
+    has_script: bool,
+    has_launch: bool,
+    has_action: bool,
+    orchestrator: &crate::schema::TaskExecutionOrchestratorSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let orchestrator_ref = orchestrator.ref_name.trim();
+    if orchestrator_ref.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` must not declare an empty `execution.orchestrator.ref`"
+        )));
+        return;
+    }
+
+    if !contract.orchestrators.contains_key(orchestrator_ref) {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` references unknown orchestrator `{orchestrator_ref}`; declare it under `orchestrators`"
+        )));
+    }
+
+    if !(has_run || has_script || has_launch || has_action || has_fallback_execution) {
+        errors.push(ValidationError::new(format!(
+            "{scope} `{task_name}` declares `execution.orchestrator`, but no executable task body resolves on that path"
+        )));
+        return;
+    }
+
+    match orchestrator.mode {
+        crate::schema::TaskExecutionOrchestratorMode::Task => {
+            if has_action {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: task`, but file `action` tasks are not orchestrator-managed"
+                )));
+            }
+            if has_launch {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: task`, but `launch` execution does not provide an orchestrator task name"
+                )));
+            }
+        }
+        crate::schema::TaskExecutionOrchestratorMode::Exec => {
+            if has_action {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: exec`, but file `action` tasks are not orchestrator-managed"
+                )));
+            }
         }
     }
 }
@@ -22180,6 +22329,82 @@ agent:
         assert_eq!(
             contract.agent.unwrap().exceptions.sensitive_writes,
             vec!["ota.yaml"]
+        );
+    }
+
+    #[test]
+    fn accepts_orchestrators_and_structured_toolchain_fulfillment() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+orchestrators:
+  mise:
+    kind: mise
+    required: true
+    config_files:
+      - mise.toml
+    activation:
+      trust: true
+    prepare:
+      install: true
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+    fulfillment:
+      source: mise
+      mode: run
+tasks:
+  verify:
+    run: //server:ci-unit
+    execution:
+      orchestrator:
+        ref: mise
+        mode: task
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("new orchestration model should validate");
+    }
+
+    #[test]
+    fn rejects_mismatched_toolchain_fulfillment_source() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  go:
+    version: "1.26.0"
+    fulfillment:
+      source: corepack
+      mode: run
+tasks:
+  verify:
+    run: go version
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("mismatched fulfillment source should be rejected")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "`toolchains.go.fulfillment.source: corepack` is not valid for `toolchains.go`",
+            )),
+            "{rendered:?}"
         );
     }
 }
