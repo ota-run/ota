@@ -6288,6 +6288,16 @@ fn execute_task_with_hooks(
         }
     }
 
+    maybe_prepare_task_orchestrator_on_run_path(
+        contract,
+        contract_path,
+        task_name,
+        task,
+        backend_kind,
+        &backend,
+        state,
+    )?;
+
     maybe_fulfill_toolchains_on_run_path(
         contract,
         contract_path,
@@ -6374,15 +6384,6 @@ fn execute_task_with_hooks(
         &backend,
         working_dir,
         current_os,
-        state,
-    )?;
-    maybe_prepare_task_orchestrator_on_run_path(
-        contract,
-        contract_path,
-        task_name,
-        task,
-        backend_kind,
-        &backend,
         state,
     )?;
     let mut path_export = match backend {
@@ -37647,6 +37648,143 @@ tasks:
             fs::read_to_string(fixture.dir.path().join("dev.txt")).unwrap(),
             "dev"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn orchestrator_preparation_runs_before_mise_toolchain_fulfillment() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  supported:
+    - native
+orchestrators:
+  mise:
+    kind: mise
+    required: true
+    config_files:
+      - mise.toml
+    activation:
+      trust: true
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+    fulfillment:
+      source: mise
+      mode: run
+tasks:
+  setup:
+    run: "true"
+    execution:
+      orchestrator:
+        ref: mise
+        mode: exec
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  strict_versions: true
+  version_policy:
+    runtimes:
+      node:
+        approved_versions:
+          - "24.15.0"
+    tools:
+      pnpm:
+        approved_versions:
+          - "10.33.4"
+  provisioning:
+    node:
+      source: mise
+      approved_versions:
+        - "24.15.0"
+    pnpm:
+      source: mise
+      approved_versions:
+        - "10.33.4"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let mise_path = bin_dir.join("mise");
+        fs::write(
+            &mise_path,
+            r#"#!/bin/sh
+set -eu
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+printf '%s\n' "$*" >> "$script_dir/mise.log"
+trust_file="$script_dir/mise.trusted"
+case "${1:-}" in
+  --version)
+    printf '2026.6.7\n'
+    exit 0
+    ;;
+  trust)
+    : > "$trust_file"
+    exit 0
+    ;;
+  install)
+    if [ ! -f "$trust_file" ]; then
+      printf 'Config files in /workspace/mise.toml are not trusted.\n' >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  exec)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&mise_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&mise_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let joined_path =
+            env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("orchestrator trust should run before mise fulfillment");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        let mise_log = fs::read_to_string(bin_dir.join("mise.log")).unwrap();
+        let trust_index = mise_log.find("trust").expect("trust should be invoked");
+        let install_index = mise_log
+            .find("install node@24.15.0")
+            .expect("node install should be invoked");
+        assert!(trust_index < install_index, "{mise_log}");
     }
 
     #[cfg(unix)]
