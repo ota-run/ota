@@ -280,7 +280,6 @@ Use mode branches when one task intent should run across multiple execution plan
 ```yaml
 tasks:
   start:
-    run: mvn spring-boot:run
     execution:
       default_mode: container
       modes:
@@ -288,12 +287,21 @@ tasks:
           context: host
           env:
             DB_URL: jdbc:postgresql://127.0.0.1:5432/app
+          launch:
+            kind: command
+            exe: mvn
+            args: [spring-boot:run]
         container:
           context: app
           lifecycle: persistent
           env:
             DB_URL: jdbc:postgresql://postgres:5432/app
-          run: mvn spring-boot:run -Dspring-boot.run.arguments=--server.address=0.0.0.0,--server.port=8080
+          launch:
+            kind: command
+            exe: mvn
+            args:
+              - spring-boot:run
+              - -Dspring-boot.run.arguments=--server.address=0.0.0.0,--server.port=8080
 ```
 
 This keeps task identity stable:
@@ -301,7 +309,7 @@ This keeps task identity stable:
 - `ota run start` uses `default_mode` when declared
 - `ota run start --mode native` selects `modes.native`
 - `ota run start --mode container` selects `modes.container`
-- mode branches can override `context`, `lifecycle`, `env`, `run`/`script`, and `runtime`
+- mode branches can override `context`, `lifecycle`, `env`, `run`/`script`/`launch`, and `runtime`
 - if a selected mode branch is missing, ota falls back to the task-level execution body and task-level execution settings
 
 ### `execution.contexts.<name>.attachments.isolated_paths`

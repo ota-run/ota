@@ -1792,6 +1792,12 @@ step kind, and keeps validation/error reporting inside the contract surface.
   hiding everything inside one shell string
 - `action` is for small built-in setup mutations that should stay deterministic and
   cross-platform instead of becoming shell-specific snippets
+- for long-running service processes, prefer `launch.kind: command` over opaque `run`
+- pair `launch.kind: command` with `runtime.kind: service` plus `runtime.surfaces` or
+  `runtime.listeners`; `launch` starts the process, while `runtime` declares what becomes reachable
+  and how readiness is proved
+- reserve `run` for finite shell tasks, pipelines, or real escape-hatch cases where a structured
+  executable shape would be misleading or unavailable
 - `launch.kind: command` reuses existing task env, input, receipt, dependency, and agent-safety
   behavior
 - `launch.kind: container` is a task launch source, not an execution context
@@ -1808,6 +1814,16 @@ Examples:
 
 ```yaml
 tasks:
+  dev:
+    launch:
+      kind: command
+      exe: bundle
+      args: [exec, rails, server, -b, 0.0.0.0, -p, "3000"]
+    runtime:
+      kind: service
+      surfaces:
+        - api
+
   quickstart:
     launch:
       kind: command
@@ -2323,13 +2339,21 @@ tasks:
           context: host
           env:
             DB_URL: jdbc:postgresql://127.0.0.1:5432/app
-          run: mvn spring-boot:run
+          launch:
+            kind: command
+            exe: mvn
+            args: [spring-boot:run]
         container:
           context: app
           lifecycle: persistent
           env:
             DB_URL: jdbc:postgresql://postgres:5432/app
-          run: mvn spring-boot:run -Dspring-boot.run.arguments=--server.address=0.0.0.0,--server.port=8080
+          launch:
+            kind: command
+            exe: mvn
+            args:
+              - spring-boot:run
+              - -Dspring-boot.run.arguments=--server.address=0.0.0.0,--server.port=8080
           runtime:
             kind: service
             listeners:
