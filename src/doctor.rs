@@ -5609,7 +5609,9 @@ fn selected_toolchain_run_fulfillment_source_for_tool(
         provider
             .owned_tool_requirements(toolchain, target_os)
             .keys()
-            .any(|owned_tool_name| owned_tool_name == tool_name)
+            .any(|owned_tool_name| {
+                owned_tool_name == tool_name || tool_executable_name(owned_tool_name) == tool_name
+            })
             .then(|| toolchain.fulfillment_source())
             .flatten()
     })
@@ -7377,6 +7379,31 @@ fn diagnose_command_version(
             return probe_started;
         }
 
+        if run_path_fulfillment_allowed && provider_hint.is_some_and(|provider| provider == "ruby")
+        {
+            probe_started |= diagnose_command_version(
+                "runtime",
+                "ruby",
+                &[String::from("ruby")],
+                "*",
+                required,
+                None,
+                None,
+                mode,
+                selected_lifecycle,
+                container_probe,
+                remote_probe,
+                remote_context_name,
+                contract_path,
+                loaded_policy,
+                target_os,
+                false,
+                provisioning_actions,
+                findings,
+            );
+            return probe_started;
+        }
+
         if run_path_fulfillment_allowed
             && tool_acquisition.is_some_and(|acquisition| {
                 acquisition.provider == ToolAcquisitionProvider::Corepack
@@ -7784,6 +7811,34 @@ fn diagnose_command_version(
             "tool",
             "mise",
             &[String::from("mise")],
+            "*",
+            required,
+            None,
+            None,
+            mode,
+            selected_lifecycle,
+            container_probe,
+            remote_probe,
+            remote_context_name,
+            contract_path,
+            loaded_policy,
+            target_os,
+            false,
+            provisioning_actions,
+            findings,
+        );
+        if findings.len() == finding_count {
+            return probe_started;
+        }
+        return probe_started;
+    }
+
+    if run_path_fulfillment_allowed && provider_hint.is_some_and(|provider| provider == "ruby") {
+        let finding_count = findings.len();
+        probe_started |= diagnose_command_version(
+            "runtime",
+            "ruby",
+            &[String::from("ruby")],
             "*",
             required,
             None,
@@ -10950,6 +11005,7 @@ fn shell_single_quote(command: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::collections::BTreeSet;
     use std::env;
     use std::fs;
     use std::io::{Read, Write};
@@ -10962,7 +11018,7 @@ mod tests {
     use crate::parser::parse_contract_str;
     use crate::policy_pack::ProvisioningTargetKind;
     use crate::runner::{ExecutionOverrides, HttpReadinessRequest};
-    use crate::schema::ServiceSpec;
+    use crate::schema::{ServiceSpec, ToolchainFulfillmentSource};
     #[cfg(windows)]
     use crate::test_support::cwd_mutex_lock;
     use crate::test_support::env_mutex_lock;
@@ -18527,6 +18583,54 @@ tasks:
     }
 
     #[test]
+    fn selected_toolchain_run_fulfillment_source_matches_owned_tool_aliases() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: athena-api
+toolchains:
+  ruby:
+    version: "3.3.11"
+    package_managers:
+      bundler: "2.5.3"
+    fulfillment:
+      source: ruby
+      mode: run
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+    requirements:
+      toolchains:
+        - ruby
+    effects:
+      writes:
+        - .bundle
+        - vendor/bundle
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let source = super::selected_toolchain_run_fulfillment_source_for_tool(
+            &contract,
+            &BTreeSet::from([String::from("ruby")]),
+            "macos",
+            "bundle",
+        );
+
+        assert_eq!(source, Some(ToolchainFulfillmentSource::Ruby));
+    }
+
+    #[test]
     fn reports_missing_toolchain_component_for_rustup_toolchain() {
         let _guard = env_mutex_lock();
         let temp = TempDir::new().unwrap();
@@ -19640,6 +19744,88 @@ tasks:
             .expect("expected bundle version mismatch finding");
         assert!(finding.why.contains("2.6.4"), "{finding:?}");
         assert!(finding.why.contains("2.5.3"), "{finding:?}");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn doctor_selected_workflow_allows_run_fulfilled_bundler_when_ruby_exists() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "ruby", "#!/bin/sh\necho ruby 3.3.11p0\n");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", bin_dir.as_os_str().to_os_string());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: athena-api
+toolchains:
+  ruby:
+    version: "3.3.11"
+    package_managers:
+      bundler: "2.5.3"
+    fulfillment:
+      source: ruby
+      mode: run
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+    requirements:
+      toolchains:
+        - ruby
+    effects:
+      writes:
+        - .bundle
+        - vendor/bundle
+      network: true
+      network_kind: dependency_hydration
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: install
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("verify"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing tool: bundle"
+                    && finding.summary != "Tool probe failed: bundle"
+                    && finding.summary != "Version mismatch for tool: bundle"),
+            "{report:?}"
+        );
     }
 
     #[cfg(not(windows))]

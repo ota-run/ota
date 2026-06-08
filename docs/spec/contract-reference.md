@@ -728,6 +728,10 @@ Rules:
 - canonical Node, Java, Go, Ruby, and .NET fulfillment all support `fulfillment.mode: run` on the
   selected path; provisioning authority still stays with org policy and backend requirement
   fulfillment
+- for canonical Ruby fulfillment with `fulfillment.mode: run`, ota currently uses the selected
+  Ruby to hydrate the declared Bundler lane structurally via `ruby -S gem install bundler
+  --no-document --version <constraint>` when `toolchains.ruby.package_managers.bundler` is
+  declared
 - `fulfillment.source: mise` with `fulfillment.mode: run` allows ota to use `mise install` for the
   selected toolchain and any declared package-manager entries on that path
 - `fulfillment.source: mise` must not be combined with managed-surface fields such as
@@ -1588,6 +1592,9 @@ Task-effect rules:
     - `prepare.source.manager`: required package manager; ota currently ships `npm` and `pnpm`
     - `prepare.source.mode`: required install mode; ota currently ships `install` and `ci`
     - `prepare.source.frozen_lockfile`: optional explicit lockfile strictness for `pnpm install`
+    - `prepare.source.kind: bundler`
+    - `prepare.source.cwd`: required repo-relative working directory for the Bundler invocation
+    - `prepare.source.path`: required repo-relative bundle install path for the repo-local gem lane
     - `prepare.source.kind: go_modules`
     - `prepare.source.cwd`: required repo-relative working directory for the `go mod download` invocation
 
@@ -1598,9 +1605,11 @@ Task-effect rules:
 - `prepare` still needs explicit `requirements` and `effects`; ota should understand both intent and side effects
 - `prepare.kind: dependency_hydration` currently requires `requirements.tools.docker`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: bundler` currently requires `requirements.toolchains: [ruby]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: go_modules` currently requires `requirements.toolchains: [go]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.source.manager: pnpm` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `pnpm install --frozen-lockfile`
 - `prepare.source.manager: npm` currently supports `mode: install` or `mode: ci`; use `mode: ci` when the repo truth is lockfile-strict npm hydration
+- `prepare.source.kind: bundler` currently executes the narrow canonical repo-local gem hydration lane: `bundle config set path <path> && bundle install`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
 - `prepare` does not replace workflow `prepare.task`; workflow prepare is still the explicit host bootstrap lane that points at a native `action` task
 - `prepare` is not orchestrator-managed in the current shipped slice
