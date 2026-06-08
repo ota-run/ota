@@ -7616,6 +7616,7 @@ fn prepare_task_shell_command(
                 let manager = match source.manager {
                     crate::schema::TaskNodePackageManagerKind::Npm => "npm",
                     crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
+                    crate::schema::TaskNodePackageManagerKind::Yarn => "yarn",
                 };
                 let mode = match source.mode {
                     crate::schema::TaskNodePackageManagerHydrationMode::Install => "install",
@@ -7627,12 +7628,9 @@ fn prepare_task_shell_command(
                     shell_quote_command_word(manager, quote_style),
                     shell_quote_command_word(mode, quote_style)
                 );
-                if source.frozen_lockfile {
+                if let Some(flag) = source.lockfile_flag() {
                     command.push(' ');
-                    command.push_str(&shell_quote_command_word(
-                        "--frozen-lockfile",
-                        quote_style,
-                    ));
+                    command.push_str(&shell_quote_command_word(flag, quote_style));
                 }
                 Ok(command)
             }
@@ -48782,6 +48780,93 @@ tasks:
             logged.contains(fixture.dir.path().join("app").display().to_string().as_str()),
             "{logged}"
         );
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_executes_yarn_immutable_from_declared_cwd() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      yarn: "4.11.0"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: app
+        manager: yarn
+        mode: install
+        frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+        - .yarn/install-state.gz
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let yarn_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo 4.11.0\r\n  exit /b 0\r\n)\r\n>> \"%OTA_YARN_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '4.11.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_YARN_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "yarn", yarn_body);
+        let log_path = fixture.dir.path().join("yarn.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_YARN_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_YARN_LOG", &log_path);
+        }
+
+        let outcome =
+            run_task(&fixture.contract, fixture.file_path(), "install").expect("prepare task should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_YARN_LOG", value) },
+            None => unsafe { env::remove_var("OTA_YARN_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("app")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
+            "{logged}"
+        );
+        assert!(logged.contains("install --immutable"), "{logged}");
     }
 
     #[test]
