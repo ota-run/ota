@@ -243,7 +243,15 @@ tasks:
     context: host
     description: Start the local development server on the host
     category: dev
-    run: pnpm dev --host 127.0.0.1 --port 3000
+    launch:
+      kind: command
+      exe: pnpm
+      args:
+        - dev
+        - --host
+        - 127.0.0.1
+        - --port
+        - "3000"
     requirements:
       toolchains:
         - node
@@ -257,7 +265,15 @@ tasks:
     context: app
     description: Start the local development server in a container context
     category: dev
-    run: pnpm dev --host 0.0.0.0 --port 3000
+    launch:
+      kind: command
+      exe: pnpm
+      args:
+        - dev
+        - --host
+        - 0.0.0.0
+        - --port
+        - "3000"
     requirements:
       toolchains:
         - node

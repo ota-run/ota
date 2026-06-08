@@ -131,7 +131,10 @@ surfaces:
 
 tasks:
   dev:
-    run: pnpm dev
+    launch:
+      kind: command
+      exe: pnpm
+      args: [dev]
     runtime:
       kind: service
       surfaces:
@@ -156,6 +159,8 @@ tasks:
 Native list form is intentionally small.
 The top-level surface owns endpoint meaning.
 Each task only opts into the surfaces it actually publishes.
+When that task is a long-running service, prefer `launch.kind: command` so Ota can reason about
+the executable separately from the declared surface contract.
 
 ### Container attachment override
 
@@ -173,7 +178,10 @@ surfaces:
 
 tasks:
   dev:
-    run: npm run dev
+    launch:
+      kind: command
+      exe: npm
+      args: [run, dev]
     runtime:
       kind: service
       surfaces:
