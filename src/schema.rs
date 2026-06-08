@@ -4144,6 +4144,11 @@ impl TaskPrepareSpec {
                         source.command_preview(),
                         source.cwd.trim()
                     ),
+                    TaskDependencyHydrationSourceSpec::GoModules(source) => format!(
+                        "hydrate {} with go mod download in `{}`",
+                        spec.medium.label(),
+                        source.cwd.trim()
+                    ),
                 }
             }
         }
@@ -4180,6 +4185,7 @@ impl TaskDependencyHydrationMedium {
 pub enum TaskDependencyHydrationSourceSpec {
     DockerCompose(TaskDockerComposeHydrationSourceSpec),
     NodePackageManager(TaskNodePackageManagerHydrationSourceSpec),
+    GoModules(TaskGoModulesHydrationSourceSpec),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -4219,6 +4225,12 @@ impl TaskNodePackageManagerHydrationSourceSpec {
         }
         parts.join(" ")
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskGoModulesHydrationSourceSpec {
+    pub cwd: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

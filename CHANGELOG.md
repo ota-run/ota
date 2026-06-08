@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- clarified agent-facing task guidance: when a repo declares a matching safe or verification
+  task, agents should prefer `ota run <task>` over raw package-manager or language-tool
+  commands and fall back only when no truthful Ota task exists or when isolating an Ota defect
+- expanded first-class task preparation for dependency hydration with a native Go slice:
+  `prepare.kind: dependency_hydration`, `medium: package_dependencies`, and
+  `source.kind: go_modules` now let ota execute `go mod download` structurally instead of
+  hiding module hydration inside opaque shell `run` commands
 - hardened dependency-isolation volume cleanup after container-backed execution and proof:
   Ota now gives container engines a longer retry window before surfacing `volume is in use`
   cleanup failures, reducing false-negative proof tails when Docker lags briefly after

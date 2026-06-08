@@ -24,6 +24,17 @@
 
 # Lessons
 
+## 2026-06-08
+
+- Pattern: While validating sibling repos, it is easy to fall back to direct `npm`, `pnpm`, or
+  language-tool commands even when the repo already exposes a truthful Ota task for the same
+  check.
+- Correction: Prefer `ota run <task>` whenever the contract already declares the matching safe or
+  verification task, and use direct tool commands only when no truthful Ota task exists or when
+  isolating an Ota defect.
+- Rule: For repo validation, Ota is the default execution surface. Do not bypass it with raw
+  package-manager or language-tool commands when the contract already models the check.
+
 ## 2026-05-30
 
 - Pattern: A pressure-test finding can expose a real Ota gap, but fixing it immediately without

@@ -3377,6 +3377,14 @@ pub fn summarize_task_prepare(
                         source.frozen_lockfile,
                     )
                 }
+                crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
+                    "go_modules",
+                    Some(source.cwd.as_str()),
+                    None,
+                    None,
+                    Some("download"),
+                    false,
+                ),
             };
             Some(TaskPrepareSummary {
                 kind: "dependency_hydration",
@@ -3427,6 +3435,14 @@ pub fn summarize_task_prepare_owned(
                         crate::schema::TaskNodePackageManagerHydrationMode::Ci => "ci",
                     }),
                     source.frozen_lockfile,
+                ),
+                crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
+                    "go_modules",
+                    Some(source.cwd.clone()),
+                    None,
+                    None,
+                    Some("download"),
+                    false,
                 ),
             };
             Some(WorkspaceTaskPrepareSummary {
