@@ -56,7 +56,7 @@ const RUSTUP_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
 const COREPACK_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`package_managers` and `platforms.<os>.package_managers`";
 const UV_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
-    "`package_managers` and `platforms.<os>.package_managers` (uv only)";
+    "`package_managers` and `platforms.<os>.package_managers` (uv and Poetry only)";
 const RUBY_PROVIDER_SPECIFIC_FIELD_SUMMARY: &str =
     "`package_managers` and `platforms.<os>.package_managers` (Bundler only)";
 const UNSUPPORTED_TOOLCHAIN_OPPORTUNITY_ECOSYSTEMS: &[&str] = &[];
@@ -1219,8 +1219,13 @@ fn uv_requirement_detail_parts(
     target_os: &str,
 ) -> Vec<String> {
     let mut parts = base_requirement_detail_parts(provider, toolchain, target_os);
-    if let Some(version) = toolchain.package_managers_for_os(target_os).get("uv") {
-        parts.push(format!("uv `{version}`"));
+    let package_managers = toolchain.package_managers_for_os(target_os);
+    if !package_managers.is_empty() {
+        let rendered = package_managers
+            .iter()
+            .map(|(name, version)| format!("{name}@{version}"))
+            .collect::<Vec<_>>();
+        parts.push(format!("package managers `{}`", rendered.join("`, `")));
     }
     parts
 }
@@ -1311,9 +1316,9 @@ fn sdkman_owned_capabilities(
 
 fn uv_owned_capabilities(
     provider: ToolchainProviderContract,
-    _toolchain: &ToolchainSpec,
+    toolchain: &ToolchainSpec,
 ) -> Vec<ToolchainOwnedCapability> {
-    vec![
+    let mut owned = vec![
         ToolchainOwnedCapability {
             kind: ToolchainOwnedCapabilityKind::Runtime,
             name: provider.owned_runtime().to_string(),
@@ -1322,7 +1327,25 @@ fn uv_owned_capabilities(
             kind: ToolchainOwnedCapabilityKind::Tool,
             name: String::from("uv"),
         },
-    ]
+    ];
+    let mut package_managers = BTreeSet::new();
+    package_managers.extend(toolchain.package_managers.keys().cloned());
+    for detail in toolchain.platforms.values() {
+        package_managers.extend(detail.package_managers.keys().cloned());
+    }
+    for package_manager in package_managers {
+        if owned.iter().any(|capability| {
+            capability.kind == ToolchainOwnedCapabilityKind::Tool
+                && capability.name == package_manager
+        }) {
+            continue;
+        }
+        owned.push(ToolchainOwnedCapability {
+            kind: ToolchainOwnedCapabilityKind::Tool,
+            name: package_manager,
+        });
+    }
+    owned
 }
 
 fn go_owned_capabilities(
@@ -1424,21 +1447,35 @@ fn uv_owned_tool_requirements(
     target_os: &str,
 ) -> BTreeMap<String, ToolRequirement> {
     let required = toolchain.required_for_os(target_os);
-    let version = toolchain
-        .package_managers_for_os(target_os)
+    let mut requirements = BTreeMap::new();
+    let package_managers = toolchain.package_managers_for_os(target_os);
+    let uv_version = package_managers
         .get("uv")
         .cloned()
         .unwrap_or_else(|| String::from("*"));
-    BTreeMap::from([(
+    requirements.insert(
         String::from("uv"),
         ToolRequirement::Detailed(ToolDetail {
-            version,
+            version: uv_version,
             required,
             only_on: toolchain.only_on.clone(),
             platforms: BTreeMap::<String, ToolPlatformDetail>::new(),
             acquisition: None,
         }),
-    )])
+    );
+    if let Some(poetry_version) = package_managers.get("poetry").cloned() {
+        requirements.insert(
+            String::from("poetry"),
+            ToolRequirement::Detailed(ToolDetail {
+                version: poetry_version,
+                required,
+                only_on: toolchain.only_on.clone(),
+                platforms: BTreeMap::<String, ToolPlatformDetail>::new(),
+                acquisition: None,
+            }),
+        );
+    }
+    requirements
 }
 
 fn go_owned_tool_requirements(
@@ -2028,17 +2065,17 @@ fn ruby_package_manager_validation_errors(name: &str, toolchain: &ToolchainSpec)
 fn uv_package_manager_validation_errors(name: &str, toolchain: &ToolchainSpec) -> Vec<String> {
     let mut errors = Vec::new();
     for package_name in toolchain.package_managers.keys() {
-        if package_name != "uv" {
+        if package_name != "uv" && package_name != "poetry" {
             errors.push(format!(
-                "toolchain `{name}` with `provider: uv` must only declare `uv` under `package_managers`; found `{package_name}`"
+                "toolchain `{name}` with `provider: uv` must only declare `uv` or `poetry` under `package_managers`; found `{package_name}`"
             ));
         }
     }
     for (platform, detail) in &toolchain.platforms {
         for package_name in detail.package_managers.keys() {
-            if package_name != "uv" {
+            if package_name != "uv" && package_name != "poetry" {
                 errors.push(format!(
-                    "toolchain `{name}` platform `{platform}` with `provider: uv` must only declare `uv` under `package_managers`; found `{package_name}`"
+                    "toolchain `{name}` platform `{platform}` with `provider: uv` must only declare `uv` or `poetry` under `package_managers`; found `{package_name}`"
                 ));
             }
         }
@@ -2511,6 +2548,40 @@ toolchains:
     }
 
     #[test]
+    fn uv_contract_projects_poetry_requirement_when_declared() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      poetry: ">=1.8"
+"#,
+        );
+        let toolchain = contract.toolchains.get("python").unwrap();
+        let provider = declared_toolchain_contract("python", toolchain).unwrap();
+
+        assert!(
+            provider
+                .requirement_detail_parts(toolchain, "linux")
+                .iter()
+                .any(|part| part.contains("poetry@>=1.8"))
+        );
+        let tool_requirements = provider.owned_tool_requirements(toolchain, "linux");
+        assert_eq!(
+            tool_requirements
+                .get("poetry")
+                .expect("projected poetry requirement")
+                .version(),
+            ">=1.8"
+        );
+    }
+
+    #[test]
     fn uv_contract_rejects_non_uv_package_manager_keys() {
         let contract = contract(
             r#"
@@ -2530,7 +2601,7 @@ toolchains:
         assert_eq!(
             provider.provider_specific_validation_errors("python", toolchain),
             vec![String::from(
-                "toolchain `python` with `provider: uv` must only declare `uv` under `package_managers`; found `pip`"
+                "toolchain `python` with `provider: uv` must only declare `uv` or `poetry` under `package_managers`; found `pip`"
             )]
         );
     }

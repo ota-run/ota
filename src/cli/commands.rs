@@ -1290,6 +1290,22 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::LegacyStandalonePoetry(value) => format!(
+            "{} path(s) {}\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value
+                .locations
+                .iter()
+                .map(|location| format!("`{location}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+            paint_key("Risk:"),
+            render_validate_warning_detail("standalone Poetry ownership"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::SensitiveAgentWritablePath(value) => format!(
             "{} path `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -15558,7 +15574,8 @@ fn selected_task_scoped_toolchain_names(
         return BTreeSet::new();
     };
     let effective = effective_task_execution(contract, task_name, overrides);
-    task.scoped_toolchain_requirements_for_execution(effective.backend, effective.context_name)
+    contract
+        .task_toolchain_names_for_execution(task, effective.backend, effective.context_name)
         .into_iter()
         .collect()
 }

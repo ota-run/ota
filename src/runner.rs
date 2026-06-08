@@ -80,7 +80,10 @@ use crate::schema::{
 use crate::terminal::supports_dynamic_stderr_ui;
 #[cfg(test)]
 use crate::toolchains::declared_toolchain_contract;
-use crate::toolchains::{ToolchainCommandSpec, declared_toolchain_fulfillment_commands};
+use crate::toolchains::{
+    ToolchainCommandSpec, declared_toolchain_fulfillment_commands,
+    requirement_surface_with_toolchain_owned_capabilities_for_required_tools,
+};
 use crate::workspace::{load_contract_for_workspace_repo, load_contract_for_workspace_repo_ref};
 
 #[derive(Clone)]
@@ -8564,7 +8567,9 @@ fn maybe_fulfill_toolchains_on_run_path(
     current_os: &str,
     state: &mut TaskRunState,
 ) -> Result<(), RunError> {
-    for toolchain_name in task.requirements.toolchains.iter().cloned() {
+    for toolchain_name in
+        task_toolchain_names_for_resolved_backend(contract, task, backend).into_iter()
+    {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
@@ -8629,7 +8634,9 @@ fn maybe_activate_corepack_shims_on_run_path(
         return Ok(());
     }
 
-    for toolchain_name in task.requirements.toolchains.iter().cloned() {
+    for toolchain_name in
+        task_toolchain_names_for_resolved_backend(contract, task, backend).into_iter()
+    {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
@@ -8929,7 +8936,10 @@ fn wrap_container_command_for_corepack_activation(
     };
 
     let mut command_parts = Vec::new();
-    for toolchain_name in task.requirements.toolchains.iter().cloned() {
+    for toolchain_name in contract
+        .task_toolchain_names_for_execution(task, Backend::Container, task.context_for_backend(contract.execution.as_ref(), Backend::Container))
+        .into_iter()
+    {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
@@ -8993,6 +9003,16 @@ fn toolchain_fulfillment_cache_key(
             cwd.as_deref().unwrap_or_default()
         ),
     }
+}
+
+fn task_toolchain_names_for_resolved_backend(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: &ResolvedExecutionBackend,
+) -> Vec<String> {
+    let backend_kind = resolved_execution_backend_kind(backend);
+    let context_name = task.context_for_backend(contract.execution.as_ref(), backend_kind);
+    contract.task_toolchain_names_for_execution(task, backend_kind, context_name)
 }
 
 #[cfg(test)]
@@ -9456,6 +9476,29 @@ fn shared_local_backend_requirement_versions(
             target_os,
             tool_source.as_str(),
         )?;
+        let context_surface =
+            requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
+                contract,
+                &crate::schema::RequirementSurface {
+                    runtimes: context.requirements.runtimes.clone(),
+                    tools: context.requirements.tools.clone(),
+                },
+                &context.requirements.toolchains.iter().cloned().collect(),
+                target_os,
+                None,
+            );
+        merge_requirement_versions(
+            &mut runtimes,
+            &context_surface.runtimes,
+            target_os,
+            "task context toolchain-owned runtimes",
+        )?;
+        merge_requirement_versions(
+            &mut tools,
+            &context_surface.tools,
+            target_os,
+            "task context toolchain-owned tools",
+        )?;
     }
 
     Ok((
@@ -9507,6 +9550,28 @@ fn direct_context_requirement_versions(
         target_os,
         tool_source.as_str(),
     )?;
+    let scoped_surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
+        contract,
+        &crate::schema::RequirementSurface {
+            runtimes: context.requirements.runtimes.clone(),
+            tools: context.requirements.tools.clone(),
+        },
+        &context.requirements.toolchains.iter().cloned().collect(),
+        target_os,
+        None,
+    );
+    merge_requirement_versions(
+        &mut runtimes,
+        &scoped_surface.runtimes,
+        target_os,
+        "execution context toolchain-owned runtimes",
+    )?;
+    merge_requirement_versions(
+        &mut tools,
+        &scoped_surface.tools,
+        target_os,
+        "execution context toolchain-owned tools",
+    )?;
 
     Ok((
         runtimes
@@ -9552,6 +9617,28 @@ fn direct_task_requirement_versions(
         &scoped_surface.tools,
         target_os,
         tool_source.as_str(),
+    )?;
+    let scoped_surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
+        contract,
+        &scoped_surface,
+        &contract
+            .task_toolchain_names_for_execution(task, Backend::Native, context_name)
+            .into_iter()
+            .collect(),
+        target_os,
+        None,
+    );
+    merge_requirement_versions(
+        &mut runtimes,
+        &scoped_surface.runtimes,
+        target_os,
+        "task toolchain-owned runtimes",
+    )?;
+    merge_requirement_versions(
+        &mut tools,
+        &scoped_surface.tools,
+        target_os,
+        "task toolchain-owned tools",
     )?;
     let scoped_native =
         task.scoped_native_requirements_for_execution(Backend::Native, context_name);

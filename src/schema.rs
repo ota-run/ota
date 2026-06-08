@@ -316,8 +316,11 @@ impl Contract {
             let Some(task) = self.tasks.get(task_name.as_str()) else {
                 continue;
             };
-            if !task.requirements.toolchains.is_empty() {
-                names.extend(task.requirements.toolchains.iter().cloned());
+            let backend = task.workflow_backend(self.execution.as_ref());
+            let context_name = task.context_for_backend(self.execution.as_ref(), backend);
+            for toolchain_name in self.task_toolchain_names_for_execution(task, backend, context_name)
+            {
+                names.insert(toolchain_name);
             }
         }
 
@@ -335,6 +338,22 @@ impl Contract {
 
     pub fn task_required_toolchain_names(&self, task_name: &str) -> BTreeSet<String> {
         self.task_closure_required_toolchain_names([task_name.to_string()])
+    }
+
+    pub fn task_toolchain_names_for_execution(
+        &self,
+        task: &TaskSpec,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> Vec<String> {
+        let context_toolchains = context_name
+            .and_then(|name| self.execution.as_ref()?.contexts.get(name))
+            .map(|context| context.requirements.toolchains.as_slice())
+            .unwrap_or_default();
+        merged_named_requirements(
+            &task.scoped_toolchain_requirements_for_execution(backend, context_name),
+            context_toolchains,
+        )
     }
 
     pub fn task_closure_required_service_names(
@@ -602,6 +621,8 @@ struct ExecutionContextRequirementsWire {
     runtimes: BTreeMap<String, RuntimeRequirement>,
     #[serde(default)]
     tools: BTreeMap<String, ToolRequirement>,
+    #[serde(default)]
+    toolchains: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -888,6 +909,10 @@ fn merge_execution_context(target: &mut ExecutionContextMerged, source: &Executi
             .runtimes
             .extend(requirements.runtimes.clone());
         target.requirements.tools.extend(requirements.tools.clone());
+        target
+            .requirements
+            .toolchains
+            .extend(requirements.toolchains.clone());
     }
     if let Some(attachments) = source.attachments.as_ref() {
         if let Some(compose) = attachments.compose.as_ref() {
@@ -1453,6 +1478,8 @@ pub struct ExecutionContextRequirements {
     pub runtimes: BTreeMap<String, RuntimeRequirement>,
     #[serde(default)]
     pub tools: BTreeMap<String, ToolRequirement>,
+    #[serde(default)]
+    pub toolchains: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -5603,6 +5630,42 @@ tasks:
         assert_eq!(
             task.scoped_check_requirements_for_execution(Backend::Native, Some("docker-host")),
             vec!["host-check", "docker-check"]
+        );
+    }
+
+    #[test]
+    fn contract_task_toolchain_names_for_execution_include_context_toolchains() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        toolchains:
+          - rust
+tasks:
+  lint:
+    context: host
+    run: cargo fmt --check
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("lint").expect("lint task should exist");
+        assert_eq!(
+            contract.task_toolchain_names_for_execution(task, Backend::Native, Some("host")),
+            vec!["rust"]
+        );
+        assert_eq!(contract.task_required_toolchain_names("lint").len(), 1);
+        assert!(
+            contract.task_required_toolchain_names("lint").contains("rust"),
+            "context-owned toolchain should count toward task requirements"
         );
     }
 

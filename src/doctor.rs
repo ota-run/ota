@@ -484,7 +484,7 @@ fn selected_backend_precondition_selections(
         }
         selection
             .toolchain_names
-            .extend(task.scoped_toolchain_requirements_for_execution(backend, context_name));
+            .extend(contract.task_toolchain_names_for_execution(task, backend, context_name));
         selection
             .env_names
             .extend(task.scoped_env_requirements_for_execution(backend, context_name));
@@ -620,7 +620,8 @@ fn selected_task_backend_precondition_selections(
         }
         selection
             .toolchain_names
-            .extend(task.scoped_toolchain_requirements_for_execution(
+            .extend(contract.task_toolchain_names_for_execution(
+                task,
                 effective.backend,
                 effective.context_name,
             ));
@@ -741,7 +742,7 @@ fn scoped_precondition_selection(
         selection.native_names.extend(scoped_native.iter().cloned());
         selection
             .toolchain_names
-            .extend(task.scoped_toolchain_requirements_for_execution(backend, context_name));
+            .extend(contract.task_toolchain_names_for_execution(task, backend, context_name));
         if matches!(backend, Backend::Native) {
             let native_toolchains = contract.native_prerequisite_required_toolchain_names_for_os(
                 scoped_native.clone(),
@@ -851,7 +852,7 @@ fn selected_remote_task_requirement_selection(
             target.scoped_tools = true;
         }
         let scoped_toolchains =
-            task.scoped_toolchain_requirements_for_execution(Backend::Remote, context_name);
+            contract.task_toolchain_names_for_execution(task, Backend::Remote, context_name);
         if !scoped_toolchains.is_empty() {
             target.scoped_toolchains = true;
             target.toolchain_names.extend(scoped_toolchains);
@@ -3576,6 +3577,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory) => {
                 ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory)
             }
+            ContractAdvisory::LegacyStandalonePoetry(advisory) => {
+                ContractAdvisory::LegacyStandalonePoetry(advisory)
+            }
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 ContractAdvisory::SensitiveAgentWritablePath(advisory)
             }
@@ -3648,6 +3652,15 @@ fn diagnose_contract_advisories(
                 ),
                 why: ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory.clone()).why(),
                 next: ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory).next(),
+            },
+            ContractAdvisory::LegacyStandalonePoetry(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: format!(
+                    "Poetry is modeled as a standalone tool ({})",
+                    advisory.locations.join(", ")
+                ),
+                why: ContractAdvisory::LegacyStandalonePoetry(advisory.clone()).why(),
+                next: ContractAdvisory::LegacyStandalonePoetry(advisory).next(),
             },
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => Finding {
                 severity: FindingSeverity::Warn,
@@ -5606,14 +5619,17 @@ fn selected_toolchain_run_fulfillment_source_for_tool(
             return None;
         }
         let provider = declared_toolchain_contract(toolchain_name, toolchain)?;
-        provider
+        let fulfillable_tools = provider
             .owned_tool_requirements(toolchain, target_os)
             .keys()
+            .filter(|owned_tool_name| {
+                provider.provider() != crate::schema::ToolchainProvider::Uv
+                    || owned_tool_name.as_str() == "uv"
+            })
             .any(|owned_tool_name| {
                 owned_tool_name == tool_name || tool_executable_name(owned_tool_name) == tool_name
-            })
-            .then(|| toolchain.fulfillment_source())
-            .flatten()
+            });
+        fulfillable_tools.then(|| toolchain.fulfillment_source()).flatten()
     })
 }
 

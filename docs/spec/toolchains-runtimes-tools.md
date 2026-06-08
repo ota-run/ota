@@ -70,7 +70,7 @@ Examples:
 - Rust plus `rustfmt` and target triples
 - Node plus declared Corepack package-manager ownership
 - Java plus `javac`
-- Python plus declared `uv`
+- Python plus declared `uv` or `poetry`
 - Ruby plus declared Bundler
 
 Do not use `toolchains` when the repo only needs a plain runtime version check and no managed
@@ -152,6 +152,7 @@ Examples of invalid duplication:
 - `toolchains.node` plus `runtimes.node`
 - `toolchains.node` plus `tools.node`
 - `toolchains.python` plus `runtimes.python`
+- `toolchains.python.package_managers.poetry` plus `tools.poetry`
 - `toolchains.rust.components: [rustfmt]` plus `tools.rustfmt`
 - `toolchains.ruby.package_managers.bundler` plus `tools.bundler`
 
@@ -168,7 +169,7 @@ Examples:
 - Rust via rustup
 - Node plus declared package-manager ownership
 - Java plus `javac`
-- Python plus `uv`
+- Python plus `uv` or `poetry`
 - Ruby plus Bundler
 
 Do not use when the repo only needs a plain runtime check.
@@ -339,6 +340,7 @@ Today ota ships:
 
 - top-level `toolchains`
 - top-level `orchestrators`
+- execution-context-scoped `execution.contexts.<name>.requirements.toolchains`
 - task-scoped `requirements.toolchains`
 - task-scoped `execution.orchestrator`
 - structured `toolchains.<name>.fulfillment`
