@@ -387,6 +387,12 @@ impl Contract {
             return;
         };
 
+        if let Some(aggregate) = task.aggregate.as_ref() {
+            for dependency in &aggregate.tasks {
+                self.collect_task_dependency_closure(dependency, visited, ordered);
+            }
+        }
+
         for dependency in &task.depends_on {
             self.collect_task_dependency_closure(dependency, visited, ordered);
         }
@@ -3198,6 +3204,8 @@ pub struct TaskSpec {
     pub launch: Option<TaskLaunchSpec>,
     #[serde(default)]
     pub action: Option<TaskActionSpec>,
+    #[serde(default)]
+    pub aggregate: Option<TaskAggregateSpec>,
     #[serde(default, skip_serializing_if = "TaskEffectsSpec::is_empty")]
     pub effects: TaskEffectsSpec,
     #[serde(default)]
@@ -3234,12 +3242,14 @@ impl TaskSpec {
             self.prepare.as_ref(),
             self.launch.as_ref(),
             self.action.as_ref(),
+            self.aggregate.as_ref(),
         ) {
-            (Some(_), None, None, None, None) => Some("run"),
-            (None, Some(_), None, None, None) => Some("script"),
-            (None, None, Some(prepare), None, None) => Some(prepare.kind_str()),
-            (None, None, None, Some(launch), None) => Some(launch.kind_str()),
-            (None, None, None, None, Some(action)) => Some(action.kind_str()),
+            (Some(_), None, None, None, None, None) => Some("run"),
+            (None, Some(_), None, None, None, None) => Some("script"),
+            (None, None, Some(prepare), None, None, None) => Some(prepare.kind_str()),
+            (None, None, None, Some(launch), None, None) => Some(launch.kind_str()),
+            (None, None, None, None, Some(action), None) => Some(action.kind_str()),
+            (None, None, None, None, None, Some(_)) => Some("aggregate"),
             _ => None,
         }
     }
@@ -3251,9 +3261,10 @@ impl TaskSpec {
             self.prepare.as_ref(),
             self.launch.as_ref(),
             self.action.as_ref(),
+            self.aggregate.as_ref(),
         ) {
-            (Some(run), None, None, None, None) => Some(run),
-            (None, Some(script), None, None, None) => Some(script),
+            (Some(run), None, None, None, None, None) => Some(run),
+            (None, Some(script), None, None, None, None) => Some(script),
             _ => None,
         }
     }
@@ -3270,6 +3281,7 @@ impl TaskSpec {
                     launch: self.launch.as_ref(),
                     action: self.action.as_ref(),
                     prepare: self.prepare.as_ref(),
+                    aggregate: self.aggregate.as_ref(),
                     os: None,
                 })
             })
@@ -3967,8 +3979,21 @@ impl TaskModeBranchSpec {
             launch: self.launch.as_ref(),
             action: None,
             prepare: self.prepare.as_ref(),
+            aggregate: None,
             os: None,
         })
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAggregateSpec {
+    pub tasks: Vec<String>,
+}
+
+impl TaskAggregateSpec {
+    pub fn preview(&self) -> String {
+        format!("aggregate: {}", self.tasks.join(", "))
     }
 }
 
@@ -4902,6 +4927,7 @@ impl TaskVariantSpec {
             launch: None,
             action: None,
             prepare: None,
+            aggregate: None,
             os: self.when.os.as_deref(),
         })
     }
@@ -4938,6 +4964,7 @@ pub struct TaskExecution<'a> {
     pub launch: Option<&'a TaskLaunchSpec>,
     pub action: Option<&'a TaskActionSpec>,
     pub prepare: Option<&'a TaskPrepareSpec>,
+    pub aggregate: Option<&'a TaskAggregateSpec>,
     pub os: Option<&'a str>,
 }
 
@@ -4958,12 +4985,17 @@ impl<'a> TaskExecution<'a> {
         self.prepare
     }
 
+    pub fn aggregate(&self) -> Option<&'a TaskAggregateSpec> {
+        self.aggregate
+    }
+
     pub fn preview(&self) -> String {
         self.body
             .map(ToOwned::to_owned)
             .or_else(|| self.launch.map(TaskLaunchSpec::preview))
             .or_else(|| self.action.map(TaskActionSpec::preview))
             .or_else(|| self.prepare.map(TaskPrepareSpec::preview))
+            .or_else(|| self.aggregate.map(TaskAggregateSpec::preview))
             .unwrap_or_else(|| String::from("-"))
     }
 }

@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- added first-class aggregate task bodies through `tasks.<name>.aggregate.tasks`: Ota now models
+  named dependency-closure entrypoints such as `verify` structurally instead of teaching fake
+  `run: "true"` wrappers, with schema/validation/runner/output support and updated docs/examples
 - fixed workflow-scoped `ota up` service selection: when a selected workflow does not declare
   `workflows.<name>.services.required`, Ota no longer falls back to unrelated repo-global
   required services during the final service-readiness phase

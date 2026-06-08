@@ -1207,6 +1207,7 @@ pub struct RunPlan {
 pub enum TaskExecutionRelation {
     Requested,
     DependsOn { parent: String },
+    AggregateMember { parent: String },
     AfterSuccess { parent: String },
     AfterFailure { parent: String },
     AfterAlways { parent: String },
@@ -6175,6 +6176,115 @@ fn execute_task_with_hooks(
             .completed_by_generation
             .insert((task_name.to_string(), generation), 0);
         return Ok(0);
+    }
+
+    if let Some(aggregate) = task.aggregate.as_ref() {
+        let mut aggregate_exit_code = 0;
+
+        for child in &aggregate.tasks {
+            let child_spec = contract
+                .tasks
+                .get(child)
+                .expect("validated aggregate execution should only reference known tasks");
+            let child_default_mode = child_spec.mode_default_backend();
+            let child_backend_override = match requested_overrides.backend {
+                Some(selected_backend) => {
+                    if child_default_mode.is_some() {
+                        let child_supports_selected_backend = child_default_mode
+                            == Some(selected_backend)
+                            || child_spec.mode_execution_branch(selected_backend).is_some();
+                        if child_supports_selected_backend {
+                            Some(selected_backend)
+                        } else {
+                            None
+                        }
+                    } else {
+                        Some(selected_backend)
+                    }
+                }
+                None => None,
+            };
+            let child_overrides = ExecutionOverrides {
+                backend: child_backend_override,
+                lifecycle: requested_overrides.lifecycle,
+                host_port: None,
+                memory: None,
+                skip_deps: false,
+            };
+            let child_generation = hook_generation_for_task(child, generation, state);
+            let child_backend = resolve_execution_backend_with_contract_path(
+                contract,
+                child,
+                child_overrides,
+                Some(contract_path),
+            )?;
+            let child_exit = execute_task_with_hooks(
+                contract,
+                contract_path,
+                child,
+                &[],
+                child_overrides,
+                policy_env,
+                &child_backend,
+                mode.clone(),
+                working_dir,
+                current_os,
+                TaskExecutionRelation::AggregateMember {
+                    parent: task_name.to_string(),
+                },
+                child_generation,
+                state,
+            )?;
+            if child_exit != 0 {
+                aggregate_exit_code = child_exit;
+                break;
+            }
+        }
+
+        let aggregate_note = Some(format!("aggregate tasks: {}", aggregate.tasks.join(", ")));
+        if requested_relation {
+            state.execution_note = aggregate_note.clone();
+        }
+        state.task_steps.push(ExecutedTaskStep {
+            name: task_name.to_string(),
+            exit_code: aggregate_exit_code,
+            relation,
+            generation,
+            execution_note: aggregate_note,
+        });
+        state.task_step_target_resolutions.push(Vec::new());
+        state.task_step_backend_fulfillments.push(None);
+        state.task_step_shared_local_backends.push(None);
+
+        let hook_exit_code = execute_post_hooks(
+            contract,
+            contract_path,
+            task_name,
+            task,
+            requested_overrides.host_port,
+            policy_env,
+            &backend,
+            mode.clone(),
+            working_dir,
+            current_os,
+            generation,
+            aggregate_exit_code,
+            state,
+        )?;
+        let final_exit_code = if aggregate_exit_code != 0 {
+            aggregate_exit_code
+        } else if hook_exit_code != 0 {
+            hook_exit_code
+        } else {
+            0
+        };
+        state
+            .completed
+            .insert(task_name.to_string(), final_exit_code);
+        state
+            .completed_by_generation
+            .insert((task_name.to_string(), generation), final_exit_code);
+        return Ok(final_exit_code);
     }
 
     let mut input_resolution = resolve_task_inputs(
@@ -49211,9 +49321,9 @@ tasks:
       toolchains:
         - node
   verify:
-    run: "true"
-    depends_on:
-      - setup
+    aggregate:
+      tasks:
+        - setup
 "#,
         );
         let bin_dir = fixture.dir.path().join("bin");
@@ -49398,9 +49508,9 @@ tasks:
       toolchains:
         - node
   verify:
-    run: "true"
-    depends_on:
-      - setup
+    aggregate:
+      tasks:
+        - setup
 "#,
         );
 
@@ -49468,6 +49578,57 @@ toolchains:
 
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
         assert_eq!(outcome.stdout.trim(), "10.24.0");
+    }
+
+    #[test]
+    fn aggregate_task_executes_children_before_recording_parent_step() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    run: echo lint
+  test:
+    run: echo test
+  verify:
+    aggregate:
+      tasks:
+        - lint
+        - test
+"#,
+        );
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "verify")
+            .expect("aggregate task should execute");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            outcome
+                .task_steps
+                .iter()
+                .map(|step| step.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["lint", "test", "verify"]
+        );
+        assert_eq!(
+            outcome.task_steps[0].relation,
+            TaskExecutionRelation::AggregateMember {
+                parent: String::from("verify"),
+            }
+        );
+        assert_eq!(
+            outcome.task_steps[1].relation,
+            TaskExecutionRelation::AggregateMember {
+                parent: String::from("verify"),
+            }
+        );
+        assert_eq!(outcome.task_steps[2].relation, TaskExecutionRelation::Requested);
+        assert_eq!(
+            outcome.task_steps[2].execution_note.as_deref(),
+            Some("aggregate tasks: lint, test")
+        );
     }
 
     fn write_fake_bin(dir: &Path, name: &str, body: &str) -> PathBuf {

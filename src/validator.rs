@@ -2248,7 +2248,8 @@ fn validate_tasks(
             || task.script.is_some()
             || task.prepare.is_some()
             || task.launch.is_some()
-            || task.action.is_some();
+            || task.action.is_some()
+            || task.aggregate.is_some();
         let has_mode_branches = task
             .execution
             .as_ref()
@@ -2268,19 +2269,20 @@ fn validate_tasks(
             task.prepare.is_some(),
             task.launch.is_some(),
             task.action.is_some(),
+            task.aggregate.is_some(),
         ]
         .into_iter()
         .filter(|present| *present)
         .count();
         if execution_field_count > 1 {
             errors.push(ValidationError::new(format!(
-                "task `{name}` must declare exactly one of `run`, `script`, `prepare`, `launch`, or `action`"
+                "task `{name}` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
             )));
         }
 
         if !has_base_fields && task.variants.is_empty() && !has_mode_branches {
             errors.push(ValidationError::new(format!(
-                "task `{name}` must declare exactly one of `run`, `script`, `prepare`, `launch`, or `action`"
+                "task `{name}` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
             )));
         }
         if let Some(launch) = task.launch.as_ref() {
@@ -2302,6 +2304,73 @@ fn validate_tasks(
         if let Some(prepare) = task.prepare.as_ref() {
             let backend = task.workflow_backend(contract.execution.as_ref());
             validate_task_prepare(name, prepare, &task.requirements, &task.effects, backend, errors);
+        }
+        if let Some(aggregate) = task.aggregate.as_ref() {
+            if aggregate.tasks.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` `aggregate.tasks` must declare at least one task"
+                )));
+            }
+            if task.context.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `context` when `aggregate` is present"
+                )));
+            }
+            if !task.env.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `env` when `aggregate` is present"
+                )));
+            }
+            if !task.env_bindings.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `env_bindings` when `aggregate` is present"
+                )));
+            }
+            if !task.inputs.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `inputs` when `aggregate` is present"
+                )));
+            }
+            if !task.targets.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `targets` when `aggregate` is present"
+                )));
+            }
+            if !task.depends_on.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `depends_on` when `aggregate` is present; model aggregate membership under `aggregate.tasks`"
+                )));
+            }
+            if !task.requires_services.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `requires_services` when `aggregate` is present"
+                )));
+            }
+            if task.runtime.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `runtime` when `aggregate` is present"
+                )));
+            }
+            if !task.effects.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `effects` when `aggregate` is present"
+                )));
+            }
+            if !task.requirements.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `requirements` when `aggregate` is present"
+                )));
+            }
+            if !task.variants.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `variants` when `aggregate` is present"
+                )));
+            }
+            if task.execution.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `execution` when `aggregate` is present"
+                )));
+            }
         }
         if let Some(mode_execution) = task.execution.as_ref() {
             validate_task_mode_execution(
@@ -2375,6 +2444,18 @@ fn validate_tasks(
                 dependency,
                 errors,
             );
+        }
+        if let Some(aggregate) = task.aggregate.as_ref() {
+            for dependency in &aggregate.tasks {
+                validate_task_dependency_reference(
+                    tasks,
+                    name,
+                    "aggregate.tasks",
+                    "aggregate references",
+                    dependency,
+                    errors,
+                );
+            }
         }
         for service_name in &task.requires_services {
             validate_task_service_reference(contract, name, service_name, errors);
@@ -7171,6 +7252,21 @@ fn validate_task_dependency_reference(
         )));
     }
 
+    if let Some(referenced) = tasks.get(dependency)
+        && referenced.aggregate.is_some()
+    {
+        let message = if field == "aggregate.tasks" {
+            format!(
+                "task `{task_name}` `aggregate.tasks` must reference executable tasks, not aggregate task `{dependency}`"
+            )
+        } else {
+            format!(
+                "task `{task_name}` must not reference aggregate task `{dependency}` from `{field}`; expand the child tasks directly or make the aggregate the user-facing entrypoint"
+            )
+        };
+        errors.push(ValidationError::new(message));
+    }
+
     if dependency.trim().is_empty() {
         errors.push(ValidationError::new(format!(
             "task `{task_name}` must not declare an empty `{field}` task reference"
@@ -8108,8 +8204,10 @@ fn visit_task(
 }
 
 fn task_edges(task: &TaskSpec) -> impl Iterator<Item = &String> {
-    task.depends_on
+    task.aggregate
         .iter()
+        .flat_map(|aggregate| aggregate.tasks.iter())
+        .chain(task.depends_on.iter())
         .chain(task.after_success.iter())
         .chain(task.after_failure.iter())
         .chain(task.after_always.iter())
@@ -14911,7 +15009,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, or `action`"
+            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -14934,7 +15032,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, or `action`"
+            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -14961,7 +15059,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, or `action`"
+            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -14988,7 +15086,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, or `action`"
+            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -15011,7 +15109,220 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, or `action`"
+            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
+        );
+    }
+
+    #[test]
+    fn accepts_aggregate_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    run: cargo fmt --check
+  test:
+    run: cargo test
+  verify:
+    aggregate:
+      tasks:
+        - lint
+        - test
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("aggregate task should validate");
+    }
+
+    #[test]
+    fn rejects_empty_aggregate_task_lists() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  verify:
+    aggregate:
+      tasks: []
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `verify` `aggregate.tasks` must declare at least one task"
+        );
+    }
+
+    #[test]
+    fn rejects_aggregate_tasks_with_depends_on() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    run: cargo fmt --check
+  verify:
+    aggregate:
+      tasks:
+        - lint
+    depends_on:
+      - lint
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `verify` must not declare `depends_on` when `aggregate` is present; model aggregate membership under `aggregate.tasks`"
+        );
+    }
+
+    #[test]
+    fn rejects_aggregate_tasks_with_execution_branches() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    run: cargo fmt --check
+  verify:
+    aggregate:
+      tasks:
+        - lint
+    execution:
+      default_mode: native
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `verify` must not declare `execution` when `aggregate` is present"
+        );
+    }
+
+    #[test]
+    fn rejects_aggregate_tasks_with_context_and_requirements() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    run: cargo fmt --check
+  verify:
+    context: host
+    aggregate:
+      tasks:
+        - lint
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let rendered = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            rendered
+                .iter()
+                .any(|error| error
+                    == "task `verify` must not declare `context` when `aggregate` is present"),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error
+                == "task `verify` must not declare `requirements` when `aggregate` is present"),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_cycles_through_aggregate_membership() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    run: cargo fmt --check
+    depends_on:
+      - verify
+  verify:
+    aggregate:
+      tasks:
+        - lint
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(
+            errors
+                .errors()
+                .iter()
+                .any(|error| error
+                    .to_string()
+                    .contains("task dependency cycle detected: lint -> verify -> lint")),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn rejects_depends_on_edges_that_target_aggregate_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    run: cargo fmt --check
+  verify:
+    aggregate:
+      tasks:
+        - lint
+  release:
+    run: cargo publish --dry-run
+    depends_on:
+      - verify
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(
+            errors.errors().iter().any(|error| error.to_string() == "task `release` must not reference aggregate task `verify` from `depends_on`; expand the child tasks directly or make the aggregate the user-facing entrypoint"),
+            "{errors}"
         );
     }
 

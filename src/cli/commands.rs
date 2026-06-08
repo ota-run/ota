@@ -9326,6 +9326,7 @@ fn build_assist_add_task_proposal(
         prepare: None,
         launch: None,
         action: None,
+        aggregate: None,
         effects: crate::schema::TaskEffectsSpec::default(),
         requirements: crate::schema::TaskRequirementsSpec::default(),
         depends_on: Vec::new(),
@@ -27082,6 +27083,9 @@ pub fn workspace_tasks(
                                 prepare: crate::output::summarize_task_prepare_owned(
                                     execution.prepare(),
                                 ),
+                                aggregate: crate::output::summarize_task_aggregate(
+                                    execution.aggregate(),
+                                ),
                                 effects: crate::output::TaskEffectsSummary::from_spec(
                                     &task.effects,
                                 ),
@@ -34412,7 +34416,12 @@ fn render_task_command_preview(task: &TaskSummary<'_>) -> String {
         .or_else(|| task.launch.as_ref().map(render_task_launch_preview))
         .or_else(|| task.action.as_ref().map(render_task_action_text))
         .or_else(|| task.prepare.as_ref().map(render_task_prepare_text))
+        .or_else(|| task.aggregate.as_ref().map(render_task_aggregate_text))
         .unwrap_or_else(|| String::from("-"))
+}
+
+fn render_task_aggregate_text(aggregate: &crate::output::TaskAggregateSummary) -> String {
+    format!("aggregate: {}", aggregate.tasks.join(", "))
 }
 
 fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
@@ -43670,6 +43679,7 @@ tasks:
             launch: None,
             action: None,
             prepare: None,
+            aggregate: None,
             effects: crate::output::TaskEffectsSummary::default(),
             selected_variant_os: None,
             depends_on: Vec::new(),
@@ -43740,6 +43750,7 @@ tasks:
             launch: None,
             action: None,
             prepare: None,
+            aggregate: None,
             effects: crate::output::TaskEffectsSummary::default(),
             selected_variant_os: None,
             depends_on: Vec::new(),
@@ -43770,6 +43781,47 @@ tasks:
             rendered.contains("                         Run mode for the API suite"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn render_tasks_text_surfaces_aggregate_bodies() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "verify",
+            context: Some("host"),
+            default_mode: None,
+            description: Some("Run the canonical verification entrypoint"),
+            notes: None,
+            category: Some("test"),
+            env: &env,
+            inputs: &inputs,
+            kind: "aggregate",
+            run: None,
+            script: None,
+            launch: None,
+            action: None,
+            prepare: None,
+            aggregate: Some(crate::output::TaskAggregateSummary {
+                tasks: vec![String::from("lint"), String::from("test")],
+            }),
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: true,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+        assert!(rendered.contains("aggregate: lint, test"), "{rendered}");
     }
 
     #[test]
@@ -43814,6 +43866,7 @@ tasks:
             launch: None,
             action: None,
             prepare: None,
+            aggregate: None,
             effects: crate::output::TaskEffectsSummary::default(),
             selected_variant_os: None,
             depends_on: Vec::new(),
@@ -43887,6 +43940,7 @@ tasks:
             launch: None,
             action: None,
             prepare: None,
+            aggregate: None,
             effects: crate::output::TaskEffectsSummary {
                 writes: vec![String::from("node_modules")],
                 network: true,
@@ -44231,6 +44285,7 @@ workflows:
                 }),
                 action: None,
                 prepare: None,
+                aggregate: None,
                 effects: crate::output::TaskEffectsSummary::default(),
                 selected_variant_os: None,
                 depends_on: Vec::new(),
@@ -44311,6 +44366,7 @@ workflows:
                     }),
                     action: None,
                     prepare: None,
+                    aggregate: None,
                     effects: crate::output::TaskEffectsSummary {
                         writes: vec![String::from("node_modules")],
                         network: true,
@@ -44332,6 +44388,47 @@ workflows:
             rendered.contains("effects=writes=node_modules; network=true; external_state=docker"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn render_workspace_tasks_text_includes_aggregate() {
+        let output = super::render_workspace_tasks_text(
+            ".",
+            &[crate::output::WorkspaceRepoTasksReport {
+                name: String::from("athena-api"),
+                path: String::from("/tmp/athena-api"),
+                contract_path: String::from("/tmp/athena-api/ota.yaml"),
+                workflow: Some(String::from("verify")),
+                required: true,
+                acquired: true,
+                depends_on: Vec::new(),
+                tasks: vec![crate::output::WorkspaceTaskSummary {
+                    name: String::from("verify"),
+                    kind: String::from("aggregate"),
+                    description: Some(String::from("Run the canonical verification entrypoint")),
+                    run: None,
+                    script: None,
+                    launch: None,
+                    action: None,
+                    prepare: None,
+                    aggregate: Some(crate::output::TaskAggregateSummary {
+                        tasks: vec![String::from("lint"), String::from("test")],
+                    }),
+                    effects: crate::output::TaskEffectsSummary::default(),
+                    depends_on: Vec::new(),
+                    requires_services: Vec::new(),
+                    after_success: Vec::new(),
+                    after_failure: Vec::new(),
+                    after_always: Vec::new(),
+                }],
+            }],
+        );
+
+        let rendered = strip_ansi_codes(&output.stdout);
+        assert!(rendered.contains("Aggregate: aggregate: lint, test"), "{rendered}");
+        assert!(rendered.contains("Task: verify"), "{rendered}");
+        assert!(rendered.contains("Kind: aggregate"), "{rendered}");
+        assert!(rendered.contains("Command: aggregate: lint, test"), "{rendered}");
     }
 
     #[test]
@@ -45561,9 +45658,9 @@ tasks:
   setup:
     run: sh -c 'touch "{}"'
   verify:
-    run: "true"
-    depends_on:
-      - setup
+    aggregate:
+      tasks:
+        - setup
 "#,
                 proof_file.display()
             ),
@@ -66484,6 +66581,13 @@ fn execution_receipt_failure_context(
                 failure_origin: String::from("dependency"),
             })
         }
+        TaskExecutionRelation::AggregateMember { .. } if failed_step.name != requested_task => {
+            Some(ExecutionReceiptFailureContext {
+                failed_task: requested_task.to_string(),
+                failed_dependency: Some(failed_step.name.clone()),
+                failure_origin: String::from("aggregate"),
+            })
+        }
         TaskExecutionRelation::AfterSuccess { .. } => Some(ExecutionReceiptFailureContext {
             failed_task: requested_task.to_string(),
             failed_dependency: None,
@@ -69577,6 +69681,13 @@ fn execution_receipt_step_detail(step: &ExecutedTaskStep, requested_task: &str) 
                 Some(format!("depends_on for `{parent}`"))
             } else {
                 Some(format!("dependency of rerun `{parent}`"))
+            }
+        }
+        TaskExecutionRelation::AggregateMember { parent } => {
+            if step.generation == 0 {
+                Some(format!("aggregate member of `{parent}`"))
+            } else {
+                Some(format!("rerun aggregate member of `{parent}`"))
             }
         }
         TaskExecutionRelation::AfterSuccess { parent } => {
@@ -73581,6 +73692,13 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                     render_workspace_task_prepare_text(prepare)
                 ));
             }
+            if let Some(aggregate) = task.aggregate.as_ref() {
+                stdout.push_str(&format!(
+                    "\n  {} {}",
+                    paint_key("Aggregate:"),
+                    render_task_aggregate_text(aggregate)
+                ));
+            }
         }
     }
 
@@ -73660,6 +73778,9 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                 task.run
                     .clone()
                     .or(task.script.clone())
+                    .or(task.launch.as_ref().map(render_workspace_task_launch_text))
+                    .or(task.prepare.as_ref().map(render_workspace_task_prepare_text))
+                    .or(task.aggregate.as_ref().map(render_task_aggregate_text))
                     .unwrap_or_else(|| String::from("-")),
                 format!(
                     "`ota run {} {}`",

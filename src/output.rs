@@ -1321,6 +1321,8 @@ pub struct WorkspaceTaskSummary {
     pub action: Option<WorkspaceTaskActionSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepare: Option<WorkspaceTaskPrepareSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<TaskAggregateSummary>,
     #[serde(default, skip_serializing_if = "TaskEffectsSummary::is_empty")]
     pub effects: TaskEffectsSummary,
     pub depends_on: Vec<String>,
@@ -2920,6 +2922,8 @@ pub struct TaskSummary<'a> {
     pub action: Option<TaskActionSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepare: Option<TaskPrepareSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate: Option<TaskAggregateSummary>,
     #[serde(default, skip_serializing_if = "TaskEffectsSummary::is_empty")]
     pub effects: TaskEffectsSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2952,6 +2956,11 @@ pub struct TaskEffectsSummary {
     pub network_kind: Option<crate::schema::TaskNetworkEffectKind>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub external_state: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct TaskAggregateSummary {
+    pub tasks: Vec<String>,
 }
 
 impl TaskEffectsSummary {
@@ -3019,6 +3028,7 @@ impl<'a> TaskSummary<'a> {
             launch: summarize_task_launch(resolved_execution.launch()),
             action: summarize_task_action(resolved_execution.action()),
             prepare: summarize_task_prepare(resolved_execution.prepare()),
+            aggregate: summarize_task_aggregate(resolved_execution.aggregate()),
             effects: TaskEffectsSummary::from_spec(&task.effects),
             selected_variant_os: resolved_execution.os,
             depends_on: task.depends_on.clone(),
@@ -3093,6 +3103,11 @@ impl<'a> TaskSummary<'a> {
     }
 
     pub fn retain_visible_task_relationships(&mut self, visible_task_names: &BTreeSet<String>) {
+        if let Some(aggregate) = self.aggregate.as_mut() {
+            aggregate
+                .tasks
+                .retain(|task| visible_task_names.contains(task.as_str()));
+        }
         self.depends_on
             .retain(|task| visible_task_names.contains(task.as_str()));
         self.after_success
@@ -3102,6 +3117,14 @@ impl<'a> TaskSummary<'a> {
         self.after_always
             .retain(|task| visible_task_names.contains(task.as_str()));
     }
+}
+
+pub fn summarize_task_aggregate(
+    aggregate: Option<&crate::schema::TaskAggregateSpec>,
+) -> Option<TaskAggregateSummary> {
+    aggregate.map(|aggregate| TaskAggregateSummary {
+        tasks: aggregate.tasks.clone(),
+    })
 }
 
 #[derive(Debug, Serialize)]

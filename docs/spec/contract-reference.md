@@ -1513,6 +1513,12 @@ tasks:
     depends_on:
       - package
     run: ./scripts/upload-artifact.sh dist/release.tar.gz
+  verify:
+    description: Run the canonical verification entrypoint
+    aggregate:
+      tasks:
+        - build
+        - upload
 extensions:
   release-upload:
     kind: export_provider
@@ -1538,6 +1544,7 @@ Fields:
 - `prepare`: optional first-class finite preparation body for machine-readable setup or dependency hydration
 - `launch`: optional structured launch source for inspectable command or packaged container starts
 - `action`: optional first-class native setup action for small cross-platform repo-file mutations
+- `aggregate`: optional first-class aggregate body for named dependency-closure entrypoints
 - `effects`: optional structured side-effect metadata for the task body
 - `requirements`: optional task-scoped prerequisite surface for this executable path
 - `execution`: optional mode-aware execution branches for one task intent
@@ -1576,6 +1583,22 @@ Task-effect rules:
 - `effects.writes` is contract truth for agent-safety review, not a log of every transient scratch file
 - when a task is agent-safe, declared writes should stay inside `agent.writable_paths` when that boundary is declared
 - agent-safe task writes must not overlap `agent.protected_paths`
+
+`aggregate` fields:
+
+- `aggregate.tasks`: required non-empty ordered list of task names ota should execute as the aggregate body
+
+`aggregate` rules:
+
+- use `aggregate` when the task is only a named dependency-closure entrypoint and does not have its own command body
+- `aggregate` is a task body, so it is mutually exclusive with `run`, `script`, `prepare`, `launch`, and `action`
+- `aggregate.tasks` entries must resolve to known tasks
+- `aggregate.tasks` order is preserved during execution
+- aggregate-member failures become the aggregate task result
+- `aggregate` must not be combined with task-local execution fields such as `context`, `env`, `inputs`, `targets`, `requires_services`, `runtime`, `effects`, `requirements`, `variants`, or `execution`
+- aggregate tasks are user-facing entrypoints; other tasks should not reference them from `depends_on` or hook edges
+- `aggregate.tasks` must reference executable child tasks, not other aggregate entrypoints
+- keep prerequisite edges in the child tasks; do not duplicate aggregate membership under `depends_on`
 
 `prepare` fields:
 
@@ -2418,7 +2441,7 @@ tasks:
 Rules:
 
 - task names must not be empty
-- tasks must declare a default `run` or `script`, or at least one variant
+- tasks must declare exactly one task body: `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`, unless the task intentionally resolves through variants or execution-mode inheritance
 - input names must use lowercase snake_case
 - input defaults must not be empty
 - input allowed values must not be empty
@@ -2428,19 +2451,22 @@ Rules:
 - variant entries must declare exactly one of `run` or `script`
 - duplicate variants for the same `when.os` are rejected
 - dependency references must resolve to known tasks
+- aggregate member references must resolve to known tasks
 - hook references must resolve to known tasks
 - task dependency cycles are rejected
-- hook edges participate in the same task cycle detection as `depends_on`
-- `depends_on` is the canonical way to reuse task steps instead of calling `ota run` from inside another task script
+- aggregate membership and hook edges participate in the same task cycle detection as `depends_on`
+- `depends_on` is the canonical prerequisite edge between executable tasks; `aggregate` is the canonical body for named dependency-closure entrypoints
 - `requires_services` references must resolve to known services
 - each required service must declare an actionable manager or readiness surface so ota can enforce the requirement
 
 Current execution model:
 
 - `run` and `script` are shell-compatible execution forms
+- `aggregate` executes its declared `aggregate.tasks` in order and records the parent aggregate task as the requested entrypoint
 - task `env` values are applied when ota runs the task and override repo-level env with the same name
 - when variants are declared, ota resolves the best matching `when.os` entry first and falls back to the default execution
 - `depends_on` runs before the task body
+- `aggregate` replaces fake no-op wrappers such as `run: "true"` for verification entrypoints like `verify`
 - `after_success` runs only when the task body exits `0`
 - `after_failure` runs only when the task body exits non-zero
 - `after_always` runs after either branch, but only when the task body actually ran

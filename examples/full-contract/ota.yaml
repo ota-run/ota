@@ -363,6 +363,16 @@ tasks:
     depends_on:
       - setup
     safe_for_agent: true
+  verify:
+    context: host
+    description: Run the canonical verification entrypoint
+    category: test
+    aggregate:
+      tasks:
+        - test
+    safe_for_agent: true
+    notes: |
+      Use this when you want one named verification surface without a fake no-op shell body.
 workflows:
   default: app
   app:
@@ -423,12 +433,13 @@ checks:
 agent:
   posture: readiness_strict
   entrypoint: setup
-  default_task: test
+  default_task: verify
   safe_tasks:
     - setup
     - test
+    - verify
   verify_after_changes:
-    - test
+    - verify
   writable_paths:
     - src
     - docs
