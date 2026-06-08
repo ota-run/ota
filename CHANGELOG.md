@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- fixed Windows native POSIX-shell task execution to launch Bash without login-shell startup:
+  repo-rooted commands such as Bundler dependency hydration now preserve Ota's selected working
+  directory instead of letting `bash -l` reset execution into `$HOME`
 - fixed native `ota doctor` / `ota up --dry-run` mismatch handling for `toolchains.ruby` with
   `fulfillment.source: ruby` and `mode: run`: when the selected path declares Bundler under the
   Ruby toolchain, Ota now checks the selected Ruby provider instead of blocking on an ambient

@@ -23518,14 +23518,19 @@ fn shell_command(command: &str) -> Command {
     if looks_like_posix_script(command)
         && let Some(bash) = bash_executable()
     {
-        let mut shell = Command::new(bash);
-        shell.arg("-lc").arg(command);
-        shell
+        bash_posix_shell_command(bash, command)
     } else {
         let mut shell = Command::new("cmd");
         shell.arg("/C").arg(command);
         shell
     }
+}
+
+#[cfg(any(windows, test))]
+fn bash_posix_shell_command(executable: PathBuf, command: &str) -> Command {
+    let mut shell = Command::new(executable);
+    shell.args(["--noprofile", "--norc", "-c"]).arg(command);
+    shell
 }
 
 #[cfg(any(windows, test))]
@@ -23839,6 +23844,28 @@ mod tests {
         let script = "env | grep FOO";
         assert!(looks_like_posix_script(script));
         assert!(!looks_like_powershell_script(script));
+    }
+
+    #[test]
+    fn windows_bash_shell_command_avoids_login_shell_startup() {
+        let shell = super::bash_posix_shell_command(
+            PathBuf::from("bash.exe"),
+            "cd . && bundle config set path vendor/bundle && bundle install",
+        );
+        let args = shell
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                String::from("--noprofile"),
+                String::from("--norc"),
+                String::from("-c"),
+                String::from("cd . && bundle config set path vendor/bundle && bundle install"),
+            ]
+        );
     }
 
     #[test]
