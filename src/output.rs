@@ -3377,6 +3377,14 @@ pub fn summarize_task_prepare(
                         source.frozen_lockfile,
                     )
                 }
+                crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
+                    "bundler",
+                    Some(source.cwd.as_str()),
+                    Some(source.path.as_str()),
+                    Some("bundle"),
+                    Some("install"),
+                    false,
+                ),
                 crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
                     "go_modules",
                     Some(source.cwd.as_str()),
@@ -3435,6 +3443,14 @@ pub fn summarize_task_prepare_owned(
                         crate::schema::TaskNodePackageManagerHydrationMode::Ci => "ci",
                     }),
                     source.frozen_lockfile,
+                ),
+                crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
+                    "bundler",
+                    Some(source.cwd.clone()),
+                    Some(source.path.clone()),
+                    Some("bundle"),
+                    Some("install"),
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
                     "go_modules",

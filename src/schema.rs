@@ -4144,6 +4144,12 @@ impl TaskPrepareSpec {
                         source.command_preview(),
                         source.cwd.trim()
                     ),
+                    TaskDependencyHydrationSourceSpec::Bundler(source) => format!(
+                        "hydrate {} with bundler install in `{}` using `{}`",
+                        spec.medium.label(),
+                        source.cwd.trim(),
+                        source.path.trim()
+                    ),
                     TaskDependencyHydrationSourceSpec::GoModules(source) => format!(
                         "hydrate {} with go mod download in `{}`",
                         spec.medium.label(),
@@ -4185,6 +4191,7 @@ impl TaskDependencyHydrationMedium {
 pub enum TaskDependencyHydrationSourceSpec {
     DockerCompose(TaskDockerComposeHydrationSourceSpec),
     NodePackageManager(TaskNodePackageManagerHydrationSourceSpec),
+    Bundler(TaskBundlerHydrationSourceSpec),
     GoModules(TaskGoModulesHydrationSourceSpec),
 }
 
@@ -4225,6 +4232,13 @@ impl TaskNodePackageManagerHydrationSourceSpec {
         }
         parts.join(" ")
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskBundlerHydrationSourceSpec {
+    pub cwd: String,
+    pub path: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

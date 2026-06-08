@@ -65,6 +65,13 @@ toolchains:
     fulfillment:
       source: go
       mode: none
+  ruby:
+    version: "3.3.11"
+    package_managers:
+      bundler: "2.5.3"
+    fulfillment:
+      source: ruby
+      mode: run
 tools:
   uv: "0.6.0"
   pwsh:
@@ -181,6 +188,26 @@ tasks:
     requirements:
       toolchains:
         - go
+  setup:ruby:gems:
+    context: host
+    description: Hydrate repo-local Ruby dependencies before Rails verification
+    category: setup
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+    effects:
+      writes:
+        - .bundle
+        - vendor/bundle
+      network: true
+      network_kind: dependency_hydration
+    requirements:
+      toolchains:
+        - ruby
   setup:docker:images:
     context: host
     description: Pre-pull registry-backed docker dependencies before service startup

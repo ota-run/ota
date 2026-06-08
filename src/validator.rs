@@ -3236,6 +3236,66 @@ fn validate_task_prepare(
                         )));
                     }
                 }
+                crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => {
+                    if spec.medium
+                        != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: bundler` must use `prepare.medium: package_dependencies`"
+                        )));
+                    }
+                    if !spec.targets.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: bundler` must omit `prepare.targets`; ota executes the declared Bundler hydration lane structurally"
+                        )));
+                    }
+                    if source.cwd.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `bundler` must declare a non-empty `prepare.source.cwd`"
+                        )));
+                    } else {
+                        validate_repo_relative_file_action_path(
+                            task_name,
+                            "prepare.source.cwd",
+                            source.cwd.as_str(),
+                            errors,
+                        );
+                    }
+                    if source.path.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `bundler` must declare a non-empty `prepare.source.path`"
+                        )));
+                    } else {
+                        validate_repo_relative_file_action_path(
+                            task_name,
+                            "prepare.source.path",
+                            source.path.as_str(),
+                            errors,
+                        );
+                    }
+                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "ruby") {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: bundler` must declare `requirements.toolchains: [ruby]`"
+                        )));
+                    }
+                    if !effects.network {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network: true`"
+                        )));
+                    }
+                    if effects.network_kind
+                        != Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
+                        )));
+                    }
+                    if effects.writes.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: bundler` must declare at least one durable repo write in `effects.writes`"
+                        )));
+                    }
+                }
                 crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => {
                     if spec.medium
                         != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
@@ -15230,6 +15290,114 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("go modules prepare should validate");
+    }
+
+    #[test]
+    fn accepts_prepare_only_bundler_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  ruby:
+    version: "3.3.11"
+    package_managers:
+      bundler: "2.5.3"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+    requirements:
+      toolchains:
+        - ruby
+    effects:
+      writes:
+        - .bundle
+        - vendor/bundle
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("bundler prepare should validate");
+    }
+
+    #[test]
+    fn rejects_bundler_prepare_without_ruby_toolchain_and_writes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("bundler prepare without ruby toolchain should fail");
+        let rendered = errors.to_string();
+        assert!(rendered.contains("must declare `requirements.toolchains: [ruby]`"));
+        assert!(rendered.contains("must declare at least one durable repo write in `effects.writes`"));
+    }
+
+    #[test]
+    fn rejects_bundler_prepare_with_targets() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  ruby:
+    version: "3.3.11"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+      targets: [api]
+    requirements:
+      toolchains:
+        - ruby
+    effects:
+      writes:
+        - .bundle
+        - vendor/bundle
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_contract(&contract).expect_err("bundler prepare targets should fail");
+        assert!(errors.to_string().contains("must omit `prepare.targets`"));
     }
 
     #[test]
