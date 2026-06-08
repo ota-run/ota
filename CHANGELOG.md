@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- widened Python toolchain package-manager ownership so Poetry is first-class under
+  `toolchains.python.package_managers.poetry`, while legacy standalone `tools.poetry`
+  declarations remain temporarily accepted with migration warnings instead of a silent break
+- expanded the managed toolchain ownership surface into named execution contexts:
+  `execution.contexts.<name>.requirements.toolchains` is now first-class, so repos can keep
+  runtime and package-manager ownership under `toolchains` even when that truth is scoped to a
+  host, container, or other named execution context instead of falling back to split
+  `runtimes` / `tools` declarations
 - expanded first-class task preparation for dependency hydration with a Yarn slice:
   `prepare.kind: dependency_hydration`, `medium: package_dependencies`, and
   `source.kind: node_package_manager` with `manager: yarn` now let ota execute

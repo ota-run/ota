@@ -40,8 +40,8 @@ use crate::schema::{
     ServiceSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
     TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
     TaskTargetActivationMode, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
-    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec, parse_memory_size_bytes,
-    parse_readiness_duration_spec, task_target_env_name,
+    ToolRequirement, ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec,
+    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
     declared_toolchain_contract, fulfillment_source_legacy_provider,
@@ -631,6 +631,21 @@ fn validate_execution(
             |value| value.version(),
         );
         validate_tool_details(&context.requirements.tools, errors);
+        validate_named_toolchain_requirements(
+            contract,
+            &context.requirements.toolchains,
+            &format!("execution context `{name}`"),
+            &format!("`execution.contexts.{name}.requirements.toolchains`"),
+            errors,
+        );
+        validate_tool_requirements_have_deterministic_toolchain_ownership(
+            contract,
+            &context.requirements.tools,
+            &context.requirements.toolchains,
+            &format!("execution context `{name}`"),
+            &format!("`execution.contexts.{name}.requirements.toolchains`"),
+            errors,
+        );
     }
 
     for (name, shared_backend) in &execution.shared_backends {
@@ -5832,6 +5847,7 @@ pub enum ContractAdvisory {
     IsolatedYarnReleaseShadow(IsolatedYarnReleaseShadowAdvisory),
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
     LegacyNodeRuntimeToolSplit(LegacyNodeRuntimeToolSplitAdvisory),
+    LegacyStandalonePoetry(LegacyStandalonePoetryAdvisory),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
     SensitiveWriteException(SensitiveWriteExceptionAdvisory),
     AgentBootstrapUnpinned(AgentBootstrapUnpinnedAdvisory),
@@ -5875,6 +5891,11 @@ pub struct IsolatedYarnReleaseShadowAdvisory {
 pub struct LegacyNodeRuntimeToolSplitAdvisory {
     pub runtime_version: String,
     pub package_managers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyStandalonePoetryAdvisory {
+    pub locations: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5949,6 +5970,10 @@ impl ContractAdvisory {
                 "Node contract uses split ownership (`runtimes.node` + tools: {}) instead of `toolchains.node`",
                 advisory.package_managers.join(", ")
             ),
+            ContractAdvisory::LegacyStandalonePoetry(advisory) => format!(
+                "Poetry is modeled as a standalone tool instead of `toolchains.python.package_managers.poetry` ({})",
+                advisory.locations.join(", ")
+            ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
                 "`agent.writable_paths` includes sensitive {} `{}`",
                 advisory.category, advisory.path
@@ -6003,6 +6028,9 @@ impl ContractAdvisory {
                 "split Node ownership keeps package-manager activation/tool ownership detached from runtime ownership; this increases onboarding drift and makes missing-tool remediation less deterministic than a `toolchains.node` contract (current runtime: `{}`)",
                 advisory.runtime_version
             ),
+            ContractAdvisory::LegacyStandalonePoetry(_) => String::from(
+                "Poetry owns Python dependency installation, lockfile semantics, virtualenv behavior, and often task execution through `poetry run`; keeping it as a standalone tool splits Python ecosystem ownership away from `toolchains.python`",
+            ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => advisory.reason.clone(),
             ContractAdvisory::SensitiveWriteException(advisory) => advisory.reason.clone(),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
@@ -6029,6 +6057,7 @@ impl ContractAdvisory {
             | ContractAdvisory::IsolatedYarnReleaseShadow(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
+            | ContractAdvisory::LegacyStandalonePoetry(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6046,6 +6075,7 @@ impl ContractAdvisory {
             | ContractAdvisory::IsolatedYarnReleaseShadow(_)
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
+            | ContractAdvisory::LegacyStandalonePoetry(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6064,6 +6094,7 @@ impl ContractAdvisory {
             ContractAdvisory::IsolatedYarnReleaseShadow(_) => None,
             ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
+            | ContractAdvisory::LegacyStandalonePoetry(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6102,6 +6133,9 @@ impl ContractAdvisory {
                     .map(|value| format!("`{value}`"))
                     .collect::<Vec<_>>()
                     .join(", ")
+            ),
+            ContractAdvisory::LegacyStandalonePoetry(_) => String::from(
+                "add or widen `toolchains.python`, move Poetry version governance under `toolchains.python.package_managers.poetry`, and remove the standalone Poetry declaration from the listed location(s)",
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 format!("{}", sensitive_agent_writable_path_next(advisory))
@@ -6198,6 +6232,7 @@ pub fn collect_contract_advisories_with_contract_path(
     );
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories.extend(collect_legacy_node_runtime_tool_split_advisories(contract));
+    advisories.extend(collect_legacy_standalone_poetry_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
     advisories.extend(collect_sensitive_write_exception_advisories(contract));
     advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
@@ -6235,6 +6270,54 @@ fn collect_legacy_node_runtime_tool_split_advisories(contract: &Contract) -> Vec
             runtime_version: runtime_requirement.version().to_string(),
             package_managers,
         },
+    )]
+}
+
+fn collect_legacy_standalone_poetry_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    if contract.toolchains.iter().any(|(toolchain_name, toolchain)| {
+        declared_toolchain_contract(toolchain_name, toolchain)
+            .is_some_and(|provider| provider.owned_runtime() == "python")
+            && (toolchain.package_managers.contains_key("poetry")
+                || toolchain
+                    .platforms
+                    .values()
+                    .any(|platform| platform.package_managers.contains_key("poetry")))
+    }) {
+        return Vec::new();
+    }
+
+    let mut locations = Vec::new();
+    if contract.tools.contains_key("poetry") {
+        locations.push(String::from("tools.poetry"));
+    }
+    if let Some(execution) = contract.execution.as_ref() {
+        for (context_name, context) in &execution.contexts {
+            if context.requirements.tools.contains_key("poetry") {
+                locations.push(format!(
+                    "execution.contexts.{context_name}.requirements.tools.poetry"
+                ));
+            }
+        }
+    }
+    for (task_name, task) in &contract.tasks {
+        if task.requirements.tools.contains_key("poetry") {
+            locations.push(format!("tasks.{task_name}.requirements.tools.poetry"));
+        }
+        for (index, branch) in task.requirements.any_of.iter().enumerate() {
+            if branch.tools.contains_key("poetry") {
+                locations.push(format!(
+                    "tasks.{task_name}.requirements.any_of[{index}].tools.poetry"
+                ));
+            }
+        }
+    }
+
+    if locations.is_empty() {
+        return Vec::new();
+    }
+
+    vec![ContractAdvisory::LegacyStandalonePoetry(
+        LegacyStandalonePoetryAdvisory { locations },
     )]
 }
 
@@ -6303,12 +6386,23 @@ fn selected_task_toolchains<'a>(
     contract: &'a Contract,
     task: &'a TaskSpec,
 ) -> Vec<(&'a String, &'a ToolchainSpec)> {
-    let mut required_toolchains = task.requirements.toolchains.clone();
+    let mut required_toolchains = BTreeSet::new();
+    let backend = task.workflow_backend(contract.execution.as_ref());
+    let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+    required_toolchains.extend(contract.task_toolchain_names_for_execution(task, backend, context_name));
     for branch in &task.requirements.any_of {
-        required_toolchains.extend(branch.toolchains.iter().cloned());
+        let branch_backend = branch.when.backend.unwrap_or(backend);
+        let branch_context_name = branch
+            .when
+            .context
+            .as_deref()
+            .or_else(|| task.context_for_backend(contract.execution.as_ref(), branch_backend));
+        required_toolchains.extend(contract.task_toolchain_names_for_execution(
+            task,
+            branch_backend,
+            branch_context_name,
+        ));
     }
-    required_toolchains.sort();
-    required_toolchains.dedup();
     if required_toolchains.is_empty() {
         return contract.toolchains.iter().collect();
     }
@@ -6415,6 +6509,108 @@ fn validate_duplicate_requirement_ownership(
                         duplicate_kind
                     )));
                 }
+            }
+        }
+    }
+
+    if let Some(execution) = contract.execution.as_ref() {
+        for (context_name, context) in &execution.contexts {
+            for toolchain_name in &context.requirements.toolchains {
+                let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                    continue;
+                };
+                for (duplicate_kind, duplicate_name) in
+                    duplicate_requirement_owners_for_toolchain(toolchain_name, toolchain)
+                {
+                    let invalid_location = match duplicate_kind.as_str() {
+                        "runtime"
+                            if context
+                                .requirements
+                                .runtimes
+                                .contains_key(duplicate_name.as_str()) =>
+                        {
+                            Some(format!(
+                                "`execution.contexts.{context_name}.requirements.runtimes.{duplicate_name}`"
+                            ))
+                        }
+                        "tool"
+                            if context
+                                .requirements
+                                .tools
+                                .contains_key(duplicate_name.as_str()) =>
+                        {
+                            Some(format!(
+                                "`execution.contexts.{context_name}.requirements.tools.{duplicate_name}`"
+                            ))
+                        }
+                        _ => None,
+                    };
+                    if let Some(invalid_location) = invalid_location {
+                        errors.push(ValidationError::new(format!(
+                            "duplicate ownership is invalid: execution context `{context_name}` requires toolchain `{toolchain_name}`, which owns {} `{duplicate_name}`, but the context also declares {invalid_location}; keep `execution.contexts.{context_name}.requirements.toolchains: [{toolchain_name}]` as the owner and remove the duplicate {} requirement",
+                            duplicate_kind,
+                            duplicate_kind
+                        )));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn validate_named_toolchain_requirements(
+    contract: &Contract,
+    toolchains: &[String],
+    owner_label: &str,
+    owner_path: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    for toolchain_name in toolchains {
+        if toolchain_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "{owner_label} must not declare an empty {owner_path} entry"
+            )));
+            continue;
+        }
+        if !contract.toolchains.contains_key(toolchain_name) {
+            errors.push(ValidationError::new(format!(
+                "{owner_label} references unknown toolchain `{toolchain_name}` in {owner_path}"
+            )));
+        }
+    }
+}
+
+fn validate_tool_requirements_have_deterministic_toolchain_ownership(
+    contract: &Contract,
+    tools: &BTreeMap<String, ToolRequirement>,
+    selected_toolchains: &[String],
+    owner_label: &str,
+    owner_path: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    for tool_name in tools.keys() {
+        if tool_name.trim().is_empty() {
+            continue;
+        }
+        if selected_toolchains.is_empty() {
+            if contract.tools.contains_key(tool_name.as_str()) {
+                continue;
+            }
+            let owners = toolchain_owners_for_tool(contract, tool_name, None);
+            if !owners.is_empty() {
+                let owner_list = owners
+                    .iter()
+                    .map(|owner| format!("`{owner}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                errors.push(ValidationError::new(format!(
+                    "{owner_label} references tool requirement `{tool_name}` in `requirements.tools` without an explicit toolchain scope; `{tool_name}` is owned by toolchain(s) {owner_list}. Declare {owner_path} explicitly (for example `[{}]`) to keep ownership deterministic",
+                    owners
+                        .iter()
+                        .map(|owner| format!(r#""{owner}""#))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
             }
         }
     }
@@ -7401,53 +7597,57 @@ fn validate_task_requirement_references(
         }
     }
 
-    let mut requirement_toolchains = task.requirements.toolchains.clone();
+    let backend = task.workflow_backend(contract.execution.as_ref());
+    let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+    let mut requirement_toolchains =
+        contract.task_toolchain_names_for_execution(task, backend, context_name);
     for branch in &task.requirements.any_of {
         requirement_toolchains.extend(branch.toolchains.iter().cloned());
     }
     requirement_toolchains.sort();
     requirement_toolchains.dedup();
 
-    for toolchain_name in &requirement_toolchains {
-        if toolchain_name.trim().is_empty() {
-            errors.push(ValidationError::new(format!(
-                "task `{task_name}` must not declare an empty `requirements.toolchains` entry"
-            )));
-            continue;
-        }
-        if !contract.toolchains.contains_key(toolchain_name) {
-            errors.push(ValidationError::new(format!(
-                "task `{task_name}` references unknown toolchain `{toolchain_name}` in `requirements.toolchains`"
-            )));
-        }
+    validate_named_toolchain_requirements(
+        contract,
+        &task.requirements.toolchains,
+        &format!("task `{task_name}`"),
+        &format!("`tasks.{task_name}.requirements.toolchains`"),
+        errors,
+    );
+    for (index, branch) in task.requirements.any_of.iter().enumerate() {
+        validate_named_toolchain_requirements(
+            contract,
+            &branch.toolchains,
+            &format!("task `{task_name}` requirements.any_of[{index}]"),
+            &format!("`tasks.{task_name}.requirements.any_of[{index}].toolchains`"),
+            errors,
+        );
     }
-    for tool_name in task.requirements.tools.keys() {
-        if tool_name.trim().is_empty() {
-            continue;
-        }
-
-        if requirement_toolchains.is_empty() {
-            if contract.tools.contains_key(tool_name.as_str()) {
-                continue;
-            }
-            let owners = toolchain_owners_for_tool(contract, tool_name, None);
-            if !owners.is_empty() {
-                let owner_list = owners
-                    .iter()
-                    .map(|owner| format!("`{owner}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                errors.push(ValidationError::new(format!(
-                    "task `{task_name}` references tool requirement `{tool_name}` in `requirements.tools` without an explicit toolchain scope; `{tool_name}` is owned by toolchain(s) {owner_list}. Declare `tasks.{task_name}.requirements.toolchains` explicitly (for example `[{}]`) to keep ownership deterministic",
-                    owners
-                        .iter()
-                        .map(|owner| format!(r#""{owner}""#))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )));
-                continue;
-            }
-        }
+    validate_tool_requirements_have_deterministic_toolchain_ownership(
+        contract,
+        &task.requirements.tools,
+        &requirement_toolchains,
+        &format!("task `{task_name}`"),
+        &format!("`tasks.{task_name}.requirements.toolchains`"),
+        errors,
+    );
+    for (index, branch) in task.requirements.any_of.iter().enumerate() {
+        let branch_backend = branch.when.backend.unwrap_or(backend);
+        let branch_context_name = branch
+            .when
+            .context
+            .as_deref()
+            .or_else(|| task.context_for_backend(contract.execution.as_ref(), branch_backend));
+        let branch_toolchains =
+            contract.task_toolchain_names_for_execution(task, branch_backend, branch_context_name);
+        validate_tool_requirements_have_deterministic_toolchain_ownership(
+            contract,
+            &branch.tools,
+            &branch_toolchains,
+            &format!("task `{task_name}` requirements.any_of[{index}]"),
+            &format!("`tasks.{task_name}.requirements.any_of[{index}].toolchains`"),
+            errors,
+        );
     }
 
     let mut requirement_env = task.requirements.env.clone();
@@ -21477,6 +21677,124 @@ tasks:
     }
 
     #[test]
+    fn rejects_execution_context_toolchain_duplicate_ownership() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      npm: "10.5.0"
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        toolchains:
+          - node
+        runtimes:
+          node: "22"
+        tools:
+          npm: "10.5.0"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("context duplicate ownership should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "execution context `host` requires toolchain `node`, which owns runtime `node`, but the context also declares `execution.contexts.host.requirements.runtimes.node`",
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "execution context `host` requires toolchain `node`, which owns tool `npm`, but the context also declares `execution.contexts.host.requirements.tools.npm`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_execution_context_tool_requirements_owned_by_context_toolchain_scope() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    version: "3.12"
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        toolchains:
+          - python
+        tools:
+          poetry: ">=1.8"
+tasks:
+  test:
+    context: host
+    run: poetry run pytest
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("standalone tools should remain valid alongside context toolchains");
+    }
+
+    #[test]
+    fn rejects_duplicate_poetry_ownership_between_python_toolchain_and_tools() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      poetry: ">=1.8"
+tools:
+  poetry: ">=1.8"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("duplicate poetry ownership should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "toolchain `python` owns tool `poetry`, but the contract also declares `tools.poetry`"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
     fn accepts_task_level_tool_requirements_owned_by_toolchain_with_explicit_scope() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -23153,6 +23471,137 @@ tasks:
                 advisory,
                 ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             ))
+        );
+    }
+
+    #[test]
+    fn collects_legacy_standalone_poetry_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  poetry: ">=1.8"
+tasks:
+  test:
+    run: poetry run pytest
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LegacyStandalonePoetry(value)
+                if value.locations == vec![String::from("tools.poetry")]
+        )));
+    }
+
+    #[test]
+    fn skips_legacy_standalone_poetry_advisory_when_python_toolchain_owns_poetry() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      poetry: ">=1.8"
+tasks:
+  test:
+    run: poetry run pytest
+    requirements:
+      toolchains:
+        - python
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(
+            !advisories.iter().any(|advisory| matches!(
+                advisory,
+                ContractAdvisory::LegacyStandalonePoetry(_)
+            ))
+        );
+    }
+
+    #[test]
+    fn skips_legacy_standalone_poetry_advisory_when_named_python_toolchain_owns_poetry() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  host-python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      poetry: ">=1.8"
+tasks:
+  test:
+    run: poetry run pytest
+    requirements:
+      toolchains:
+        - host-python
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(
+            !advisories.iter().any(|advisory| matches!(
+                advisory,
+                ContractAdvisory::LegacyStandalonePoetry(_)
+            ))
+        );
+    }
+
+    #[test]
+    fn rejects_branch_tool_requirement_owned_by_toolchain_without_explicit_scope() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tasks:
+  lint:
+    run: cargo fmt --check
+    requirements:
+      any_of:
+        - when:
+            backend: native
+          tools:
+            cargo: "*"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("branch tool requirements should demand explicit toolchain scope")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `lint` requirements.any_of[0] references tool requirement `cargo` in `requirements.tools` without an explicit toolchain scope"
+            )),
+            "{rendered:?}"
         );
     }
 

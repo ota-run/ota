@@ -634,6 +634,7 @@ Current shipped scope is intentionally narrow:
 
 - top-level `toolchains`
 - top-level `orchestrators`
+- execution-context-scoped `execution.contexts.<name>.requirements.toolchains`
 - task-scoped `requirements.toolchains`
 - canonical shipped fulfillment paths for Rust, Node, Java, Python, Go, Ruby, and .NET toolchains
 - explicit non-canonical run-path fulfillment when `fulfillment.source` points at another shipped
@@ -715,6 +716,12 @@ Rules:
 - `profile`, `components`, and `targets` remain Rust-specific managed-surface fields
 - `package_managers` remains the toolchain-owned package-manager surface for Node, Python, and
   Ruby where applicable
+- `toolchains.python.package_managers` currently accepts `uv` and `poetry`; `uv` remains the
+  canonical Python fulfillment source today, while Poetry ownership is now first-class even though
+  Poetry run-path fulfillment is not yet shipped
+- standalone `tools.poetry` remains temporarily accepted for compatibility, but `ota validate`
+  and `ota doctor` now warn and recommend migrating Poetry ownership to
+  `toolchains.python.package_managers.poetry`
 - `only_on`, when set, scopes the toolchain to `linux`, `macos`, or `windows`
 - `platforms` may override `version`, `profile`, `components`, `package_managers`, and `targets`
   per OS using `linux`, `macos`, or `windows`
@@ -930,6 +937,9 @@ Rules:
   host-global `tools` fallback when no scoped tool requirements are declared; declare non-native
   tool requirements on the selected task path (`tasks.<name>.requirements.tools`) or selected
   execution context (`execution.contexts.<name>.requirements.tools`)
+- selected execution contexts may also own toolchain capability truth directly through
+  `execution.contexts.<name>.requirements.toolchains`; use that when a managed ecosystem such as
+  Python or Node applies only on one named path instead of the whole repo
 
 Use `only_on` to scope where a tool is required, and use `platforms` only when values change on a matching OS.
 `required: false` keeps the tool active but downgrades missing/version mismatch findings to warnings.
