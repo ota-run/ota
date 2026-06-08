@@ -23605,6 +23605,11 @@ fn visit_task(
     for dependency in &task.depends_on {
         visit_task(dependency, tasks, visited, ordered);
     }
+    if let Some(aggregate) = task.aggregate.as_ref() {
+        for child in &aggregate.tasks {
+            visit_task(child, tasks, visited, ordered);
+        }
+    }
 
     ordered.push(task_name.to_string());
 }
@@ -49713,6 +49718,39 @@ tasks:
         assert_eq!(
             outcome.task_steps[2].execution_note.as_deref(),
             Some("aggregate tasks: lint, test")
+        );
+    }
+
+    #[test]
+    fn plan_task_execution_expands_aggregate_children_before_parent() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    run: echo lint
+  test:
+    run: echo test
+  verify:
+    aggregate:
+      tasks:
+        - lint
+        - test
+"#,
+        );
+
+        let plan =
+            super::plan_task_execution(&fixture.contract, "verify").expect("aggregate plan");
+
+        assert_eq!(
+            plan.tasks,
+            vec![
+                String::from("lint"),
+                String::from("test"),
+                String::from("verify")
+            ]
         );
     }
 
