@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- fixed workflow-scoped `ota up` service selection: when a selected workflow does not declare
+  `workflows.<name>.services.required`, Ota no longer falls back to unrelated repo-global
+  required services during the final service-readiness phase
 - fixed Windows native POSIX-shell task execution to launch Bash without login-shell startup:
   repo-rooted commands such as Bundler dependency hydration now preserve Ota's selected working
   directory instead of letting `bash -l` reset execution into `$HOME`

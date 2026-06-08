@@ -63429,6 +63429,80 @@ workflows:
     }
 
     #[test]
+    fn up_does_not_inherit_repo_global_required_services_for_bounded_workflow() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: workflow-up
+services:
+  postgres:
+    required: true
+    start: echo postgres >> run.log
+    healthcheck: exit 1
+tasks:
+  install:
+    run: echo install >> run.log
+  verify:static:
+    run: echo verify >> run.log
+workflows:
+  default: verify-static
+  verify-static:
+    setup:
+      task: install
+    run:
+      task: verify:static
+"#,
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            Some("verify-static"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(
+            result.ok,
+            "status={} phase={} findings={:?} stdout=\n{}\nstderr=\n{}",
+            result.status,
+            result.phase,
+            result
+                .report
+                .findings
+                .iter()
+                .map(|finding| finding.summary.as_str())
+                .collect::<Vec<_>>(),
+            result.stdout,
+            result.stderr
+        );
+        assert_eq!(result.status, "READY");
+        assert_eq!(
+            fs::read_to_string(repo.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["install"]
+        );
+        assert!(
+            !result
+                .report
+                .findings
+                .iter()
+                .any(|finding| finding.summary.contains("postgres"))
+        );
+    }
+
+    #[test]
     fn up_keeps_final_check_diagnosis_scoped_to_selected_workflow() {
         let _guard = env_mutex_lock();
         let repo = TempDir::new().unwrap();
@@ -83347,17 +83421,15 @@ fn selected_workflow_required_service_closure(
     contract: &Contract,
     workflow_name: Option<&str>,
 ) -> BTreeSet<String> {
-    let mut selected = BTreeSet::new();
     if let Some((_, workflow)) = contract.selected_workflow(workflow_name) {
+        let mut selected = BTreeSet::new();
         let services = &workflow.services;
         for service_name in &services.required {
             collect_service_dependencies(contract, service_name, &mut selected);
         }
-    }
-    if selected.is_empty() {
-        required_service_closure(contract)
-    } else {
         selected
+    } else {
+        required_service_closure(contract)
     }
 }
 
