@@ -2736,6 +2736,7 @@ fn validate_task_mode_execution(
     }
     if let Some(default_mode) = mode_execution.default_mode
         && mode_execution.modes.any()
+        && !has_fallback_execution
         && mode_execution
             .modes
             .branch_for_backend(default_mode)
@@ -16296,6 +16297,41 @@ tasks:
     run: echo native
     execution:
       default_mode: native
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn allows_native_default_mode_with_task_level_fallback_and_container_branch() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  start:
+    context: host
+    run: echo native
+    execution:
+      default_mode: native
+      modes:
+        container:
+          context: app
+          run: echo container
 "#,
         )
         .unwrap();
