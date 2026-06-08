@@ -3310,6 +3310,13 @@ fn validate_task_prepare(
                             "task `{task_name}` prepare `node_package_manager` must not use `manager: pnpm` with `mode: ci`; use `mode: install` and explicit lockfile policy instead"
                         )));
                     }
+                    if matches!(source.manager, crate::schema::TaskNodePackageManagerKind::Yarn)
+                        && matches!(source.mode, crate::schema::TaskNodePackageManagerHydrationMode::Ci)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` must not use `manager: yarn` with `mode: ci`; use `mode: install` and `frozen_lockfile: true` for lockfile-strict Yarn hydration"
+                        )));
+                    }
                     if source.frozen_lockfile
                         && matches!(source.manager, crate::schema::TaskNodePackageManagerKind::Npm)
                     {
@@ -15426,6 +15433,88 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("node package-manager prepare should validate");
+    }
+
+    #[test]
+    fn accepts_prepare_only_yarn_package_manager_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      yarn: "4.11.0"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: yarn
+        mode: install
+        frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+        - .yarn/install-state.gz
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("yarn package-manager prepare should validate");
+    }
+
+    #[test]
+    fn rejects_yarn_package_manager_prepare_with_ci_mode() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      yarn: "4.11.0"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: yarn
+        mode: ci
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("yarn package-manager ci prepare should fail");
+        assert!(errors
+            .to_string()
+            .contains("must not use `manager: yarn` with `mode: ci`"));
     }
 
     #[test]

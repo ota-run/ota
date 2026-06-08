@@ -4250,10 +4250,21 @@ pub struct TaskNodePackageManagerHydrationSourceSpec {
 }
 
 impl TaskNodePackageManagerHydrationSourceSpec {
+    pub const fn lockfile_flag(&self) -> Option<&'static str> {
+        if !self.frozen_lockfile {
+            return None;
+        }
+        match self.manager {
+            TaskNodePackageManagerKind::Npm => None,
+            TaskNodePackageManagerKind::Pnpm => Some("--frozen-lockfile"),
+            TaskNodePackageManagerKind::Yarn => Some("--immutable"),
+        }
+    }
+
     pub fn command_preview(&self) -> String {
         let mut parts = vec![self.manager.label().to_string(), self.mode.label().to_string()];
-        if self.frozen_lockfile {
-            parts.push(String::from("--frozen-lockfile"));
+        if let Some(flag) = self.lockfile_flag() {
+            parts.push(String::from(flag));
         }
         parts.join(" ")
     }
@@ -4277,6 +4288,7 @@ pub struct TaskGoModulesHydrationSourceSpec {
 pub enum TaskNodePackageManagerKind {
     Npm,
     Pnpm,
+    Yarn,
 }
 
 impl TaskNodePackageManagerKind {
@@ -4284,6 +4296,7 @@ impl TaskNodePackageManagerKind {
         match self {
             Self::Npm => "npm",
             Self::Pnpm => "pnpm",
+            Self::Yarn => "yarn",
         }
     }
 }
@@ -5336,6 +5349,36 @@ tasks:
             .env_for_backend(contract.execution.as_ref(), Backend::Container);
 
         assert_eq!(env.get("FOO").map(String::as_str), Some("container"));
+    }
+
+    #[test]
+    fn node_package_manager_prepare_preview_uses_manager_specific_lockfile_flags() {
+        let pnpm = super::TaskNodePackageManagerHydrationSourceSpec {
+            cwd: String::from("."),
+            manager: super::TaskNodePackageManagerKind::Pnpm,
+            mode: super::TaskNodePackageManagerHydrationMode::Install,
+            frozen_lockfile: true,
+        };
+        assert_eq!(pnpm.lockfile_flag(), Some("--frozen-lockfile"));
+        assert_eq!(pnpm.command_preview(), "pnpm install --frozen-lockfile");
+
+        let yarn = super::TaskNodePackageManagerHydrationSourceSpec {
+            cwd: String::from("."),
+            manager: super::TaskNodePackageManagerKind::Yarn,
+            mode: super::TaskNodePackageManagerHydrationMode::Install,
+            frozen_lockfile: true,
+        };
+        assert_eq!(yarn.lockfile_flag(), Some("--immutable"));
+        assert_eq!(yarn.command_preview(), "yarn install --immutable");
+
+        let npm = super::TaskNodePackageManagerHydrationSourceSpec {
+            cwd: String::from("."),
+            manager: super::TaskNodePackageManagerKind::Npm,
+            mode: super::TaskNodePackageManagerHydrationMode::Install,
+            frozen_lockfile: true,
+        };
+        assert_eq!(npm.lockfile_flag(), None);
+        assert_eq!(npm.command_preview(), "npm install");
     }
 
     #[test]

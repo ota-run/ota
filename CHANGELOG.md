@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- expanded first-class task preparation for dependency hydration with a Yarn slice:
+  `prepare.kind: dependency_hydration`, `medium: package_dependencies`, and
+  `source.kind: node_package_manager` with `manager: yarn` now let ota execute
+  `yarn install --immutable` structurally instead of hiding lockfile-backed Yarn hydration
+  inside opaque shell `run` commands
 - added first-class aggregate task bodies through `tasks.<name>.aggregate.tasks`: Ota now models
   named dependency-closure entrypoints such as `verify` structurally instead of teaching fake
   `run: "true"` wrappers, with schema/validation/runner/output support and updated docs/examples

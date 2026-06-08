@@ -1612,9 +1612,9 @@ Task-effect rules:
   - `prepare.medium: package_dependencies`
     - `prepare.source.kind: node_package_manager`
     - `prepare.source.cwd`: required repo-relative working directory for the install invocation
-    - `prepare.source.manager`: required package manager; ota currently ships `npm` and `pnpm`
+    - `prepare.source.manager`: required package manager; ota currently ships `npm`, `pnpm`, and `yarn`
     - `prepare.source.mode`: required install mode; ota currently ships `install` and `ci`
-    - `prepare.source.frozen_lockfile`: optional explicit lockfile strictness for `pnpm install`
+    - `prepare.source.frozen_lockfile`: optional explicit lockfile strictness for `pnpm install --frozen-lockfile` or `yarn install --immutable`
     - `prepare.source.kind: bundler`
     - `prepare.source.cwd`: required repo-relative working directory for the Bundler invocation
     - `prepare.source.path`: required repo-relative bundle install path for the repo-local gem lane
@@ -1632,6 +1632,7 @@ Task-effect rules:
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: go_modules` currently requires `requirements.toolchains: [go]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.source.manager: pnpm` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `pnpm install --frozen-lockfile`
 - `prepare.source.manager: npm` currently supports `mode: install` or `mode: ci`; use `mode: ci` when the repo truth is lockfile-strict npm hydration
+- `prepare.source.manager: yarn` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `yarn install --immutable`
 - `prepare.source.kind: bundler` currently executes the narrow canonical repo-local gem hydration lane: `bundle config set path <path> && bundle install`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
 - `prepare` does not replace workflow `prepare.task`; workflow prepare is still the explicit host bootstrap lane that points at a native `action` task
