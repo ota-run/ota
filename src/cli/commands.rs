@@ -46068,6 +46068,99 @@ tasks:
     }
 
     #[test]
+    fn run_dry_run_allows_selected_native_bundler_when_ruby_fulfillment_runs() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "ruby"),
+            if cfg!(windows) {
+                "@echo off\r\necho ruby 3.3.11p0\r\n"
+            } else {
+                "#!/bin/sh\necho 'ruby 3.3.11p0'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).expect("join fake path");
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: athena-api
+toolchains:
+  ruby:
+    version: "3.3.11"
+    package_managers:
+      bundler: "2.5.3"
+    fulfillment:
+      source: ruby
+      mode: run
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+    requirements:
+      toolchains:
+        - ruby
+    effects:
+      writes:
+        - .bundle
+        - vendor/bundle
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "install",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["preview_status"], "RUNNABLE");
+        assert_eq!(json["resolved"]["backend"], "native");
+    }
+
+    #[test]
     fn run_dry_run_blocks_when_selected_container_toolchain_owned_tool_is_missing() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");

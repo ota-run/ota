@@ -1549,10 +1549,28 @@ fn go_fulfillment_commands(
 
 fn ruby_fulfillment_commands(
     _provider: ToolchainProviderContract,
-    _toolchain: &ToolchainSpec,
+    toolchain: &ToolchainSpec,
     _target_os: &str,
 ) -> Vec<ToolchainCommandSpec> {
-    Vec::new()
+    toolchain
+        .package_managers_for_os(_target_os)
+        .get("bundler")
+        .cloned()
+        .map(|version| {
+            vec![ToolchainCommandSpec {
+                program: "ruby",
+                args: vec![
+                    String::from("-S"),
+                    String::from("gem"),
+                    String::from("install"),
+                    String::from("bundler"),
+                    String::from("--no-document"),
+                    String::from("--version"),
+                    version,
+                ],
+            }]
+        })
+        .unwrap_or_default()
 }
 
 fn dotnet_fulfillment_commands(
@@ -2805,6 +2823,42 @@ toolchains:
         assert_eq!(
             commands[1].args,
             vec![String::from("install"), String::from("pnpm@10.33.4")]
+        );
+    }
+
+    #[test]
+    fn declared_toolchain_fulfillment_commands_support_ruby_source() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: athena-api
+toolchains:
+  ruby:
+    version: "3.3.11"
+    package_managers:
+      bundler: "2.5.3"
+    fulfillment:
+      source: ruby
+      mode: run
+"#,
+        );
+        let toolchain = contract.toolchains.get("ruby").unwrap();
+        let commands = declared_toolchain_fulfillment_commands("ruby", toolchain, "linux");
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].program, "ruby");
+        assert_eq!(
+            commands[0].args,
+            vec![
+                String::from("-S"),
+                String::from("gem"),
+                String::from("install"),
+                String::from("bundler"),
+                String::from("--no-document"),
+                String::from("--version"),
+                String::from("2.5.3"),
+            ]
         );
     }
 

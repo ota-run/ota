@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- fixed native `ota doctor` / `ota up --dry-run` mismatch handling for `toolchains.ruby` with
+  `fulfillment.source: ruby` and `mode: run`: when the selected path declares Bundler under the
+  Ruby toolchain, Ota now checks the selected Ruby provider instead of blocking on an ambient
+  `bundle` probe before selected-path fulfillment can occur, and the shipped Ruby fulfillment lane
+  now installs declared Bundler versions via `ruby -S gem install bundler ...`
 - clarified agent-facing task guidance: when a repo declares a matching safe or verification
   task, agents should prefer `ota run <task>` over raw package-manager or language-tool
   commands and fall back only when no truthful Ota task exists or when isolating an Ota defect
@@ -33,6 +38,10 @@
   `prepare.kind: dependency_hydration`, `medium: package_dependencies`, and
   `source.kind: go_modules` now let ota execute `go mod download` structurally instead of
   hiding module hydration inside opaque shell `run` commands
+- expanded first-class task preparation for dependency hydration with a Ruby/Bundler slice:
+  `prepare.kind: dependency_hydration`, `medium: package_dependencies`, and
+  `source.kind: bundler` now let ota execute repo-local gem hydration structurally instead of
+  hiding `bundle config set path ... && bundle install` inside shell `run` commands
 - hardened dependency-isolation volume cleanup after container-backed execution and proof:
   Ota now gives container engines a longer retry window before surfacing `volume is in use`
   cleanup failures, reducing false-negative proof tails when Docker lags briefly after
