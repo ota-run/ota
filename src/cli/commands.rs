@@ -15036,7 +15036,7 @@ fn build_run_preview_plan(
             .take(plan.dependency_chain.len().saturating_sub(1))
         {
             plan.actions.push(format!(
-                "would run dependency `{dependency}` before `{task_name}`"
+                "would run planned step `{dependency}` before `{task_name}`"
             ));
         }
     } else if !requested_task.depends_on.is_empty() {
@@ -15116,6 +15116,12 @@ fn run_preview_task_execution_action(
     }
     if let Some(action) = task.action.as_ref() {
         return format!("would run task action `{}`{backend_detail}", action.kind);
+    }
+    if task.aggregate.is_some() {
+        return format!(
+            "would complete aggregate task `{}`{backend_detail}",
+            task.name
+        );
     }
     format!("would execute task `{}`{backend_detail}", task.name)
 }
@@ -45934,6 +45940,76 @@ tasks:
         assert_eq!(json["task"], "ci");
         assert_eq!(json["resolved"]["backend"], "native");
         assert!(json["plan"]["actions"].is_array());
+    }
+
+    #[test]
+    fn run_dry_run_json_expands_aggregate_child_plan() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  lint:backend:
+    run: echo backend
+  lint:frontend:
+    run: echo frontend
+  lint:
+    aggregate:
+      tasks:
+        - lint:backend
+        - lint:frontend
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "lint",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        let chain = json["plan"]["dependency_chain"]
+            .as_array()
+            .expect("dependency chain array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(chain, vec!["lint:backend", "lint:frontend", "lint"]);
+        let actions = json["plan"]["actions"]
+            .as_array()
+            .expect("actions array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            actions.contains(&"would run planned step `lint:backend` before `lint`"),
+            "{actions:?}"
+        );
+        assert!(
+            actions.contains(&"would run planned step `lint:frontend` before `lint`"),
+            "{actions:?}"
+        );
+        assert!(
+            actions.contains(&"would complete aggregate task `lint` on the host"),
+            "{actions:?}"
+        );
     }
 
     #[test]
