@@ -7526,6 +7526,11 @@ fn prepare_task_shell_command(
                 }
                 Ok(command)
             }
+            crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => Ok(format!(
+                "cd {} && bundle config set path {} && bundle install",
+                shell_quote_command_word(source.cwd.trim(), quote_style),
+                shell_quote_command_word(source.path.trim(), quote_style)
+            )),
             crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => Ok(format!(
                 "cd {} && go mod download",
                 shell_quote_command_word(source.cwd.trim(), quote_style)
@@ -48709,6 +48714,84 @@ tasks:
         assert!(logged.contains("mod download"), "{logged}");
         assert!(
             logged.contains(fixture.dir.path().join("server").display().to_string().as_str()),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_executes_bundler_from_declared_cwd() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  ruby:
+    version: "3.3.11"
+    package_managers:
+      bundler: "2.5.3"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: api
+        path: vendor/bundle
+    requirements:
+      toolchains:
+        - ruby
+    effects:
+      writes:
+        - .bundle
+        - vendor/bundle
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("api")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let bundle_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo Bundler version 2.5.3\r\n  exit /b 0\r\n)\r\n>> \"%OTA_BUNDLE_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'Bundler version 2.5.3\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_BUNDLE_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "bundle", bundle_body);
+        let log_path = fixture.dir.path().join("bundle.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_BUNDLE_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_BUNDLE_LOG", &log_path);
+        }
+
+        let outcome =
+            run_task(&fixture.contract, fixture.file_path(), "install").expect("prepare task should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_BUNDLE_LOG", value) },
+            None => unsafe { env::remove_var("OTA_BUNDLE_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(logged.contains("config set path vendor/bundle"), "{logged}");
+        assert!(logged.contains("install"), "{logged}");
+        assert!(
+            logged.contains(fixture.dir.path().join("api").display().to_string().as_str()),
             "{logged}"
         );
     }
