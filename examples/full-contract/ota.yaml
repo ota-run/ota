@@ -60,6 +60,11 @@ toolchains:
     fulfillment:
       source: corepack
       mode: run
+  go:
+    version: "1.26.0"
+    fulfillment:
+      source: go
+      mode: none
 tools:
   uv: "0.6.0"
   pwsh:
@@ -160,6 +165,22 @@ tasks:
     requirements:
       toolchains:
         - node
+  setup:go:modules:
+    context: host
+    description: Hydrate Go module dependencies before native source verification
+    category: setup
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: go_modules
+        cwd: .
+    effects:
+      network: true
+      network_kind: dependency_hydration
+    requirements:
+      toolchains:
+        - go
   setup:docker:images:
     context: host
     description: Pre-pull registry-backed docker dependencies before service startup

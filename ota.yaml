@@ -348,6 +348,8 @@ agent:
     Use `ota validate` to verify the contract.
     Use `ota doctor` to inspect readiness and agent guidance.
     Use `ota tasks` to discover runnable repo actions.
+    When a repo already exposes a matching safe task, prefer `ota run <task>` over raw package-manager or language-tool commands.
+    Fall back to direct commands only when no truthful Ota task exists or when isolating an Ota defect.
     Use `ota run setup` to prepare the repo.
     Use `ota run contract:validate` to self-host the contract validator against this checkout.
     Use `ota run ci` to run the canonical verification path.

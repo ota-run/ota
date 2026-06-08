@@ -1588,6 +1588,8 @@ Task-effect rules:
     - `prepare.source.manager`: required package manager; ota currently ships `npm` and `pnpm`
     - `prepare.source.mode`: required install mode; ota currently ships `install` and `ci`
     - `prepare.source.frozen_lockfile`: optional explicit lockfile strictness for `pnpm install`
+    - `prepare.source.kind: go_modules`
+    - `prepare.source.cwd`: required repo-relative working directory for the `go mod download` invocation
 
 `prepare` rules:
 
@@ -1596,8 +1598,10 @@ Task-effect rules:
 - `prepare` still needs explicit `requirements` and `effects`; ota should understand both intent and side effects
 - `prepare.kind: dependency_hydration` currently requires `requirements.tools.docker`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: go_modules` currently requires `requirements.toolchains: [go]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.source.manager: pnpm` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `pnpm install --frozen-lockfile`
 - `prepare.source.manager: npm` currently supports `mode: install` or `mode: ci`; use `mode: ci` when the repo truth is lockfile-strict npm hydration
+- `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
 - `prepare` does not replace workflow `prepare.task`; workflow prepare is still the explicit host bootstrap lane that points at a native `action` task
 - `prepare` is not orchestrator-managed in the current shipped slice
 
@@ -2826,6 +2830,9 @@ Agent semantics:
 - `entrypoint` is the first task an AI agent should use to get oriented in the repo
 - `default_task` is the normal verification task to run when no more specific task is needed
 - `safe_tasks` are the tasks an AI agent can run without broad risk
+- when a repo declares a matching safe or verification task, agents should prefer `ota run <task>`
+  over raw package-manager or language-tool commands; fall back only when no truthful Ota task
+  exists or when isolating an Ota defect
 - `safe_for_agent: false` is just the default; omit it unless explicit `true` improves readability
 - task `effects.writes` makes the expected durable writes explicit so agent-safe task claims can be checked structurally
 - task `effects.network` makes connectivity dependence explicit for agent-safe and CI-visible task review

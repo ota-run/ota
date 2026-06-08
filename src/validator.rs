@@ -3236,6 +3236,49 @@ fn validate_task_prepare(
                         )));
                     }
                 }
+                crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => {
+                    if spec.medium
+                        != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: go_modules` must use `prepare.medium: package_dependencies`"
+                        )));
+                    }
+                    if !spec.targets.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: go_modules` must omit `prepare.targets`; ota executes the declared Go module hydration lane structurally"
+                        )));
+                    }
+                    if source.cwd.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `go_modules` must declare a non-empty `prepare.source.cwd`"
+                        )));
+                    } else {
+                        validate_repo_relative_file_action_path(
+                            task_name,
+                            "prepare.source.cwd",
+                            source.cwd.as_str(),
+                            errors,
+                        );
+                    }
+                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "go") {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: go_modules` must declare `requirements.toolchains: [go]`"
+                        )));
+                    }
+                    if !effects.network {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network: true`"
+                        )));
+                    }
+                    if effects.network_kind
+                        != Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
+                        )));
+                    }
+                }
             }
         }
     }
@@ -15155,6 +15198,103 @@ tasks:
         assert!(errors
             .to_string()
             .contains("must omit `prepare.targets`"));
+    }
+
+    #[test]
+    fn accepts_prepare_only_go_modules_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  go:
+    version: "1.26.0"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: go_modules
+        cwd: .
+    requirements:
+      toolchains:
+        - go
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("go modules prepare should validate");
+    }
+
+    #[test]
+    fn rejects_go_modules_prepare_without_go_toolchain() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: go_modules
+        cwd: .
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("go modules prepare without go toolchain should fail");
+        assert!(errors
+            .to_string()
+            .contains("must declare `requirements.toolchains: [go]`"));
+    }
+
+    #[test]
+    fn rejects_go_modules_prepare_with_targets() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  go:
+    version: "1.26.0"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: go_modules
+        cwd: .
+      targets: [server]
+    requirements:
+      toolchains:
+        - go
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_contract(&contract).expect_err("go modules prepare targets should fail");
+        assert!(errors.to_string().contains("must omit `prepare.targets`"));
     }
 
     #[test]
