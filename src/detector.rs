@@ -32,8 +32,8 @@ use toml::Value as TomlValue;
 
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
-    ServiceReadinessKind, TaskActionSpec, ToolchainFulfillmentMode,
-    ToolchainFulfillmentSpec, ToolchainProvider,
+    ServiceReadinessKind, TaskActionSpec, ToolchainFulfillmentMode, ToolchainFulfillmentSpec,
+    ToolchainProvider,
 };
 use crate::toolchains::{
     COREPACK_TOOLCHAIN_NAME, DOTNET_TOOLCHAIN_NAME, GO_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME,
@@ -52,6 +52,7 @@ pub enum Confidence {
 #[serde(rename_all = "lowercase")]
 pub enum InferenceFieldType {
     Project,
+    Execution,
     Runtime,
     Tool,
     Env,
@@ -66,6 +67,7 @@ impl InferenceFieldType {
     fn as_str(self) -> &'static str {
         match self {
             Self::Project => "project",
+            Self::Execution => "execution",
             Self::Runtime => "runtime",
             Self::Tool => "tool",
             Self::Env => "env",
@@ -199,6 +201,8 @@ pub struct DetectContract {
     pub version: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<DetectProject>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<DetectExecution>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub toolchains: BTreeMap<String, DetectToolchainSpec>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -230,6 +234,19 @@ pub struct DetectToolchainSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectProject {
     pub name: String,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub struct DetectExecution {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_context: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub contexts: BTreeMap<String, DetectExecutionContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DetectExecutionContext {
+    pub backend: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -425,6 +442,14 @@ impl DetectReport {
                 contract.project = Some(DetectProject {
                     name: inference.value.clone(),
                 });
+                continue;
+            }
+
+            if let Some(execution_field) = inference.field.strip_prefix("execution.") {
+                let execution = contract
+                    .execution
+                    .get_or_insert_with(DetectExecution::default);
+                apply_execution_inference(execution, execution_field, &inference.value);
                 continue;
             }
 
@@ -3444,6 +3469,49 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
         let service = services
             .get(YamlValue::String(service_name.to_string()))
             .expect("compose service key should exist while iterating service mapping");
+        let host_endpoint = infer_compose_host_endpoint(service);
+        if let Some(endpoint) = host_endpoint.as_ref() {
+            let endpoint_source = format!("{file_name}#services.{service_name}.ports[0]");
+            builder.set_execution_default_context(
+                String::from("host"),
+                endpoint_source.clone(),
+                Confidence::High,
+            );
+            builder.set_execution_context_backend(
+                String::from("host"),
+                String::from("native"),
+                endpoint_source.clone(),
+                Confidence::High,
+            );
+            builder.set_service_endpoint_address(
+                service_name.to_string(),
+                String::from("host"),
+                endpoint.address.clone(),
+                endpoint_source.clone(),
+                Confidence::High,
+            );
+            builder.set_service_endpoint_port(
+                service_name.to_string(),
+                String::from("host"),
+                endpoint.port,
+                endpoint_source.clone(),
+                Confidence::High,
+            );
+            if !service_declares_compose_healthcheck(service) {
+                builder.set_service_readiness_from(
+                    service_name.to_string(),
+                    String::from("host"),
+                    endpoint_source.clone(),
+                    Confidence::High,
+                );
+                builder.set_service_readiness_kind(
+                    service_name.to_string(),
+                    ServiceReadinessKind::Tcp,
+                    endpoint_source,
+                    Confidence::High,
+                );
+            }
+        }
 
         if service_declares_compose_healthcheck(service) {
             builder.set_service_readiness_kind(
@@ -3465,6 +3533,98 @@ fn service_declares_compose_healthcheck(service: &YamlValue) -> bool {
         .and_then(YamlValue::as_mapping)
         .and_then(|healthcheck| healthcheck.get(YamlValue::String(String::from("test"))))
         .is_some()
+}
+
+fn infer_compose_host_endpoint(service: &YamlValue) -> Option<DetectServiceEndpointSpec> {
+    let ports = service
+        .as_mapping()
+        .and_then(|mapping| mapping.get(YamlValue::String(String::from("ports"))))
+        .and_then(YamlValue::as_sequence)?;
+    if ports.len() != 1 {
+        return None;
+    }
+    parse_compose_published_port(&ports[0]).map(|port| DetectServiceEndpointSpec {
+        address: String::from("127.0.0.1"),
+        port,
+    })
+}
+
+fn parse_compose_published_port(value: &YamlValue) -> Option<u16> {
+    if let Some(port_string) = value.as_str() {
+        return parse_compose_port_string(port_string);
+    }
+    parse_compose_port_mapping(value)
+}
+
+fn parse_compose_port_string(value: &str) -> Option<u16> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.contains('-') {
+        return None;
+    }
+    let (port_spec, protocol) = trimmed
+        .split_once('/')
+        .map_or((trimmed, None), |(port_spec, protocol)| {
+            (port_spec, Some(protocol))
+        });
+    if protocol.is_some_and(|protocol| !protocol.eq_ignore_ascii_case("tcp")) {
+        return None;
+    }
+
+    let segments = port_spec.split(':').collect::<Vec<_>>();
+    let (host_ip, published) = match segments.as_slice() {
+        [published, _target] => (None, *published),
+        [host_ip, published, _target] => (Some(*host_ip), *published),
+        _ => return None,
+    };
+    if !host_ip.is_none_or(compose_host_ip_is_local) {
+        return None;
+    }
+    parse_explicit_port(published)
+}
+
+fn parse_compose_port_mapping(value: &YamlValue) -> Option<u16> {
+    let mapping = value.as_mapping()?;
+    let protocol = mapping
+        .get(YamlValue::String(String::from("protocol")))
+        .and_then(YamlValue::as_str);
+    if protocol.is_some_and(|protocol| !protocol.eq_ignore_ascii_case("tcp")) {
+        return None;
+    }
+
+    let target = mapping
+        .get(YamlValue::String(String::from("target")))
+        .and_then(yaml_u16)?;
+    let published = mapping
+        .get(YamlValue::String(String::from("published")))
+        .and_then(yaml_u16)?;
+    let host_ip = mapping
+        .get(YamlValue::String(String::from("host_ip")))
+        .and_then(YamlValue::as_str);
+    if !host_ip.is_none_or(compose_host_ip_is_local) || target == 0 {
+        return None;
+    }
+    Some(published)
+}
+
+fn yaml_u16(value: &YamlValue) -> Option<u16> {
+    if let Some(number) = value.as_u64() {
+        return (number <= u16::MAX as u64)
+            .then_some(number as u16)
+            .filter(|port| *port != 0);
+    }
+    value.as_str().and_then(parse_explicit_port)
+}
+
+fn parse_explicit_port(value: &str) -> Option<u16> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.contains('-') {
+        return None;
+    }
+    trimmed.parse::<u16>().ok().filter(|port| *port != 0)
+}
+
+fn compose_host_ip_is_local(host_ip: &str) -> bool {
+    matches!(host_ip.trim(), "" | "0.0.0.0" | "127.0.0.1" | "localhost")
 }
 
 fn apply_service_inference(service: &mut DetectService, field_name: &str, value: &str) {
@@ -3502,26 +3662,24 @@ fn apply_service_inference(service: &mut DetectService, field_name: &str, value:
             manager.service = Some(value.to_string());
         }
         ["endpoints", context, "address"] => {
-            let endpoint =
-                service
+            let endpoint = service
+                .endpoints
+                .entry((*context).to_string())
+                .or_insert_with(|| DetectServiceEndpointSpec {
+                    address: String::new(),
+                    port: 0,
+                });
+            endpoint.address = value.to_string();
+        }
+        ["endpoints", context, "port"] => {
+            if let Ok(port) = value.parse::<u16>() {
+                let endpoint = service
                     .endpoints
                     .entry((*context).to_string())
                     .or_insert_with(|| DetectServiceEndpointSpec {
                         address: String::new(),
                         port: 0,
                     });
-            endpoint.address = value.to_string();
-        }
-        ["endpoints", context, "port"] => {
-            if let Ok(port) = value.parse::<u16>() {
-                let endpoint =
-                    service
-                        .endpoints
-                        .entry((*context).to_string())
-                        .or_insert_with(|| DetectServiceEndpointSpec {
-                            address: String::new(),
-                            port: 0,
-                        });
                 endpoint.port = port;
             }
         }
@@ -3541,6 +3699,22 @@ fn apply_service_inference(service: &mut DetectService, field_name: &str, value:
                 "tcp" => Some(ServiceReadinessKind::Tcp),
                 _ => None,
             };
+        }
+        _ => {}
+    }
+}
+
+fn apply_execution_inference(execution: &mut DetectExecution, field_name: &str, value: &str) {
+    let segments = field_name.split('.').collect::<Vec<_>>();
+    match segments.as_slice() {
+        ["default_context"] => execution.default_context = Some(value.to_string()),
+        ["contexts", context_name, "backend"] => {
+            execution.contexts.insert(
+                (*context_name).to_string(),
+                DetectExecutionContext {
+                    backend: value.to_string(),
+                },
+            );
         }
         _ => {}
     }
@@ -4108,6 +4282,46 @@ impl DetectBuilder {
         }
     }
 
+    fn set_execution_default_context(
+        &mut self,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = String::from("execution.default_context");
+        if self.should_replace(&field, &source, confidence) {
+            let execution = self
+                .contract
+                .execution
+                .get_or_insert_with(DetectExecution::default);
+            execution.default_context = Some(value.clone());
+            self.record(field, value, source, confidence);
+        }
+    }
+
+    fn set_execution_context_backend(
+        &mut self,
+        name: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = format!("execution.contexts.{name}.backend");
+        if self.should_replace(&field, &source, confidence) {
+            let execution = self
+                .contract
+                .execution
+                .get_or_insert_with(DetectExecution::default);
+            execution.contexts.insert(
+                name,
+                DetectExecutionContext {
+                    backend: value.clone(),
+                },
+            );
+            self.record(field, value, source, confidence);
+        }
+    }
+
     fn set_tool(&mut self, name: String, value: String, source: String, confidence: Confidence) {
         let field = format!("tools.{name}");
         if self.should_replace(&field, &source, confidence) {
@@ -4219,7 +4433,9 @@ impl DetectBuilder {
         let field = format!("services.{name}.manager.kind");
         if self.should_replace(&field, &source, confidence) {
             let service = self.contract.services.entry(name).or_default();
-            let manager = service.manager.get_or_insert_with(DetectServiceManagerSpec::default);
+            let manager = service
+                .manager
+                .get_or_insert_with(DetectServiceManagerSpec::default);
             manager.kind = value;
             self.record(field, value.as_str().to_string(), source, confidence);
         }
@@ -4235,7 +4451,9 @@ impl DetectBuilder {
         let field = format!("services.{name}.manager.name");
         if self.should_replace(&field, &source, confidence) {
             let service = self.contract.services.entry(name).or_default();
-            let manager = service.manager.get_or_insert_with(DetectServiceManagerSpec::default);
+            let manager = service
+                .manager
+                .get_or_insert_with(DetectServiceManagerSpec::default);
             manager.name = Some(value.clone());
             self.record(field, value, source, confidence);
         }
@@ -4251,7 +4469,9 @@ impl DetectBuilder {
         let field = format!("services.{name}.manager.file");
         if self.should_replace(&field, &source, confidence) {
             let service = self.contract.services.entry(name).or_default();
-            let manager = service.manager.get_or_insert_with(DetectServiceManagerSpec::default);
+            let manager = service
+                .manager
+                .get_or_insert_with(DetectServiceManagerSpec::default);
             manager.file = Some(value.clone());
             self.record(field, value, source, confidence);
         }
@@ -4267,8 +4487,76 @@ impl DetectBuilder {
         let field = format!("services.{name}.manager.service");
         if self.should_replace(&field, &source, confidence) {
             let service = self.contract.services.entry(name).or_default();
-            let manager = service.manager.get_or_insert_with(DetectServiceManagerSpec::default);
+            let manager = service
+                .manager
+                .get_or_insert_with(DetectServiceManagerSpec::default);
             manager.service = Some(value.clone());
+            self.record(field, value, source, confidence);
+        }
+    }
+
+    fn set_service_endpoint_address(
+        &mut self,
+        name: String,
+        context: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = format!("services.{name}.endpoints.{context}.address");
+        if self.should_replace(&field, &source, confidence) {
+            let service = self.contract.services.entry(name).or_default();
+            let endpoint =
+                service
+                    .endpoints
+                    .entry(context)
+                    .or_insert_with(|| DetectServiceEndpointSpec {
+                        address: String::new(),
+                        port: 0,
+                    });
+            endpoint.address = value.clone();
+            self.record(field, value, source, confidence);
+        }
+    }
+
+    fn set_service_endpoint_port(
+        &mut self,
+        name: String,
+        context: String,
+        value: u16,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = format!("services.{name}.endpoints.{context}.port");
+        if self.should_replace(&field, &source, confidence) {
+            let service = self.contract.services.entry(name).or_default();
+            let endpoint =
+                service
+                    .endpoints
+                    .entry(context)
+                    .or_insert_with(|| DetectServiceEndpointSpec {
+                        address: String::new(),
+                        port: 0,
+                    });
+            endpoint.port = value;
+            self.record(field, value.to_string(), source, confidence);
+        }
+    }
+
+    fn set_service_readiness_from(
+        &mut self,
+        name: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = format!("services.{name}.readiness.from");
+        if self.should_replace(&field, &source, confidence) {
+            let service = self.contract.services.entry(name).or_default();
+            let readiness = service
+                .readiness
+                .get_or_insert_with(DetectServiceReadinessSpec::default);
+            readiness.from = Some(value.clone());
             self.record(field, value, source, confidence);
         }
     }
@@ -4736,6 +5024,7 @@ fn normalize_detected_toolchains(_root: &Path, contract: &mut DetectContract) {
 fn inference_type_for_field(field: &str) -> InferenceFieldType {
     match field.split('.').next().unwrap_or_default() {
         "project" => InferenceFieldType::Project,
+        "execution" => InferenceFieldType::Execution,
         "runtimes" => InferenceFieldType::Runtime,
         "tools" => InferenceFieldType::Tool,
         "env" => InferenceFieldType::Env,

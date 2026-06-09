@@ -33438,6 +33438,9 @@ fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange
     let segments = change.field.split('.').collect::<Vec<_>>();
     match segments.as_slice() {
         ["project", "name"] => set_string_field(root, &segments, &change.detected),
+        ["execution", "default_context"] | ["execution", "contexts", _, "backend"] => {
+            set_string_field(root, &segments, &change.detected)
+        }
         ["toolchains", _, "provider"]
         | ["toolchains", _, "version"]
         | ["toolchains", _, "fulfillment"]
@@ -33458,7 +33461,9 @@ fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange
         | ["services", _, "healthcheck"]
         | ["services", _, "endpoints", _, "address"]
         | ["services", _, "readiness", "from"]
-        | ["services", _, "readiness", "kind"] => set_string_field(root, &segments, &change.detected),
+        | ["services", _, "readiness", "kind"] => {
+            set_string_field(root, &segments, &change.detected)
+        }
         ["services", _, "endpoints", _, "port"] => {
             set_integer_field(root, &segments, &change.detected)
         }
@@ -33493,6 +33498,14 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
     let mut fields = Vec::new();
     if contract.project.is_some() {
         fields.push(String::from("project.name"));
+    }
+    if let Some(execution) = contract.execution.as_ref() {
+        if execution.default_context.is_some() {
+            fields.push(String::from("execution.default_context"));
+        }
+        for context_name in execution.contexts.keys() {
+            fields.push(format!("execution.contexts.{context_name}.backend"));
+        }
     }
     for (name, toolchain) in &contract.toolchains {
         fields.push(format!("toolchains.{name}.version"));
@@ -33669,6 +33682,27 @@ fn init_contract_provenance(
             "project.name",
             starter_project_source,
         );
+    }
+
+    if let Some(execution) = contract.execution.as_ref() {
+        if execution.default_context.is_some() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                &detected_fields,
+                "execution.default_context",
+                starter_contract_source,
+            );
+        }
+        for context_name in execution.contexts.keys() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                &detected_fields,
+                format!("execution.contexts.{context_name}.backend"),
+                starter_contract_source,
+            );
+        }
     }
 
     for name in contract.runtimes.keys() {
@@ -34672,18 +34706,16 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
 
 fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> String {
     match prepare.kind {
-        "dependency_hydration" => {
-            render_dependency_hydration_prepare_text(
-                prepare.medium,
-                prepare.source_kind,
-                prepare.cwd,
-                prepare.file,
-                prepare.manager,
-                prepare.mode,
-                prepare.frozen_lockfile,
-                &prepare.targets,
-            )
-        }
+        "dependency_hydration" => render_dependency_hydration_prepare_text(
+            prepare.medium,
+            prepare.source_kind,
+            prepare.cwd,
+            prepare.file,
+            prepare.manager,
+            prepare.mode,
+            prepare.frozen_lockfile,
+            &prepare.targets,
+        ),
         _ => String::from("-"),
     }
 }
@@ -34717,18 +34749,16 @@ fn render_workspace_task_launch_text(launch: &WorkspaceTaskLaunchSummary) -> Str
 
 fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> String {
     match prepare.kind {
-        "dependency_hydration" => {
-            render_dependency_hydration_prepare_text(
-                prepare.medium,
-                prepare.source_kind,
-                prepare.cwd.as_deref(),
-                prepare.file.as_deref(),
-                prepare.manager,
-                prepare.mode,
-                prepare.frozen_lockfile,
-                &prepare.targets,
-            )
-        }
+        "dependency_hydration" => render_dependency_hydration_prepare_text(
+            prepare.medium,
+            prepare.source_kind,
+            prepare.cwd.as_deref(),
+            prepare.file.as_deref(),
+            prepare.manager,
+            prepare.mode,
+            prepare.frozen_lockfile,
+            &prepare.targets,
+        ),
         _ => String::from("-"),
     }
 }
@@ -44579,10 +44609,16 @@ workflows:
         );
 
         let rendered = strip_ansi_codes(&output.stdout);
-        assert!(rendered.contains("Aggregate: aggregate: lint, test"), "{rendered}");
+        assert!(
+            rendered.contains("Aggregate: aggregate: lint, test"),
+            "{rendered}"
+        );
         assert!(rendered.contains("Task: verify"), "{rendered}");
         assert!(rendered.contains("Kind: aggregate"), "{rendered}");
-        assert!(rendered.contains("Command: aggregate: lint, test"), "{rendered}");
+        assert!(
+            rendered.contains("Command: aggregate: lint, test"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -74003,7 +74039,10 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                     .clone()
                     .or(task.script.clone())
                     .or(task.launch.as_ref().map(render_workspace_task_launch_text))
-                    .or(task.prepare.as_ref().map(render_workspace_task_prepare_text))
+                    .or(task
+                        .prepare
+                        .as_ref()
+                        .map(render_workspace_task_prepare_text))
                     .or(task.aggregate.as_ref().map(render_task_aggregate_text))
                     .unwrap_or_else(|| String::from("-")),
                 format!(

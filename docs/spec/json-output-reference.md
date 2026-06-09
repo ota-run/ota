@@ -3981,3 +3981,73 @@ Example with inferred Docker Compose services:
   ]
 }
 ```
+
+Example with inferred Docker Compose host topology from an explicit published port:
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "written": false,
+  "config": {
+    "version": 1,
+    "project": {
+      "name": "ota-containerized-web"
+    },
+    "execution": {
+      "default_context": "host",
+      "contexts": {
+        "host": {
+          "backend": "native"
+        }
+      }
+    },
+    "services": {
+      "web": {
+        "manager": {
+          "kind": "compose",
+          "name": "docker-heavy-node",
+          "file": "docker-compose.yml",
+          "service": "web"
+        },
+        "endpoints": {
+          "host": {
+            "address": "127.0.0.1",
+            "port": 3000
+          }
+        },
+        "readiness": {
+          "from": "host",
+          "kind": "tcp"
+        }
+      }
+    }
+  },
+  "inferred": [
+    {
+      "field": "execution.default_context",
+      "type": "execution",
+      "value": "host",
+      "source": "docker-compose.yml#services.web.ports[0]",
+      "signal": "config",
+      "confidence": "high"
+    },
+    {
+      "field": "execution.contexts.host.backend",
+      "type": "execution",
+      "value": "native",
+      "source": "docker-compose.yml#services.web.ports[0]",
+      "signal": "config",
+      "confidence": "high"
+    },
+    {
+      "field": "services.web.readiness.kind",
+      "type": "service",
+      "value": "tcp",
+      "source": "docker-compose.yml#services.web.ports[0]",
+      "signal": "config",
+      "confidence": "high"
+    }
+  ]
+}
+```

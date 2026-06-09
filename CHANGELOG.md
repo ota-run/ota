@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- widened Docker Compose service topology detection for explicit host-published ports: `ota detect`,
+  `ota init`, and detect merge can now infer the canonical host execution slice
+  (`execution.default_context`, `execution.contexts.host.backend`), plus matching
+  `services.<name>.endpoints.host` and structured `readiness.from` / `readiness.kind: tcp`
+  when one Compose service exposes one deterministic published port
+- fixed detect-merge execution governance for inferred Compose host topology: additive merge no
+  longer rewrites an authored `execution.default_context`, and it now skips host-topology
+  additions entirely when the existing contract still uses root shorthand execution
 - upgraded Docker Compose service detection to the canonical managed-service surface: `ota detect`,
   `ota init`, detect merge, and detect-owned field tracking now emit `services.<name>.manager.*`
   and structured `readiness.kind: compose_health` for Compose-backed services instead of teaching
