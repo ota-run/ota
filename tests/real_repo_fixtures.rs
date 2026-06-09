@@ -1522,10 +1522,7 @@ fn init_json_reports_detected_mode_for_docker_legacy_fixture() {
         json["config"]["services"]["web"]["manager"]["kind"],
         "compose"
     );
-    assert_eq!(
-        json["config"]["services"]["db"]["manager"]["service"],
-        "db"
-    );
+    assert_eq!(json["config"]["services"]["db"]["manager"]["service"], "db");
     assert!(
         json["inferred"]
             .as_array()
@@ -1858,6 +1855,11 @@ fn detect_json_handles_docker_heavy_node_fixture() {
     assert_eq!(json["config"]["project"]["name"], "ota-containerized-web");
     assert_json_corepack_node_toolchain(&json["config"], "22.3.0", "pnpm", "10.5.0");
     assert_eq!(json["config"]["tools"]["docker"], "*");
+    assert_eq!(json["config"]["execution"]["default_context"], "host");
+    assert_eq!(
+        json["config"]["execution"]["contexts"]["host"]["backend"],
+        "native"
+    );
     assert_eq!(
         json["config"]["services"]["web"]["manager"]["kind"],
         "compose"
@@ -1866,7 +1868,34 @@ fn detect_json_handles_docker_heavy_node_fixture() {
         json["config"]["services"]["web"]["manager"]["service"],
         "web"
     );
+    assert_eq!(
+        json["config"]["services"]["web"]["endpoints"]["host"]["address"],
+        "127.0.0.1"
+    );
+    assert_eq!(
+        json["config"]["services"]["web"]["endpoints"]["host"]["port"],
+        3000
+    );
+    assert_eq!(
+        json["config"]["services"]["web"]["readiness"]["from"],
+        "host"
+    );
+    assert_eq!(
+        json["config"]["services"]["web"]["readiness"]["kind"],
+        "tcp"
+    );
     assert_eq!(json["config"]["tasks"]["dev"]["run"], "pnpm dev");
+    assert!(
+        json["inferred"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|inference| {
+                inference["field"] == "execution.default_context"
+                    && inference["type"] == "execution"
+                    && inference["source"] == "docker-compose.yml#services.web.ports[0]"
+            })
+    );
 }
 
 #[test]
@@ -1886,8 +1915,16 @@ fn init_write_writes_high_confidence_contract_for_docker_heavy_node_fixture() {
     assert!(written.contains("provider: corepack"));
     assert!(written.contains("version: 22.3.0"));
     assert!(written.contains("pnpm: 10.5.0"));
+    assert!(written.contains("execution:"));
+    assert!(written.contains("default_context: host"));
+    assert!(written.contains("backend: native"));
     assert!(written.contains("manager:"));
     assert!(written.contains("kind: compose"));
+    assert!(written.contains("endpoints:"));
+    assert!(written.contains("address: 127.0.0.1"));
+    assert!(written.contains("port: 3000"));
+    assert!(written.contains("from: host"));
+    assert!(written.contains("kind: tcp"));
     assert!(written.contains("run: pnpm build"));
     assert!(written.contains("run: pnpm dev"));
 }
@@ -1933,8 +1970,16 @@ fn detect_writes_high_confidence_contract_for_docker_heavy_node_fixture() {
     assert!(written.contains("provider: corepack"));
     assert!(written.contains("version: 22.3.0"));
     assert!(written.contains("pnpm: 10.5.0"));
+    assert!(written.contains("execution:"));
+    assert!(written.contains("default_context: host"));
+    assert!(written.contains("backend: native"));
     assert!(written.contains("manager:"));
     assert!(written.contains("kind: compose"));
+    assert!(written.contains("endpoints:"));
+    assert!(written.contains("address: 127.0.0.1"));
+    assert!(written.contains("port: 3000"));
+    assert!(written.contains("from: host"));
+    assert!(written.contains("kind: tcp"));
     assert!(written.contains("run: pnpm build"));
     assert!(written.contains("run: pnpm dev"));
 }
@@ -1977,11 +2022,143 @@ project:
     assert!(written.contains("provider: corepack"));
     assert!(written.contains("version: 22.3.0"));
     assert!(written.contains("pnpm: 10.5.0"));
+    assert!(written.contains("execution:"));
+    assert!(written.contains("default_context: host"));
+    assert!(written.contains("backend: native"));
     assert!(written.contains("manager:"));
     assert!(written.contains("kind: compose"));
+    assert!(written.contains("endpoints:"));
+    assert!(written.contains("address: 127.0.0.1"));
+    assert!(written.contains("port: 3000"));
+    assert!(written.contains("from: host"));
+    assert!(written.contains("kind: tcp"));
     assert!(written.contains("run: pnpm build"));
     assert!(written.contains("run: pnpm dev"));
     assert!(!written.contains("name: ota-containerized-web"));
+}
+
+#[test]
+fn detect_merge_json_keeps_existing_default_context_for_named_execution_contract() {
+    let fixture = copy_fixture_to_temp("docker-heavy-node");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: existing
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:22
+"#,
+    )
+    .expect("ota.yaml should be seeded for named execution merge fixture");
+
+    let output = run_ota(&[
+        "detect",
+        "--merge",
+        "--json",
+        fixture.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["written"], true);
+    assert!(
+        !json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| change["field"] == "execution.default_context")
+    );
+
+    let contract = load_contract(&fixture.path().join("ota.yaml"))
+        .expect("merged ota.yaml should load for named execution fixture");
+    validate_contract(&contract).expect("merged named execution contract should validate");
+
+    let execution = contract
+        .execution
+        .as_ref()
+        .expect("named execution fixture should keep execution");
+    assert_eq!(execution.default_context.as_deref(), Some("app"));
+    assert_eq!(
+        execution.contexts.get("host").map(|context| context.backend),
+        Some(ota::schema::Backend::Native)
+    );
+    let web = contract
+        .services
+        .get("web")
+        .expect("web service should be merged");
+    assert_eq!(
+        web.readiness
+            .as_ref()
+            .and_then(|readiness| readiness.from.as_deref()),
+        Some("host")
+    );
+}
+
+#[test]
+fn detect_merge_json_skips_host_topology_for_shorthand_execution_contract() {
+    let fixture = copy_fixture_to_temp("docker-heavy-node");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: existing
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: node:22
+"#,
+    )
+    .expect("ota.yaml should be seeded for shorthand execution merge fixture");
+
+    let output = run_ota(&[
+        "detect",
+        "--merge",
+        "--json",
+        fixture.path().to_str().unwrap(),
+    ]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["written"], true);
+    assert!(
+        !json["comparison"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|change| {
+                change["field"] == "execution.default_context"
+                    || change["field"] == "execution.contexts.host.backend"
+                    || change["field"] == "services.web.endpoints.host.address"
+                    || change["field"] == "services.web.endpoints.host.port"
+                    || change["field"] == "services.web.readiness.from"
+                    || change["field"] == "services.web.readiness.kind"
+            })
+    );
+
+    let contract = load_contract(&fixture.path().join("ota.yaml"))
+        .expect("merged ota.yaml should load for shorthand execution fixture");
+    validate_contract(&contract).expect("merged shorthand execution contract should validate");
+
+    let execution = contract
+        .execution
+        .as_ref()
+        .expect("shorthand execution fixture should keep execution");
+    assert_eq!(execution.preferred, Some(ota::schema::Backend::Container));
+    assert!(execution.contexts.is_empty());
+    let web = contract
+        .services
+        .get("web")
+        .expect("web service should be merged");
+    assert!(web.endpoints.is_empty());
+    assert!(web.readiness.is_none());
 }
 
 #[test]

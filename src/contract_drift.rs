@@ -28,7 +28,7 @@ use serde_yaml::{Mapping, Value as YamlValue};
 use crate::detector::{DetectService, Inference, detect_repo};
 use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
-use crate::schema::{Contract, ServiceSpec, ToolchainFulfillmentMode, ToolchainProvider};
+use crate::schema::{Backend, Contract, ServiceSpec, ToolchainFulfillmentMode, ToolchainProvider};
 
 const DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP: &str = "repo_contract";
 const DETECT_COMPARISON_REPO_SIGNALS_OWNERSHIP: &str = "repo_signals";
@@ -220,6 +220,25 @@ pub(crate) fn collect_detect_changes(
         );
     }
 
+    let existing_execution_fields = existing_execution_field_values(existing);
+    for (field, detected_value) in detect_execution_field_values(detected) {
+        if !should_surface_detect_execution_change(
+            existing,
+            field.as_str(),
+            existing_execution_fields.contains_key(&field),
+        ) {
+            continue;
+        }
+        push_detect_change(
+            &mut changes,
+            existing,
+            &inference_index,
+            &field,
+            existing_execution_fields.get(&field).map(String::as_str),
+            Some(detected_value.as_str()),
+        );
+    }
+
     for (name, value) in &detected.runtimes {
         let existing_version = match existing.runtimes.get(name) {
             Some(requirement) if !requirement.required_for_os(current_os()) => continue,
@@ -375,6 +394,14 @@ pub(crate) fn collect_detect_changes(
             .map(|service| existing_service_field_values(name, service))
             .unwrap_or_default();
         for (field, detected_value) in detect_service_field_values(name, service) {
+            if !should_surface_detect_service_change(
+                existing,
+                detected,
+                field.as_str(),
+                existing_fields.contains_key(&field),
+            ) {
+                continue;
+            }
             push_detect_change(
                 &mut changes,
                 existing,
@@ -430,6 +457,90 @@ pub(crate) fn collect_detect_changes(
     changes
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExistingExecutionMergeMode {
+    None,
+    ContextMode,
+    Shorthand,
+}
+
+fn existing_execution_merge_mode(existing: &Contract) -> ExistingExecutionMergeMode {
+    let Some(execution) = existing.execution.as_ref() else {
+        return ExistingExecutionMergeMode::None;
+    };
+    if execution.default_context.is_some() || !execution.contexts.is_empty() {
+        ExistingExecutionMergeMode::ContextMode
+    } else {
+        ExistingExecutionMergeMode::Shorthand
+    }
+}
+
+fn should_surface_detect_execution_change(
+    existing: &Contract,
+    field: &str,
+    existing_field_present: bool,
+) -> bool {
+    match field {
+        "execution.default_context" => existing.execution.is_none(),
+        "execution.contexts.host.backend" => {
+            !existing_field_present
+                && !matches!(
+                    existing_execution_merge_mode(existing),
+                    ExistingExecutionMergeMode::Shorthand
+                )
+        }
+        _ => true,
+    }
+}
+
+fn should_surface_detect_service_change(
+    existing: &Contract,
+    detected: &crate::detector::DetectContract,
+    field: &str,
+    existing_field_present: bool,
+) -> bool {
+    if !is_detected_host_topology_service_field(detected, field) {
+        return true;
+    }
+    if existing_field_present {
+        return false;
+    }
+
+    match existing_execution_merge_mode(existing) {
+        ExistingExecutionMergeMode::None => true,
+        ExistingExecutionMergeMode::Shorthand => false,
+        ExistingExecutionMergeMode::ContextMode => existing_host_context_is_native_or_missing(existing),
+    }
+}
+
+fn is_detected_host_topology_service_field(
+    detected: &crate::detector::DetectContract,
+    field: &str,
+) -> bool {
+    let segments = field.split('.').collect::<Vec<_>>();
+    match segments.as_slice() {
+        ["services", service_name, "endpoints", "host", "address" | "port"] => detected
+            .services
+            .get(*service_name)
+            .is_some_and(|service| service.endpoints.contains_key("host")),
+        ["services", service_name, "readiness", "from"]
+        | ["services", service_name, "readiness", "kind"] => detected
+            .services
+            .get(*service_name)
+            .and_then(|service| service.readiness.as_ref())
+            .is_some_and(|readiness| readiness.from.as_deref() == Some("host")),
+        _ => false,
+    }
+}
+
+fn existing_host_context_is_native_or_missing(existing: &Contract) -> bool {
+    existing
+        .execution
+        .as_ref()
+        .and_then(|execution| execution.contexts.get("host"))
+        .is_none_or(|context| context.backend == Backend::Native)
+}
+
 pub(crate) fn collect_detect_removals(
     existing: &Contract,
     detected: &crate::detector::DetectContract,
@@ -443,6 +554,16 @@ pub(crate) fn collect_detect_removals(
             String::from("project.name"),
             existing.project.name.clone(),
         );
+    }
+
+    let existing_execution_fields = existing_execution_field_values(existing);
+    let detected_execution_fields = detect_execution_field_values(detected)
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+    for (field, existing_value) in existing_execution_fields {
+        if !detected_execution_fields.contains_key(&field) {
+            push_detect_removal(&mut removals, existing, field, existing_value);
+        }
     }
 
     for (name, requirement) in &existing.runtimes {
@@ -589,6 +710,50 @@ pub(crate) fn collect_detect_removals(
     removals
 }
 
+fn existing_execution_field_values(existing: &Contract) -> BTreeMap<String, String> {
+    let mut fields = BTreeMap::new();
+    let Some(execution) = existing.execution.as_ref() else {
+        return fields;
+    };
+
+    if let Some(default_context) = execution.default_context.as_ref() {
+        fields.insert(
+            String::from("execution.default_context"),
+            default_context.clone(),
+        );
+    }
+    for (context_name, context) in &execution.contexts {
+        fields.insert(
+            format!("execution.contexts.{context_name}.backend"),
+            backend_name(context.backend).to_string(),
+        );
+    }
+    fields
+}
+
+fn detect_execution_field_values(
+    detected: &crate::detector::DetectContract,
+) -> Vec<(String, String)> {
+    let mut fields = Vec::new();
+    let Some(execution) = detected.execution.as_ref() else {
+        return fields;
+    };
+
+    if let Some(default_context) = execution.default_context.as_ref() {
+        fields.push((
+            String::from("execution.default_context"),
+            default_context.clone(),
+        ));
+    }
+    for (context_name, context) in &execution.contexts {
+        fields.push((
+            format!("execution.contexts.{context_name}.backend"),
+            context.backend.clone(),
+        ));
+    }
+    fields
+}
+
 fn existing_service_field_values(name: &str, service: &ServiceSpec) -> BTreeMap<String, String> {
     let mut fields = BTreeMap::new();
     if let Some(manager) = service.manager.as_ref() {
@@ -606,7 +771,10 @@ fn existing_service_field_values(name: &str, service: &ServiceSpec) -> BTreeMap<
             fields.insert(format!("services.{name}.manager.file"), file.clone());
         }
         if let Some(service_name) = manager.service.as_ref() {
-            fields.insert(format!("services.{name}.manager.service"), service_name.clone());
+            fields.insert(
+                format!("services.{name}.manager.service"),
+                service_name.clone(),
+            );
         }
     }
     if let Some(provider) = service.provider.as_ref() {
@@ -654,13 +822,19 @@ fn detect_service_field_values(name: &str, service: &DetectService) -> Vec<(Stri
             manager.kind.as_str().to_string(),
         ));
         if let Some(manager_name) = manager.name.as_ref() {
-            fields.push((format!("services.{name}.manager.name"), manager_name.clone()));
+            fields.push((
+                format!("services.{name}.manager.name"),
+                manager_name.clone(),
+            ));
         }
         if let Some(file) = manager.file.as_ref() {
             fields.push((format!("services.{name}.manager.file"), file.clone()));
         }
         if let Some(service_name) = manager.service.as_ref() {
-            fields.push((format!("services.{name}.manager.service"), service_name.clone()));
+            fields.push((
+                format!("services.{name}.manager.service"),
+                service_name.clone(),
+            ));
         }
     }
     if let Some(provider) = service.provider.as_ref() {
@@ -715,6 +889,14 @@ fn toolchain_fulfillment_name(fulfillment: ToolchainFulfillmentMode) -> &'static
     match fulfillment {
         ToolchainFulfillmentMode::None => "none",
         ToolchainFulfillmentMode::Run => "run",
+    }
+}
+
+fn backend_name(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
     }
 }
 
@@ -800,8 +982,8 @@ fn push_detect_change_with_inference(
 mod tests {
     use super::*;
     use crate::detector::{
-        Confidence, DetectContract, DetectProject, DetectService, DetectTask, DetectToolchainSpec,
-        Inference,
+        Confidence, DetectContract, DetectExecution, DetectExecutionContext, DetectProject,
+        DetectService, DetectTask, DetectToolchainSpec, Inference,
     };
     use crate::parser::parse_contract_str;
     use crate::schema::{EnvSource, EnvSourceKind, ToolchainProvider};
@@ -891,6 +1073,194 @@ services:
         assert_eq!(removals[0].owner_kind.as_deref(), Some("manual"));
         assert_eq!(removals[0].ownership.as_deref(), Some("repo_contract"));
         assert_eq!(removals[0].provenance.as_deref(), Some("repo_signals"));
+    }
+
+    #[test]
+    fn collect_detect_removals_keeps_execution_topology_fields_visible() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+"#,
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            execution: Some(DetectExecution {
+                default_context: Some(String::from("host")),
+                contexts: BTreeMap::from([(
+                    String::from("host"),
+                    DetectExecutionContext {
+                        backend: String::from("native"),
+                    },
+                )]),
+            }),
+            ..DetectContract::default()
+        };
+
+        assert!(collect_detect_removals(&existing, &detected).is_empty());
+
+        let detected_without_execution = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            ..DetectContract::default()
+        };
+
+        let removals = collect_detect_removals(&existing, &detected_without_execution);
+        assert_eq!(removals.len(), 2);
+        assert_eq!(removals[0].field, "execution.contexts.host.backend");
+        assert_eq!(removals[1].field, "execution.default_context");
+    }
+
+    #[test]
+    fn collect_detect_changes_skips_host_default_context_update_for_existing_context_mode() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:22
+"#,
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            execution: Some(DetectExecution {
+                default_context: Some(String::from("host")),
+                contexts: BTreeMap::from([(
+                    String::from("host"),
+                    DetectExecutionContext {
+                        backend: String::from("native"),
+                    },
+                )]),
+            }),
+            ..DetectContract::default()
+        };
+        let inferences = vec![
+            Inference::new(
+                String::from("execution.default_context"),
+                String::from("host"),
+                String::from("docker-compose.yml#services.web.ports[0]"),
+                Confidence::High,
+            ),
+            Inference::new(
+                String::from("execution.contexts.host.backend"),
+                String::from("native"),
+                String::from("docker-compose.yml#services.web.ports[0]"),
+                Confidence::High,
+            ),
+        ];
+
+        let changes = collect_detect_changes(&existing, &detected, &inferences);
+        assert!(
+            !changes
+                .iter()
+                .any(|change| change.field == "execution.default_context")
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|change| change.field == "execution.contexts.host.backend"
+                    && change.status == "add")
+        );
+    }
+
+    #[test]
+    fn collect_detect_changes_skip_host_topology_additions_for_shorthand_execution() {
+        let existing = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: node:22
+"#,
+        )
+        .unwrap();
+
+        let detected = DetectContract {
+            version: 1,
+            project: Some(DetectProject {
+                name: String::from("ota"),
+            }),
+            execution: Some(DetectExecution {
+                default_context: Some(String::from("host")),
+                contexts: BTreeMap::from([(
+                    String::from("host"),
+                    DetectExecutionContext {
+                        backend: String::from("native"),
+                    },
+                )]),
+            }),
+            services: BTreeMap::from([(
+                String::from("web"),
+                DetectService {
+                    manager: Some(crate::detector::DetectServiceManagerSpec {
+                        kind: crate::schema::ServiceManagerKind::Compose,
+                        name: Some(String::from("ota")),
+                        file: Some(String::from("docker-compose.yml")),
+                        service: Some(String::from("web")),
+                    }),
+                    provider: None,
+                    start: None,
+                    stop: None,
+                    endpoints: BTreeMap::from([(
+                        String::from("host"),
+                        crate::detector::DetectServiceEndpointSpec {
+                            address: String::from("127.0.0.1"),
+                            port: 3000,
+                        },
+                    )]),
+                    healthcheck: None,
+                    readiness: Some(crate::detector::DetectServiceReadinessSpec {
+                        from: Some(String::from("host")),
+                        kind: Some(crate::schema::ServiceReadinessKind::Tcp),
+                    }),
+                },
+            )]),
+            ..DetectContract::default()
+        };
+
+        let changes = collect_detect_changes(&existing, &detected, &[]);
+        let fields = changes.iter().map(|change| change.field.as_str()).collect::<Vec<_>>();
+
+        assert!(!fields.contains(&"execution.default_context"));
+        assert!(!fields.contains(&"execution.contexts.host.backend"));
+        assert!(!fields.contains(&"services.web.endpoints.host.address"));
+        assert!(!fields.contains(&"services.web.endpoints.host.port"));
+        assert!(!fields.contains(&"services.web.readiness.from"));
+        assert!(!fields.contains(&"services.web.readiness.kind"));
+        assert!(fields.contains(&"services.web.manager.kind"));
     }
 
     #[test]
