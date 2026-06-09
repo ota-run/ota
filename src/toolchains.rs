@@ -1566,14 +1566,28 @@ fn uv_fulfillment_commands(
     toolchain: &ToolchainSpec,
     target_os: &str,
 ) -> Vec<ToolchainCommandSpec> {
-    vec![ToolchainCommandSpec {
+    let python_version = toolchain.version_for_os(target_os).to_string();
+    let mut commands = vec![ToolchainCommandSpec {
         program: "uv",
         args: vec![
             String::from("python"),
             String::from("install"),
-            toolchain.version_for_os(target_os).to_string(),
+            python_version.clone(),
         ],
-    }]
+    }];
+    if let Some(poetry_version) = toolchain.package_managers_for_os(target_os).get("poetry") {
+        commands.push(ToolchainCommandSpec {
+            program: "uv",
+            args: vec![
+                String::from("tool"),
+                String::from("install"),
+                String::from("--python"),
+                python_version,
+                python_tool_install_package_spec("poetry", poetry_version),
+            ],
+        });
+    }
+    commands
 }
 
 fn go_fulfillment_commands(
@@ -1616,6 +1630,21 @@ fn dotnet_fulfillment_commands(
     _target_os: &str,
 ) -> Vec<ToolchainCommandSpec> {
     Vec::new()
+}
+
+fn python_tool_install_package_spec(name: &str, version: &str) -> String {
+    let trimmed = version.trim();
+    if trimmed.is_empty() || trimmed == "*" {
+        return name.to_string();
+    }
+    if trimmed
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit())
+    {
+        return format!("{name}=={trimmed}");
+    }
+    format!("{name}{trimmed}")
 }
 
 fn mise_fulfillment_commands(
@@ -2929,6 +2958,50 @@ toolchains:
                 String::from("--no-document"),
                 String::from("--version"),
                 String::from("2.5.3"),
+            ]
+        );
+    }
+
+    #[test]
+    fn declared_toolchain_fulfillment_commands_support_poetry_under_uv_source() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: openhands
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      poetry: ">=1.8"
+    fulfillment:
+      source: uv
+      mode: run
+"#,
+        );
+        let toolchain = contract.toolchains.get("python").unwrap();
+        let commands = declared_toolchain_fulfillment_commands("python", toolchain, "linux");
+
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].program, "uv");
+        assert_eq!(
+            commands[0].args,
+            vec![
+                String::from("python"),
+                String::from("install"),
+                String::from("3.12"),
+            ]
+        );
+        assert_eq!(commands[1].program, "uv");
+        assert_eq!(
+            commands[1].args,
+            vec![
+                String::from("tool"),
+                String::from("install"),
+                String::from("--python"),
+                String::from("3.12"),
+                String::from("poetry>=1.8"),
             ]
         );
     }

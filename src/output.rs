@@ -3181,8 +3181,14 @@ pub struct TaskPrepareSummary<'a> {
     pub manager: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_mode: Option<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<&'a str>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub frozen_lockfile: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub no_root: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<&'a str>,
 }
@@ -3202,8 +3208,14 @@ pub struct WorkspaceTaskPrepareSummary {
     pub manager: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_mode: Option<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub frozen_lockfile: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub no_root: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<String>,
 }
@@ -3371,7 +3383,7 @@ pub fn summarize_task_prepare(
 ) -> Option<TaskPrepareSummary<'_>> {
     match prepare? {
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
-            let (source_kind, cwd, file, manager, mode, frozen_lockfile) = match &spec.source {
+            let (source_kind, cwd, file, manager, mode, group_mode, groups, frozen_lockfile, no_root) = match &spec.source {
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
                     (
                         "docker_compose",
@@ -3379,6 +3391,9 @@ pub fn summarize_task_prepare(
                         Some(source.file.as_str()),
                         None,
                         None,
+                        None,
+                        Vec::new(),
+                        false,
                         false,
                     )
                 }
@@ -3398,7 +3413,10 @@ pub fn summarize_task_prepare(
                             }
                             crate::schema::TaskNodePackageManagerHydrationMode::Ci => "ci",
                         }),
+                        None,
+                        Vec::new(),
                         source.frozen_lockfile,
+                        false,
                     )
                 }
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
@@ -3407,7 +3425,24 @@ pub fn summarize_task_prepare(
                     Some(source.path.as_str()),
                     Some("bundle"),
                     Some("install"),
+                    None,
+                    Vec::new(),
                     false,
+                    false,
+                ),
+                crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => (
+                    "poetry",
+                    Some(source.cwd.as_str()),
+                    None,
+                    Some("poetry"),
+                    Some("install"),
+                    Some(match source.group_mode {
+                        crate::schema::TaskPoetryHydrationGroupMode::With => "with",
+                        crate::schema::TaskPoetryHydrationGroupMode::Only => "only",
+                    }),
+                    source.groups.iter().map(String::as_str).collect(),
+                    false,
+                    source.no_root,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
                     "go_modules",
@@ -3415,6 +3450,9 @@ pub fn summarize_task_prepare(
                     None,
                     None,
                     Some("download"),
+                    None,
+                    Vec::new(),
+                    false,
                     false,
                 ),
             };
@@ -3433,7 +3471,10 @@ pub fn summarize_task_prepare(
                 file,
                 manager,
                 mode,
+                group_mode,
+                groups,
                 frozen_lockfile,
+                no_root,
                 targets: spec.targets.iter().map(String::as_str).collect(),
             })
         }
@@ -3445,13 +3486,16 @@ pub fn summarize_task_prepare_owned(
 ) -> Option<WorkspaceTaskPrepareSummary> {
     match prepare? {
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
-            let (source_kind, cwd, file, manager, mode, frozen_lockfile) = match &spec.source {
+            let (source_kind, cwd, file, manager, mode, group_mode, groups, frozen_lockfile, no_root) = match &spec.source {
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
                     "docker_compose",
                     Some(source.cwd.clone()),
                     Some(source.file.clone()),
                     None,
                     None,
+                    None,
+                    Vec::new(),
+                    false,
                     false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => (
@@ -3467,7 +3511,10 @@ pub fn summarize_task_prepare_owned(
                         crate::schema::TaskNodePackageManagerHydrationMode::Install => "install",
                         crate::schema::TaskNodePackageManagerHydrationMode::Ci => "ci",
                     }),
+                    None,
+                    Vec::new(),
                     source.frozen_lockfile,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
                     "bundler",
@@ -3475,7 +3522,24 @@ pub fn summarize_task_prepare_owned(
                     Some(source.path.clone()),
                     Some("bundle"),
                     Some("install"),
+                    None,
+                    Vec::new(),
                     false,
+                    false,
+                ),
+                crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => (
+                    "poetry",
+                    Some(source.cwd.clone()),
+                    None,
+                    Some("poetry"),
+                    Some("install"),
+                    Some(match source.group_mode {
+                        crate::schema::TaskPoetryHydrationGroupMode::With => "with",
+                        crate::schema::TaskPoetryHydrationGroupMode::Only => "only",
+                    }),
+                    source.groups.clone(),
+                    false,
+                    source.no_root,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
                     "go_modules",
@@ -3483,6 +3547,9 @@ pub fn summarize_task_prepare_owned(
                     None,
                     None,
                     Some("download"),
+                    None,
+                    Vec::new(),
+                    false,
                     false,
                 ),
             };
@@ -3501,7 +3568,10 @@ pub fn summarize_task_prepare_owned(
                 file,
                 manager,
                 mode,
+                group_mode,
+                groups,
                 frozen_lockfile,
+                no_root,
                 targets: spec.targets.clone(),
             })
         }

@@ -717,8 +717,9 @@ Rules:
 - `package_managers` remains the toolchain-owned package-manager surface for Node, Python, and
   Ruby where applicable
 - `toolchains.python.package_managers` currently accepts `uv` and `poetry`; `uv` remains the
-  canonical Python fulfillment source today, while Poetry ownership is now first-class even though
-  Poetry run-path fulfillment is not yet shipped
+  canonical Python fulfillment source today, and ota can now use that same selected Python
+  fulfillment lane to install declared Poetry versions on the selected run path before task
+  execution
 - standalone `tools.poetry` remains temporarily accepted for compatibility, but `ota validate`
   and `ota doctor` now warn and recommend migrating Poetry ownership to
   `toolchains.python.package_managers.poetry`
@@ -1628,6 +1629,11 @@ Task-effect rules:
     - `prepare.source.kind: bundler`
     - `prepare.source.cwd`: required repo-relative working directory for the Bundler invocation
     - `prepare.source.path`: required repo-relative bundle install path for the repo-local gem lane
+    - `prepare.source.kind: poetry`
+    - `prepare.source.cwd`: required repo-relative working directory for the Poetry install invocation
+    - `prepare.source.groups`: optional dependency-group list for `poetry install --with ...` or `--only ...`
+    - `prepare.source.group_mode`: optional group selector; ota currently ships `with` and `only`
+    - `prepare.source.no_root`: optional `poetry install --no-root`
     - `prepare.source.kind: go_modules`
     - `prepare.source.cwd`: required repo-relative working directory for the `go mod download` invocation
 
@@ -1639,11 +1645,13 @@ Task-effect rules:
 - `prepare.kind: dependency_hydration` currently requires `requirements.tools.docker`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: bundler` currently requires `requirements.toolchains: [ruby]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: poetry` currently requires `requirements.toolchains: [python]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: go_modules` currently requires `requirements.toolchains: [go]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.source.manager: pnpm` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `pnpm install --frozen-lockfile`
 - `prepare.source.manager: npm` currently supports `mode: install` or `mode: ci`; use `mode: ci` when the repo truth is lockfile-strict npm hydration
 - `prepare.source.manager: yarn` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `yarn install --immutable`
 - `prepare.source.kind: bundler` currently executes the narrow canonical repo-local gem hydration lane: `bundle config set path <path> && bundle install`
+- `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
 - `prepare` does not replace workflow `prepare.task`; workflow prepare is still the explicit host bootstrap lane that points at a native `action` task
 - `prepare` is not orchestrator-managed in the current shipped slice
@@ -2855,6 +2863,10 @@ agent:
       powershell: $env:OTA_VERSION='v1.6.16'; irm https://dist.ota.run/install.ps1 | iex
   notes: Keep agent edits narrow and add regressions for behavioral changes.
 ```
+
+For unreleased source pressure tests, the same bootstrap surface may pin an exact git revision
+deterministically through `OTA_GIT_REV=<40-char-commit>` / `$env:OTA_GIT_REV='<40-char-commit>'`
+with `--from-git` / `-FromGit` instead of a released `OTA_VERSION=...` install.
 
 Current validation rules:
 

@@ -26,9 +26,15 @@
 
 ## Unreleased
 
+- fixed agent bootstrap determinism advisories so exact `OTA_GIT_REV=<commit>` source-install
+  pins are now recognized as deterministic, while moving branch installs still warn correctly
 - widened Python toolchain package-manager ownership so Poetry is first-class under
   `toolchains.python.package_managers.poetry`, while legacy standalone `tools.poetry`
   declarations remain temporarily accepted with migration warnings instead of a silent break
+- expanded first-class Python setup so Poetry is now operational as well as declarative:
+  `prepare.kind: dependency_hydration` now ships `source.kind: poetry`, and the existing
+  Python `provider: uv` fulfillment lane can now install declared Poetry versions on the
+  selected run path before tasks execute
 - expanded the managed toolchain ownership surface into named execution contexts:
   `execution.contexts.<name>.requirements.toolchains` is now first-class, so repos can keep
   runtime and package-manager ownership under `toolchains` even when that truth is scoped to a

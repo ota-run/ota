@@ -3400,6 +3400,61 @@ fn validate_task_prepare(
                         )));
                     }
                 }
+                crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => {
+                    if spec.medium
+                        != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: poetry` must use `prepare.medium: package_dependencies`"
+                        )));
+                    }
+                    if !spec.targets.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: poetry` must omit `prepare.targets`; ota executes the declared Poetry hydration lane structurally"
+                        )));
+                    }
+                    if source.cwd.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `poetry` must declare a non-empty `prepare.source.cwd`"
+                        )));
+                    } else {
+                        validate_repo_relative_file_action_path(
+                            task_name,
+                            "prepare.source.cwd",
+                            source.cwd.as_str(),
+                            errors,
+                        );
+                    }
+                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "python") {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: poetry` must declare `requirements.toolchains: [python]`"
+                        )));
+                    }
+                    if !effects.network {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network: true`"
+                        )));
+                    }
+                    if effects.network_kind
+                        != Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
+                        )));
+                    }
+                    if effects.writes.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: poetry` must declare at least one durable repo write in `effects.writes`"
+                        )));
+                    }
+                    for (index, group) in source.groups.iter().enumerate() {
+                        if group.trim().is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "task `{task_name}` prepare `poetry` must not declare an empty `prepare.source.groups[{index}]` entry"
+                            )));
+                        }
+                    }
+                }
                 crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => {
                     if spec.medium
                         != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
@@ -6145,7 +6200,7 @@ impl ContractAdvisory {
                 advisory.path
             ),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
-                "set `{}` to an explicit versioned install command, for example by pinning `OTA_VERSION=vX.Y.Z` (or a `--version`/`-Version` flag) to keep agent bootstrap deterministic",
+                "set `{}` to an explicit ota install pin, for example by pinning `OTA_VERSION=vX.Y.Z` (or a `--version`/`-Version` flag), or by using `OTA_GIT_REV=<exact-commit>` for unreleased source pressure tests, to keep agent bootstrap deterministic",
                 advisory.field
             ),
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
@@ -6925,7 +6980,19 @@ fn ota_bootstrap_command_has_version_pin(command: &str) -> bool {
     ]
     .iter()
     .any(|marker| lowercase.contains(marker));
-    has_version_marker && contains_semver_triplet(normalized)
+    if has_version_marker && contains_semver_triplet(normalized) {
+        return true;
+    }
+
+    let has_git_rev_marker = [
+        "ota_git_rev=",
+        "ota_git_rev =",
+        "$env:ota_git_rev=",
+        "$env:ota_git_rev =",
+    ]
+    .iter()
+    .any(|marker| lowercase.contains(marker));
+    has_git_rev_marker && contains_hex_commitish(normalized)
 }
 
 fn contains_semver_triplet(value: &str) -> bool {
@@ -6973,6 +7040,29 @@ fn contains_semver_triplet(value: &str) -> bool {
         }
 
         index += 1;
+    }
+
+    false
+}
+
+fn contains_hex_commitish(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_hexdigit() {
+            index += 1;
+            continue;
+        }
+
+        let start = index;
+        while index < bytes.len() && bytes[index].is_ascii_hexdigit() {
+            index += 1;
+        }
+
+        let length = index - start;
+        if (7..=40).contains(&length) {
+            return true;
+        }
     }
 
     false
@@ -15932,6 +16022,76 @@ tasks:
     }
 
     #[test]
+    fn accepts_prepare_only_poetry_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      poetry: ">=1.8"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: poetry
+        cwd: .
+        groups:
+          - dev
+          - test
+    requirements:
+      toolchains:
+        - python
+    effects:
+      writes:
+        - .venv
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("poetry prepare should validate");
+    }
+
+    #[test]
+    fn rejects_poetry_prepare_without_python_toolchain_and_writes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: poetry
+        cwd: .
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("poetry prepare without python toolchain should fail");
+        let rendered = errors.to_string();
+        assert!(rendered.contains("must declare `requirements.toolchains: [python]`"));
+        assert!(rendered.contains("must declare at least one durable repo write in `effects.writes`"));
+    }
+
+    #[test]
     fn rejects_bundler_prepare_without_ruby_toolchain_and_writes() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -23404,6 +23564,34 @@ agent:
     ota:
       sh: curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=v1.6.16 sh
       powershell: $env:OTA_VERSION='v1.6.16'; irm https://dist.ota.run/install.ps1 | iex
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(
+            !advisories
+                .iter()
+                .any(|advisory| matches!(advisory, ContractAdvisory::AgentBootstrapUnpinned(_)))
+        );
+    }
+
+    #[test]
+    fn skips_agent_bootstrap_unpinned_advisory_when_git_revision_is_pinned() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  bootstrap:
+    ota:
+      sh: curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_REV=e71931d6a41cc52a15966e0125725b67a05cc073 sh -s -- --from-git
+      powershell: $env:OTA_GIT_REV='e71931d6a41cc52a15966e0125725b67a05cc073'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit
 "#,
         )
         .unwrap();
