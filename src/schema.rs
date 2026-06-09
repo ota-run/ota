@@ -318,7 +318,8 @@ impl Contract {
             };
             let backend = task.workflow_backend(self.execution.as_ref());
             let context_name = task.context_for_backend(self.execution.as_ref(), backend);
-            for toolchain_name in self.task_toolchain_names_for_execution(task, backend, context_name)
+            for toolchain_name in
+                self.task_toolchain_names_for_execution(task, backend, context_name)
             {
                 names.insert(toolchain_name);
             }
@@ -2359,6 +2360,8 @@ pub struct TaskServiceEnvBindingSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub view: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<TaskServiceEnvBindingFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scheme: Option<String>,
@@ -2913,7 +2916,42 @@ impl ServiceSpec {
     }
 
     pub fn endpoint_for_context(&self, context_name: &str) -> Option<&ServiceEndpointSpec> {
-        self.endpoints.get(context_name)
+        let mut resolved = None;
+        for (endpoint_name, endpoint) in &self.endpoints {
+            if endpoint.context_name(endpoint_name.as_str()) != context_name {
+                continue;
+            }
+            if resolved.is_some() {
+                return None;
+            }
+            resolved = Some(endpoint);
+        }
+        resolved
+    }
+
+    pub fn endpoint_named(&self, endpoint_name: &str) -> Option<&ServiceEndpointSpec> {
+        self.endpoints.get(endpoint_name)
+    }
+
+    pub fn endpoint_count_for_context(&self, context_name: &str) -> usize {
+        self.endpoints
+            .iter()
+            .filter(|(endpoint_name, endpoint)| {
+                endpoint.context_name(endpoint_name.as_str()) == context_name
+            })
+            .count()
+    }
+
+    pub fn has_endpoint_for_context(&self, context_name: &str) -> bool {
+        self.endpoint_count_for_context(context_name) > 0
+    }
+
+    pub fn sole_endpoint_name(&self) -> Option<&str> {
+        if self.endpoints.len() == 1 {
+            self.endpoints.keys().next().map(String::as_str)
+        } else {
+            None
+        }
     }
 }
 
@@ -2946,8 +2984,16 @@ const fn default_service_producer_address_view() -> TaskTargetAddressView {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceEndpointSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     pub address: String,
     pub port: u16,
+}
+
+impl ServiceEndpointSpec {
+    pub fn context_name<'a>(&'a self, endpoint_name: &'a str) -> &'a str {
+        self.context.as_deref().unwrap_or(endpoint_name)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -2955,6 +3001,8 @@ pub struct ServiceEndpointSpec {
 pub struct ServiceReadinessSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2984,6 +3032,10 @@ pub struct ServiceReadinessSpec {
 impl ServiceReadinessSpec {
     pub fn from_context(&self) -> Option<&str> {
         self.from.as_deref()
+    }
+
+    pub fn endpoint_name(&self) -> Option<&str> {
+        self.endpoint.as_deref()
     }
 
     pub fn legacy_run_command(&self) -> Option<String> {
@@ -4179,42 +4231,40 @@ impl TaskPrepareSpec {
 
     pub fn preview(&self) -> String {
         match self {
-            Self::DependencyHydration(spec) => {
-                match &spec.source {
-                    TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
-                        let targets = spec.targets.join(", ");
-                        format!(
-                            "hydrate {} from docker compose `{}` for {}",
-                            spec.medium.label(),
-                            source.display_path(),
-                            targets
-                        )
-                    }
-                    TaskDependencyHydrationSourceSpec::NodePackageManager(source) => format!(
-                        "hydrate {} with {} in `{}`",
+            Self::DependencyHydration(spec) => match &spec.source {
+                TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
+                    let targets = spec.targets.join(", ");
+                    format!(
+                        "hydrate {} from docker compose `{}` for {}",
                         spec.medium.label(),
-                        source.command_preview(),
-                        source.cwd.trim()
-                    ),
-                    TaskDependencyHydrationSourceSpec::Bundler(source) => format!(
-                        "hydrate {} with bundler install in `{}` using `{}`",
-                        spec.medium.label(),
-                        source.cwd.trim(),
-                        source.path.trim()
-                    ),
-                    TaskDependencyHydrationSourceSpec::Poetry(source) => format!(
-                        "hydrate {} with {} in `{}`",
-                        spec.medium.label(),
-                        source.command_preview(),
-                        source.cwd.trim()
-                    ),
-                    TaskDependencyHydrationSourceSpec::GoModules(source) => format!(
-                        "hydrate {} with go mod download in `{}`",
-                        spec.medium.label(),
-                        source.cwd.trim()
-                    ),
+                        source.display_path(),
+                        targets
+                    )
                 }
-            }
+                TaskDependencyHydrationSourceSpec::NodePackageManager(source) => format!(
+                    "hydrate {} with {} in `{}`",
+                    spec.medium.label(),
+                    source.command_preview(),
+                    source.cwd.trim()
+                ),
+                TaskDependencyHydrationSourceSpec::Bundler(source) => format!(
+                    "hydrate {} with bundler install in `{}` using `{}`",
+                    spec.medium.label(),
+                    source.cwd.trim(),
+                    source.path.trim()
+                ),
+                TaskDependencyHydrationSourceSpec::Poetry(source) => format!(
+                    "hydrate {} with {} in `{}`",
+                    spec.medium.label(),
+                    source.command_preview(),
+                    source.cwd.trim()
+                ),
+                TaskDependencyHydrationSourceSpec::GoModules(source) => format!(
+                    "hydrate {} with go mod download in `{}`",
+                    spec.medium.label(),
+                    source.cwd.trim()
+                ),
+            },
         }
     }
 }
@@ -4296,7 +4346,10 @@ impl TaskNodePackageManagerHydrationSourceSpec {
     }
 
     pub fn command_preview(&self) -> String {
-        let mut parts = vec![self.manager.label().to_string(), self.mode.label().to_string()];
+        let mut parts = vec![
+            self.manager.label().to_string(),
+            self.mode.label().to_string(),
+        ];
         if let Some(flag) = self.lockfile_flag() {
             parts.push(String::from(flag));
         }
@@ -5718,7 +5771,9 @@ tasks:
         );
         assert_eq!(contract.task_required_toolchain_names("lint").len(), 1);
         assert!(
-            contract.task_required_toolchain_names("lint").contains("rust"),
+            contract
+                .task_required_toolchain_names("lint")
+                .contains("rust"),
             "context-owned toolchain should count toward task requirements"
         );
     }

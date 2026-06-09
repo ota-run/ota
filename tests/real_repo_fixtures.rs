@@ -2085,7 +2085,10 @@ execution:
         .expect("named execution fixture should keep execution");
     assert_eq!(execution.default_context.as_deref(), Some("app"));
     assert_eq!(
-        execution.contexts.get("host").map(|context| context.backend),
+        execution
+            .contexts
+            .get("host")
+            .map(|context| context.backend),
         Some(ota::schema::Backend::Native)
     );
     let web = contract

@@ -113,7 +113,7 @@ human text output:
 - `ota run <task> --dry-run --json`: use `summary`, `resolved`, `requested_task`, `env`,
   `toolchains`, and `plan`; repo-level run JSON is currently preview-only and requires `--dry-run`
 - `ota proof runtime --json`: use `mode`, `workflow`, `phase`, `summary`, and `artifacts`; inspect the referenced `doctor.json` and `topology.json` artifacts instead of expecting the proof wrapper to duplicate those payloads
-- `ota services --json`: use `services`, grouped `members` when present, and nested `manager`, `readiness`, `endpoints`, and `depends_on`
+- `ota services --json`: use `services`, grouped `members` when present, and nested `manager`, `readiness`, `endpoints`, and `depends_on`; readiness may include `endpoint`, and endpoint objects may include `context` when the endpoint name and execution context differ
 - `ota assist declare-readiness --json`: use `mode`, `subject`, `inputs.style`, `changes`, `validation`, and `next`
 - `ota assist declare-service --json`: use `mode`, `subject`, `inputs`, `changes`, `validation`, and `next`
 - `ota assist bind-task --json`: use `mode`, `subject.task`, `subject.target`, `inputs`, `changes`, `validation`, and `next`
@@ -810,34 +810,36 @@ Success:
   "mode": "preview",
   "operation": "declare-readiness",
   "subject": {
-    "task": "dev"
+    "service": "api"
   },
   "inputs": {
-    "style": "spring-http"
+    "endpoint": "host_3000",
+    "style": "http"
   },
   "assumptions": [
-    "task `dev` already declares a service runtime",
-    "listener `http` is the readiness surface"
+    "service `api` already declares endpoint `host_3000`",
+    "structured readiness should anchor to endpoint `host_3000` in context `host`"
   ],
   "changes": [
     {
-      "path": "tasks.dev.runtime.readiness",
+      "path": "services.api.readiness",
       "action": "set",
       "before": null,
       "after": {
         "kind": "http",
-        "listener": "http",
+        "from": "host",
+        "endpoint": "host_3000",
         "method": "GET",
-        "path": "/actuator/health"
+        "path": "/health"
       }
     }
   ],
-  "diff": "tasks.dev.runtime.readiness\n- <absent>\n+ kind: http ...",
+  "diff": "services.api.readiness\n- <absent>\n+ kind: http ...",
   "validation": [
     "ota validate /abs/path/to/ota.yaml",
     "ota doctor /abs/path/to/ota.yaml"
   ],
-  "next": "rerun with `ota assist declare-readiness --task dev --style spring-http --write /abs/path/to/ota.yaml` to apply this readiness change"
+  "next": "rerun with `ota assist declare-readiness --service api --endpoint host_3000 --style http --write /abs/path/to/ota.yaml` to apply this readiness change"
 }
 ```
 
@@ -846,9 +848,11 @@ Notes:
 - `path` is the resolved repo contract path
 - `member` is present only when `--member` targeted a merged monorepo member contract
 - `subject` contains exactly one selector key today: `task` or `service`
+- `inputs.endpoint` is present only when `--endpoint` selected one explicit managed-service projection
 - `changes[*].before` is present when assist is refining or replacing an existing readiness block, including legacy top-level readiness shapes
 - `changes[*].after` uses the canonical readiness contract shape Ota would write
 - `mode` is `preview` by default and `write` when `--write` succeeded
+- `inputs.style` may also be `compose-health` for compose-managed `--service` targets
 
 Failure:
 
@@ -883,7 +887,8 @@ Success:
   },
   "inputs": {
     "manager": "compose",
-    "endpoint": "host",
+    "endpoint": "web",
+    "endpoint_context": "host",
     "address": "127.0.0.1",
     "port": "5432",
     "required": "false",
@@ -910,13 +915,15 @@ Success:
           "service": "postgres"
         },
         "endpoints": {
-          "host": {
+          "web": {
+            "context": "host",
             "address": "127.0.0.1",
             "port": 5432
           }
         },
         "readiness": {
           "from": "host",
+          "endpoint": "web",
           "kind": "tcp"
         }
       }
@@ -927,7 +934,7 @@ Success:
     "ota validate /abs/path/to/ota.yaml",
     "ota doctor /abs/path/to/ota.yaml"
   ],
-  "next": "rerun with `ota assist declare-service --name postgres --manager compose --endpoint host --address 127.0.0.1 --port 5432 --required false --compose-file docker-compose.yml --compose-service postgres --style tcp --write /abs/path/to/ota.yaml` to apply this service change"
+  "next": "rerun with `ota assist declare-service --name postgres --manager compose --endpoint web --endpoint-context host --address 127.0.0.1 --port 5432 --compose-file docker-compose.yml --compose-service postgres --style tcp --write /abs/path/to/ota.yaml` to apply this service change"
 }
 ```
 
@@ -935,6 +942,7 @@ Notes:
 
 - `subject.service` is the targeted top-level managed service name
 - `inputs` records the explicit or defaulted service declaration inputs used to build the proposal
+- `inputs.endpoint_context` is present when assist is authoring an endpoint whose identity and execution context differ
 - `changes[*].before` is present when assist is refining an existing service block
 - `changes[*].after` is the exact service block Ota would write
 
@@ -3982,7 +3990,7 @@ Example with inferred Docker Compose services:
 }
 ```
 
-Example with inferred Docker Compose host topology from an explicit published port:
+Example with inferred Docker Compose host topology from one deterministic host-published TCP port candidate:
 
 ```json
 {
@@ -4051,3 +4059,8 @@ Example with inferred Docker Compose host topology from an explicit published po
   ]
 }
 ```
+
+When a Compose service exposes multiple deterministic host-published TCP port candidates, Ota now
+keeps the inferred host execution slice and emits named endpoints such as
+`services.<name>.endpoints.host_3000.context: host`, while intentionally omitting
+`services.<name>.readiness.endpoint` when no single truthful readiness target can be selected.

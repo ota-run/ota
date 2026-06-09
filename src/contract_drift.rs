@@ -509,7 +509,9 @@ fn should_surface_detect_service_change(
     match existing_execution_merge_mode(existing) {
         ExistingExecutionMergeMode::None => true,
         ExistingExecutionMergeMode::Shorthand => false,
-        ExistingExecutionMergeMode::ContextMode => existing_host_context_is_native_or_missing(existing),
+        ExistingExecutionMergeMode::ContextMode => {
+            existing_host_context_is_native_or_missing(existing)
+        }
     }
 }
 
@@ -519,7 +521,13 @@ fn is_detected_host_topology_service_field(
 ) -> bool {
     let segments = field.split('.').collect::<Vec<_>>();
     match segments.as_slice() {
-        ["services", service_name, "endpoints", "host", "address" | "port"] => detected
+        [
+            "services",
+            service_name,
+            "endpoints",
+            "host",
+            "address" | "port",
+        ] => detected
             .services
             .get(*service_name)
             .is_some_and(|service| service.endpoints.contains_key("host")),
@@ -789,19 +797,31 @@ fn existing_service_field_values(name: &str, service: &ServiceSpec) -> BTreeMap<
     if let Some(healthcheck) = service.healthcheck.as_ref() {
         fields.insert(format!("services.{name}.healthcheck"), healthcheck.clone());
     }
-    for (context, endpoint) in &service.endpoints {
+    for (endpoint_name, endpoint) in &service.endpoints {
+        if let Some(context) = endpoint.context.as_ref() {
+            fields.insert(
+                format!("services.{name}.endpoints.{endpoint_name}.context"),
+                context.clone(),
+            );
+        }
         fields.insert(
-            format!("services.{name}.endpoints.{context}.address"),
+            format!("services.{name}.endpoints.{endpoint_name}.address"),
             endpoint.address.clone(),
         );
         fields.insert(
-            format!("services.{name}.endpoints.{context}.port"),
+            format!("services.{name}.endpoints.{endpoint_name}.port"),
             endpoint.port.to_string(),
         );
     }
     if let Some(readiness) = service.readiness.as_ref() {
         if let Some(from) = readiness.from.as_ref() {
             fields.insert(format!("services.{name}.readiness.from"), from.clone());
+        }
+        if let Some(endpoint) = readiness.endpoint.as_ref() {
+            fields.insert(
+                format!("services.{name}.readiness.endpoint"),
+                endpoint.clone(),
+            );
         }
         if let Some(kind) = readiness.kind {
             fields.insert(
@@ -849,19 +869,31 @@ fn detect_service_field_values(name: &str, service: &DetectService) -> Vec<(Stri
     if let Some(healthcheck) = service.healthcheck.as_ref() {
         fields.push((format!("services.{name}.healthcheck"), healthcheck.clone()));
     }
-    for (context, endpoint) in &service.endpoints {
+    for (endpoint_name, endpoint) in &service.endpoints {
+        if let Some(context) = endpoint.context.as_ref() {
+            fields.push((
+                format!("services.{name}.endpoints.{endpoint_name}.context"),
+                context.clone(),
+            ));
+        }
         fields.push((
-            format!("services.{name}.endpoints.{context}.address"),
+            format!("services.{name}.endpoints.{endpoint_name}.address"),
             endpoint.address.clone(),
         ));
         fields.push((
-            format!("services.{name}.endpoints.{context}.port"),
+            format!("services.{name}.endpoints.{endpoint_name}.port"),
             endpoint.port.to_string(),
         ));
     }
     if let Some(readiness) = service.readiness.as_ref() {
         if let Some(from) = readiness.from.as_ref() {
             fields.push((format!("services.{name}.readiness.from"), from.clone()));
+        }
+        if let Some(endpoint) = readiness.endpoint.as_ref() {
+            fields.push((
+                format!("services.{name}.readiness.endpoint"),
+                endpoint.clone(),
+            ));
         }
         if let Some(kind) = readiness.kind {
             fields.push((
@@ -1237,6 +1269,7 @@ execution:
                     endpoints: BTreeMap::from([(
                         String::from("host"),
                         crate::detector::DetectServiceEndpointSpec {
+                            context: None,
                             address: String::from("127.0.0.1"),
                             port: 3000,
                         },
@@ -1244,6 +1277,7 @@ execution:
                     healthcheck: None,
                     readiness: Some(crate::detector::DetectServiceReadinessSpec {
                         from: Some(String::from("host")),
+                        endpoint: None,
                         kind: Some(crate::schema::ServiceReadinessKind::Tcp),
                     }),
                 },
@@ -1252,7 +1286,10 @@ execution:
         };
 
         let changes = collect_detect_changes(&existing, &detected, &[]);
-        let fields = changes.iter().map(|change| change.field.as_str()).collect::<Vec<_>>();
+        let fields = changes
+            .iter()
+            .map(|change| change.field.as_str())
+            .collect::<Vec<_>>();
 
         assert!(!fields.contains(&"execution.default_context"));
         assert!(!fields.contains(&"execution.contexts.host.backend"));

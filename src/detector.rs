@@ -20,7 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -309,6 +309,8 @@ impl Default for DetectServiceManagerSpec {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectServiceEndpointSpec {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     pub address: String,
     pub port: u16,
 }
@@ -317,6 +319,8 @@ pub struct DetectServiceEndpointSpec {
 pub struct DetectServiceReadinessSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<ServiceReadinessKind>,
 }
@@ -3469,9 +3473,12 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
         let service = services
             .get(YamlValue::String(service_name.to_string()))
             .expect("compose service key should exist while iterating service mapping");
-        let host_endpoint = infer_compose_host_endpoint(service);
-        if let Some(endpoint) = host_endpoint.as_ref() {
-            let endpoint_source = format!("{file_name}#services.{service_name}.ports[0]");
+        let host_endpoints = infer_compose_host_endpoints(service);
+        if let Some(primary_candidate) = host_endpoints.first().copied() {
+            let endpoint_source = format!(
+                "{file_name}#services.{service_name}.ports[{}]",
+                primary_candidate.index
+            );
             builder.set_execution_default_context(
                 String::from("host"),
                 endpoint_source.clone(),
@@ -3483,33 +3490,66 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
                 endpoint_source.clone(),
                 Confidence::High,
             );
-            builder.set_service_endpoint_address(
-                service_name.to_string(),
-                String::from("host"),
-                endpoint.address.clone(),
-                endpoint_source.clone(),
-                Confidence::High,
-            );
-            builder.set_service_endpoint_port(
-                service_name.to_string(),
-                String::from("host"),
-                endpoint.port,
-                endpoint_source.clone(),
-                Confidence::High,
-            );
-            if !service_declares_compose_healthcheck(service) {
-                builder.set_service_readiness_from(
+            if host_endpoints.len() == 1 {
+                builder.set_service_endpoint_address(
                     service_name.to_string(),
                     String::from("host"),
+                    String::from("127.0.0.1"),
                     endpoint_source.clone(),
                     Confidence::High,
                 );
-                builder.set_service_readiness_kind(
+                builder.set_service_endpoint_port(
                     service_name.to_string(),
-                    ServiceReadinessKind::Tcp,
-                    endpoint_source,
+                    String::from("host"),
+                    primary_candidate.port,
+                    endpoint_source.clone(),
                     Confidence::High,
                 );
+                if !service_declares_compose_healthcheck(service) {
+                    builder.set_service_readiness_from(
+                        service_name.to_string(),
+                        String::from("host"),
+                        endpoint_source.clone(),
+                        Confidence::High,
+                    );
+                    builder.set_service_readiness_kind(
+                        service_name.to_string(),
+                        ServiceReadinessKind::Tcp,
+                        endpoint_source,
+                        Confidence::High,
+                    );
+                }
+            } else {
+                let mut used_endpoint_names = BTreeSet::new();
+                for candidate in host_endpoints {
+                    let endpoint_name =
+                        infer_compose_host_endpoint_name(candidate, &mut used_endpoint_names);
+                    let candidate_source = format!(
+                        "{file_name}#services.{service_name}.ports[{}]",
+                        candidate.index
+                    );
+                    builder.set_service_endpoint_context(
+                        service_name.to_string(),
+                        endpoint_name.clone(),
+                        String::from("host"),
+                        candidate_source.clone(),
+                        Confidence::High,
+                    );
+                    builder.set_service_endpoint_address(
+                        service_name.to_string(),
+                        endpoint_name.clone(),
+                        String::from("127.0.0.1"),
+                        candidate_source.clone(),
+                        Confidence::High,
+                    );
+                    builder.set_service_endpoint_port(
+                        service_name.to_string(),
+                        endpoint_name,
+                        candidate.port,
+                        candidate_source,
+                        Confidence::High,
+                    );
+                }
             }
         }
 
@@ -3535,18 +3575,41 @@ fn service_declares_compose_healthcheck(service: &YamlValue) -> bool {
         .is_some()
 }
 
-fn infer_compose_host_endpoint(service: &YamlValue) -> Option<DetectServiceEndpointSpec> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ComposePublishedHostEndpointCandidate {
+    index: usize,
+    port: u16,
+}
+
+fn infer_compose_host_endpoints(service: &YamlValue) -> Vec<ComposePublishedHostEndpointCandidate> {
     let ports = service
         .as_mapping()
         .and_then(|mapping| mapping.get(YamlValue::String(String::from("ports"))))
-        .and_then(YamlValue::as_sequence)?;
-    if ports.len() != 1 {
-        return None;
+        .and_then(YamlValue::as_sequence);
+    let Some(ports) = ports else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::new();
+    for (index, port_entry) in ports.iter().enumerate() {
+        let Some(port) = parse_compose_published_port(port_entry) else {
+            continue;
+        };
+        candidates.push(ComposePublishedHostEndpointCandidate { index, port });
     }
-    parse_compose_published_port(&ports[0]).map(|port| DetectServiceEndpointSpec {
-        address: String::from("127.0.0.1"),
-        port,
-    })
+    candidates
+}
+
+fn infer_compose_host_endpoint_name(
+    candidate: ComposePublishedHostEndpointCandidate,
+    used_names: &mut BTreeSet<String>,
+) -> String {
+    let base = format!("host_{}", candidate.port);
+    if used_names.insert(base.clone()) {
+        return base;
+    }
+    let indexed = format!("{base}_{}", candidate.index);
+    used_names.insert(indexed.clone());
+    indexed
 }
 
 fn parse_compose_published_port(value: &YamlValue) -> Option<u16> {
@@ -3666,10 +3729,22 @@ fn apply_service_inference(service: &mut DetectService, field_name: &str, value:
                 .endpoints
                 .entry((*context).to_string())
                 .or_insert_with(|| DetectServiceEndpointSpec {
+                    context: None,
                     address: String::new(),
                     port: 0,
                 });
             endpoint.address = value.to_string();
+        }
+        ["endpoints", context, "context"] => {
+            let endpoint = service
+                .endpoints
+                .entry((*context).to_string())
+                .or_insert_with(|| DetectServiceEndpointSpec {
+                    context: None,
+                    address: String::new(),
+                    port: 0,
+                });
+            endpoint.context = Some(value.to_string());
         }
         ["endpoints", context, "port"] => {
             if let Ok(port) = value.parse::<u16>() {
@@ -3677,6 +3752,7 @@ fn apply_service_inference(service: &mut DetectService, field_name: &str, value:
                     .endpoints
                     .entry((*context).to_string())
                     .or_insert_with(|| DetectServiceEndpointSpec {
+                        context: None,
                         address: String::new(),
                         port: 0,
                     });
@@ -3688,6 +3764,12 @@ fn apply_service_inference(service: &mut DetectService, field_name: &str, value:
                 .readiness
                 .get_or_insert_with(DetectServiceReadinessSpec::default);
             readiness.from = Some(value.to_string());
+        }
+        ["readiness", "endpoint"] => {
+            let readiness = service
+                .readiness
+                .get_or_insert_with(DetectServiceReadinessSpec::default);
+            readiness.endpoint = Some(value.to_string());
         }
         ["readiness", "kind"] => {
             let readiness = service
@@ -4498,23 +4580,45 @@ impl DetectBuilder {
     fn set_service_endpoint_address(
         &mut self,
         name: String,
-        context: String,
+        endpoint_name: String,
         value: String,
         source: String,
         confidence: Confidence,
     ) {
-        let field = format!("services.{name}.endpoints.{context}.address");
+        let field = format!("services.{name}.endpoints.{endpoint_name}.address");
         if self.should_replace(&field, &source, confidence) {
             let service = self.contract.services.entry(name).or_default();
-            let endpoint =
-                service
-                    .endpoints
-                    .entry(context)
-                    .or_insert_with(|| DetectServiceEndpointSpec {
-                        address: String::new(),
-                        port: 0,
-                    });
+            let endpoint = service.endpoints.entry(endpoint_name).or_insert_with(|| {
+                DetectServiceEndpointSpec {
+                    context: None,
+                    address: String::new(),
+                    port: 0,
+                }
+            });
             endpoint.address = value.clone();
+            self.record(field, value, source, confidence);
+        }
+    }
+
+    fn set_service_endpoint_context(
+        &mut self,
+        name: String,
+        endpoint_name: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = format!("services.{name}.endpoints.{endpoint_name}.context");
+        if self.should_replace(&field, &source, confidence) {
+            let service = self.contract.services.entry(name).or_default();
+            let endpoint = service.endpoints.entry(endpoint_name).or_insert_with(|| {
+                DetectServiceEndpointSpec {
+                    context: None,
+                    address: String::new(),
+                    port: 0,
+                }
+            });
+            endpoint.context = Some(value.clone());
             self.record(field, value, source, confidence);
         }
     }
@@ -4522,22 +4626,21 @@ impl DetectBuilder {
     fn set_service_endpoint_port(
         &mut self,
         name: String,
-        context: String,
+        endpoint_name: String,
         value: u16,
         source: String,
         confidence: Confidence,
     ) {
-        let field = format!("services.{name}.endpoints.{context}.port");
+        let field = format!("services.{name}.endpoints.{endpoint_name}.port");
         if self.should_replace(&field, &source, confidence) {
             let service = self.contract.services.entry(name).or_default();
-            let endpoint =
-                service
-                    .endpoints
-                    .entry(context)
-                    .or_insert_with(|| DetectServiceEndpointSpec {
-                        address: String::new(),
-                        port: 0,
-                    });
+            let endpoint = service.endpoints.entry(endpoint_name).or_insert_with(|| {
+                DetectServiceEndpointSpec {
+                    context: None,
+                    address: String::new(),
+                    port: 0,
+                }
+            });
             endpoint.port = value;
             self.record(field, value.to_string(), source, confidence);
         }
@@ -7406,6 +7509,157 @@ channel = "1.85.0"
                 && inference.source == "docker-compose.yml#services.db.healthcheck.test"
                 && inference.confidence == Confidence::High
         }));
+    }
+
+    #[test]
+    fn detects_compose_host_topology_with_one_deterministic_candidate_across_ports_list() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "docker-compose.yml",
+            r#"services:
+  web:
+    image: nginx:latest
+    ports:
+      - "3000:3000"
+      - "53:53/udp"
+      - "80"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.default_context.as_deref()),
+            Some("host")
+        );
+        assert_eq!(
+            report
+                .contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.contexts.get("host"))
+                .map(|context| context.backend.as_str()),
+            Some("native")
+        );
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("web")
+                .and_then(|service| service.endpoints.get("host"))
+                .map(|endpoint| (endpoint.address.as_str(), endpoint.port)),
+            Some(("127.0.0.1", 3000))
+        );
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("web")
+                .and_then(|service| service.readiness.as_ref())
+                .and_then(|readiness| readiness.from.as_deref()),
+            Some("host")
+        );
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("web")
+                .and_then(|service| service.readiness.as_ref())
+                .and_then(|readiness| readiness.kind),
+            Some(ServiceReadinessKind::Tcp)
+        );
+    }
+
+    #[test]
+    fn detects_named_host_endpoints_when_multiple_deterministic_candidates_exist() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "docker-compose.yml",
+            r#"services:
+  web:
+    image: nginx:latest
+    ports:
+      - "3000:3000"
+      - "9229:9229"
+"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(
+            report
+                .contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.default_context.as_deref()),
+            Some("host")
+        );
+        assert_eq!(
+            report
+                .contract
+                .execution
+                .as_ref()
+                .and_then(|execution| execution.contexts.get("host"))
+                .map(|context| context.backend.as_str()),
+            Some("native")
+        );
+        assert!(
+            report
+                .contract
+                .services
+                .get("web")
+                .is_some_and(|service| service.endpoints.len() == 2)
+        );
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("web")
+                .and_then(|service| service.endpoints.get("host_3000"))
+                .map(|endpoint| (
+                    endpoint.context.as_deref(),
+                    endpoint.address.as_str(),
+                    endpoint.port
+                )),
+            Some((Some("host"), "127.0.0.1", 3000))
+        );
+        assert_eq!(
+            report
+                .contract
+                .services
+                .get("web")
+                .and_then(|service| service.endpoints.get("host_9229"))
+                .map(|endpoint| (
+                    endpoint.context.as_deref(),
+                    endpoint.address.as_str(),
+                    endpoint.port
+                )),
+            Some((Some("host"), "127.0.0.1", 9229))
+        );
+        assert!(
+            report
+                .contract
+                .services
+                .get("web")
+                .and_then(|service| service.readiness.as_ref())
+                .is_none()
+        );
+        assert!(
+            report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "services.web.endpoints.host_3000.context")
+        );
+        assert!(
+            report
+                .inferences
+                .iter()
+                .any(|inference| inference.field == "services.web.endpoints.host_9229.context")
+        );
     }
 
     #[test]

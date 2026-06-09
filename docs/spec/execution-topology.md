@@ -429,7 +429,9 @@ authoring should use typed manager blocks and explicit endpoint/readiness topolo
 
 ### `services.<name>.endpoints`
 
-A service must declare how it is reached from each context that matters.
+A service must declare how it is reached from each context that matters. Endpoint keys are now
+endpoint identities, not just context labels, so one context can expose more than one truthful
+service surface.
 
 ```yaml
 services:
@@ -446,17 +448,28 @@ services:
       app:
         address: postgres
         port: 5432
+      inspector:
+        context: host
+        address: 127.0.0.1
+        port: 9229
 ```
 
 This makes the communication truth explicit:
 
 - `127.0.0.1:5432` may be valid from the host
 - `postgres:5432` may be valid from the app container
+- `127.0.0.1:9229` may be a second host-scoped endpoint for the same service
 - they are different truths and Ota should model both
+
+Rules:
+
+- when `context` is omitted, the endpoint key is also the context name for backward compatibility
+- when one context has multiple endpoints, consumers such as readiness or env bindings must select
+  the exact endpoint name explicitly
 
 For typed Compose managers, Ota may infer default endpoints when unambiguous, but the contract surface must exist so ambiguity can be expressed explicitly.
 
-### `services.<name>.readiness.from`
+### `services.<name>.readiness.from` and `readiness.endpoint`
 
 Readiness probes must say where they run from.
 
@@ -464,12 +477,16 @@ Readiness probes must say where they run from.
 services:
   postgres:
     readiness:
-      from: app
-      run: pg_isready -h postgres -p 5432
+      from: host
+      endpoint: host
+      kind: tcp
 ```
 
 This replaces the current host-bound limitation with a truthful topology model:
 
+- `from` says which execution context runs the probe
+- `endpoint` says which named endpoint projection that probe should target when one context has
+  multiple candidates
 - if the workload runs from `app`, readiness should usually be checked from `app`
 - if the workload runs from `host`, readiness should usually be checked from `host`
 

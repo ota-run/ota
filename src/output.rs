@@ -3383,42 +3383,46 @@ pub fn summarize_task_prepare(
 ) -> Option<TaskPrepareSummary<'_>> {
     match prepare? {
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
-            let (source_kind, cwd, file, manager, mode, group_mode, groups, frozen_lockfile, no_root) = match &spec.source {
-                crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
-                    (
-                        "docker_compose",
-                        Some(source.cwd.as_str()),
-                        Some(source.file.as_str()),
-                        None,
-                        None,
-                        None,
-                        Vec::new(),
-                        false,
-                        false,
-                    )
-                }
-                crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
-                    (
-                        "node_package_manager",
-                        Some(source.cwd.as_str()),
-                        None,
-                        Some(match source.manager {
-                            crate::schema::TaskNodePackageManagerKind::Npm => "npm",
-                            crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
-                            crate::schema::TaskNodePackageManagerKind::Yarn => "yarn",
-                        }),
-                        Some(match source.mode {
-                            crate::schema::TaskNodePackageManagerHydrationMode::Install => {
-                                "install"
-                            }
-                            crate::schema::TaskNodePackageManagerHydrationMode::Ci => "ci",
-                        }),
-                        None,
-                        Vec::new(),
-                        source.frozen_lockfile,
-                        false,
-                    )
-                }
+            let (
+                source_kind,
+                cwd,
+                file,
+                manager,
+                mode,
+                group_mode,
+                groups,
+                frozen_lockfile,
+                no_root,
+            ) = match &spec.source {
+                crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
+                    "docker_compose",
+                    Some(source.cwd.as_str()),
+                    Some(source.file.as_str()),
+                    None,
+                    None,
+                    None,
+                    Vec::new(),
+                    false,
+                    false,
+                ),
+                crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => (
+                    "node_package_manager",
+                    Some(source.cwd.as_str()),
+                    None,
+                    Some(match source.manager {
+                        crate::schema::TaskNodePackageManagerKind::Npm => "npm",
+                        crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
+                        crate::schema::TaskNodePackageManagerKind::Yarn => "yarn",
+                    }),
+                    Some(match source.mode {
+                        crate::schema::TaskNodePackageManagerHydrationMode::Install => "install",
+                        crate::schema::TaskNodePackageManagerHydrationMode::Ci => "ci",
+                    }),
+                    None,
+                    Vec::new(),
+                    source.frozen_lockfile,
+                    false,
+                ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
                     "bundler",
                     Some(source.cwd.as_str()),
@@ -3486,7 +3490,17 @@ pub fn summarize_task_prepare_owned(
 ) -> Option<WorkspaceTaskPrepareSummary> {
     match prepare? {
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
-            let (source_kind, cwd, file, manager, mode, group_mode, groups, frozen_lockfile, no_root) = match &spec.source {
+            let (
+                source_kind,
+                cwd,
+                file,
+                manager,
+                mode,
+                group_mode,
+                groups,
+                frozen_lockfile,
+                no_root,
+            ) = match &spec.source {
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
                     "docker_compose",
                     Some(source.cwd.clone()),
@@ -3675,6 +3689,8 @@ pub struct ServiceReadinessSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub probe: Option<String>,
@@ -3704,6 +3720,7 @@ impl ServiceReadinessSummary {
     fn from_spec(readiness: &crate::schema::ServiceReadinessSpec) -> Self {
         Self {
             from: readiness.from.clone(),
+            endpoint: readiness.endpoint.clone(),
             run: readiness.run.clone(),
             probe: readiness.probe.clone(),
             kind: readiness.kind.map(|kind| kind.as_str().to_string()),
@@ -3731,6 +3748,8 @@ impl ServiceReadinessSummary {
 
 #[derive(Debug, Serialize)]
 pub struct ServiceEndpointSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     pub address: String,
     pub port: u16,
 }
@@ -3738,6 +3757,7 @@ pub struct ServiceEndpointSummary {
 impl ServiceEndpointSummary {
     fn from_spec(endpoint: &crate::schema::ServiceEndpointSpec) -> Self {
         Self {
+            context: endpoint.context.clone(),
             address: endpoint.address.clone(),
             port: endpoint.port,
         }

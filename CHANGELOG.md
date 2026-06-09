@@ -26,11 +26,28 @@
 
 ## Unreleased
 
+- widened managed-service topology modeling so service endpoint identity is no longer forced to
+  equal execution-context identity: `services.<name>.endpoints.<name>.context`,
+  `services.<name>.readiness.endpoint`, and `tasks.<name>.env_bindings.<VAR>.from_service.endpoint`
+  now let one context expose multiple truthful service surfaces without falling back to opaque
+  shell glue
+- closed the assist authoring gap for named service endpoints: `ota assist declare-service` now
+  accepts `--endpoint-context`, projects it into proposal JSON/YAML, and keeps generated readiness
+  and replay commands aligned with the authored endpoint context
 - widened Docker Compose service topology detection for explicit host-published ports: `ota detect`,
   `ota init`, and detect merge can now infer the canonical host execution slice
   (`execution.default_context`, `execution.contexts.host.backend`), plus matching
   `services.<name>.endpoints.host` and structured `readiness.from` / `readiness.kind: tcp`
-  when one Compose service exposes one deterministic published port
+  when one Compose service exposes exactly one deterministic TCP host-published port candidate;
+  when one Compose service exposes multiple deterministic TCP host-published port candidates, Ota
+  now emits named host endpoints such as `services.<name>.endpoints.host_3000.context: host`
+  instead of dropping topology entirely, while intentionally withholding ambiguous readiness
+  ownership
+- closed the remaining readiness assist gap for multi-endpoint services: `ota assist
+  declare-readiness` now accepts `--endpoint`, carries the selector through preview/apply
+  JSON/text output, and writes `services.<name>.readiness.endpoint` plus the matching
+  `readiness.from` context instead of forcing manual YAML edits when one service exposes multiple
+  truthful projections
 - fixed detect-merge execution governance for inferred Compose host topology: additive merge no
   longer rewrites an authored `execution.default_context`, and it now skips host-topology
   additions entirely when the existing contract still uses root shorthand execution

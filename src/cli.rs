@@ -861,6 +861,9 @@ enum AssistCommands {
         /// Target one declared managed service.
         #[arg(long)]
         service: Option<String>,
+        /// Target one explicit managed service endpoint when the service exposes multiple projections.
+        #[arg(long)]
+        endpoint: Option<String>,
         /// Use one explicit readiness template style.
         #[arg(long, value_enum)]
         style: Option<AssistReadinessStyleArg>,
@@ -896,6 +899,9 @@ enum AssistCommands {
         /// Endpoint name to declare or refine. Defaults to `host` when safe.
         #[arg(long)]
         endpoint: Option<String>,
+        /// Execution context projected by the selected endpoint when it differs from the endpoint name.
+        #[arg(long = "endpoint-context")]
+        endpoint_context: Option<String>,
         /// Endpoint address to declare or refine.
         #[arg(long)]
         address: Option<String>,
@@ -909,7 +915,7 @@ enum AssistCommands {
         #[arg(long, value_enum)]
         style: Option<AssistReadinessStyleArg>,
         /// Producer task selector in `<task>` or `<task>:<listener>` form for a workspace-owned service.
-        #[arg(long, conflicts_with_all = ["manager", "manager_name", "compose_file", "compose_service", "endpoint", "address", "port", "style"])]
+        #[arg(long, conflicts_with_all = ["manager", "manager_name", "compose_file", "compose_service", "endpoint", "endpoint_context", "address", "port", "style"])]
         producer: Option<String>,
         /// Workspace repo that owns the producer task.
         #[arg(long = "producer-repo", add = ArgValueCompleter::new(complete_workspace_repo_candidates), requires = "producer")]
@@ -4640,6 +4646,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     member,
                     task,
                     service,
+                    endpoint,
                     style,
                     path,
                 },
@@ -4649,6 +4656,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             member.as_deref(),
             task.as_deref(),
             service.as_deref(),
+            endpoint.as_deref(),
             style,
             write,
             format_from_json(json),
@@ -4666,6 +4674,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     compose_file,
                     compose_service,
                     endpoint,
+                    endpoint_context,
                     address,
                     port,
                     required,
@@ -4684,6 +4693,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             compose_file.as_deref(),
             compose_service.as_deref(),
             endpoint.as_deref(),
+            endpoint_context.as_deref(),
             address.as_deref(),
             port,
             required,
@@ -17265,6 +17275,7 @@ tasks:
                         member: None,
                         task: None,
                         service: None,
+                        endpoint: None,
                         style: None,
                         path: None,
                     },
@@ -17283,6 +17294,7 @@ tasks:
                         compose_file: None,
                         compose_service: None,
                         endpoint: None,
+                        endpoint_context: None,
                         address: None,
                         port: None,
                         required: None,
@@ -31743,6 +31755,57 @@ project:
     }
 
     #[test]
+    fn detect_merge_json_writes_named_host_endpoints_for_multiple_published_ports() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: existing
+"#,
+        );
+        fixture.write(
+            "docker-compose.yml",
+            r#"services:
+  web:
+    image: nginx:latest
+    ports:
+      - "3000:3000"
+      - "9229:9229"
+"#,
+        );
+
+        let output = run_with(["ota", "detect", "--merge", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["written"], true);
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["services.web.endpoints.host_3000.context"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["services.web.endpoints.host_9229.context"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["services"]["web"]["endpoints"]["host_3000"]["context"],
+            "host"
+        );
+        assert_eq!(
+            json["config"]["services"]["web"]["endpoints"]["host_9229"]["context"],
+            "host"
+        );
+        let written = fs::read_to_string(fixture.file_path()).unwrap();
+        assert!(written.contains("default_context: host"));
+        assert!(written.contains("host_3000:"));
+        assert!(written.contains("context: host"));
+        assert!(written.contains("port: 3000"));
+        assert!(written.contains("host_9229:"));
+        assert!(written.contains("port: 9229"));
+        assert!(!written.contains("readiness:"));
+    }
+
+    #[test]
     fn detect_merge_json_reports_written_false_when_nothing_is_addable() {
         let fixture = ContractFixture::new(
             r#"
@@ -42618,6 +42681,67 @@ services:
     }
 
     #[test]
+    fn assist_declare_readiness_json_preview_supports_explicit_managed_service_endpoint() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: api
+    endpoints:
+      host_3000:
+        context: host
+        address: 127.0.0.1
+        port: 3000
+      host_9229:
+        context: host
+        address: 127.0.0.1
+        port: 9229
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--json",
+            "--service",
+            "api",
+            "--endpoint",
+            "host_3000",
+            "--style",
+            "http",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["subject"]["service"], "api");
+        assert_eq!(json["inputs"]["endpoint"], "host_3000");
+        assert_eq!(json["inputs"]["style"], "http");
+        assert_eq!(json["changes"][0]["after"]["from"], "host");
+        assert_eq!(json["changes"][0]["after"]["endpoint"], "host_3000");
+        assert!(
+            json["next"]
+                .as_str()
+                .unwrap()
+                .contains("--endpoint host_3000 --style http --write")
+        );
+    }
+
+    #[test]
     fn assist_declare_readiness_json_preview_supports_compose_health_style() {
         let fixture = ContractFixture::new(
             r#"
@@ -42653,6 +42777,52 @@ services:
         assert_eq!(json["subject"]["service"], "worker");
         assert_eq!(json["changes"][0]["after"]["kind"], "compose_health");
         assert_eq!(json["changes"][0]["after"]["from"], Value::Null);
+    }
+
+    #[test]
+    fn assist_declare_readiness_rejects_endpoint_for_task_targets() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+tasks:
+  dev:
+    run: cargo run
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 8080
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: auto
+              path: /
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-readiness",
+            "--task",
+            "dev",
+            "--endpoint",
+            "host",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("`--endpoint` is only valid together with `--service`"));
     }
 
     #[test]
@@ -42962,6 +43132,136 @@ execution:
             json["changes"][0]["after"]["endpoints"],
             serde_json::json!({})
         );
+    }
+
+    #[test]
+    fn assist_declare_service_authors_named_endpoint_with_explicit_context() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--json",
+            "--name",
+            "postgres",
+            "--manager",
+            "compose",
+            "--compose-file",
+            "docker-compose.yml",
+            "--compose-service",
+            "postgres",
+            "--endpoint",
+            "web",
+            "--endpoint-context",
+            "host",
+            "--address",
+            "127.0.0.1",
+            "--port",
+            "5432",
+            "--style",
+            "tcp",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["inputs"]["endpoint"], "web");
+        assert_eq!(json["inputs"]["endpoint_context"], "host");
+        assert_eq!(
+            json["changes"][0]["after"]["endpoints"]["web"]["context"],
+            "host"
+        );
+        assert_eq!(json["changes"][0]["after"]["readiness"]["from"], "host");
+        assert_eq!(json["changes"][0]["after"]["readiness"]["endpoint"], "web");
+        assert!(
+            json["next"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("--endpoint-context")
+        );
+    }
+
+    #[test]
+    fn assist_declare_service_realigns_existing_readiness_when_endpoint_context_changes() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: postgres:latest
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+    endpoints:
+      web:
+        context: host
+        address: 127.0.0.1
+        port: 5432
+    readiness:
+      from: host
+      endpoint: web
+      kind: tcp
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--json",
+            "--name",
+            "postgres",
+            "--manager",
+            "compose",
+            "--compose-file",
+            "docker-compose.yml",
+            "--compose-service",
+            "postgres",
+            "--endpoint",
+            "web",
+            "--endpoint-context",
+            "app",
+            "--address",
+            "postgres",
+            "--port",
+            "5432",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(
+            json["changes"][0]["after"]["endpoints"]["web"]["context"],
+            "app"
+        );
+        assert_eq!(json["changes"][0]["after"]["readiness"]["from"], "app");
+        assert_eq!(json["changes"][0]["after"]["readiness"]["endpoint"], "web");
     }
 
     #[test]

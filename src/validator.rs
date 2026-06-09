@@ -2318,7 +2318,14 @@ fn validate_tasks(
         }
         if let Some(prepare) = task.prepare.as_ref() {
             let backend = task.workflow_backend(contract.execution.as_ref());
-            validate_task_prepare(name, prepare, &task.requirements, &task.effects, backend, errors);
+            validate_task_prepare(
+                name,
+                prepare,
+                &task.requirements,
+                &task.effects,
+                backend,
+                errors,
+            );
         }
         if let Some(aggregate) = task.aggregate.as_ref() {
             if aggregate.tasks.is_empty() {
@@ -2592,16 +2599,53 @@ fn validate_task_env_bindings(
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
+            let requested_endpoint = binding
+                .from_service
+                .endpoint
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
             if service.endpoints.is_empty() {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` env binding `{name}` references service `{service_name}`, but that service declares no endpoints"
                 )));
-            } else if let Some(view) = requested_view
-                && !service.endpoints.contains_key(view)
-                && !service.endpoints.contains_key("host")
-            {
+            } else if let Some(endpoint_name) = requested_endpoint {
+                if let Some(endpoint) = service.endpoint_named(endpoint_name) {
+                    if let Some(view) = requested_view
+                        && endpoint.context_name(endpoint_name) != view
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` env binding `{name}` endpoint `{service_name}.{endpoint_name}` projects context `{}`, so `from_service.view: {view}` does not match",
+                            endpoint.context_name(endpoint_name)
+                        )));
+                    }
+                } else {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` env binding `{name}` references unknown service endpoint `{service_name}.{endpoint_name}`"
+                    )));
+                }
+            } else if let Some(view) = requested_view {
+                let view_matches = service.has_endpoint_for_context(view);
+                let host_matches = service.has_endpoint_for_context("host");
+                if !view_matches && !host_matches {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` env binding `{name}` references service `{service_name}` view `{view}`, but neither that view nor `host` is declared under `services.{service_name}.endpoints`"
+                    )));
+                } else if view_matches && service.endpoint_count_for_context(view) > 1 {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` env binding `{name}` references service `{service_name}` view `{view}` with multiple matching endpoints; declare `from_service.endpoint` explicitly"
+                    )));
+                } else if !view_matches
+                    && host_matches
+                    && service.endpoint_count_for_context("host") > 1
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` env binding `{name}` falls back to host view for service `{service_name}`, but `host` has multiple matching endpoints; declare `from_service.endpoint` explicitly"
+                    )));
+                }
+            } else if service.endpoint_count_for_context("host") > 1 {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` env binding `{name}` references service `{service_name}` view `{view}`, but neither that view nor `host` is declared under `services.{service_name}.endpoints`"
+                    "task `{task_name}` env binding `{name}` references service `{service_name}` with multiple host endpoints; declare `from_service.endpoint` explicitly"
                 )));
             }
         } else {
@@ -2615,6 +2659,13 @@ fn validate_task_env_bindings(
         {
             errors.push(ValidationError::new(format!(
                 "task `{task_name}` env binding `{name}` must not declare an empty `from_service.view`"
+            )));
+        }
+        if let Some(endpoint) = binding.from_service.endpoint.as_deref()
+            && endpoint.trim().is_empty()
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` env binding `{name}` must not declare an empty `from_service.endpoint`"
             )));
         }
         if let Some(scheme) = binding.from_service.scheme.as_deref()
@@ -2926,7 +2977,8 @@ fn validate_task_execution_orchestrator(
         )));
     }
 
-    if !(has_run || has_script || has_prepare || has_launch || has_action || has_fallback_execution) {
+    if !(has_run || has_script || has_prepare || has_launch || has_action || has_fallback_execution)
+    {
         errors.push(ValidationError::new(format!(
             "{scope} `{task_name}` declares `execution.orchestrator`, but no executable task body resolves on that path"
         )));
@@ -3217,8 +3269,7 @@ fn validate_task_prepare(
             }
             match &spec.source {
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
-                    if spec.medium
-                        != crate::schema::TaskDependencyHydrationMedium::ContainerImages
+                    if spec.medium != crate::schema::TaskDependencyHydrationMedium::ContainerImages
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: docker_compose` must use `prepare.medium: container_images`"
@@ -3296,7 +3347,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "node") {
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "node")
+                    {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: node_package_manager` must declare `requirements.toolchains: [node]`"
                         )));
@@ -3318,22 +3373,33 @@ fn validate_task_prepare(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: node_package_manager` must declare at least one durable repo write in `effects.writes`"
                         )));
                     }
-                    if matches!(source.manager, crate::schema::TaskNodePackageManagerKind::Pnpm)
-                        && matches!(source.mode, crate::schema::TaskNodePackageManagerHydrationMode::Ci)
-                    {
+                    if matches!(
+                        source.manager,
+                        crate::schema::TaskNodePackageManagerKind::Pnpm
+                    ) && matches!(
+                        source.mode,
+                        crate::schema::TaskNodePackageManagerHydrationMode::Ci
+                    ) {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `node_package_manager` must not use `manager: pnpm` with `mode: ci`; use `mode: install` and explicit lockfile policy instead"
                         )));
                     }
-                    if matches!(source.manager, crate::schema::TaskNodePackageManagerKind::Yarn)
-                        && matches!(source.mode, crate::schema::TaskNodePackageManagerHydrationMode::Ci)
-                    {
+                    if matches!(
+                        source.manager,
+                        crate::schema::TaskNodePackageManagerKind::Yarn
+                    ) && matches!(
+                        source.mode,
+                        crate::schema::TaskNodePackageManagerHydrationMode::Ci
+                    ) {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `node_package_manager` must not use `manager: yarn` with `mode: ci`; use `mode: install` and `frozen_lockfile: true` for lockfile-strict Yarn hydration"
                         )));
                     }
                     if source.frozen_lockfile
-                        && matches!(source.manager, crate::schema::TaskNodePackageManagerKind::Npm)
+                        && matches!(
+                            source.manager,
+                            crate::schema::TaskNodePackageManagerKind::Npm
+                        )
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `node_package_manager` must not declare `frozen_lockfile: true` for `manager: npm`; use `mode: ci` for lockfile-strict npm hydration"
@@ -3377,7 +3443,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "ruby") {
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "ruby")
+                    {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: bundler` must declare `requirements.toolchains: [ruby]`"
                         )));
@@ -3425,7 +3495,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "python") {
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "python")
+                    {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: poetry` must declare `requirements.toolchains: [python]`"
                         )));
@@ -3480,7 +3554,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "go") {
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "go")
+                    {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: go_modules` must declare `requirements.toolchains: [go]`"
                         )));
@@ -6329,15 +6407,19 @@ fn collect_legacy_node_runtime_tool_split_advisories(contract: &Contract) -> Vec
 }
 
 fn collect_legacy_standalone_poetry_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
-    if contract.toolchains.iter().any(|(toolchain_name, toolchain)| {
-        declared_toolchain_contract(toolchain_name, toolchain)
-            .is_some_and(|provider| provider.owned_runtime() == "python")
-            && (toolchain.package_managers.contains_key("poetry")
-                || toolchain
-                    .platforms
-                    .values()
-                    .any(|platform| platform.package_managers.contains_key("poetry")))
-    }) {
+    if contract
+        .toolchains
+        .iter()
+        .any(|(toolchain_name, toolchain)| {
+            declared_toolchain_contract(toolchain_name, toolchain)
+                .is_some_and(|provider| provider.owned_runtime() == "python")
+                && (toolchain.package_managers.contains_key("poetry")
+                    || toolchain
+                        .platforms
+                        .values()
+                        .any(|platform| platform.package_managers.contains_key("poetry")))
+        })
+    {
         return Vec::new();
     }
 
@@ -6444,7 +6526,11 @@ fn selected_task_toolchains<'a>(
     let mut required_toolchains = BTreeSet::new();
     let backend = task.workflow_backend(contract.execution.as_ref());
     let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
-    required_toolchains.extend(contract.task_toolchain_names_for_execution(task, backend, context_name));
+    required_toolchains.extend(contract.task_toolchain_names_for_execution(
+        task,
+        backend,
+        context_name,
+    ));
     for branch in &task.requirements.any_of {
         let branch_backend = branch.when.backend.unwrap_or(backend);
         let branch_context_name = branch
@@ -8053,6 +8139,11 @@ fn validate_services(
                 .as_deref()
                 .map(str::trim)
                 .unwrap_or_default();
+            let endpoint_name = readiness
+                .endpoint
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
             let uses_legacy_command = !run.is_empty();
             let uses_named_probe = !probe.is_empty();
             let structured_kind = readiness.kind;
@@ -8065,6 +8156,25 @@ fn validate_services(
             if from.is_empty() && requires_from {
                 errors.push(ValidationError::new(format!(
                     "service `{name}` readiness field `from` must not be empty"
+                )));
+            }
+            if !endpoint_name.is_empty()
+                && matches!(
+                    structured_kind,
+                    Some(crate::schema::ServiceReadinessKind::ComposeHealth)
+                )
+            {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` structured compose health readiness must not declare `readiness.endpoint`"
+                )));
+            }
+            if readiness
+                .endpoint
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` readiness field `endpoint` must not be empty"
                 )));
             }
             if uses_legacy_command && structured_kind.is_some() {
@@ -8088,6 +8198,11 @@ fn validate_services(
                 )));
             }
             if uses_legacy_command {
+                if readiness.endpoint.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "service `{name}` legacy readiness `run` must not declare `readiness.endpoint`"
+                    )));
+                }
                 for (field_name, present) in [
                     ("method", readiness.method.is_some()),
                     ("path", readiness.path.is_some()),
@@ -8110,9 +8225,30 @@ fn validate_services(
                     errors.push(ValidationError::new(format!(
                         "service `{name}` readiness `probe` must also declare `from` so ota can select the service endpoint projection"
                     )));
-                } else if service.endpoint_for_context(from).is_none() {
+                } else if let Some(endpoint_name) = readiness
+                    .endpoint_name()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    match service.endpoint_named(endpoint_name) {
+                        Some(endpoint) if endpoint.context_name(endpoint_name) != from => {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` readiness endpoint `{endpoint_name}` projects context `{}`, so `readiness.from: {from}` does not match",
+                                endpoint.context_name(endpoint_name)
+                            )));
+                        }
+                        Some(_) => {}
+                        None => errors.push(ValidationError::new(format!(
+                            "service `{name}` readiness references unknown endpoint `{endpoint_name}`"
+                        ))),
+                    }
+                } else if !service.has_endpoint_for_context(from) {
                     errors.push(ValidationError::new(format!(
                         "service `{name}` readiness references unknown endpoint context `{from}`"
+                    )));
+                } else if service.endpoint_count_for_context(from) > 1 {
+                    errors.push(ValidationError::new(format!(
+                        "service `{name}` readiness from `{from}` matches multiple endpoints; declare `readiness.endpoint` explicitly"
                     )));
                 }
                 if !contract.readiness.probes.contains_key(probe) {
@@ -8222,6 +8358,7 @@ fn validate_services(
                             )));
                         }
                         for (field_name, present) in [
+                            ("endpoint", readiness.endpoint.is_some()),
                             ("method", readiness.method.is_some()),
                             ("path", readiness.path.is_some()),
                             ("headers", !readiness.headers.is_empty()),
@@ -8272,13 +8409,34 @@ fn validate_services(
                     structured_kind,
                     Some(crate::schema::ServiceReadinessKind::ComposeHealth)
                 )
-                && !service.endpoints.contains_key(from)
             {
-                errors.push(ValidationError::new(format!(
-                    "service `{name}` readiness from `{}` requires a matching `services.{name}.endpoints.{}` projection",
-                    from,
-                    from
-                )));
+                if let Some(endpoint_name) = readiness
+                    .endpoint_name()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    match service.endpoint_named(endpoint_name) {
+                        Some(endpoint) if endpoint.context_name(endpoint_name) != from => {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` readiness endpoint `{endpoint_name}` projects context `{}`, so `readiness.from: {from}` does not match",
+                                endpoint.context_name(endpoint_name)
+                            )));
+                        }
+                        Some(_) => {}
+                        None => errors.push(ValidationError::new(format!(
+                            "service `{name}` readiness references unknown endpoint `{endpoint_name}`"
+                        ))),
+                    }
+                } else if !service.has_endpoint_for_context(from) {
+                    errors.push(ValidationError::new(format!(
+                        "service `{name}` readiness from `{}` requires a matching `services.{name}.endpoints.*` projection",
+                        from
+                    )));
+                } else if service.endpoint_count_for_context(from) > 1 {
+                    errors.push(ValidationError::new(format!(
+                        "service `{name}` readiness from `{from}` matches multiple endpoints; declare `readiness.endpoint` explicitly"
+                    )));
+                }
             }
             if service.timeout.is_some() {
                 errors.push(ValidationError::new(format!(
@@ -8287,10 +8445,21 @@ fn validate_services(
             }
         }
 
-        for (context_name, endpoint) in &service.endpoints {
-            if context_name.trim().is_empty() {
+        for (endpoint_name, endpoint) in &service.endpoints {
+            if endpoint_name.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
-                    "service `{name}` endpoints must not declare an empty context name"
+                    "service `{name}` endpoints must not declare an empty endpoint name"
+                )));
+                continue;
+            }
+            let context_name = endpoint.context_name(endpoint_name.as_str());
+            if endpoint
+                .context
+                .as_deref()
+                .is_some_and(|context| context.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "service `{name}` endpoint `{endpoint_name}` must not declare an empty `context`"
                 )));
                 continue;
             }
@@ -8300,17 +8469,17 @@ fn validate_services(
                 .is_none_or(|execution| !execution.contexts.contains_key(context_name))
             {
                 errors.push(ValidationError::new(format!(
-                    "service `{name}` endpoint projection `{context_name}` references unknown execution context"
+                    "service `{name}` endpoint `{endpoint_name}` references unknown execution context `{context_name}`"
                 )));
             }
             if endpoint.address.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
-                    "service `{name}` endpoint `{context_name}` must declare a non-empty `address`"
+                    "service `{name}` endpoint `{endpoint_name}` must declare a non-empty `address`"
                 )));
             }
             if endpoint.port == 0 {
                 errors.push(ValidationError::new(format!(
-                    "service `{name}` endpoint `{context_name}` must declare `port` greater than zero"
+                    "service `{name}` endpoint `{endpoint_name}` must declare `port` greater than zero"
                 )));
             }
         }
@@ -9417,7 +9586,7 @@ fn validate_readiness_probe_target(
                         target.name
                     )));
                 } else if !endpoint_name.is_empty()
-                    && service.endpoint_for_context(endpoint_name).is_none()
+                    && service.endpoint_named(endpoint_name).is_none()
                 {
                     errors.push(ValidationError::new(format!(
                         "`readiness.probes.{name}.target.endpoint` references unknown service endpoint `{}.{endpoint_name}`",
@@ -14234,9 +14403,9 @@ services:
 
         let errors = validate_contract(&contract).unwrap_err();
         assert!(errors.errors().iter().any(|error| {
-            error
-                .to_string()
-                .contains("service `postgres` endpoint projection `host` references unknown execution context")
+            error.to_string().contains(
+                "service `postgres` endpoint `host` references unknown execution context `host`",
+            )
         }));
     }
 
@@ -14273,8 +14442,133 @@ services:
         assert!(errors.errors().iter().any(|error| {
             error
                 .to_string()
-                .contains("service `postgres` readiness from `app` requires a matching `services.postgres.endpoints.app` projection")
+                .contains("service `postgres` readiness from `app` requires a matching `services.postgres.endpoints.*` projection")
         }));
+    }
+
+    #[test]
+    fn validates_service_readiness_with_named_endpoint_projection() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    endpoints:
+      web:
+        context: host
+        address: 127.0.0.1
+        port: 3000
+      inspector:
+        context: host
+        address: 127.0.0.1
+        port: 9229
+    readiness:
+      from: host
+      endpoint: web
+      kind: http
+      path: /health
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_service_readiness_without_explicit_endpoint_when_context_is_ambiguous() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  api:
+    endpoints:
+      web:
+        context: host
+        address: 127.0.0.1
+        port: 3000
+      inspector:
+        context: host
+        address: 127.0.0.1
+        port: 9229
+    readiness:
+      from: host
+      kind: tcp
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("service `api` readiness from `host` matches multiple endpoints; declare `readiness.endpoint` explicitly")
+        }));
+    }
+
+    #[test]
+    fn validates_task_env_binding_with_explicit_service_endpoint() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      secret: true
+execution:
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    endpoints:
+      primary:
+        context: host
+        address: 127.0.0.1
+        port: 5432
+      analytics:
+        context: host
+        address: 127.0.0.1
+        port: 6432
+tasks:
+  test:
+    run: cargo test
+    env_bindings:
+      DATABASE_URL:
+        from_service:
+          service: postgres
+          view: host
+          endpoint: analytics
+          scheme: postgres
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
     }
 
     #[test]
@@ -15548,10 +15842,8 @@ tasks:
             .map(ToString::to_string)
             .collect::<Vec<_>>();
         assert!(
-            rendered
-                .iter()
-                .any(|error| error
-                    == "task `verify` must not declare `context` when `aggregate` is present"),
+            rendered.iter().any(|error| error
+                == "task `verify` must not declare `context` when `aggregate` is present"),
             "{rendered:?}"
         );
         assert!(
@@ -15584,12 +15876,9 @@ tasks:
 
         let errors = validate_contract(&contract).unwrap_err();
         assert!(
-            errors
-                .errors()
-                .iter()
-                .any(|error| error
-                    .to_string()
-                    .contains("task dependency cycle detected: lint -> verify -> lint")),
+            errors.errors().iter().any(|error| error
+                .to_string()
+                .contains("task dependency cycle detected: lint -> verify -> lint")),
             "{errors}"
         );
     }
@@ -15681,9 +15970,7 @@ tasks:
         let rendered = errors.to_string();
         assert!(rendered.contains("must declare `requirements.tools.docker`"));
         assert!(rendered.contains("must declare `effects.network: true`"));
-        assert!(rendered.contains(
-            "must declare `effects.network_kind: dependency_hydration`"
-        ));
+        assert!(rendered.contains("must declare `effects.network_kind: dependency_hydration`"));
     }
 
     #[test]
@@ -15800,11 +16087,13 @@ tasks:
         )
         .unwrap();
 
-        let errors = validate_contract(&contract)
-            .expect_err("yarn package-manager ci prepare should fail");
-        assert!(errors
-            .to_string()
-            .contains("must not use `manager: yarn` with `mode: ci`"));
+        let errors =
+            validate_contract(&contract).expect_err("yarn package-manager ci prepare should fail");
+        assert!(
+            errors
+                .to_string()
+                .contains("must not use `manager: yarn` with `mode: ci`")
+        );
     }
 
     #[test]
@@ -15837,7 +16126,9 @@ tasks:
             validate_contract(&contract).expect_err("node package-manager prepare should fail");
         let rendered = errors.to_string();
         assert!(rendered.contains("must declare `requirements.toolchains: [node]`"));
-        assert!(rendered.contains("must declare at least one durable repo write in `effects.writes`"));
+        assert!(
+            rendered.contains("must declare at least one durable repo write in `effects.writes`")
+        );
     }
 
     #[test]
@@ -15869,9 +16160,11 @@ tasks:
         .unwrap();
         let docker_errors =
             validate_contract(&docker_contract).expect_err("mismatched docker medium should fail");
-        assert!(docker_errors.to_string().contains(
-            "must use `prepare.medium: container_images`"
-        ));
+        assert!(
+            docker_errors
+                .to_string()
+                .contains("must use `prepare.medium: container_images`")
+        );
 
         let node_contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -15905,9 +16198,11 @@ tasks:
         .unwrap();
         let node_errors =
             validate_contract(&node_contract).expect_err("mismatched node medium should fail");
-        assert!(node_errors.to_string().contains(
-            "must use `prepare.medium: package_dependencies`"
-        ));
+        assert!(
+            node_errors
+                .to_string()
+                .contains("must use `prepare.medium: package_dependencies`")
+        );
     }
 
     #[test]
@@ -15946,9 +16241,7 @@ tasks:
 
         let errors = validate_contract(&contract)
             .expect_err("node package-manager targets should be rejected");
-        assert!(errors
-            .to_string()
-            .contains("must omit `prepare.targets`"));
+        assert!(errors.to_string().contains("must omit `prepare.targets`"));
     }
 
     #[test]
@@ -16088,7 +16381,9 @@ tasks:
             .expect_err("poetry prepare without python toolchain should fail");
         let rendered = errors.to_string();
         assert!(rendered.contains("must declare `requirements.toolchains: [python]`"));
-        assert!(rendered.contains("must declare at least one durable repo write in `effects.writes`"));
+        assert!(
+            rendered.contains("must declare at least one durable repo write in `effects.writes`")
+        );
     }
 
     #[test]
@@ -16119,7 +16414,9 @@ tasks:
             .expect_err("bundler prepare without ruby toolchain should fail");
         let rendered = errors.to_string();
         assert!(rendered.contains("must declare `requirements.toolchains: [ruby]`"));
-        assert!(rendered.contains("must declare at least one durable repo write in `effects.writes`"));
+        assert!(
+            rendered.contains("must declare at least one durable repo write in `effects.writes`")
+        );
     }
 
     #[test]
@@ -16156,8 +16453,7 @@ tasks:
         )
         .unwrap();
 
-        let errors =
-            validate_contract(&contract).expect_err("bundler prepare targets should fail");
+        let errors = validate_contract(&contract).expect_err("bundler prepare targets should fail");
         assert!(errors.to_string().contains("must omit `prepare.targets`"));
     }
 
@@ -16186,9 +16482,11 @@ tasks:
 
         let errors = validate_contract(&contract)
             .expect_err("go modules prepare without go toolchain should fail");
-        assert!(errors
-            .to_string()
-            .contains("must declare `requirements.toolchains: [go]`"));
+        assert!(
+            errors
+                .to_string()
+                .contains("must declare `requirements.toolchains: [go]`")
+        );
     }
 
     #[test]
@@ -23715,10 +24013,9 @@ tasks:
 
         let advisories = collect_contract_advisories(&contract);
         assert!(
-            !advisories.iter().any(|advisory| matches!(
-                advisory,
-                ContractAdvisory::LegacyStandalonePoetry(_)
-            ))
+            !advisories
+                .iter()
+                .any(|advisory| matches!(advisory, ContractAdvisory::LegacyStandalonePoetry(_)))
         );
     }
 
@@ -23748,10 +24045,9 @@ tasks:
 
         let advisories = collect_contract_advisories(&contract);
         assert!(
-            !advisories.iter().any(|advisory| matches!(
-                advisory,
-                ContractAdvisory::LegacyStandalonePoetry(_)
-            ))
+            !advisories
+                .iter()
+                .any(|advisory| matches!(advisory, ContractAdvisory::LegacyStandalonePoetry(_)))
         );
     }
 

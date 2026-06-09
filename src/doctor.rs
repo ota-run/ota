@@ -4396,7 +4396,7 @@ fn service_finding(
                 summary: format!("Service readiness failed: {name}"),
                 why: service_readiness_failure_why(
                     name,
-                    service.endpoint_for_context(from_context),
+                    resolve_service_readiness_endpoint(service, readiness),
                     from_context,
                 ),
                 next: match service.start_command(name) {
@@ -4417,7 +4417,7 @@ fn service_finding(
                 summary: format!("Service readiness context is not executable: {name}"),
                 why: service_readiness_execution_why(
                     name,
-                    service.endpoint_for_context(from_context),
+                    resolve_service_readiness_endpoint(service, readiness),
                     from_context,
                     &error,
                 ),
@@ -4472,7 +4472,7 @@ fn service_finding(
             .as_ref()
             .and_then(ServiceReadinessSpec::from_context)
             .is_some()
-            || service.endpoints.contains_key("host")
+            || service.has_endpoint_for_context("host")
             || service.endpoints.len() == 1
             || compose_managed;
 
@@ -4779,6 +4779,22 @@ fn service_readiness_execution_next(
     )
 }
 
+fn resolve_service_readiness_endpoint<'a>(
+    service: &'a ServiceSpec,
+    readiness: &crate::schema::ServiceReadinessSpec,
+) -> Option<&'a crate::schema::ServiceEndpointSpec> {
+    let from_context = readiness.from_context()?;
+    if let Some(endpoint_name) = readiness
+        .endpoint_name()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        service.endpoint_named(endpoint_name)
+    } else {
+        service.endpoint_for_context(from_context)
+    }
+}
+
 fn run_service_readiness(
     contract: &Contract,
     name: &str,
@@ -4832,7 +4848,7 @@ fn run_service_readiness(
         let Ok(resolved) = resolve_named_readiness_probe_contract(contract, probe_name) else {
             return Ok(CheckStatus::Failed);
         };
-        let Some(endpoint) = service.endpoint_for_context(from_context) else {
+        let Some(endpoint) = resolve_service_readiness_endpoint(service, readiness) else {
             return Ok(CheckStatus::Failed);
         };
         let is_native_backend = matches!(backend, ResolvedExecutionBackend::Native { .. });
@@ -4938,7 +4954,7 @@ fn run_service_readiness(
     let Some(kind) = readiness.structured_kind() else {
         return Ok(CheckStatus::Failed);
     };
-    let Some(endpoint) = service.endpoint_for_context(from_context) else {
+    let Some(endpoint) = resolve_service_readiness_endpoint(service, readiness) else {
         return Ok(CheckStatus::Failed);
     };
     let timing = service_readiness_timing_policy(readiness);
@@ -5629,7 +5645,9 @@ fn selected_toolchain_run_fulfillment_source_for_tool(
             .any(|owned_tool_name| {
                 owned_tool_name == tool_name || tool_executable_name(owned_tool_name) == tool_name
             });
-        fulfillable_tools.then(|| toolchain.fulfillment_source()).flatten()
+        fulfillable_tools
+            .then(|| toolchain.fulfillment_source())
+            .flatten()
     })
 }
 
@@ -9712,7 +9730,11 @@ fn resolve_observer_task_probe_command(
                 })?;
             let path =
                 combine_readiness_probe_paths(Some(base_path.as_str()), probe.path.as_deref());
-            let endpoint = crate::schema::ServiceEndpointSpec { address, port };
+            let endpoint = crate::schema::ServiceEndpointSpec {
+                context: None,
+                address,
+                port,
+            };
             let request = HttpReadinessRequest {
                 method: probe
                     .method
@@ -9735,7 +9757,11 @@ fn resolve_observer_task_probe_command(
                 observer_task_name,
                 resolved_target.as_str(),
             )?;
-            let endpoint = crate::schema::ServiceEndpointSpec { address, port };
+            let endpoint = crate::schema::ServiceEndpointSpec {
+                context: None,
+                address,
+                port,
+            };
             service_tcp_readiness_probe_command_from_timeout(&endpoint, timeout_duration)
         }
     };
@@ -16117,6 +16143,7 @@ tasks:
     #[test]
     fn service_http_probe_command_keeps_python_timeout_classification_reachable() {
         let endpoint = crate::schema::ServiceEndpointSpec {
+            context: None,
             address: String::from("127.0.0.1"),
             port: 8080,
         };
@@ -16143,6 +16170,7 @@ tasks:
     #[test]
     fn service_tcp_probe_command_keeps_python_timeout_classification_reachable() {
         let endpoint = crate::schema::ServiceEndpointSpec {
+            context: None,
             address: String::from("127.0.0.1"),
             port: 5432,
         };
