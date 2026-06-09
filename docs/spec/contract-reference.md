@@ -24,11 +24,13 @@
 
 # ota Contract Reference
 
-This document describes the current `ota.yaml` contract accepted by the shipped parser and validator.
+This document describes the canonical `ota.yaml` authoring surface accepted by the shipped parser and validator.
 
 Use this page as the canonical field and validation reference for the shipped contract surface.
 When you need operator guidance for targets, shared backends, activation, and backend fulfillment,
 follow it with [local-service-topology.md](local-service-topology.md).
+Backward-compatibility parsing may continue to accept older shapes, but new and updated contracts
+should normalize to the canonical surfaces documented here.
 
 ## Minimal contract
 
@@ -481,7 +483,7 @@ Current lifecycle meaning:
 
 - `persistent`: when `execution.preferred: container` is configured, `ota run` and the `setup` task inside `ota up` reuse a persistent named container for the effective contract directory
 - `ephemeral`: when `execution.preferred: container` is configured, `ota run` and the `setup` task inside `ota up` use a fresh `run --rm` container with the first available configured engine for each invocation
-- outside backend-backed task execution, such as service commands, healthchecks, and diagnosis, lifecycle remains advisory today
+- outside backend-backed task execution, such as service startup, service readiness, and diagnosis, lifecycle remains advisory today
 
 Current command behavior:
 
@@ -500,7 +502,7 @@ Current command behavior:
 - `ota doctor` warns on suspicious remote target shape (`ssh`/`tsh` without `user@host`, `kubectl` not starting `pod/`)
 - `ota doctor` evaluates context-specific requirements for declared contexts
 - when preconditions already contain blocking errors, `ota doctor` stops before later service/check readiness probing so blocked setups stay bounded and the primary blocker remains obvious
-- `ota up` still runs service start commands, service healthchecks, and diagnosis on the host unless the resolved execution path is containerized
+- `ota up` still runs service startup, service readiness, and diagnosis on the host unless the resolved execution path is containerized
 
 ## `services`
 
@@ -510,40 +512,53 @@ Optional.
 services:
   api:
     required: true
-    provider: docker-compose
-    start: docker compose up -d api
-    stop: docker compose stop api
-    healthcheck: curl -fsS http://localhost:3000/health
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: api
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 3000
+    readiness:
+      from: host
+      kind: http
+      path: /health
+      success:
+        status: [200]
     depends_on:
       - postgres
-    timeout: 5000
   postgres:
-    required: true
-    provider: docker-compose
-    start: docker compose up -d postgres
-    stop: docker compose stop postgres
-    healthcheck: pg_isready -h localhost -p 5432
-  billing-db:
     required: true
     manager:
       kind: compose
       name: local
       file: compose.yaml
-      service: billing-db
+      service: postgres
     endpoints:
       host:
         address: 127.0.0.1
         port: 5432
       app:
-        address: billing-db
+        address: postgres
         port: 5432
     readiness:
-      from: app
+      from: host
       kind: tcp
       interval: 5s
       timeout: 3s
       retries: 5
       start_period: 10s
+  redis:
+    required: true
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: redis
+    readiness:
+      kind: compose_health
 ```
 
 Fields:
@@ -554,10 +569,6 @@ Fields:
 - `producer.task`: required producing task name in that repo's `ota.yaml`
 - `producer.listener`: optional named runtime listener on that producer task; omit it only when the producer exposes exactly one declared listener
 - `producer.address_view`: optional reachable address shape; the current shipped cross-repo service slice supports `host` only and defaults to `host`
-- `provider`: optional string
-- `start`: optional string
-- `stop`: optional string
-- `healthcheck`: optional string
 - `manager`: optional object with:
   - `kind: compose|host`
   - `name`: compose project name (`compose` required)
@@ -565,10 +576,8 @@ Fields:
   - `file`: optional compose file path when `kind: compose`
 - `endpoints`: optional per-context projections of reachable service address/port
 - `depends_on`: optional list of service names
-- `timeout`: optional healthcheck timeout in milliseconds
 - `readiness`: optional explicit readiness check that runs in a named execution context
 - `readiness.from`: context name that owns the runtime for the check and matches one declared endpoint projection
-- legacy `readiness.run`: command to execute in that context
 - structured `readiness.kind`: `tcp`, `http`, or `compose_health`
 - structured `readiness.method`: optional HTTP method, default `GET`
 - structured `readiness.path`: required for structured HTTP readiness and must start with `/`
@@ -588,38 +597,34 @@ Current behavior:
   - only `producer.address_view: host` is supported
   - the producer listener must declare one fixed `project.host` endpoint
   - `ota doctor`, `ota up`, and `ota run` may reuse or start that producer through the owning repo contract before the consumer proceeds
-- producer-owned services must not also declare local manager truth such as `manager`, `provider`, `start`, `stop`, `healthcheck`, `endpoints`, `readiness`, or `timeout`
+- producer-owned services must not also declare local manager truth such as `manager`, `endpoints`, or `readiness`
 - `tasks.<name>.requires_services` remains the consumer-side dependency truth; producer ownership lives on `services.<name>`, not inside each consumer task
-- service declarations may use legacy `provider/start/stop/healthcheck` fields or new context-aware `manager/endpoints/readiness` fields
-- `services.<name>.readiness` now supports three valid forms:
-  - legacy command form: `from` + `run`
+- service declarations should model local service ownership with `manager`, reachability with `endpoints`, and readiness with `readiness`
+- `services.<name>.readiness` has three canonical forms:
   - reusable probe form: `from` + `probe` (+ optional polling controls such as `interval`, `retries`, and `start_period`)
   - structured probe form: `from` + `kind` (+ `path` for HTTP, with optional request/response/timing controls)
   - structured compose-health form: `kind: compose_health` for compose-managed container health state without endpoint/host-port probing
 - unknown `depends_on` references are invalid
 - service dependency cycles are invalid
-- `timeout` must be greater than zero when set
 - `readiness_gate` is a later-spec draft field and is not accepted by the current shipped parser
-- `ota doctor` runs declared service `healthcheck` commands
-- for `provider: docker-compose`, `ota doctor` runs the healthcheck inside the service container via `docker compose exec -T <service> sh -lc <healthcheck>`
-- for `manager.kind: compose`, `ota doctor` derives `start/stop/healthcheck` commands from compose metadata
-- for `manager.kind: host`, `ota doctor` runs healthchecks in the resolved host command context
+- `ota doctor` evaluates manager-owned service readiness through the declared control plane and endpoint topology
+- for `manager.kind: compose`, `ota doctor` derives compose lifecycle commands from manager metadata
+- for `manager.kind: host`, `ota doctor` runs readiness checks in the resolved host command context
 - `services.<name>.readiness.from` with a named endpoint projection validates readiness from that execution context
 - `services.<name>.readiness.probe` can reference one top-level `readiness.probes.<name>` declaration so service-manager readiness reuses the same transport and timeout truth as checks and workflows while `from` still selects the service endpoint projection
 - structured `services.<name>.readiness.kind: http` probes the declared endpoint with the same request/response model shipped for task runtime readiness
 - structured `services.<name>.readiness.kind: tcp` probes the declared endpoint for listener reachability from the declared context
 - structured `services.<name>.readiness.kind: compose_health` reads the compose-managed container health status directly (`healthy`) and does not require `readiness.from` or `services.<name>.endpoints`
 - `kind: compose_health` requires `services.<name>.manager.kind: compose` and must not declare endpoint-probe fields such as `from`, `method`, `path`, `headers`, `success`, `body`, or `timeout`
-- legacy `services.<name>.readiness.run` remains supported for repo-specific command probes that do not fit the structured HTTP/TCP model yet
 - reusable and structured top-level service readiness use the same default wait model as task runtime readiness: when `retries` is omitted, Ota uses the default bounded budget and reports failure after the limit is reached; declaring `retries` makes that budget explicit and tuned for the service
 - `services.<name>.endpoints.<context>` projects a context-specific address/port pair for readiness reporting and topology checks
-- failed required service healthchecks are blocking errors
-- failed optional service healthchecks are warnings
-- timed out required service healthchecks are blocking errors
-- timed out optional service healthchecks are warnings
-- required services without a `healthcheck` produce a warning because readiness cannot be verified yet
+- failed required service readiness checks are blocking errors
+- failed optional service readiness checks are warnings
+- timed out required service readiness checks are blocking errors
+- timed out optional service readiness checks are warnings
+- required services without declared readiness produce a warning because readiness cannot be verified yet
 - `ota up` starts required services, and required-service dependencies, in declared dependency order before `setup`
-- `ota up` treats each required service healthcheck as a readiness gate before moving on to dependents
+- `ota up` treats each required service readiness check as a readiness gate before moving on to dependents
 - ota still does not provide deep service orchestration beyond explicit contract commands
 
 ## `toolchains`

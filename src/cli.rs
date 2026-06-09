@@ -31829,7 +31829,7 @@ tasks:
     }
 
     #[test]
-    fn detect_write_includes_compose_service_commands() {
+    fn detect_write_includes_canonical_compose_service_contract() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
             "package.json",
@@ -31849,15 +31849,10 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         let written = fs::read_to_string(fixture.file_path()).unwrap();
-        assert!(written.contains("provider: docker-compose"), "{written}");
-        assert!(
-            written.contains("start: docker compose up -d postgres"),
-            "{written}"
-        );
-        assert!(
-            written.contains("stop: docker compose stop postgres"),
-            "{written}"
-        );
+        assert!(written.contains("manager:"), "{written}");
+        assert!(written.contains("kind: compose"), "{written}");
+        assert!(written.contains("file: docker-compose.yml"), "{written}");
+        assert!(written.contains("service: postgres"), "{written}");
     }
 
     #[test]

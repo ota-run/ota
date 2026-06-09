@@ -424,7 +424,8 @@ Typed managers let Ota reason about:
 - the network or namespace boundary
 - the real service name, not just a shell snippet
 
-Legacy `provider/start/stop/healthcheck` fields should remain as compatibility mode, but they stay a weaker host-bound model.
+Older single-context service declarations may still parse for backward compatibility, but canonical
+authoring should use typed manager blocks and explicit endpoint/readiness topology.
 
 ### `services.<name>.endpoints`
 
@@ -686,27 +687,21 @@ Each of those avoids modeling topology truth directly.
 
 ## Migration path
 
-Keep current fields as compatibility mode:
-
-- `execution.preferred`
-- `execution.supported`
-- `services.provider`
-- `services.start`
-- `services.stop`
-- `services.healthcheck`
+Older single-context service declarations may still parse for backward compatibility, but new and
+updated contracts should normalize to typed manager blocks, per-context endpoints, and explicit
+`readiness.from` semantics.
 
 Compatibility interpretation:
 
-- legacy contracts use a single-context model
-- legacy service fields remain host-bound unless upgraded to typed topology-aware service blocks
-- task-scoped workload listeners are canonical on the named-context topology model and should not be backported into legacy service semantics
+- older single-context service declarations stay host-bound unless upgraded to typed topology-aware service blocks
+- task-scoped workload listeners are canonical on the named-context topology model and should not be backported into older single-context service semantics
 
-Warn when topology-sensitive container usage mixes with legacy service semantics.
+Warn when topology-sensitive container usage mixes with older single-context service semantics.
 
 Example warning:
 
 - task context resolves to container
-- service uses legacy host-bound `healthcheck`
+- service exposes only a host-bound readiness path
 - no endpoint projection exists for that container context
 
 Ota should warn that the contract is ambiguous for container workloads and recommend an explicit topology upgrade.

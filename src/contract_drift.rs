@@ -20,14 +20,15 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_yaml::{Mapping, Value as YamlValue};
 
-use crate::detector::{Inference, detect_repo};
+use crate::detector::{DetectService, Inference, detect_repo};
 use crate::doctor::{Finding, FindingSeverity};
 use crate::output::{DetectComparisonChange, DetectComparisonRemoval};
-use crate::schema::{Contract, ToolchainFulfillmentMode, ToolchainProvider};
+use crate::schema::{Contract, ServiceSpec, ToolchainFulfillmentMode, ToolchainProvider};
 
 const DETECT_COMPARISON_REPO_CONTRACT_OWNERSHIP: &str = "repo_contract";
 const DETECT_COMPARISON_REPO_SIGNALS_OWNERSHIP: &str = "repo_signals";
@@ -368,50 +369,21 @@ pub(crate) fn collect_detect_changes(
     }
 
     for (name, service) in &detected.services {
-        push_detect_change(
-            &mut changes,
-            existing,
-            &inference_index,
-            &format!("services.{name}.provider"),
-            existing
-                .services
-                .get(name)
-                .and_then(|existing_service| existing_service.provider.as_deref()),
-            service.provider.as_deref(),
-        );
-        push_detect_change(
-            &mut changes,
-            existing,
-            &inference_index,
-            &format!("services.{name}.start"),
-            existing
-                .services
-                .get(name)
-                .and_then(|existing_service| existing_service.start.as_deref()),
-            service.start.as_deref(),
-        );
-        push_detect_change(
-            &mut changes,
-            existing,
-            &inference_index,
-            &format!("services.{name}.stop"),
-            existing
-                .services
-                .get(name)
-                .and_then(|existing_service| existing_service.stop.as_deref()),
-            service.stop.as_deref(),
-        );
-        push_detect_change(
-            &mut changes,
-            existing,
-            &inference_index,
-            &format!("services.{name}.healthcheck"),
-            existing
-                .services
-                .get(name)
-                .and_then(|existing_service| existing_service.healthcheck.as_deref()),
-            service.healthcheck.as_deref(),
-        );
+        let existing_fields = existing
+            .services
+            .get(name)
+            .map(|service| existing_service_field_values(name, service))
+            .unwrap_or_default();
+        for (field, detected_value) in detect_service_field_values(name, service) {
+            push_detect_change(
+                &mut changes,
+                existing,
+                &inference_index,
+                &field,
+                existing_fields.get(&field).map(String::as_str),
+                Some(detected_value.as_str()),
+            );
+        }
     }
 
     for (name, task) in &detected.tasks {
@@ -575,58 +547,18 @@ pub(crate) fn collect_detect_removals(
     }
 
     for (name, service) in &existing.services {
-        let detected_service = detected.services.get(name);
-        if service.provider.is_some()
-            && detected_service
-                .and_then(|value| value.provider.as_ref())
-                .is_none()
-        {
-            push_detect_removal(
-                &mut removals,
-                existing,
-                format!("services.{name}.provider"),
-                service.provider.as_deref().unwrap_or_default().to_string(),
-            );
-        }
-        if service.start.is_some()
-            && detected_service
-                .and_then(|value| value.start.as_ref())
-                .is_none()
-        {
-            push_detect_removal(
-                &mut removals,
-                existing,
-                format!("services.{name}.start"),
-                service.start.as_deref().unwrap_or_default().to_string(),
-            );
-        }
-        if service.stop.is_some()
-            && detected_service
-                .and_then(|value| value.stop.as_ref())
-                .is_none()
-        {
-            push_detect_removal(
-                &mut removals,
-                existing,
-                format!("services.{name}.stop"),
-                service.stop.as_deref().unwrap_or_default().to_string(),
-            );
-        }
-        if service.healthcheck.is_some()
-            && detected_service
-                .and_then(|value| value.healthcheck.as_ref())
-                .is_none()
-        {
-            push_detect_removal(
-                &mut removals,
-                existing,
-                format!("services.{name}.healthcheck"),
-                service
-                    .healthcheck
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_string(),
-            );
+        let existing_fields = existing_service_field_values(name, service);
+        let detected_fields = detected
+            .services
+            .get(name)
+            .map(|value| detect_service_field_values(name, value))
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+        for (field, existing_value) in existing_fields {
+            if !detected_fields.contains_key(&field) {
+                push_detect_removal(&mut removals, existing, field, existing_value);
+            }
         }
     }
 
@@ -655,6 +587,116 @@ pub(crate) fn collect_detect_removals(
     }
 
     removals
+}
+
+fn existing_service_field_values(name: &str, service: &ServiceSpec) -> BTreeMap<String, String> {
+    let mut fields = BTreeMap::new();
+    if let Some(manager) = service.manager.as_ref() {
+        fields.insert(
+            format!("services.{name}.manager.kind"),
+            manager.kind.as_str().to_string(),
+        );
+        if let Some(manager_name) = manager.name.as_ref() {
+            fields.insert(
+                format!("services.{name}.manager.name"),
+                manager_name.clone(),
+            );
+        }
+        if let Some(file) = manager.file.as_ref() {
+            fields.insert(format!("services.{name}.manager.file"), file.clone());
+        }
+        if let Some(service_name) = manager.service.as_ref() {
+            fields.insert(format!("services.{name}.manager.service"), service_name.clone());
+        }
+    }
+    if let Some(provider) = service.provider.as_ref() {
+        fields.insert(format!("services.{name}.provider"), provider.clone());
+    }
+    if let Some(start) = service.start.as_ref() {
+        fields.insert(format!("services.{name}.start"), start.clone());
+    }
+    if let Some(stop) = service.stop.as_ref() {
+        fields.insert(format!("services.{name}.stop"), stop.clone());
+    }
+    if let Some(healthcheck) = service.healthcheck.as_ref() {
+        fields.insert(format!("services.{name}.healthcheck"), healthcheck.clone());
+    }
+    for (context, endpoint) in &service.endpoints {
+        fields.insert(
+            format!("services.{name}.endpoints.{context}.address"),
+            endpoint.address.clone(),
+        );
+        fields.insert(
+            format!("services.{name}.endpoints.{context}.port"),
+            endpoint.port.to_string(),
+        );
+    }
+    if let Some(readiness) = service.readiness.as_ref() {
+        if let Some(from) = readiness.from.as_ref() {
+            fields.insert(format!("services.{name}.readiness.from"), from.clone());
+        }
+        if let Some(kind) = readiness.kind {
+            fields.insert(
+                format!("services.{name}.readiness.kind"),
+                kind.as_str().to_string(),
+            );
+        }
+    }
+
+    fields
+}
+
+fn detect_service_field_values(name: &str, service: &DetectService) -> Vec<(String, String)> {
+    let mut fields = Vec::new();
+    if let Some(manager) = service.manager.as_ref() {
+        fields.push((
+            format!("services.{name}.manager.kind"),
+            manager.kind.as_str().to_string(),
+        ));
+        if let Some(manager_name) = manager.name.as_ref() {
+            fields.push((format!("services.{name}.manager.name"), manager_name.clone()));
+        }
+        if let Some(file) = manager.file.as_ref() {
+            fields.push((format!("services.{name}.manager.file"), file.clone()));
+        }
+        if let Some(service_name) = manager.service.as_ref() {
+            fields.push((format!("services.{name}.manager.service"), service_name.clone()));
+        }
+    }
+    if let Some(provider) = service.provider.as_ref() {
+        fields.push((format!("services.{name}.provider"), provider.clone()));
+    }
+    if let Some(start) = service.start.as_ref() {
+        fields.push((format!("services.{name}.start"), start.clone()));
+    }
+    if let Some(stop) = service.stop.as_ref() {
+        fields.push((format!("services.{name}.stop"), stop.clone()));
+    }
+    if let Some(healthcheck) = service.healthcheck.as_ref() {
+        fields.push((format!("services.{name}.healthcheck"), healthcheck.clone()));
+    }
+    for (context, endpoint) in &service.endpoints {
+        fields.push((
+            format!("services.{name}.endpoints.{context}.address"),
+            endpoint.address.clone(),
+        ));
+        fields.push((
+            format!("services.{name}.endpoints.{context}.port"),
+            endpoint.port.to_string(),
+        ));
+    }
+    if let Some(readiness) = service.readiness.as_ref() {
+        if let Some(from) = readiness.from.as_ref() {
+            fields.push((format!("services.{name}.readiness.from"), from.clone()));
+        }
+        if let Some(kind) = readiness.kind {
+            fields.push((
+                format!("services.{name}.readiness.kind"),
+                kind.as_str().to_string(),
+            ));
+        }
+    }
+    fields
 }
 
 fn toolchain_provider_name(provider: ToolchainProvider) -> &'static str {
@@ -824,10 +866,13 @@ services:
         services.insert(
             String::from("postgres"),
             DetectService {
+                manager: None,
                 provider: None,
                 start: None,
                 stop: None,
+                endpoints: BTreeMap::new(),
                 healthcheck: None,
+                readiness: None,
             },
         );
         let detected = DetectContract {
