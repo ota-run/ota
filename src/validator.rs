@@ -22837,6 +22837,8 @@ toolchains:
   python:
     provider: uv
     version: "3.12"
+    package_managers:
+      uv: "*"
 tools:
   uv: "*"
 "#,

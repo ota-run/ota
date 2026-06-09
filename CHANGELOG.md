@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- fixed Python toolchain host requirement projection for Poetry-owned repos: when
+  `toolchains.python.package_managers.poetry` is declared without an explicit `package_managers.uv`
+  requirement, Ota no longer injects `uv` as a mandatory host tool on check-only/run-path surfaces;
+  `uv` remains available for explicit Python run fulfillment and for repos that actually declare
+  `package_managers.uv`
 - Fix native task fulfillment so inferred wildcard shell-tool requirements like `pnpm: "*"` no longer conflict with exact toolchain-owned package-manager versions; exact owned versions now win during requirement merging.
 
 - fixed agent bootstrap determinism advisories so exact `OTA_GIT_REV=<commit>` source-install
