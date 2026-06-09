@@ -4005,6 +4005,7 @@ enum ResolvedAssistReadinessTarget {
     Service {
         name: String,
         from: Option<String>,
+        endpoint: Option<String>,
         compose_managed: bool,
         existing: Option<ServiceReadinessSpec>,
     },
@@ -4016,6 +4017,7 @@ pub fn assist_declare_readiness(
     member: Option<&str>,
     task: Option<&str>,
     service: Option<&str>,
+    endpoint: Option<&str>,
     style: Option<AssistReadinessStyleArg>,
     write: bool,
     format: OutputFormat,
@@ -4055,6 +4057,9 @@ pub fn assist_declare_readiness(
     }
     if let Some(service) = service {
         debug_lines.push(format!("DEBUG service={service}"));
+    }
+    if let Some(endpoint) = endpoint {
+        debug_lines.push(format!("DEBUG endpoint={endpoint}"));
     }
     if let Some(style) = style {
         debug_lines.push(format!(
@@ -4148,31 +4153,36 @@ pub fn assist_declare_readiness(
                     }
                 };
 
-                let proposal =
-                    match build_assist_readiness_proposal(&target.contract, task, service, style) {
-                        Ok(proposal) => proposal,
-                        Err((why, next)) => {
-                            return match format {
-                                OutputFormat::Text => CommandOutput::failure(assist_text_failure(
-                                    "ota assist declare-readiness",
-                                    &text_path_display,
-                                    &why,
-                                    &next,
-                                )),
-                                OutputFormat::Json => {
-                                    CommandOutput::failure(to_json(&AssistProposalFailure {
-                                        ok: false,
-                                        path: &path_display,
-                                        member,
-                                        operation: "declare-readiness",
-                                        subject: assist_subject_map(task, service),
-                                        why,
-                                        next,
-                                    }))
-                                }
-                            };
-                        }
-                    };
+                let proposal = match build_assist_readiness_proposal(
+                    &target.contract,
+                    task,
+                    service,
+                    endpoint,
+                    style,
+                ) {
+                    Ok(proposal) => proposal,
+                    Err((why, next)) => {
+                        return match format {
+                            OutputFormat::Text => CommandOutput::failure(assist_text_failure(
+                                "ota assist declare-readiness",
+                                &text_path_display,
+                                &why,
+                                &next,
+                            )),
+                            OutputFormat::Json => {
+                                CommandOutput::failure(to_json(&AssistProposalFailure {
+                                    ok: false,
+                                    path: &path_display,
+                                    member,
+                                    operation: "declare-readiness",
+                                    subject: assist_subject_map(task, service),
+                                    why,
+                                    next,
+                                }))
+                            }
+                        };
+                    }
+                };
 
                 let after_value = proposal.after_value.clone();
                 set_yaml_path(
@@ -4417,6 +4427,7 @@ pub fn assist_declare_readiness(
 struct AssistReadinessProposal {
     subject_kind: &'static str,
     subject_name: String,
+    endpoint: Option<String>,
     style: AssistReadinessStyleArg,
     assumptions: Vec<String>,
     change_path: String,
@@ -4434,6 +4445,9 @@ impl AssistReadinessProposal {
 
     fn inputs_json(&self) -> BTreeMap<&'static str, String> {
         let mut inputs = BTreeMap::new();
+        if let Some(endpoint) = &self.endpoint {
+            inputs.insert("endpoint", endpoint.clone());
+        }
         inputs.insert("style", assist_readiness_style_name(self.style).to_string());
         inputs
     }
@@ -4453,6 +4467,9 @@ impl AssistReadinessProposal {
             command.push_str(&format!(" --member {member}"));
         }
         command.push_str(&format!(" --{} {}", self.subject_kind, self.subject_name));
+        if let Some(endpoint) = &self.endpoint {
+            command.push_str(&format!(" --endpoint {endpoint}"));
+        }
         command.push_str(&format!(
             " --style {} --write",
             assist_readiness_style_name(self.style)
@@ -4469,6 +4486,7 @@ struct AssistServiceProposal {
     compose_file: Option<String>,
     compose_service: Option<String>,
     endpoint: Option<String>,
+    endpoint_context: Option<String>,
     address: Option<String>,
     port: Option<u16>,
     producer_task: Option<String>,
@@ -4498,6 +4516,9 @@ impl AssistServiceProposal {
         }
         if let Some(endpoint) = &self.endpoint {
             inputs.insert("endpoint", endpoint.clone());
+        }
+        if let Some(endpoint_context) = &self.endpoint_context {
+            inputs.insert("endpoint_context", endpoint_context.clone());
         }
         if let Some(address) = &self.address {
             inputs.insert("address", address.clone());
@@ -4553,6 +4574,12 @@ impl AssistServiceProposal {
         }
         if let Some(endpoint) = &self.endpoint {
             command.push_str(&format!(" --endpoint {}", endpoint));
+        }
+        if let Some(endpoint_context) = &self.endpoint_context {
+            command.push_str(&format!(
+                " --endpoint-context {}",
+                shell_quote(endpoint_context)
+            ));
         }
         if let Some(address) = &self.address {
             command.push_str(&format!(" --address {}", address));
@@ -5188,6 +5215,14 @@ fn render_assist_readiness_text(
         paint_key("Style:"),
         assist_readiness_style_name(proposal.style)
     ));
+    if let Some(endpoint) = &proposal.endpoint {
+        output.push_str(&format!(
+            "\n{} {} {}",
+            info_bullet(),
+            paint_key("Endpoint:"),
+            endpoint
+        ));
+    }
     if mode == "write" {
         output.push_str(&format!(
             "\n{} {} {}",
@@ -5294,11 +5329,15 @@ fn render_assist_service_text(
             ));
         }
         if let Some(endpoint) = proposal.endpoint.as_deref() {
+            let endpoint_label = match proposal.endpoint_context.as_deref() {
+                Some(endpoint_context) => format!("{endpoint} ({endpoint_context})"),
+                None => endpoint.to_string(),
+            };
             output.push_str(&format!(
                 "\n{} {} {}",
                 info_bullet(),
                 paint_key("Endpoint:"),
-                endpoint
+                endpoint_label
             ));
         }
     }
@@ -5830,6 +5869,7 @@ pub fn assist_declare_service(
     compose_file: Option<&str>,
     compose_service: Option<&str>,
     endpoint: Option<&str>,
+    endpoint_context: Option<&str>,
     address: Option<&str>,
     port: Option<u16>,
     required: Option<bool>,
@@ -5878,6 +5918,9 @@ pub fn assist_declare_service(
     }
     if let Some(endpoint) = endpoint {
         debug_lines.push(format!("DEBUG endpoint={endpoint}"));
+    }
+    if let Some(endpoint_context) = endpoint_context {
+        debug_lines.push(format!("DEBUG endpoint_context={endpoint_context}"));
     }
     if let Some(address) = address {
         debug_lines.push(format!("DEBUG address={address}"));
@@ -6003,6 +6046,7 @@ pub fn assist_declare_service(
                     compose_file,
                     compose_service,
                     endpoint,
+                    endpoint_context,
                     address,
                     port,
                     required,
@@ -10311,6 +10355,7 @@ fn build_assist_service_proposal(
     compose_file: Option<&str>,
     compose_service: Option<&str>,
     endpoint: Option<&str>,
+    endpoint_context: Option<&str>,
     address: Option<&str>,
     port: Option<u16>,
     required: Option<bool>,
@@ -10387,18 +10432,26 @@ fn build_assist_service_proposal(
         ));
     }
 
-    let endpoint_inputs_present = endpoint.is_some() || address.is_some() || port.is_some();
+    if matches!(endpoint_context, Some(value) if value.trim().is_empty()) {
+        return Err((
+            String::from("`--endpoint-context` must not be empty"),
+            String::from("rerun with a non-empty execution context name such as `host` or `app`"),
+        ));
+    }
+
+    let endpoint_inputs_present =
+        endpoint.is_some() || endpoint_context.is_some() || address.is_some() || port.is_some();
     let endpoint_name = if compose_health_style && !endpoint_inputs_present {
         existing.as_ref().and_then(|service| {
             service
                 .readiness
                 .as_ref()
-                .and_then(|readiness| readiness.from.clone())
+                .and_then(|readiness| readiness.endpoint.clone())
                 .or_else(|| {
-                    if service.endpoints.contains_key("host") {
+                    if service.endpoint_named("host").is_some() {
                         Some(String::from("host"))
                     } else if service.endpoints.len() == 1 {
-                        service.endpoints.keys().next().cloned()
+                        service.sole_endpoint_name().map(str::to_string)
                     } else {
                         None
                     }
@@ -10416,8 +10469,28 @@ fn build_assist_service_proposal(
     let endpoint_spec = endpoint_name.as_ref().and_then(|endpoint_name| {
         existing
             .as_ref()
-            .and_then(|service| service.endpoints.get(endpoint_name))
+            .and_then(|service| service.endpoint_named(endpoint_name))
     });
+    let effective_endpoint_context = endpoint_name.as_ref().map(|endpoint_name| {
+        endpoint_context
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                endpoint_spec.map(|endpoint| endpoint.context_name(endpoint_name).to_string())
+            })
+            .unwrap_or_else(|| endpoint_name.clone())
+    });
+    let stored_endpoint_context = endpoint_name
+        .as_ref()
+        .zip(effective_endpoint_context.as_ref())
+        .and_then(|(endpoint_name, endpoint_context)| {
+            if endpoint_name == endpoint_context {
+                None
+            } else {
+                Some(endpoint_context.clone())
+            }
+        });
     let endpoint_address = endpoint_name.as_ref().map(|_| {
         address
             .map(str::to_string)
@@ -10471,6 +10544,7 @@ fn build_assist_service_proposal(
 
     let readiness = match style {
         Some(style) => Some(build_assist_service_readiness(
+            effective_endpoint_context.as_deref(),
             endpoint_name.as_deref(),
             style,
         )),
@@ -10499,12 +10573,27 @@ fn build_assist_service_proposal(
         after.endpoints.insert(
             endpoint_name.clone(),
             crate::schema::ServiceEndpointSpec {
+                context: stored_endpoint_context.clone(),
                 address: address.clone(),
                 port,
             },
         );
     }
     after.readiness = readiness;
+    if let (Some(readiness), Some(endpoint_name), Some(endpoint_context)) = (
+        after.readiness.as_mut(),
+        endpoint_name.as_ref(),
+        effective_endpoint_context.as_ref(),
+    ) {
+        let targets_selected_endpoint = readiness.endpoint.as_deref()
+            == Some(endpoint_name.as_str())
+            || (readiness.endpoint.is_none() && after.endpoints.len() == 1);
+        if targets_selected_endpoint
+            && !matches!(readiness.kind, Some(ServiceReadinessKind::ComposeHealth))
+        {
+            readiness.from = Some(endpoint_context.clone());
+        }
+    }
 
     let after_value = serde_yaml::to_value(&after).map_err(|error| {
         (
@@ -10529,9 +10618,17 @@ fn build_assist_service_proposal(
         assumptions.push(format!("service `{name}` will be created under `services`"));
     }
     if let Some(endpoint_name) = endpoint_name.as_ref() {
-        assumptions.push(format!(
-            "endpoint `{endpoint_name}` is the service projection boundary"
-        ));
+        if let Some(endpoint_context) = effective_endpoint_context.as_ref() {
+            if endpoint_context == endpoint_name {
+                assumptions.push(format!(
+                    "endpoint `{endpoint_name}` is the service projection boundary"
+                ));
+            } else {
+                assumptions.push(format!(
+                    "endpoint `{endpoint_name}` projects execution context `{endpoint_context}`"
+                ));
+            }
+        }
     } else if compose_health_style {
         assumptions.push(String::from(
             "compose health state is the service readiness boundary",
@@ -10562,6 +10659,7 @@ fn build_assist_service_proposal(
         compose_file: compose_file_value,
         compose_service: compose_service_value,
         endpoint: endpoint_name,
+        endpoint_context: stored_endpoint_context,
         address: endpoint_address,
         port: endpoint_port,
         producer_task: None,
@@ -10693,6 +10791,7 @@ fn build_assist_workspace_service_producer_proposal(
         compose_file: None,
         compose_service: None,
         endpoint: None,
+        endpoint_context: None,
         address: None,
         port: None,
         producer_task: Some(producer_task_name),
@@ -10733,21 +10832,19 @@ fn resolve_assist_service_endpoint_name(
     if let Some(from) = existing
         .readiness
         .as_ref()
-        .and_then(|readiness| readiness.from.clone())
+        .and_then(|readiness| readiness.endpoint.clone())
     {
         return Ok(from);
     }
 
-    if existing.endpoints.contains_key("host") {
+    if existing.endpoint_named("host").is_some() {
         return Ok(String::from("host"));
     }
 
     if existing.endpoints.len() == 1 {
         return Ok(existing
-            .endpoints
-            .keys()
-            .next()
-            .cloned()
+            .sole_endpoint_name()
+            .map(str::to_string)
             .expect("single endpoint"));
     }
 
@@ -10784,12 +10881,14 @@ fn resolve_assist_service_endpoint_name(
 }
 
 fn build_assist_service_readiness(
+    from: Option<&str>,
     endpoint: Option<&str>,
     style: AssistReadinessStyleArg,
 ) -> crate::schema::ServiceReadinessSpec {
     match style {
         AssistReadinessStyleArg::SpringHttp => crate::schema::ServiceReadinessSpec {
-            from: endpoint.map(str::to_string),
+            from: from.map(str::to_string),
+            endpoint: endpoint.map(str::to_string),
             run: None,
             probe: None,
             kind: Some(ServiceReadinessKind::Http),
@@ -10806,7 +10905,8 @@ fn build_assist_service_readiness(
             start_period: Some(String::from("10s")),
         },
         AssistReadinessStyleArg::Http => crate::schema::ServiceReadinessSpec {
-            from: endpoint.map(str::to_string),
+            from: from.map(str::to_string),
+            endpoint: endpoint.map(str::to_string),
             run: None,
             probe: None,
             kind: Some(ServiceReadinessKind::Http),
@@ -10821,7 +10921,8 @@ fn build_assist_service_readiness(
             start_period: Some(String::from("10s")),
         },
         AssistReadinessStyleArg::Tcp => crate::schema::ServiceReadinessSpec {
-            from: endpoint.map(str::to_string),
+            from: from.map(str::to_string),
+            endpoint: endpoint.map(str::to_string),
             run: None,
             probe: None,
             kind: Some(ServiceReadinessKind::Tcp),
@@ -10837,6 +10938,7 @@ fn build_assist_service_readiness(
         },
         AssistReadinessStyleArg::ComposeHealth => crate::schema::ServiceReadinessSpec {
             from: None,
+            endpoint: None,
             run: None,
             probe: None,
             kind: Some(ServiceReadinessKind::ComposeHealth),
@@ -10857,6 +10959,7 @@ fn build_assist_readiness_proposal(
     contract: &Contract,
     task: Option<&str>,
     service: Option<&str>,
+    endpoint: Option<&str>,
     requested_style: Option<AssistReadinessStyleArg>,
 ) -> Result<AssistReadinessProposal, (String, String)> {
     match (task, service) {
@@ -10877,7 +10980,7 @@ fn build_assist_readiness_proposal(
         _ => {}
     }
 
-    match resolve_assist_readiness_target(contract, task, service, requested_style) {
+    match resolve_assist_readiness_target(contract, task, service, endpoint, requested_style) {
         Ok(ResolvedAssistReadinessTarget::Task {
             name,
             listener,
@@ -10959,6 +11062,7 @@ fn build_assist_readiness_proposal(
             Ok(AssistReadinessProposal {
                 subject_kind: "task",
                 subject_name: name.clone(),
+                endpoint: None,
                 style,
                 assumptions: vec![
                     format!("task `{name}` already declares a service runtime"),
@@ -10978,6 +11082,7 @@ fn build_assist_readiness_proposal(
         Ok(ResolvedAssistReadinessTarget::Service {
             name,
             from,
+            endpoint,
             compose_managed,
             existing,
         }) => {
@@ -10990,6 +11095,7 @@ fn build_assist_readiness_proposal(
             let after = match style {
                 AssistReadinessStyleArg::SpringHttp => ServiceReadinessSpec {
                     from: Some(endpoint_from.clone()),
+                    endpoint: endpoint.clone(),
                     run: None,
                     probe: None,
                     kind: Some(ServiceReadinessKind::Http),
@@ -11010,6 +11116,7 @@ fn build_assist_readiness_proposal(
                 },
                 AssistReadinessStyleArg::Http => ServiceReadinessSpec {
                     from: Some(endpoint_from.clone()),
+                    endpoint: endpoint.clone(),
                     run: None,
                     probe: None,
                     kind: Some(ServiceReadinessKind::Http),
@@ -11025,6 +11132,7 @@ fn build_assist_readiness_proposal(
                 },
                 AssistReadinessStyleArg::Tcp => ServiceReadinessSpec {
                     from: Some(endpoint_from.clone()),
+                    endpoint: endpoint.clone(),
                     run: None,
                     probe: None,
                     kind: Some(ServiceReadinessKind::Tcp),
@@ -11040,6 +11148,7 @@ fn build_assist_readiness_proposal(
                 },
                 AssistReadinessStyleArg::ComposeHealth => ServiceReadinessSpec {
                     from: None,
+                    endpoint: None,
                     run: None,
                     probe: None,
                     kind: Some(ServiceReadinessKind::ComposeHealth),
@@ -11076,6 +11185,7 @@ fn build_assist_readiness_proposal(
             Ok(AssistReadinessProposal {
                 subject_kind: "service",
                 subject_name: name.clone(),
+                endpoint: endpoint.clone(),
                 style,
                 assumptions: if is_compose_health_readiness_style(style) {
                     vec![
@@ -11083,10 +11193,26 @@ fn build_assist_readiness_proposal(
                         String::from("structured readiness should follow compose health state"),
                     ]
                 } else {
-                    vec![
-                        format!("service `{name}` already declares endpoint `{endpoint_from}`"),
-                        format!("structured readiness should anchor to endpoint `{endpoint_from}`"),
-                    ]
+                    match endpoint.as_deref() {
+                        Some(endpoint_name) if endpoint_name != endpoint_from => vec![
+                            format!("service `{name}` already declares endpoint `{endpoint_name}`"),
+                            format!(
+                                "structured readiness should anchor to endpoint `{endpoint_name}` in context `{endpoint_from}`"
+                            ),
+                        ],
+                        Some(endpoint_name) => vec![
+                            format!("service `{name}` already declares endpoint `{endpoint_name}`"),
+                            format!(
+                                "structured readiness should anchor to endpoint `{endpoint_name}`"
+                            ),
+                        ],
+                        None => vec![
+                            format!("service `{name}` already declares endpoint `{endpoint_from}`"),
+                            format!(
+                                "structured readiness should anchor to endpoint `{endpoint_from}`"
+                            ),
+                        ],
+                    }
                 },
                 change_path: format!("services.{name}.readiness"),
                 yaml_path: vec![String::from("services"), name, String::from("readiness")],
@@ -11203,9 +11329,16 @@ fn resolve_assist_readiness_target(
     contract: &Contract,
     task: Option<&str>,
     service: Option<&str>,
+    requested_endpoint: Option<&str>,
     requested_style: Option<AssistReadinessStyleArg>,
 ) -> Result<ResolvedAssistReadinessTarget, (String, String)> {
     if let Some(task) = task {
+        if requested_endpoint.is_some() {
+            return Err((
+                String::from("`--endpoint` is only valid together with `--service`"),
+                String::from("rerun with `--service <name> --endpoint <name>`"),
+            ));
+        }
         let task_spec = contract.tasks.get(task).ok_or_else(|| {
             (
                 format!("unknown task `{task}`"),
@@ -11248,23 +11381,65 @@ fn resolve_assist_readiness_target(
             .and_then(ServiceReadinessSpec::structured_kind),
         Some(ServiceReadinessKind::ComposeHealth)
     );
+    if wants_compose_health && requested_endpoint.is_some() {
+        return Err((
+            String::from("`--endpoint` does not apply to `--style compose-health`"),
+            String::from("rerun without `--endpoint`, or choose `--style tcp|http|spring-http`"),
+        ));
+    }
+    let endpoint = if wants_compose_health {
+        None
+    } else if let Some(endpoint) = requested_endpoint {
+        let endpoint = endpoint.trim();
+        if endpoint.is_empty() {
+            return Err((
+                String::from("`--endpoint` must not be empty"),
+                String::from("rerun with a non-empty endpoint name such as `host`"),
+            ));
+        }
+        if spec.endpoint_named(endpoint).is_none() {
+            return Err((
+                format!("service `{service}` does not declare endpoint `{endpoint}`"),
+                String::from("run `ota services` to inspect declared service endpoints"),
+            ));
+        }
+        Some(endpoint.to_string())
+    } else if let Some(existing) = spec
+        .readiness
+        .as_ref()
+        .and_then(|readiness| readiness.endpoint.clone())
+    {
+        Some(existing)
+    } else {
+        None
+    };
     let from = if wants_compose_health {
         None
+    } else if let Some(endpoint_name) = endpoint.as_deref() {
+        Some(
+            spec.endpoint_named(endpoint_name)
+                .expect("selected endpoint must exist")
+                .context_name(endpoint_name)
+                .to_string(),
+        )
     } else if let Some(existing) = spec
         .readiness
         .as_ref()
         .and_then(|readiness| readiness.from.clone())
     {
         Some(existing)
-    } else if spec.endpoints.contains_key("host") {
+    } else if spec.has_endpoint_for_context("host") && spec.endpoint_count_for_context("host") == 1
+    {
         Some(String::from("host"))
     } else if spec.endpoints.len() == 1 {
         Some(
-            spec.endpoints
-                .keys()
-                .next()
-                .cloned()
-                .expect("single endpoint"),
+            spec.endpoint_named(spec.sole_endpoint_name().expect("single endpoint"))
+                .and_then(|endpoint| endpoint.context.clone())
+                .unwrap_or_else(|| {
+                    spec.sole_endpoint_name()
+                        .expect("single endpoint")
+                        .to_string()
+                }),
         )
     } else {
         return Err((
@@ -11272,13 +11447,14 @@ fn resolve_assist_readiness_target(
                 "service `{service}` has multiple endpoints; assist cannot pick readiness.from safely"
             ),
             String::from(
-                "declare `readiness.from` manually or reduce the endpoint choice before rerunning",
+                "rerun with `--endpoint <name>` to pick the service projection explicitly",
             ),
         ));
     };
     Ok(ResolvedAssistReadinessTarget::Service {
         name: service.to_string(),
         from,
+        endpoint,
         compose_managed,
         existing: spec.readiness.clone(),
     })
@@ -13623,20 +13799,29 @@ fn render_services_output_text(path: &str, services: &[ServiceSummary]) -> Strin
         }
 
         if !service.endpoints.is_empty() {
-            let context_width = service
+            let endpoint_width = service
                 .endpoints
                 .keys()
-                .map(|context| context.len())
+                .map(|endpoint_name| endpoint_name.len())
                 .max()
                 .unwrap_or(0);
             output.push_str(&format!("\n  {}", paint_key("endpoints:")));
-            for (context, endpoint) in &service.endpoints {
+            for (endpoint_name, endpoint) in &service.endpoints {
+                let context = endpoint
+                    .context
+                    .as_deref()
+                    .unwrap_or(endpoint_name.as_str());
                 output.push_str(&format!(
-                    "\n    {:<context_width$}  {}:{}",
-                    context,
+                    "\n    {:<endpoint_width$}  {}:{}{}",
+                    endpoint_name,
                     endpoint.address,
                     endpoint.port,
-                    context_width = context_width
+                    if context == endpoint_name {
+                        String::new()
+                    } else {
+                        format!(" ({context})")
+                    },
+                    endpoint_width = endpoint_width
                 ));
             }
         }
@@ -33459,8 +33644,10 @@ fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange
         | ["services", _, "start"]
         | ["services", _, "stop"]
         | ["services", _, "healthcheck"]
+        | ["services", _, "endpoints", _, "context"]
         | ["services", _, "endpoints", _, "address"]
         | ["services", _, "readiness", "from"]
+        | ["services", _, "readiness", "endpoint"]
         | ["services", _, "readiness", "kind"] => {
             set_string_field(root, &segments, &change.detected)
         }
@@ -33559,13 +33746,19 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
         if service.healthcheck.is_some() {
             fields.push(format!("services.{name}.healthcheck"));
         }
-        for context in service.endpoints.keys() {
-            fields.push(format!("services.{name}.endpoints.{context}.address"));
-            fields.push(format!("services.{name}.endpoints.{context}.port"));
+        for (endpoint_name, endpoint) in &service.endpoints {
+            if endpoint.context.is_some() {
+                fields.push(format!("services.{name}.endpoints.{endpoint_name}.context"));
+            }
+            fields.push(format!("services.{name}.endpoints.{endpoint_name}.address"));
+            fields.push(format!("services.{name}.endpoints.{endpoint_name}.port"));
         }
         if let Some(readiness) = service.readiness.as_ref() {
             if readiness.from.is_some() {
                 fields.push(format!("services.{name}.readiness.from"));
+            }
+            if readiness.endpoint.is_some() {
+                fields.push(format!("services.{name}.readiness.endpoint"));
             }
             if readiness.kind.is_some() {
                 fields.push(format!("services.{name}.readiness.kind"));
@@ -33855,19 +34048,28 @@ fn init_contract_provenance(
                 starter_contract_source,
             );
         }
-        for context in service.endpoints.keys() {
+        for (endpoint_name, endpoint) in &service.endpoints {
+            if endpoint.context.is_some() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("services.{name}.endpoints.{endpoint_name}.context"),
+                    starter_contract_source,
+                );
+            }
             push_init_field_provenance(
                 &mut provenance,
                 &inference_map,
                 &detected_fields,
-                format!("services.{name}.endpoints.{context}.address"),
+                format!("services.{name}.endpoints.{endpoint_name}.address"),
                 starter_contract_source,
             );
             push_init_field_provenance(
                 &mut provenance,
                 &inference_map,
                 &detected_fields,
-                format!("services.{name}.endpoints.{context}.port"),
+                format!("services.{name}.endpoints.{endpoint_name}.port"),
                 starter_contract_source,
             );
         }
@@ -33878,6 +34080,15 @@ fn init_contract_provenance(
                     &inference_map,
                     &detected_fields,
                     format!("services.{name}.readiness.from"),
+                    starter_contract_source,
+                );
+            }
+            if readiness.endpoint.is_some() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("services.{name}.readiness.endpoint"),
                     starter_contract_source,
                 );
             }
@@ -48288,6 +48499,7 @@ tasks:
         endpoints.insert(
             String::from("container"),
             ServiceEndpointSummary {
+                context: None,
                 address: String::from("postgres"),
                 port: 5432,
             },
@@ -48295,6 +48507,7 @@ tasks:
         endpoints.insert(
             String::from("host"),
             ServiceEndpointSummary {
+                context: None,
                 address: String::from("127.0.0.1"),
                 port: 5432,
             },
@@ -48316,6 +48529,7 @@ tasks:
             healthcheck: Some(String::from("pg_isready -U postgres")),
             readiness: Some(ServiceReadinessSummary {
                 from: Some(String::from("host")),
+                endpoint: None,
                 run: Some(String::from("postgres://localhost:5432")),
                 probe: None,
                 kind: None,

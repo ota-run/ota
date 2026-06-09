@@ -574,10 +574,11 @@ Fields:
   - `name`: compose project name (`compose` required)
   - `service`: compose service name when `kind: compose`
   - `file`: optional compose file path when `kind: compose`
-- `endpoints`: optional per-context projections of reachable service address/port
+- `endpoints`: optional named projections of reachable service address/port
 - `depends_on`: optional list of service names
 - `readiness`: optional explicit readiness check that runs in a named execution context
-- `readiness.from`: context name that owns the runtime for the check and matches one declared endpoint projection
+- `readiness.from`: context name that owns the runtime for the check
+- `readiness.endpoint`: optional named endpoint projection to use when one context has multiple service endpoints
 - structured `readiness.kind`: `tcp`, `http`, or `compose_health`
 - structured `readiness.method`: optional HTTP method, default `GET`
 - structured `readiness.path`: required for structured HTTP readiness and must start with `/`
@@ -610,14 +611,18 @@ Current behavior:
 - `ota doctor` evaluates manager-owned service readiness through the declared control plane and endpoint topology
 - for `manager.kind: compose`, `ota doctor` derives compose lifecycle commands from manager metadata
 - for `manager.kind: host`, `ota doctor` runs readiness checks in the resolved host command context
-- `services.<name>.readiness.from` with a named endpoint projection validates readiness from that execution context
-- `services.<name>.readiness.probe` can reference one top-level `readiness.probes.<name>` declaration so service-manager readiness reuses the same transport and timeout truth as checks and workflows while `from` still selects the service endpoint projection
+- `services.<name>.readiness.from` selects the execution context for service readiness
+- `services.<name>.readiness.endpoint` selects one named endpoint projection when `from` alone is ambiguous
+- `services.<name>.readiness.probe` can reference one top-level `readiness.probes.<name>` declaration so service-manager readiness reuses the same transport and timeout truth as checks and workflows while `from` / `endpoint` still select the service endpoint projection
 - structured `services.<name>.readiness.kind: http` probes the declared endpoint with the same request/response model shipped for task runtime readiness
 - structured `services.<name>.readiness.kind: tcp` probes the declared endpoint for listener reachability from the declared context
 - structured `services.<name>.readiness.kind: compose_health` reads the compose-managed container health status directly (`healthy`) and does not require `readiness.from` or `services.<name>.endpoints`
-- `kind: compose_health` requires `services.<name>.manager.kind: compose` and must not declare endpoint-probe fields such as `from`, `method`, `path`, `headers`, `success`, `body`, or `timeout`
+- `kind: compose_health` requires `services.<name>.manager.kind: compose` and must not declare endpoint-probe fields such as `from`, `endpoint`, `method`, `path`, `headers`, `success`, `body`, or `timeout`
 - reusable and structured top-level service readiness use the same default wait model as task runtime readiness: when `retries` is omitted, Ota uses the default bounded budget and reports failure after the limit is reached; declaring `retries` makes that budget explicit and tuned for the service
-- `services.<name>.endpoints.<context>` projects a context-specific address/port pair for readiness reporting and topology checks
+- `services.<name>.endpoints.<name>` declares one named endpoint projection:
+  - `context`: optional execution context for that projection; when omitted, the endpoint name is also the context name for backward compatibility
+  - `address`: required reachable address for that context projection
+  - `port`: required reachable port for that context projection
 - failed required service readiness checks are blocking errors
 - failed optional service readiness checks are warnings
 - timed out required service readiness checks are blocking errors
@@ -1280,6 +1285,10 @@ This derives task env values from declared service endpoints. It is useful when 
 run natively or inside a container: Ota keeps the service dependency in `requires_services`, then
 projects the selected service view into env without hand-writing container host aliases such as
 `host.docker.internal`.
+
+When a service exposes more than one endpoint in the same view/context, declare
+`from_service.endpoint` to pick the exact named service endpoint instead of relying on view-only
+selection.
 
 Use `password_env` for real credentials. The referenced env var must be declared under `env.vars`
 with `secret: true`, and the generated env value (for example `DATABASE_URL`) must also be declared

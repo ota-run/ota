@@ -36,17 +36,20 @@
         "inputs": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["manager", "endpoint", "address", "port", "required"],
+          "required": ["required"],
           "properties": {
             "manager": { "enum": ["compose", "host"] },
             "manager_name": { "type": "string" },
             "compose_file": { "type": "string" },
             "compose_service": { "type": "string" },
             "endpoint": { "type": "string" },
+            "endpoint_context": { "type": "string" },
             "address": { "type": "string" },
             "port": { "type": "string" },
             "required": { "enum": ["true", "false"] },
-            "style": { "enum": ["spring-http", "http", "tcp"] }
+            "style": { "enum": ["spring-http", "http", "tcp", "compose-health"] },
+            "producer": { "type": "string" },
+            "producer_repo": { "type": "string" }
           }
         },
         "assumptions": {

@@ -1919,9 +1919,24 @@ fn service_env_bindings_for_task(
             .filter(|value| !value.is_empty())
             .or(context_name)
             .unwrap_or("host");
-        let (endpoint_view, endpoint) = service
-            .endpoint_for_context(requested_view)
-            .map(|endpoint| (requested_view, endpoint))
+        let selected_endpoint = binding
+            .from_service
+            .endpoint
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .and_then(|endpoint_name| {
+                service
+                    .endpoint_named(endpoint_name)
+                    .map(|endpoint| (endpoint_name, endpoint))
+            });
+        let (endpoint_view, endpoint) = selected_endpoint
+            .map(|(endpoint_name, endpoint)| (endpoint.context_name(endpoint_name), endpoint))
+            .or_else(|| {
+                service
+                    .endpoint_for_context(requested_view)
+                    .map(|endpoint| (requested_view, endpoint))
+            })
             .or_else(|| {
                 service
                     .endpoint_for_context("host")
@@ -7649,9 +7664,15 @@ fn prepare_task_shell_command(
                 );
                 if !source.groups.is_empty() {
                     command.push(' ');
-                    command.push_str(&shell_quote_command_word(source.group_mode.flag(), quote_style));
+                    command.push_str(&shell_quote_command_word(
+                        source.group_mode.flag(),
+                        quote_style,
+                    ));
                     command.push(' ');
-                    command.push_str(&shell_quote_command_word(&source.groups.join(","), quote_style));
+                    command.push_str(&shell_quote_command_word(
+                        &source.groups.join(","),
+                        quote_style,
+                    ));
                 }
                 if source.no_root {
                     command.push(' ');
@@ -8954,7 +8975,11 @@ fn wrap_container_command_for_corepack_activation(
 
     let mut command_parts = Vec::new();
     for toolchain_name in contract
-        .task_toolchain_names_for_execution(task, Backend::Container, task.context_for_backend(contract.execution.as_ref(), Backend::Container))
+        .task_toolchain_names_for_execution(
+            task,
+            Backend::Container,
+            task.context_for_backend(contract.execution.as_ref(), Backend::Container),
+        )
         .into_iter()
     {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
@@ -17881,7 +17906,7 @@ fn resolve_named_probe_contract_source(
                     target.name
                 ));
             };
-            if service.endpoint_for_context(endpoint.as_str()).is_none() {
+            if service.endpoint_named(endpoint.as_str()).is_none() {
                 return Err(format!(
                     "readiness probe `{probe_name}` references unknown service endpoint `{}.{endpoint}`",
                     target.name
@@ -18000,7 +18025,7 @@ fn resolve_named_probe_target_endpoint(
                 ));
             };
             let endpoint = service
-                .endpoint_for_context(endpoint_name.as_str())
+                .endpoint_named(endpoint_name.as_str())
                 .ok_or_else(|| {
                     format!(
                         "readiness probe `{probe_name}` references unknown service endpoint `{}.{endpoint_name}`",
@@ -24538,6 +24563,56 @@ tasks:
             error,
             RunError::MissingRequiredEnv { name } if name == "POSTGRES_PASSWORD"
         ));
+    }
+
+    #[test]
+    fn service_env_binding_uses_explicit_named_endpoint() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    endpoints:
+      primary:
+        context: host
+        address: 127.0.0.1
+        port: 5432
+      analytics:
+        context: host
+        address: 127.0.0.1
+        port: 6432
+tasks:
+  test:
+    run: bundle exec rspec
+    env_bindings:
+      DATABASE_URL:
+        from_service:
+          service: postgres
+          endpoint: analytics
+          scheme: postgres
+"#,
+        )
+        .unwrap();
+
+        let env = effective_task_env_for_selection(
+            &contract,
+            "test",
+            ExecutionOverrides::default(),
+            Path::new("/repo"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            env.get("DATABASE_URL").map(String::as_str),
+            Some("postgres://127.0.0.1:6432")
+        );
     }
 
     #[test]
@@ -38277,9 +38352,18 @@ esac
 
         assert_eq!(outcome.exit_code, 0);
         let mise_log = fs::read_to_string(bin_dir.join("mise-env.log")).unwrap();
-        assert!(mise_log.contains("trust|/workspace/.ota/mise/cache"), "{mise_log}");
-        assert!(mise_log.contains("install|/workspace/.ota/mise/cache"), "{mise_log}");
-        assert!(mise_log.contains("exec|/workspace/.ota/mise/cache"), "{mise_log}");
+        assert!(
+            mise_log.contains("trust|/workspace/.ota/mise/cache"),
+            "{mise_log}"
+        );
+        assert!(
+            mise_log.contains("install|/workspace/.ota/mise/cache"),
+            "{mise_log}"
+        );
+        assert!(
+            mise_log.contains("exec|/workspace/.ota/mise/cache"),
+            "{mise_log}"
+        );
     }
 
     #[cfg(unix)]
@@ -48797,8 +48881,12 @@ tasks:
             env::set_var("OTA_DOCKER_LOG", &log_path);
         }
 
-        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup:docker:images")
-            .expect("prepare task should execute");
+        let outcome = run_task(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup:docker:images",
+        )
+        .expect("prepare task should execute");
 
         match original_path {
             Some(path) => unsafe { env::set_var("PATH", path) },
@@ -48816,7 +48904,15 @@ tasks:
             "{logged}"
         );
         assert!(
-            logged.contains(fixture.dir.path().join("docker").display().to_string().as_str()),
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("docker")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
             "{logged}"
         );
     }
@@ -48878,8 +48974,8 @@ tasks:
             env::set_var("OTA_PNPM_LOG", &log_path);
         }
 
-        let outcome =
-            run_task(&fixture.contract, fixture.file_path(), "install").expect("prepare task should execute");
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "install")
+            .expect("prepare task should execute");
 
         match original_path {
             Some(path) => unsafe { env::set_var("PATH", path) },
@@ -48894,7 +48990,15 @@ tasks:
         let logged = fs::read_to_string(log_path).unwrap();
         assert!(logged.contains("install --frozen-lockfile"), "{logged}");
         assert!(
-            logged.contains(fixture.dir.path().join("app").display().to_string().as_str()),
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("app")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
             "{logged}"
         );
     }
@@ -48957,8 +49061,8 @@ tasks:
             env::set_var("OTA_YARN_LOG", &log_path);
         }
 
-        let outcome =
-            run_task(&fixture.contract, fixture.file_path(), "install").expect("prepare task should execute");
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "install")
+            .expect("prepare task should execute");
 
         match original_path {
             Some(path) => unsafe { env::set_var("PATH", path) },
@@ -49036,8 +49140,8 @@ tasks:
             env::set_var("OTA_GO_LOG", &log_path);
         }
 
-        let outcome =
-            run_task(&fixture.contract, fixture.file_path(), "setup").expect("prepare task should execute");
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("prepare task should execute");
 
         match original_path {
             Some(path) => unsafe { env::set_var("PATH", path) },
@@ -49052,7 +49156,15 @@ tasks:
         let logged = fs::read_to_string(log_path).unwrap();
         assert!(logged.contains("mod download"), "{logged}");
         assert!(
-            logged.contains(fixture.dir.path().join("server").display().to_string().as_str()),
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("server")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
             "{logged}"
         );
     }
@@ -49113,8 +49225,8 @@ tasks:
             env::set_var("OTA_BUNDLE_LOG", &log_path);
         }
 
-        let outcome =
-            run_task(&fixture.contract, fixture.file_path(), "install").expect("prepare task should execute");
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "install")
+            .expect("prepare task should execute");
 
         match original_path {
             Some(path) => unsafe { env::set_var("PATH", path) },
@@ -49130,7 +49242,15 @@ tasks:
         assert!(logged.contains("config set path vendor/bundle"), "{logged}");
         assert!(logged.contains("install"), "{logged}");
         assert!(
-            logged.contains(fixture.dir.path().join("api").display().to_string().as_str()),
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("api")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
             "{logged}"
         );
     }
@@ -49200,8 +49320,8 @@ tasks:
             env::set_var("OTA_POETRY_LOG", &log_path);
         }
 
-        let outcome =
-            run_task(&fixture.contract, fixture.file_path(), "install").expect("prepare task should execute");
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "install")
+            .expect("prepare task should execute");
 
         match original_path {
             Some(path) => unsafe { env::set_var("PATH", path) },
@@ -49214,9 +49334,20 @@ tasks:
 
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
         let logged = fs::read_to_string(log_path).unwrap();
-        assert!(logged.contains("install --with dev,test --no-root"), "{logged}");
         assert!(
-            logged.contains(fixture.dir.path().join("api").display().to_string().as_str()),
+            logged.contains("install --with dev,test --no-root"),
+            "{logged}"
+        );
+        assert!(
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("api")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
             "{logged}"
         );
     }
@@ -49945,7 +50076,10 @@ tasks:
                 parent: String::from("verify"),
             }
         );
-        assert_eq!(outcome.task_steps[2].relation, TaskExecutionRelation::Requested);
+        assert_eq!(
+            outcome.task_steps[2].relation,
+            TaskExecutionRelation::Requested
+        );
         assert_eq!(
             outcome.task_steps[2].execution_note.as_deref(),
             Some("aggregate tasks: lint, test")
@@ -49972,8 +50106,7 @@ tasks:
 "#,
         );
 
-        let plan =
-            super::plan_task_execution(&fixture.contract, "verify").expect("aggregate plan");
+        let plan = super::plan_task_execution(&fixture.contract, "verify").expect("aggregate plan");
 
         assert_eq!(
             plan.tasks,

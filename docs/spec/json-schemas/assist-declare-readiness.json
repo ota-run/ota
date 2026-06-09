@@ -40,8 +40,9 @@
           "additionalProperties": false,
           "required": ["style"],
           "properties": {
+            "endpoint": { "type": "string" },
             "style": {
-              "enum": ["spring-http", "http", "tcp"]
+              "enum": ["spring-http", "http", "tcp", "compose-health"]
             }
           }
         },

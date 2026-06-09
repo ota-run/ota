@@ -606,6 +606,17 @@ fn assist_declare_service_schema_covers_preview_and_failure_contract() {
     assert!(inputs.get("style").is_some());
     assert!(inputs.get("compose_file").is_some());
     assert!(inputs.get("compose_service").is_some());
+    assert!(inputs.get("endpoint_context").is_some());
+    assert!(inputs.get("producer").is_some());
+    assert!(inputs.get("producer_repo").is_some());
+    assert_eq!(
+        success["inputs"]["required"],
+        serde_json::json!(["required"])
+    );
+    assert_eq!(
+        inputs["style"]["enum"],
+        serde_json::json!(["spring-http", "http", "tcp", "compose-health"])
+    );
     assert_eq!(
         failure["operation"]["const"],
         serde_json::json!("declare-service")
@@ -1065,9 +1076,10 @@ fn assist_declare_readiness_schema_covers_preview_and_failure_contract() {
     assert_eq!(success["operation"]["const"], json!("declare-readiness"));
     assert!(subject.get("task").is_some());
     assert!(subject.get("service").is_some());
+    assert!(inputs.get("endpoint").is_some());
     assert_eq!(
         inputs["style"]["enum"],
-        json!(["spring-http", "http", "tcp"])
+        json!(["spring-http", "http", "tcp", "compose-health"])
     );
     assert_eq!(change["action"]["const"], json!("set"));
     assert!(failure.get("why").is_some());
