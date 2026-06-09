@@ -1519,12 +1519,12 @@ fn init_json_reports_detected_mode_for_docker_legacy_fixture() {
     assert_eq!(json["mode"], "detected");
     assert_eq!(json["config"]["project"]["name"], "docker-legacy");
     assert_eq!(
-        json["config"]["services"]["web"]["provider"],
-        "docker-compose"
+        json["config"]["services"]["web"]["manager"]["kind"],
+        "compose"
     );
     assert_eq!(
-        json["config"]["services"]["db"]["start"],
-        "docker compose up -d db"
+        json["config"]["services"]["db"]["manager"]["service"],
+        "db"
     );
     assert!(
         json["inferred"]
@@ -1532,7 +1532,7 @@ fn init_json_reports_detected_mode_for_docker_legacy_fixture() {
             .unwrap()
             .iter()
             .any(|inference| {
-                inference["field"] == "services.web.provider"
+                inference["field"] == "services.web.manager.kind"
                     && inference["source"] == "docker-compose.yml#services.web"
             })
     );
@@ -1596,8 +1596,8 @@ fn init_json_reports_detected_mode_for_mixed_node_python_compose_fixture() {
     assert_eq!(json["config"]["tools"]["npm"], "10.9.0");
     assert_eq!(json["config"]["tasks"]["worker"]["run"], "npm run worker");
     assert_eq!(
-        json["config"]["services"]["postgres"]["provider"],
-        "docker-compose"
+        json["config"]["services"]["postgres"]["manager"]["kind"],
+        "compose"
     );
 }
 
@@ -1784,7 +1784,8 @@ fn init_write_writes_high_confidence_contract_for_mixed_node_python_compose_fixt
     assert!(written.contains("python: '>=3.12'"));
     assert!(written.contains("run: npm run dev"));
     assert!(written.contains("run: npm run worker"));
-    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("manager:"));
+    assert!(written.contains("kind: compose"));
 
     let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
     assert!(
@@ -1811,7 +1812,8 @@ fn detect_writes_high_confidence_contract_for_mixed_node_python_compose_fixture(
     assert!(written.contains("npm: 10.9.0"));
     assert!(written.contains("run: npm run dev"));
     assert!(written.contains("run: npm run worker"));
-    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("manager:"));
+    assert!(written.contains("kind: compose"));
     assert!(!written.contains("python:"));
 
     let validate_output = run_ota(&["validate", fixture.path().to_str().unwrap()]);
@@ -1857,12 +1859,12 @@ fn detect_json_handles_docker_heavy_node_fixture() {
     assert_json_corepack_node_toolchain(&json["config"], "22.3.0", "pnpm", "10.5.0");
     assert_eq!(json["config"]["tools"]["docker"], "*");
     assert_eq!(
-        json["config"]["services"]["web"]["provider"],
-        "docker-compose"
+        json["config"]["services"]["web"]["manager"]["kind"],
+        "compose"
     );
     assert_eq!(
-        json["config"]["services"]["web"]["stop"],
-        "docker compose stop web"
+        json["config"]["services"]["web"]["manager"]["service"],
+        "web"
     );
     assert_eq!(json["config"]["tasks"]["dev"]["run"], "pnpm dev");
 }
@@ -1884,7 +1886,8 @@ fn init_write_writes_high_confidence_contract_for_docker_heavy_node_fixture() {
     assert!(written.contains("provider: corepack"));
     assert!(written.contains("version: 22.3.0"));
     assert!(written.contains("pnpm: 10.5.0"));
-    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("manager:"));
+    assert!(written.contains("kind: compose"));
     assert!(written.contains("run: pnpm build"));
     assert!(written.contains("run: pnpm dev"));
 }
@@ -1930,7 +1933,8 @@ fn detect_writes_high_confidence_contract_for_docker_heavy_node_fixture() {
     assert!(written.contains("provider: corepack"));
     assert!(written.contains("version: 22.3.0"));
     assert!(written.contains("pnpm: 10.5.0"));
-    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("manager:"));
+    assert!(written.contains("kind: compose"));
     assert!(written.contains("run: pnpm build"));
     assert!(written.contains("run: pnpm dev"));
 }
@@ -1973,7 +1977,8 @@ project:
     assert!(written.contains("provider: corepack"));
     assert!(written.contains("version: 22.3.0"));
     assert!(written.contains("pnpm: 10.5.0"));
-    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("manager:"));
+    assert!(written.contains("kind: compose"));
     assert!(written.contains("run: pnpm build"));
     assert!(written.contains("run: pnpm dev"));
     assert!(!written.contains("name: ota-containerized-web"));
@@ -2022,7 +2027,8 @@ project:
     assert!(written.contains("name: existing"));
     assert!(written.contains("node: 22.8.0"));
     assert!(!written.contains("python:"));
-    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("manager:"));
+    assert!(written.contains("kind: compose"));
     assert!(!written.contains("name: ota-hybrid-app"));
 }
 
@@ -2197,8 +2203,8 @@ fn detect_json_handles_compose_yaml_fixture() {
     let json = stdout_json(&output);
 
     assert_eq!(
-        json["config"]["services"]["web"]["provider"],
-        "docker-compose"
+        json["config"]["services"]["web"]["manager"]["kind"],
+        "compose"
     );
     assert!(
         json["inferred"]
@@ -2206,7 +2212,7 @@ fn detect_json_handles_compose_yaml_fixture() {
             .unwrap()
             .iter()
             .any(|inference| {
-                inference["field"] == "services.web.provider"
+                inference["field"] == "services.web.manager.kind"
                     && inference["source"] == "compose.yaml#services.web"
             })
     );
@@ -2227,8 +2233,8 @@ fn detect_json_handles_compose_yml_fixture() {
     let json = stdout_json(&output);
 
     assert_eq!(
-        json["config"]["services"]["web"]["provider"],
-        "docker-compose"
+        json["config"]["services"]["web"]["manager"]["kind"],
+        "compose"
     );
     assert!(
         json["inferred"]
@@ -2236,7 +2242,7 @@ fn detect_json_handles_compose_yml_fixture() {
             .unwrap()
             .iter()
             .any(|inference| {
-                inference["field"] == "services.web.provider"
+                inference["field"] == "services.web.manager.kind"
                     && inference["source"] == "compose.yml#services.web"
             })
     );
@@ -2268,8 +2274,8 @@ fn detect_json_surfaces_declared_compose_healthcheck_on_real_fixture() {
     let json = stdout_json(&output);
 
     assert_eq!(
-        json["config"]["services"]["db"]["healthcheck"],
-        "docker compose exec -T db sh -lc 'pg_isready -h localhost -p 5432'"
+        json["config"]["services"]["db"]["readiness"]["kind"],
+        "compose_health"
     );
     assert!(
         json["inferred"]
@@ -2277,7 +2283,7 @@ fn detect_json_surfaces_declared_compose_healthcheck_on_real_fixture() {
             .unwrap()
             .iter()
             .any(|inference| {
-                inference["field"] == "services.db.healthcheck"
+                inference["field"] == "services.db.readiness.kind"
                     && inference["source"] == "docker-compose.yml#services.db.healthcheck.test"
                     && inference["confidence"] == "high"
             })
@@ -2355,7 +2361,8 @@ fn init_write_writes_high_confidence_contract_for_polyglot_ops_fixture() {
     assert!(written.contains("python: 3.12.6"));
     assert!(written.contains("app:"));
     assert!(written.contains("postgres:"));
-    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("manager:"));
+    assert!(written.contains("kind: compose"));
     assert!(written.contains("tools:"));
     assert!(written.contains("docker: '*'"));
     assert!(!written.contains("tasks:"));
@@ -2381,7 +2388,8 @@ fn detect_writes_high_confidence_contract_for_polyglot_ops_fixture() {
     assert!(written.contains("python: 3.12.6"));
     assert!(written.contains("app:"));
     assert!(written.contains("postgres:"));
-    assert!(written.contains("provider: docker-compose"));
+    assert!(written.contains("manager:"));
+    assert!(written.contains("kind: compose"));
     assert!(written.contains("tools:"));
     assert!(written.contains("docker: '*'"));
     assert!(!written.contains("tasks:"));

@@ -757,8 +757,9 @@ Notes:
 
 - top-level `services` lists declared repo services in deterministic order
 - `members` is present when a monorepo root request includes grouped member service summaries
-- each service can expose `producer`, `manager`, legacy `provider`, `start`, `stop`,
-  `healthcheck`, structured `readiness`, projected `endpoints`, `depends_on`, and `timeout`
+- canonical service docs focus on `producer`, `manager`, projected `endpoints`, structured
+  `readiness`, and `depends_on`; compatibility-mode fields may still appear in output when older
+  contracts are inspected
 
 Success:
 
@@ -776,15 +777,10 @@ Success:
         "file": "compose.yaml",
         "service": "postgres"
       },
-      "healthcheck": "pg_isready -h 127.0.0.1 -p 5432",
-      "endpoints": {
-        "host": {
-          "address": "127.0.0.1",
-          "port": 5432
-        }
+      "readiness": {
+        "kind": "compose_health"
       },
-      "depends_on": [],
-      "timeout": 30
+      "depends_on": []
     }
   ]
 }
@@ -3945,37 +3941,42 @@ Example with inferred Docker Compose services:
     },
     "services": {
       "db": {
-        "provider": "docker-compose",
-        "start": "docker compose up -d db",
-        "stop": "docker compose stop db",
-        "healthcheck": "pg_isready -h localhost -p 5432"
+        "manager": {
+          "kind": "compose",
+          "name": "docker-legacy",
+          "file": "docker-compose.yml",
+          "service": "db"
+        },
+        "readiness": {
+          "kind": "compose_health"
+        }
       }
     }
   },
   "inferred": [
     {
-      "field": "services.db.provider",
+      "field": "services.db.manager.kind",
       "type": "service",
-      "value": "docker-compose",
+      "value": "compose",
       "source": "docker-compose.yml#services.db",
       "signal": "config",
       "confidence": "high"
     },
     {
-      "field": "services.db.start",
+      "field": "services.db.manager.name",
       "type": "service",
-      "value": "docker compose up -d db",
-      "source": "docker-compose.yml#services.db",
-      "signal": "config",
-      "confidence": "medium"
+      "value": "docker-legacy",
+      "source": "directory-name",
+      "signal": "convention",
+      "confidence": "high"
     },
     {
-      "field": "services.db.healthcheck",
+      "field": "services.db.readiness.kind",
       "type": "service",
-      "value": "pg_isready -h localhost -p 5432",
+      "value": "compose_health",
       "source": "docker-compose.yml#services.db.healthcheck.test",
       "signal": "config",
-      "confidence": "medium"
+      "confidence": "high"
     }
   ]
 }

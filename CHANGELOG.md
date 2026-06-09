@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- upgraded Docker Compose service detection to the canonical managed-service surface: `ota detect`,
+  `ota init`, detect merge, and detect-owned field tracking now emit `services.<name>.manager.*`
+  and structured `readiness.kind: compose_health` for Compose-backed services instead of teaching
+  legacy `provider/start/stop/healthcheck` as the inferred contract shape, with updated JSON
+  output docs and regressions
 - fixed Python toolchain host requirement projection for Poetry-owned repos: when
   `toolchains.python.package_managers.poetry` is declared without an explicit `package_managers.uv`
   requirement, Ota no longer injects `uv` as a mandatory host tool on check-only/run-path surfaces;

@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use ota::detector::detect_repo;
 use ota::parser::parse_contract_str;
-use ota::schema::ToolchainProvider;
+use ota::schema::{ServiceReadinessKind, ToolchainProvider};
 use ota::validator::validate_contract;
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -810,24 +810,27 @@ fn detects_fullstack_node_compose_fixture() {
             .contract
             .services
             .get("db")
-            .and_then(|service| service.provider.as_deref()),
-        Some("docker-compose")
+            .and_then(|service| service.manager.as_ref())
+            .and_then(|manager| manager.service.as_deref()),
+        Some("db")
     );
     assert_eq!(
         report
             .contract
             .services
             .get("db")
-            .and_then(|service| service.healthcheck.as_deref()),
-        Some("docker compose exec -T db sh -lc 'pg_isready -U postgres'")
+            .and_then(|service| service.readiness.as_ref())
+            .and_then(|readiness| readiness.kind),
+        Some(ServiceReadinessKind::ComposeHealth)
     );
     assert_eq!(
         report
             .contract
             .services
             .get("cache")
-            .and_then(|service| service.start.as_deref()),
-        Some("docker compose up -d cache")
+            .and_then(|service| service.manager.as_ref())
+            .and_then(|manager| manager.service.as_deref()),
+        Some("cache")
     );
 }
 
@@ -869,16 +872,18 @@ fn detects_mixed_node_python_compose_fixture() {
             .contract
             .services
             .get("postgres")
-            .and_then(|service| service.provider.as_deref()),
-        Some("docker-compose")
+            .and_then(|service| service.manager.as_ref())
+            .and_then(|manager| manager.service.as_deref()),
+        Some("postgres")
     );
     assert_eq!(
         report
             .contract
             .services
             .get("postgres")
-            .and_then(|service| service.healthcheck.as_deref()),
-        Some("docker compose exec -T postgres sh -lc 'pg_isready -U ota'")
+            .and_then(|service| service.readiness.as_ref())
+            .and_then(|readiness| readiness.kind),
+        Some(ServiceReadinessKind::ComposeHealth)
     );
     assert_eq!(
         report.high_confidence_contract().runtimes.get("python"),

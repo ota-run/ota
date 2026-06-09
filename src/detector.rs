@@ -31,8 +31,9 @@ use serde_yaml::Value as YamlValue;
 use toml::Value as TomlValue;
 
 use crate::schema::{
-    EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, TaskActionSpec,
-    ToolchainFulfillmentMode, ToolchainFulfillmentSpec, ToolchainProvider,
+    EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
+    ServiceReadinessKind, TaskActionSpec, ToolchainFulfillmentMode,
+    ToolchainFulfillmentSpec, ToolchainProvider,
 };
 use crate::toolchains::{
     COREPACK_TOOLCHAIN_NAME, DOTNET_TOOLCHAIN_NAME, GO_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME,
@@ -252,13 +253,55 @@ pub struct DetectTask {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectService {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub manager: Option<DetectServiceManagerSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub endpoints: BTreeMap<String, DetectServiceEndpointSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub healthcheck: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<DetectServiceReadinessSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DetectServiceManagerSpec {
+    pub kind: ServiceManagerKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+}
+
+impl Default for DetectServiceManagerSpec {
+    fn default() -> Self {
+        Self {
+            kind: ServiceManagerKind::Compose,
+            name: None,
+            file: None,
+            service: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DetectServiceEndpointSpec {
+    pub address: String,
+    pub port: u16,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+pub struct DetectServiceReadinessSpec {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<ServiceReadinessKind>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -489,13 +532,7 @@ impl DetectReport {
                     .services
                     .entry(service_name.to_string())
                     .or_default();
-                match field_name {
-                    "provider" => service.provider = Some(inference.value.clone()),
-                    "start" => service.start = Some(inference.value.clone()),
-                    "stop" => service.stop = Some(inference.value.clone()),
-                    "healthcheck" => service.healthcheck = Some(inference.value.clone()),
-                    _ => {}
-                }
+                apply_service_inference(service, field_name, &inference.value);
                 continue;
             }
 
@@ -3356,6 +3393,12 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
     };
 
     let file_name = path.file_name().unwrap().to_string_lossy();
+    let explicit_compose_project_name = document
+        .get("name")
+        .and_then(YamlValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from);
     builder.set_tool(
         "docker".to_string(),
         "*".to_string(),
@@ -3363,32 +3406,49 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
         Confidence::High,
     );
     for service_name in services.keys().filter_map(YamlValue::as_str) {
-        builder.set_service_provider(
+        let source = format!("{file_name}#services.{service_name}");
+        builder.set_service_manager_kind(
             service_name.to_string(),
-            "docker-compose".to_string(),
-            format!("{file_name}#services.{service_name}"),
+            ServiceManagerKind::Compose,
+            source.clone(),
             Confidence::High,
         );
-        builder.set_service_start(
+        builder.set_service_manager_file(
             service_name.to_string(),
-            format!("docker compose up -d {service_name}"),
-            format!("{file_name}#services.{service_name}"),
+            file_name.to_string(),
+            source.clone(),
             Confidence::High,
         );
-        builder.set_service_stop(
+        builder.set_service_manager_service(
             service_name.to_string(),
-            format!("docker compose stop {service_name}"),
-            format!("{file_name}#services.{service_name}"),
+            service_name.to_string(),
+            source.clone(),
             Confidence::High,
         );
-
-        if let Some(command) = services
-            .get(YamlValue::String(service_name.to_string()))
-            .and_then(|service| extract_compose_healthcheck_command(service_name, service))
-        {
-            builder.set_service_healthcheck(
+        if let Some(project_name) = explicit_compose_project_name.as_ref() {
+            builder.set_service_manager_name(
                 service_name.to_string(),
-                command,
+                project_name.clone(),
+                format!("{file_name}#name"),
+                Confidence::High,
+            );
+        } else if let Some(project_name) = directory_name_for_root(root) {
+            builder.set_service_manager_name(
+                service_name.to_string(),
+                project_name,
+                String::from("directory-name"),
+                Confidence::High,
+            );
+        }
+
+        let service = services
+            .get(YamlValue::String(service_name.to_string()))
+            .expect("compose service key should exist while iterating service mapping");
+
+        if service_declares_compose_healthcheck(service) {
+            builder.set_service_readiness_kind(
+                service_name.to_string(),
+                ServiceReadinessKind::ComposeHealth,
                 format!("{file_name}#services.{service_name}.healthcheck.test"),
                 Confidence::High,
             );
@@ -3398,74 +3458,92 @@ fn detect_compose_services(root: &Path, builder: &mut DetectBuilder) -> Result<(
     Ok(())
 }
 
-fn extract_compose_healthcheck_command(service_name: &str, service: &YamlValue) -> Option<String> {
-    let test = service
-        .as_mapping()?
-        .get(YamlValue::String(String::from("healthcheck")))?
-        .as_mapping()?
-        .get(YamlValue::String(String::from("test")))?;
+fn service_declares_compose_healthcheck(service: &YamlValue) -> bool {
+    service
+        .as_mapping()
+        .and_then(|mapping| mapping.get(YamlValue::String(String::from("healthcheck"))))
+        .and_then(YamlValue::as_mapping)
+        .and_then(|healthcheck| healthcheck.get(YamlValue::String(String::from("test"))))
+        .is_some()
+}
 
-    let command = match test {
-        YamlValue::String(command) => {
-            let command = command.trim();
-            if command.is_empty() {
-                None
-            } else {
-                Some(command.to_string())
+fn apply_service_inference(service: &mut DetectService, field_name: &str, value: &str) {
+    let segments = field_name.split('.').collect::<Vec<_>>();
+    match segments.as_slice() {
+        ["provider"] => service.provider = Some(value.to_string()),
+        ["start"] => service.start = Some(value.to_string()),
+        ["stop"] => service.stop = Some(value.to_string()),
+        ["healthcheck"] => service.healthcheck = Some(value.to_string()),
+        ["manager", "kind"] => {
+            let manager = service
+                .manager
+                .get_or_insert_with(DetectServiceManagerSpec::default);
+            manager.kind = match value {
+                "host" => ServiceManagerKind::Host,
+                _ => ServiceManagerKind::Compose,
+            };
+        }
+        ["manager", "name"] => {
+            let manager = service
+                .manager
+                .get_or_insert_with(DetectServiceManagerSpec::default);
+            manager.name = Some(value.to_string());
+        }
+        ["manager", "file"] => {
+            let manager = service
+                .manager
+                .get_or_insert_with(DetectServiceManagerSpec::default);
+            manager.file = Some(value.to_string());
+        }
+        ["manager", "service"] => {
+            let manager = service
+                .manager
+                .get_or_insert_with(DetectServiceManagerSpec::default);
+            manager.service = Some(value.to_string());
+        }
+        ["endpoints", context, "address"] => {
+            let endpoint =
+                service
+                    .endpoints
+                    .entry((*context).to_string())
+                    .or_insert_with(|| DetectServiceEndpointSpec {
+                        address: String::new(),
+                        port: 0,
+                    });
+            endpoint.address = value.to_string();
+        }
+        ["endpoints", context, "port"] => {
+            if let Ok(port) = value.parse::<u16>() {
+                let endpoint =
+                    service
+                        .endpoints
+                        .entry((*context).to_string())
+                        .or_insert_with(|| DetectServiceEndpointSpec {
+                            address: String::new(),
+                            port: 0,
+                        });
+                endpoint.port = port;
             }
         }
-        YamlValue::Sequence(parts) => {
-            let values = parts
-                .iter()
-                .map(YamlValue::as_str)
-                .collect::<Option<Vec<_>>>()?;
-            let first = *values.first()?;
-            match first {
-                "NONE" => None,
-                "CMD-SHELL" => {
-                    let command = values.get(1)?.trim();
-                    if command.is_empty() {
-                        None
-                    } else {
-                        Some(command.to_string())
-                    }
-                }
-                "CMD" => {
-                    let command = values
-                        .iter()
-                        .skip(1)
-                        .map(|part| part.trim())
-                        .filter(|part| !part.is_empty())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    if command.is_empty() {
-                        None
-                    } else {
-                        Some(command)
-                    }
-                }
-                _ => {
-                    let command = values
-                        .iter()
-                        .map(|part| part.trim())
-                        .filter(|part| !part.is_empty())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    if command.is_empty() {
-                        None
-                    } else {
-                        Some(command)
-                    }
-                }
-            }
+        ["readiness", "from"] => {
+            let readiness = service
+                .readiness
+                .get_or_insert_with(DetectServiceReadinessSpec::default);
+            readiness.from = Some(value.to_string());
         }
-        _ => None,
-    }?;
-
-    Some(format!(
-        "docker compose exec -T {service_name} sh -lc {}",
-        shell_single_quote(&command)
-    ))
+        ["readiness", "kind"] => {
+            let readiness = service
+                .readiness
+                .get_or_insert_with(DetectServiceReadinessSpec::default);
+            readiness.kind = match value {
+                "compose_health" => Some(ServiceReadinessKind::ComposeHealth),
+                "http" => Some(ServiceReadinessKind::Http),
+                "tcp" => Some(ServiceReadinessKind::Tcp),
+                _ => None,
+            };
+        }
+        _ => {}
+    }
 }
 
 fn detect_directory_name(root: &Path, builder: &mut DetectBuilder) {
@@ -3941,11 +4019,6 @@ fn detect_release_script(root: &Path, builder: &mut DetectBuilder) -> Result<(),
     Ok(())
 }
 
-fn shell_single_quote(command: &str) -> String {
-    let escaped = command.replace('\'', r"'\''");
-    format!("'{}'", escaped)
-}
-
 fn extract_xml_tag(contents: &str, tag: &str) -> Option<String> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -4136,65 +4209,85 @@ impl DetectBuilder {
         }
     }
 
-    fn set_service_provider(
+    fn set_service_manager_kind(
         &mut self,
         name: String,
-        value: String,
+        value: ServiceManagerKind,
         source: String,
         confidence: Confidence,
     ) {
-        self.set_service_field(name, "provider", value, source, confidence);
-    }
-
-    fn set_service_start(
-        &mut self,
-        name: String,
-        value: String,
-        source: String,
-        confidence: Confidence,
-    ) {
-        self.set_service_field(name, "start", value, source, confidence);
-    }
-
-    fn set_service_stop(
-        &mut self,
-        name: String,
-        value: String,
-        source: String,
-        confidence: Confidence,
-    ) {
-        self.set_service_field(name, "stop", value, source, confidence);
-    }
-
-    fn set_service_healthcheck(
-        &mut self,
-        name: String,
-        value: String,
-        source: String,
-        confidence: Confidence,
-    ) {
-        self.set_service_field(name, "healthcheck", value, source, confidence);
-    }
-
-    fn set_service_field(
-        &mut self,
-        name: String,
-        field_name: &str,
-        value: String,
-        source: String,
-        confidence: Confidence,
-    ) {
-        let field = format!("services.{name}.{field_name}");
+        let field = format!("services.{name}.manager.kind");
         if self.should_replace(&field, &source, confidence) {
             let service = self.contract.services.entry(name).or_default();
-            match field_name {
-                "provider" => service.provider = Some(value.clone()),
-                "start" => service.start = Some(value.clone()),
-                "stop" => service.stop = Some(value.clone()),
-                "healthcheck" => service.healthcheck = Some(value.clone()),
-                _ => {}
-            }
+            let manager = service.manager.get_or_insert_with(DetectServiceManagerSpec::default);
+            manager.kind = value;
+            self.record(field, value.as_str().to_string(), source, confidence);
+        }
+    }
+
+    fn set_service_manager_name(
+        &mut self,
+        name: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = format!("services.{name}.manager.name");
+        if self.should_replace(&field, &source, confidence) {
+            let service = self.contract.services.entry(name).or_default();
+            let manager = service.manager.get_or_insert_with(DetectServiceManagerSpec::default);
+            manager.name = Some(value.clone());
             self.record(field, value, source, confidence);
+        }
+    }
+
+    fn set_service_manager_file(
+        &mut self,
+        name: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = format!("services.{name}.manager.file");
+        if self.should_replace(&field, &source, confidence) {
+            let service = self.contract.services.entry(name).or_default();
+            let manager = service.manager.get_or_insert_with(DetectServiceManagerSpec::default);
+            manager.file = Some(value.clone());
+            self.record(field, value, source, confidence);
+        }
+    }
+
+    fn set_service_manager_service(
+        &mut self,
+        name: String,
+        value: String,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = format!("services.{name}.manager.service");
+        if self.should_replace(&field, &source, confidence) {
+            let service = self.contract.services.entry(name).or_default();
+            let manager = service.manager.get_or_insert_with(DetectServiceManagerSpec::default);
+            manager.service = Some(value.clone());
+            self.record(field, value, source, confidence);
+        }
+    }
+
+    fn set_service_readiness_kind(
+        &mut self,
+        name: String,
+        value: ServiceReadinessKind,
+        source: String,
+        confidence: Confidence,
+    ) {
+        let field = format!("services.{name}.readiness.kind");
+        if self.should_replace(&field, &source, confidence) {
+            let service = self.contract.services.entry(name).or_default();
+            let readiness = service
+                .readiness
+                .get_or_insert_with(DetectServiceReadinessSpec::default);
+            readiness.kind = Some(value);
+            self.record(field, value.as_str().to_string(), source, confidence);
         }
     }
 
@@ -5001,7 +5094,9 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{Confidence, detect_repo};
-    use crate::schema::{EnvSource, EnvSourceKind, ToolchainProvider};
+    use crate::schema::{
+        EnvSource, EnvSourceKind, ServiceManagerKind, ServiceReadinessKind, ToolchainProvider,
+    };
 
     #[test]
     fn prefers_nvmrc_over_package_json_engines() {
@@ -6959,32 +7054,35 @@ channel = "1.85.0"
                 .contract
                 .services
                 .get("web")
-                .and_then(|service| service.provider.as_deref()),
-            Some("docker-compose")
+                .and_then(|service| service.manager.as_ref())
+                .map(|manager| manager.kind),
+            Some(ServiceManagerKind::Compose)
         );
         assert_eq!(
             report
                 .contract
                 .services
                 .get("web")
-                .and_then(|service| service.start.as_deref()),
-            Some("docker compose up -d web")
+                .and_then(|service| service.manager.as_ref())
+                .and_then(|manager| manager.file.as_deref()),
+            Some("docker-compose.yml")
         );
         assert_eq!(
             report
                 .contract
                 .services
                 .get("db")
-                .and_then(|service| service.stop.as_deref()),
-            Some("docker compose stop db")
+                .and_then(|service| service.manager.as_ref())
+                .and_then(|manager| manager.service.as_deref()),
+            Some("db")
         );
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "services.web.provider"
+            inference.field == "services.web.manager.kind"
                 && inference.source == "docker-compose.yml#services.web"
                 && inference.confidence == Confidence::High
         }));
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "services.web.start"
+            inference.field == "services.web.manager.file"
                 && inference.source == "docker-compose.yml#services.web"
                 && inference.confidence == Confidence::High
         }));
@@ -7010,11 +7108,12 @@ channel = "1.85.0"
                 .contract
                 .services
                 .get("db")
-                .and_then(|service| service.healthcheck.as_deref()),
-            Some("docker compose exec -T db sh -lc 'pg_isready -h localhost -p 5432'")
+                .and_then(|service| service.readiness.as_ref())
+                .and_then(|readiness| readiness.kind),
+            Some(ServiceReadinessKind::ComposeHealth)
         );
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "services.db.healthcheck"
+            inference.field == "services.db.readiness.kind"
                 && inference.source == "docker-compose.yml#services.db.healthcheck.test"
                 && inference.confidence == Confidence::High
         }));
@@ -7079,11 +7178,12 @@ channel = "1.85.0"
                 .contract
                 .services
                 .get("web")
-                .and_then(|service| service.provider.as_deref()),
-            Some("docker-compose")
+                .and_then(|service| service.manager.as_ref())
+                .and_then(|manager| manager.file.as_deref()),
+            Some("docker-compose.yaml")
         );
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "services.web.provider"
+            inference.field == "services.web.manager.kind"
                 && inference.source == "docker-compose.yaml#services.web"
                 && inference.confidence == Confidence::High
         }));
@@ -7107,11 +7207,12 @@ channel = "1.85.0"
                 .contract
                 .services
                 .get("db")
-                .and_then(|service| service.start.as_deref()),
-            Some("docker compose up -d db")
+                .and_then(|service| service.manager.as_ref())
+                .and_then(|manager| manager.file.as_deref()),
+            Some("compose.yaml")
         );
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "services.db.start"
+            inference.field == "services.db.manager.file"
                 && inference.source == "compose.yaml#services.db"
                 && inference.confidence == Confidence::High
         }));
@@ -7135,11 +7236,12 @@ channel = "1.85.0"
                 .contract
                 .services
                 .get("cache")
-                .and_then(|service| service.stop.as_deref()),
-            Some("docker compose stop cache")
+                .and_then(|service| service.manager.as_ref())
+                .and_then(|manager| manager.file.as_deref()),
+            Some("compose.yml")
         );
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "services.cache.stop"
+            inference.field == "services.cache.manager.file"
                 && inference.source == "compose.yml#services.cache"
                 && inference.confidence == Confidence::High
         }));
@@ -7165,11 +7267,12 @@ channel = "1.85.0"
                 .contract
                 .services
                 .get("db")
-                .and_then(|service| service.healthcheck.as_deref()),
-            Some("docker compose exec -T db sh -lc 'pg_isready -h localhost -p 5432'")
+                .and_then(|service| service.readiness.as_ref())
+                .and_then(|readiness| readiness.kind),
+            Some(ServiceReadinessKind::ComposeHealth)
         );
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "services.db.healthcheck"
+            inference.field == "services.db.readiness.kind"
                 && inference.source == "docker-compose.yaml#services.db.healthcheck.test"
                 && inference.confidence == Confidence::High
         }));
@@ -7195,11 +7298,12 @@ channel = "1.85.0"
                 .contract
                 .services
                 .get("db")
-                .and_then(|service| service.healthcheck.as_deref()),
-            Some("docker compose exec -T db sh -lc 'pg_isready -h localhost -p 5432'")
+                .and_then(|service| service.readiness.as_ref())
+                .and_then(|readiness| readiness.kind),
+            Some(ServiceReadinessKind::ComposeHealth)
         );
         assert!(report.inferences.iter().any(|inference| {
-            inference.field == "services.db.healthcheck"
+            inference.field == "services.db.readiness.kind"
                 && inference.source == "compose.yaml#services.db.healthcheck.test"
                 && inference.confidence == Confidence::High
         }));

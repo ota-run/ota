@@ -33451,7 +33451,17 @@ fn apply_detect_change(document: &mut YamlValue, change: &DetectComparisonChange
         ["env", "sources", _, "must_exist"] => {
             set_env_source_bool_field(root, &segments, &change.detected)
         }
-        ["services", _, _] => set_string_field(root, &segments, &change.detected),
+        ["services", _, "manager", _]
+        | ["services", _, "provider"]
+        | ["services", _, "start"]
+        | ["services", _, "stop"]
+        | ["services", _, "healthcheck"]
+        | ["services", _, "endpoints", _, "address"]
+        | ["services", _, "readiness", "from"]
+        | ["services", _, "readiness", "kind"] => set_string_field(root, &segments, &change.detected),
+        ["services", _, "endpoints", _, "port"] => {
+            set_integer_field(root, &segments, &change.detected)
+        }
         ["tasks", _, "run"] | ["tasks", _, "description"] => {
             set_string_field(root, &segments, &change.detected)
         }
@@ -33512,6 +33522,18 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
         }
     }
     for (name, service) in &contract.services {
+        if let Some(manager) = service.manager.as_ref() {
+            fields.push(format!("services.{name}.manager.kind"));
+            if manager.name.is_some() {
+                fields.push(format!("services.{name}.manager.name"));
+            }
+            if manager.file.is_some() {
+                fields.push(format!("services.{name}.manager.file"));
+            }
+            if manager.service.is_some() {
+                fields.push(format!("services.{name}.manager.service"));
+            }
+        }
         if service.provider.is_some() {
             fields.push(format!("services.{name}.provider"));
         }
@@ -33523,6 +33545,18 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
         }
         if service.healthcheck.is_some() {
             fields.push(format!("services.{name}.healthcheck"));
+        }
+        for context in service.endpoints.keys() {
+            fields.push(format!("services.{name}.endpoints.{context}.address"));
+            fields.push(format!("services.{name}.endpoints.{context}.port"));
+        }
+        if let Some(readiness) = service.readiness.as_ref() {
+            if readiness.from.is_some() {
+                fields.push(format!("services.{name}.readiness.from"));
+            }
+            if readiness.kind.is_some() {
+                fields.push(format!("services.{name}.readiness.kind"));
+            }
         }
     }
     for (index, _check) in contract.checks.iter().enumerate() {
@@ -33715,6 +33749,42 @@ fn init_contract_provenance(
         }
     }
     for (name, service) in &contract.services {
+        if let Some(manager) = service.manager.as_ref() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                &detected_fields,
+                format!("services.{name}.manager.kind"),
+                starter_contract_source,
+            );
+            if manager.name.is_some() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("services.{name}.manager.name"),
+                    starter_contract_source,
+                );
+            }
+            if manager.file.is_some() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("services.{name}.manager.file"),
+                    starter_contract_source,
+                );
+            }
+            if manager.service.is_some() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("services.{name}.manager.service"),
+                    starter_contract_source,
+                );
+            }
+        }
         if service.provider.is_some() {
             push_init_field_provenance(
                 &mut provenance,
@@ -33750,6 +33820,42 @@ fn init_contract_provenance(
                 format!("services.{name}.healthcheck"),
                 starter_contract_source,
             );
+        }
+        for context in service.endpoints.keys() {
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                &detected_fields,
+                format!("services.{name}.endpoints.{context}.address"),
+                starter_contract_source,
+            );
+            push_init_field_provenance(
+                &mut provenance,
+                &inference_map,
+                &detected_fields,
+                format!("services.{name}.endpoints.{context}.port"),
+                starter_contract_source,
+            );
+        }
+        if let Some(readiness) = service.readiness.as_ref() {
+            if readiness.from.is_some() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("services.{name}.readiness.from"),
+                    starter_contract_source,
+                );
+            }
+            if readiness.kind.is_some() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("services.{name}.readiness.kind"),
+                    starter_contract_source,
+                );
+            }
         }
     }
     for (index, _check) in contract.checks.iter().enumerate() {
@@ -34136,6 +34242,31 @@ fn set_bool_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
 
     let final_key = YamlValue::String(segments[segments.len() - 1].to_string());
     current.insert(final_key, YamlValue::Bool(parsed));
+    true
+}
+
+fn set_integer_field(root: &mut Mapping, segments: &[&str], value: &str) -> bool {
+    if segments.len() < 2 {
+        return false;
+    }
+    let Ok(parsed) = value.parse::<i64>() else {
+        return false;
+    };
+
+    let mut current = root;
+    for segment in &segments[..segments.len() - 1] {
+        let key = YamlValue::String((*segment).to_string());
+        let entry = current
+            .entry(key)
+            .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
+        let Some(mapping) = entry.as_mapping_mut() else {
+            return false;
+        };
+        current = mapping;
+    }
+
+    let final_key = YamlValue::String(segments[segments.len() - 1].to_string());
+    current.insert(final_key, YamlValue::Number(parsed.into()));
     true
 }
 

@@ -200,10 +200,22 @@ project:
 services:
   postgres:
     required: true
-    provider: docker-compose
-    start: docker compose up -d postgres
-    stop: docker compose stop postgres
-    healthcheck: pg_isready -h localhost -p 5432
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      service: postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+    readiness:
+      from: host
+      kind: tcp
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
 env:
   vars:
