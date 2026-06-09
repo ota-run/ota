@@ -9703,9 +9703,17 @@ where
         if version.is_empty() {
             continue;
         }
-        if let Some((existing, existing_source)) = target.get(name.as_str())
-            && existing != &version
-        {
+        if let Some((existing, existing_source)) = target.get(name.as_str()) {
+            if existing == &version {
+                continue;
+            }
+            if existing == "*" && version != "*" {
+                target.insert(name.clone(), (version, source.to_string()));
+                continue;
+            }
+            if version == "*" {
+                continue;
+            }
             return Err(format!(
                 "conflicting requirement for `{name}`: `{existing}` from {existing_source} vs `{version}` from {source}"
             ));
@@ -49657,6 +49665,39 @@ tasks:
         }
 
         assert!(!log_path.exists());
+    }
+
+    #[test]
+    fn direct_task_requirements_prefer_exact_toolchain_owned_tool_over_inferred_wildcard() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+tasks:
+  lint:
+    run: pnpm run lint
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+
+        let (_, tools) = super::direct_task_requirement_versions(
+            &fixture.contract,
+            fixture.contract.tasks.get("lint").unwrap(),
+            "lint",
+            current_os(),
+        )
+        .expect("toolchain-owned package manager should satisfy inferred shell tool");
+
+        assert_eq!(tools.get("pnpm").map(String::as_str), Some("10.24.0"));
     }
 
     #[test]
