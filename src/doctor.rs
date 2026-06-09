@@ -5624,7 +5624,7 @@ fn selected_toolchain_run_fulfillment_source_for_tool(
             .keys()
             .filter(|owned_tool_name| {
                 provider.provider() != crate::schema::ToolchainProvider::Uv
-                    || owned_tool_name.as_str() == "uv"
+                    || matches!(owned_tool_name.as_str(), "uv" | "poetry")
             })
             .any(|owned_tool_name| {
                 owned_tool_name == tool_name || tool_executable_name(owned_tool_name) == tool_name
@@ -18644,6 +18644,43 @@ tasks:
         );
 
         assert_eq!(source, Some(ToolchainFulfillmentSource::Ruby));
+    }
+
+    #[test]
+    fn selected_toolchain_run_fulfillment_source_supports_poetry_under_python_toolchain() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: openhands
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      poetry: ">=1.8"
+    fulfillment:
+      source: uv
+      mode: run
+tasks:
+  test:
+    run: poetry run pytest
+    requirements:
+      toolchains:
+        - python
+"#,
+        )
+        .unwrap();
+
+        let source = super::selected_toolchain_run_fulfillment_source_for_tool(
+            &contract,
+            &BTreeSet::from([String::from("python")]),
+            "macos",
+            "poetry",
+        );
+
+        assert_eq!(source, Some(ToolchainFulfillmentSource::Uv));
     }
 
     #[test]

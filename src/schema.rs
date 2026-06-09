@@ -4202,6 +4202,12 @@ impl TaskPrepareSpec {
                         source.cwd.trim(),
                         source.path.trim()
                     ),
+                    TaskDependencyHydrationSourceSpec::Poetry(source) => format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    ),
                     TaskDependencyHydrationSourceSpec::GoModules(source) => format!(
                         "hydrate {} with go mod download in `{}`",
                         spec.medium.label(),
@@ -4244,6 +4250,7 @@ pub enum TaskDependencyHydrationSourceSpec {
     DockerCompose(TaskDockerComposeHydrationSourceSpec),
     NodePackageManager(TaskNodePackageManagerHydrationSourceSpec),
     Bundler(TaskBundlerHydrationSourceSpec),
+    Poetry(TaskPoetryHydrationSourceSpec),
     GoModules(TaskGoModulesHydrationSourceSpec),
 }
 
@@ -4306,8 +4313,55 @@ pub struct TaskBundlerHydrationSourceSpec {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct TaskPoetryHydrationSourceSpec {
+    pub cwd: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_default_poetry_group_mode")]
+    pub group_mode: TaskPoetryHydrationGroupMode,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub no_root: bool,
+}
+
+impl TaskPoetryHydrationSourceSpec {
+    pub fn command_preview(&self) -> String {
+        let mut parts = vec![String::from("poetry"), String::from("install")];
+        if !self.groups.is_empty() {
+            parts.push(self.group_mode.flag().to_string());
+            parts.push(self.groups.join(","));
+        }
+        if self.no_root {
+            parts.push(String::from("--no-root"));
+        }
+        parts.join(" ")
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskGoModulesHydrationSourceSpec {
     pub cwd: String,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskPoetryHydrationGroupMode {
+    #[default]
+    With,
+    Only,
+}
+
+impl TaskPoetryHydrationGroupMode {
+    pub const fn flag(self) -> &'static str {
+        match self {
+            Self::With => "--with",
+            Self::Only => "--only",
+        }
+    }
+}
+
+const fn is_default_poetry_group_mode(value: &TaskPoetryHydrationGroupMode) -> bool {
+    matches!(value, TaskPoetryHydrationGroupMode::With)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
