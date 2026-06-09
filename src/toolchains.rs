@@ -1318,16 +1318,10 @@ fn uv_owned_capabilities(
     provider: ToolchainProviderContract,
     toolchain: &ToolchainSpec,
 ) -> Vec<ToolchainOwnedCapability> {
-    let mut owned = vec![
-        ToolchainOwnedCapability {
-            kind: ToolchainOwnedCapabilityKind::Runtime,
-            name: provider.owned_runtime().to_string(),
-        },
-        ToolchainOwnedCapability {
-            kind: ToolchainOwnedCapabilityKind::Tool,
-            name: String::from("uv"),
-        },
-    ];
+    let mut owned = vec![ToolchainOwnedCapability {
+        kind: ToolchainOwnedCapabilityKind::Runtime,
+        name: provider.owned_runtime().to_string(),
+    }];
     let mut package_managers = BTreeSet::new();
     package_managers.extend(toolchain.package_managers.keys().cloned());
     for detail in toolchain.platforms.values() {
@@ -1449,20 +1443,18 @@ fn uv_owned_tool_requirements(
     let required = toolchain.required_for_os(target_os);
     let mut requirements = BTreeMap::new();
     let package_managers = toolchain.package_managers_for_os(target_os);
-    let uv_version = package_managers
-        .get("uv")
-        .cloned()
-        .unwrap_or_else(|| String::from("*"));
-    requirements.insert(
-        String::from("uv"),
-        ToolRequirement::Detailed(ToolDetail {
-            version: uv_version,
-            required,
-            only_on: toolchain.only_on.clone(),
-            platforms: BTreeMap::<String, ToolPlatformDetail>::new(),
-            acquisition: None,
-        }),
-    );
+    if let Some(uv_version) = package_managers.get("uv").cloned() {
+        requirements.insert(
+            String::from("uv"),
+            ToolRequirement::Detailed(ToolDetail {
+                version: uv_version,
+                required,
+                only_on: toolchain.only_on.clone(),
+                platforms: BTreeMap::<String, ToolPlatformDetail>::new(),
+                acquisition: None,
+            }),
+        );
+    }
     if let Some(poetry_version) = package_managers.get("poetry").cloned() {
         requirements.insert(
             String::from("poetry"),
@@ -2601,12 +2593,57 @@ toolchains:
                 .any(|part| part.contains("poetry@>=1.8"))
         );
         let tool_requirements = provider.owned_tool_requirements(toolchain, "linux");
+        assert!(
+            !tool_requirements.contains_key("uv"),
+            "poetry-only python toolchain should not project uv as a required host tool"
+        );
         assert_eq!(
             tool_requirements
                 .get("poetry")
                 .expect("projected poetry requirement")
                 .version(),
             ">=1.8"
+        );
+        assert!(
+            provider
+                .owned_capabilities(toolchain)
+                .iter()
+                .all(|capability| capability.name != "uv"),
+            "poetry-only python toolchain should not own uv unless the contract declares it"
+        );
+    }
+
+    #[test]
+    fn poetry_only_python_toolchain_requirement_surface_does_not_inject_uv() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: openhands
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      poetry: ">=1.8"
+"#,
+        );
+        let toolchain_names = BTreeSet::from([String::from("python")]);
+        let requirement_surface = requirement_surface_with_toolchain_owned_tools_for_required_tools(
+            &contract,
+            &RequirementSurface::default(),
+            &toolchain_names,
+            "linux",
+            None,
+        );
+
+        assert!(
+            !requirement_surface.tools.contains_key("uv"),
+            "poetry-only python toolchain should not inject uv into the effective tool surface"
+        );
+        assert!(
+            requirement_surface.tools.contains_key("poetry"),
+            "poetry-only python toolchain should still project poetry into the effective tool surface"
         );
     }
 
