@@ -514,6 +514,8 @@ Notes:
 - top-level `surfaces` is present when the contract declares reusable runtime surfaces; it exposes
   the declared kind, port, optional label, optional purpose, optional visibility, optional path,
   and optional readiness contract for each reusable surface
+- `tasks[*].env_files` is present when one task owns ordered task-local dotenv overlays for
+  execution; these overlays are execution-only inputs, not root `env.sources`
 - `tasks[*].launch` is present when one task uses structured `launch` instead of shell `run` or
   `script`; it exposes the launch kind plus the structured command or packaged container metadata
 - task-target probe entries also expose `target.observer` and `target.resolution_plane`; the
@@ -688,6 +690,9 @@ Notes:
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
 - `artifacts` points at the captured canonical payloads; machine consumers should inspect those
   files directly when they need the full topology or doctor surface
+- `likely_cause` is optional and appears only when ota can derive a higher-confidence runtime-drift
+  hint from captured proof logs; treat it as advisory, not a replacement for `doctor.json` or
+  `up.log`
 - cleanup failures are reported through top-level `error` and `next` without duplicating the doctor
   findings stream
 - timeout-only failures without a blocking primary doctor finding are normalized to
@@ -744,7 +749,8 @@ Blocked:
     "topology": "./.ota/proof/docker/topology.json",
     "doctor": "./.ota/proof/docker/doctor.json",
     "up_log": "./.ota/proof/docker/up.log"
-  }
+  },
+  "likely_cause": "likely config drift: the runtime is still targeting Redis on loopback inside a multi-service startup path; move that host binding into a workflow-scoped env overlay or task `env_files` instead of `127.0.0.1` / `localhost`"
 }
 ```
 

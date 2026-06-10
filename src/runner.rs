@@ -2081,6 +2081,7 @@ fn effective_task_env_for_backend_with_resolved_env(
     };
     let context_name = resolved_backend_context_name(backend);
     let mut env = derived_attachment_env_for_backend(backend, ota_workspace.as_str());
+    env.extend(load_task_env_file_values(task, backend_kind, working_dir));
     env.extend(
         task.env_for_backend_with_context_name(
             contract.execution.as_ref(),
@@ -2148,6 +2149,7 @@ pub(crate) fn effective_task_env_for_selection(
         &dependency_isolation_paths,
         ota_workspace.as_str(),
     );
+    env.extend(load_task_env_file_values(task, backend, working_dir));
     let engine_hint = if backend == Backend::Container {
         effective_task_container_backend_for_target_resolution(contract, task_name, overrides)
             .and_then(|container| {
@@ -2178,6 +2180,66 @@ pub(crate) fn effective_task_env_for_selection(
     ));
     env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
     Some(env)
+}
+
+fn load_task_env_file_values(
+    task: &TaskSpec,
+    backend: Backend,
+    working_dir: &Path,
+) -> BTreeMap<String, String> {
+    let mut merged = BTreeMap::new();
+    for path in task.env_files_for_backend(backend) {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let source_path = working_dir.join(trimmed);
+        let file = match File::open(&source_path) {
+            Ok(file) => file,
+            Err(_) => continue,
+        };
+        let mut values = BTreeMap::new();
+        for entry in dotenvy::from_read_iter(file) {
+            match entry {
+                Ok((name, value)) => {
+                    values.insert(name, value);
+                }
+                Err(_) => return BTreeMap::new(),
+            }
+        }
+        merged.extend(values);
+    }
+    merged
+}
+
+pub(crate) fn ensure_task_env_files_ready(
+    task_name: &str,
+    task: &TaskSpec,
+    backend: Backend,
+    working_dir: &Path,
+) -> Result<(), RunError> {
+    for path in task.env_files_for_backend(backend) {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let source_path = working_dir.join(trimmed);
+        let file = File::open(&source_path).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "env file `{trimmed}` declared in `env_files` is not readable: {source}"
+            ),
+        })?;
+        for entry in dotenvy::from_read_iter(file) {
+            entry.map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "env file `{trimmed}` declared in `env_files` is not valid dotenv content: {source}"
+                ),
+            })?;
+        }
+    }
+    Ok(())
 }
 
 pub fn resolve_task_env_details(
@@ -6421,6 +6483,8 @@ fn execute_task_with_hooks(
         }
     }
 
+    ensure_task_env_files_ready(task_name, task, backend_kind, working_dir)?;
+
     maybe_prepare_task_orchestrator_on_run_path(
         contract,
         contract_path,
@@ -7945,55 +8009,41 @@ fn execute_ensure_env_file_action(
         message: format!("could not read `{}`: {source}", spec.path.trim()),
     })?;
     let existing_keys = parse_env_keys(content.as_str());
-    let mut missing = Vec::<(String, String)>::new();
+    let mut updates = Vec::<(String, String, crate::schema::TaskEnsureEnvVarMode)>::new();
     for (key, value_spec) in &spec.vars {
-        if existing_keys.contains(key.as_str()) {
+        if matches!(
+            value_spec.mode,
+            crate::schema::TaskEnsureEnvVarMode::Missing
+        ) && existing_keys.contains(key.as_str())
+        {
             continue;
         }
         let value = resolve_ensure_env_var_value(task_name, key.as_str(), value_spec)?;
-        missing.push((key.clone(), value));
+        updates.push((key.clone(), value, value_spec.mode));
     }
 
-    if !missing.is_empty() {
-        let mut append = String::new();
-        if !content.is_empty() && !content.ends_with('\n') {
-            append.push('\n');
-        }
-        for (key, value) in &missing {
-            append.push_str(key);
-            append.push('=');
-            append.push_str(value);
-            append.push('\n');
-        }
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&path)
-            .map_err(|source| RunError::FileActionFailed {
-                task: task_name.to_string(),
-                message: format!("could not append to `{}`: {source}", spec.path.trim()),
-            })?;
-        use std::io::Write;
-        file.write_all(append.as_bytes())
-            .map_err(|source| RunError::FileActionFailed {
-                task: task_name.to_string(),
-                message: format!(
-                    "could not append env values to `{}`: {source}",
-                    spec.path.trim()
-                ),
-            })?;
+    let (next_content, replaced_count, appended_count) =
+        apply_ensure_env_updates(content.as_str(), &updates);
+    if next_content != content {
+        std::fs::write(&path, next_content).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not update `{}`: {source}", spec.path.trim()),
+        })?;
     }
 
     let summary = if created {
         format!(
-            "ensured `{}` (created), appended {} env key(s)\n",
+            "ensured `{}` (created), appended {} env key(s), replaced {} env key(s)\n",
             spec.path.trim(),
-            missing.len()
+            appended_count,
+            replaced_count
         )
     } else {
         format!(
-            "ensured `{}`, appended {} env key(s)\n",
+            "ensured `{}`, appended {} env key(s), replaced {} env key(s)\n",
             spec.path.trim(),
-            missing.len()
+            appended_count,
+            replaced_count
         )
     };
     Ok(file_action_output(summary))
@@ -8131,6 +8181,55 @@ fn parse_env_keys(content: &str) -> BTreeSet<String> {
         }
     }
     keys
+}
+
+fn apply_ensure_env_updates(
+    content: &str,
+    updates: &[(String, String, crate::schema::TaskEnsureEnvVarMode)],
+) -> (String, usize, usize) {
+    if updates.is_empty() {
+        return (content.to_string(), 0, 0);
+    }
+
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    let had_trailing_newline = content.ends_with('\n');
+    let mut replaced = 0;
+    let mut appended = 0;
+
+    for (key, value, mode) in updates {
+        let mut matched_index = None;
+        for (index, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let Some((raw_key, _)) = trimmed.split_once('=') else {
+                continue;
+            };
+            if raw_key.trim() == key {
+                matched_index = Some(index);
+                break;
+            }
+        }
+
+        match (mode, matched_index) {
+            (crate::schema::TaskEnsureEnvVarMode::Replace, Some(index)) => {
+                lines[index] = format!("{key}={value}");
+                replaced += 1;
+            }
+            (_, Some(_)) => {}
+            _ => {
+                lines.push(format!("{key}={value}"));
+                appended += 1;
+            }
+        }
+    }
+
+    let mut next = lines.join("\n");
+    if had_trailing_newline || !next.is_empty() {
+        next.push('\n');
+    }
+    (next, replaced, appended)
 }
 
 fn resolve_ensure_env_var_value(
@@ -48572,6 +48671,121 @@ tasks:
             second.stdout.contains("appended 0 env key(s)"),
             "{}",
             second.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_env_file_action_replaces_existing_keys_when_requested() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env-local:
+    action:
+      kind: ensure_env_file
+      path: .env.local
+      vars:
+        REDIS_HOST:
+          value: redis
+          mode: replace
+        REDIS_PORT:
+          value: "6379"
+"#,
+        );
+        fixture.write(".env.local", "REDIS_HOST=127.0.0.1\nEXISTING=1\n");
+
+        let output = run_task(&fixture.contract, fixture.file_path(), "setup:env-local")
+            .expect("ensure env action should run");
+        assert_eq!(output.exit_code, 0);
+        let content = fs::read_to_string(fixture.dir.path().join(".env.local")).unwrap();
+        assert!(content.contains("REDIS_HOST=redis\n"), "{content}");
+        assert!(content.contains("REDIS_PORT=6379\n"), "{content}");
+        assert!(content.contains("EXISTING=1\n"), "{content}");
+        assert!(
+            output.stdout.contains("appended 1 env key(s)"),
+            "{}",
+            output.stdout
+        );
+        assert!(
+            output.stdout.contains("replaced 1 env key(s)"),
+            "{}",
+            output.stdout
+        );
+    }
+
+    #[test]
+    fn effective_task_env_for_selection_loads_task_env_files() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    env_files:
+      - .env.compose
+    env:
+      REDIS_HOST: task-override
+    run: docker compose up
+"#,
+        );
+        fixture.write(
+            ".env.compose",
+            "REDIS_HOST=redis\nDATABASE_URL=postgres://compose\n",
+        );
+
+        let env = effective_task_env_for_selection(
+            &fixture.contract,
+            "docker-build",
+            ExecutionOverrides::default(),
+            fixture.dir.path(),
+        )
+        .expect("task env should resolve");
+
+        assert_eq!(
+            env.get("REDIS_HOST").map(String::as_str),
+            Some("task-override")
+        );
+        assert_eq!(
+            env.get("DATABASE_URL").map(String::as_str),
+            Some("postgres://compose")
+        );
+    }
+
+    #[test]
+    fn invalid_task_env_file_fails_before_missing_required_env_resolution() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+tasks:
+  docker-build:
+    env_files:
+      - .env.compose
+    run: docker compose up
+"#,
+        );
+        fixture.write(".env.compose", "DATABASE_URL=\nINVALID LINE\n");
+
+        let error = run_task(&fixture.contract, fixture.file_path(), "docker-build")
+            .expect_err("invalid env file should fail the task");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains(
+                "env file `.env.compose` declared in `env_files` is not valid dotenv content"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("missing required env"),
+            "task should fail on invalid env file before missing env resolution: {rendered}"
         );
     }
 

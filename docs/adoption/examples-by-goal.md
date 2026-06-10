@@ -107,6 +107,7 @@ What this proves:
 - service-backed tasks
 - workflow-scoped setup and run for an app path
 - workflow `prepare` for deterministic host file bootstrap before setup
+- task-owned `env_files` for workflow-local dotenv overlays
 - contract env policy plus task-scoped env requirements
 - local readiness and targetable listeners
 - a more realistic app contract than a single-script starter

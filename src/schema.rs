@@ -3268,6 +3268,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
+    pub env_files: Vec<String>,
+    #[serde(default)]
     pub env_bindings: BTreeMap<String, TaskEnvBindingSpec>,
     #[serde(default)]
     pub inputs: BTreeMap<String, TaskInputSpec>,
@@ -3474,6 +3476,14 @@ impl TaskSpec {
         merged.extend(self.env.clone());
         if let Some(branch) = self.mode_execution_branch(backend) {
             merged.extend(branch.env.clone());
+        }
+        merged
+    }
+
+    pub fn env_files_for_backend(&self, backend: Backend) -> Vec<String> {
+        let mut merged = self.env_files.clone();
+        if let Some(branch) = self.mode_execution_branch(backend) {
+            merged.extend(branch.env_files.clone());
         }
         merged
     }
@@ -4009,6 +4019,8 @@ pub struct TaskModeBranchSpec {
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
+    pub env_files: Vec<String>,
+    #[serde(default)]
     pub env_bindings: BTreeMap<String, TaskEnvBindingSpec>,
     #[serde(default)]
     pub run: Option<String>,
@@ -4509,6 +4521,20 @@ pub struct TaskEnsureEnvVarSpec {
     pub value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub random: Option<TaskEnsureEnvRandomSpec>,
+    #[serde(default, skip_serializing_if = "is_default_task_ensure_env_var_mode")]
+    pub mode: TaskEnsureEnvVarMode,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskEnsureEnvVarMode {
+    #[default]
+    Missing,
+    Replace,
+}
+
+const fn is_default_task_ensure_env_var_mode(value: &TaskEnsureEnvVarMode) -> bool {
+    matches!(value, TaskEnsureEnvVarMode::Missing)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

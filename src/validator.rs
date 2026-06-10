@@ -1985,6 +1985,7 @@ fn validate_tasks(
             &task.env_bindings,
             errors,
         );
+        validate_task_env_files(name, "env_files", &task.env_files, errors);
         if let Some(execution) = task.execution.as_ref() {
             if let Some(branch) = execution.modes.native.as_ref()
                 && let Some(runtime) = branch.runtime.as_ref()
@@ -2003,6 +2004,12 @@ fn validate_tasks(
                     "execution.modes.native.env_bindings",
                     &branch.env,
                     &branch.env_bindings,
+                    errors,
+                );
+                validate_task_env_files(
+                    name,
+                    "execution.modes.native.env_files",
+                    &branch.env_files,
                     errors,
                 );
             }
@@ -2025,6 +2032,12 @@ fn validate_tasks(
                     &branch.env_bindings,
                     errors,
                 );
+                validate_task_env_files(
+                    name,
+                    "execution.modes.container.env_files",
+                    &branch.env_files,
+                    errors,
+                );
             }
             if let Some(branch) = execution.modes.remote.as_ref()
                 && let Some(runtime) = branch.runtime.as_ref()
@@ -2043,6 +2056,14 @@ fn validate_tasks(
                     "execution.modes.remote.env_bindings",
                     &branch.env,
                     &branch.env_bindings,
+                    errors,
+                );
+            }
+            if let Some(branch) = execution.modes.remote.as_ref() {
+                validate_task_env_files(
+                    name,
+                    "execution.modes.remote.env_files",
+                    &branch.env_files,
                     errors,
                 );
             }
@@ -2341,6 +2362,11 @@ fn validate_tasks(
             if !task.env.is_empty() {
                 errors.push(ValidationError::new(format!(
                     "task `{name}` must not declare `env` when `aggregate` is present"
+                )));
+            }
+            if !task.env_files.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `env_files` when `aggregate` is present"
                 )));
             }
             if !task.env_bindings.is_empty() {
@@ -3247,6 +3273,18 @@ fn validate_task_action(
                 validate_task_ensure_bundle_step(task_name, index, step, errors);
             }
         }
+    }
+}
+
+fn validate_task_env_files(
+    task_name: &str,
+    scope: &str,
+    env_files: &[String],
+    errors: &mut Vec<ValidationError>,
+) {
+    for (index, path) in env_files.iter().enumerate() {
+        let field = format!("{scope}[{index}]");
+        validate_repo_relative_file_action_path(task_name, field.as_str(), path.as_str(), errors);
     }
 }
 
@@ -11414,6 +11452,62 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `setup:env-local` action `ensure_env_file` key `EMPTY` random bytes must be between 1 and 1024"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn validates_task_env_files_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    env_files:
+      - .env.compose
+    execution:
+      modes:
+        native:
+          env_files:
+            - .env.native
+    run: docker compose up
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("task env_files should validate");
+    }
+
+    #[test]
+    fn rejects_invalid_task_env_files_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    env_files:
+      - ../.env.compose
+    run: docker compose up
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid env_files should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `docker-build` `env_files[0]` must be a repo-relative path that does not escape the repo"
             )),
             "{rendered:?}"
         );

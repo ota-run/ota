@@ -141,6 +141,8 @@ tasks:
   dev:
     context: host
     description: Start the app once the managed services are ready
+    env_files:
+      - .env.local
     env:
       APP_ENV: local
     run: pnpm dev

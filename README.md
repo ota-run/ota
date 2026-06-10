@@ -192,6 +192,10 @@ If you are not sure which task to run after `ota up`, use:
 ota tasks --use
 ```
 
+Keep workflow-local env inputs declarative. Use `tasks.<name>.env_files` for ordered dotenv
+overlays owned by one task path, and use native `action` tasks such as `copy_if_missing` or
+`ensure_env_file` when the workflow needs deterministic local env-file bootstrap before setup.
+
 If you want repo-local agent guidance from the same contract after the core loop is working, use:
 
 ```bash
