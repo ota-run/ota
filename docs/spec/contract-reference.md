@@ -1676,7 +1676,9 @@ Task-effect rules:
 - `modes`: optional backend map
 - `modes.<mode>.context`: optional context override for that mode
 - `modes.<mode>.lifecycle`: optional lifecycle override for that mode (container mode only)
+- `env_files`: optional ordered repo-relative dotenv overlays injected into the task process before task-level `env`
 - `modes.<mode>.env`: optional env map merged over task-level `env`
+- `modes.<mode>.env_files`: optional ordered repo-relative dotenv overlays appended after task-level `env_files`
 - `modes.<mode>.run`: optional single-line command override for that mode
 - `modes.<mode>.script`: optional multiline script override for that mode
 - `modes.<mode>.prepare`: optional structured preparation override for that mode
@@ -1699,6 +1701,7 @@ Task-effect rules:
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
 - when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`prepare`/`launch`, and `runtime`
+- use `env_files` when one task path owns a workflow-specific dotenv overlay such as a `docker compose` interpolation file and that ownership should stay declarative instead of being hard-coded into the shell body
 - when a selected branch omits `run`/`script`/`prepare`/`launch`, ota falls back to the task-level execution body (including OS variants)
 - when a task declares `execution.modes`, an explicit `--mode` must resolve to a declared branch
   unless it matches `default_mode`; unsupported explicit overrides fail early with a mode-branch error
@@ -1736,9 +1739,10 @@ Task-effect rules:
 - `action.kind: ensure_env_file`
   - `action.path`: required repo-relative env-file path to create/update
   - `action.template`: optional repo-relative seed file copied when `action.path` is missing
-  - `action.vars`: required key map for missing env keys to append
-  - `action.vars.<KEY>.value`: literal value for missing key
-  - `action.vars.<KEY>.random`: generated value for missing key
+  - `action.vars`: required key map for env keys ota should enforce
+  - `action.vars.<KEY>.value`: literal value for the declared key
+  - `action.vars.<KEY>.random`: generated value for the declared key
+  - `action.vars.<KEY>.mode`: optional `missing` or `replace` (default `missing`)
   - `action.vars.<KEY>.random.bytes`: optional byte length (default `32`)
   - `action.vars.<KEY>.random.encoding`: optional `hex` or `base64` (default `hex`)
 - `action.kind: ensure_file`
@@ -1771,7 +1775,8 @@ there instead.
 
 Use `action.kind: ensure_env_file` when a setup path needs deterministic env bootstrap without a
 shell script. It creates `action.path` (optionally seeded from `action.template`) and appends only
-missing keys from `action.vars`, so repeated runs do not clobber user-edited values.
+missing keys by default. Use `action.vars.<KEY>.mode: replace` when a workflow-scoped overlay must
+derive from a template but rewrite specific keys deterministically.
 
 Use `action.kind: ensure_file` when setup needs one deterministic bootstrap file (for example a
 secret token file) without shell glue. It creates `action.path` once from one explicit source
@@ -2644,7 +2649,7 @@ Fields:
 - `<name>.prepare.task`: optional native `action` task ota should run first as explicit host file preparation for that workflow
   - must reference a declared task with `action`, not `run`, `script`, `launch`, or `runtime`
   - must resolve to native execution
-  - intended for deterministic local file preparation such as `copy_if_missing`
+  - intended for deterministic local file preparation such as `copy_if_missing`, `ensure_env_file`, or `ensure_bundle`
 - `<name>.setup.task`: optional task ota should treat as the preparation phase for that workflow
 - `<name>.run.task`: optional task ota should treat as the primary runnable surface for that workflow
 - `<name>.services.required`: optional services that belong to that workflow
@@ -2664,7 +2669,7 @@ Prepare vs setup vs run:
 - `prepare`
   - host-side deterministic bootstrap before setup
   - must point to one native `action` task
-  - use it for file preparation such as `copy_if_missing`
+  - use it for file preparation such as `copy_if_missing`, `ensure_env_file`, or `ensure_bundle`
 - `setup`
   - repo preparation
   - use it for dependency install, generated artifacts, and other normal bootstrap work

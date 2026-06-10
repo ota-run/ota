@@ -26,6 +26,7 @@
         },
         "failure_class": { "type": "string" },
         "error": { "type": "string" },
+        "likely_cause": { "type": "string" },
         "next": { "type": "string" }
       }
     },

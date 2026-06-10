@@ -15,6 +15,7 @@
         "notes": { "type": "string" },
         "category": { "type": "string" },
         "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "env_files": { "type": "array", "items": { "type": "string" } },
         "inputs": { "type": "object", "additionalProperties": true },
         "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory"] },
         "run": { "type": "string" },
@@ -52,6 +53,7 @@
             "properties": {
               "mode": { "enum": ["native", "container", "remote"] },
               "context": { "type": "string" },
+              "env_files": { "type": "array", "items": { "type": "string" } },
               "lifecycle": { "enum": ["persistent", "ephemeral"] },
               "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory"] },
               "run": { "type": "string" },

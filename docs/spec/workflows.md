@@ -195,6 +195,10 @@ Prepare vs setup vs run:
 - `setup` is repo preparation
 - `run` is the primary operational path
 
+When the run path needs workflow-local dotenv input, keep that ownership on the run task with
+`tasks.<name>.env_files`. Use workflow `prepare.task` only for finite host bootstrap such as
+materializing or rewriting a local env file before setup.
+
 Good workflow design keeps those three meanings separate.
 
 Good boundary:

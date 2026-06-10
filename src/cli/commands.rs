@@ -132,9 +132,9 @@ use crate::runner::{
     TaskExecutionRelation, TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence,
     clean_execution_report, clean_stale_execution, effective_execution,
     effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
-    env_resolution_source_label, ephemeral_container_name, host_runtime_readiness_observed,
-    load_declared_env_sources, load_policy_env_overlay, named_execution_context,
-    persistent_container_name, preflight_native_runtime_listener_binds,
+    ensure_task_env_files_ready, env_resolution_source_label, ephemeral_container_name,
+    host_runtime_readiness_observed, load_declared_env_sources, load_policy_env_overlay,
+    named_execution_context, persistent_container_name, preflight_native_runtime_listener_binds,
     reported_task_context_for_backend, resolve_declared_env_source_value,
     resolve_effective_task_container_backend, resolve_execution_backend,
     resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
@@ -2157,6 +2157,11 @@ pub fn proof_runtime(
                     up_process_failure,
                     &up_log_artifact_path,
                 );
+                let proof_likely_cause = proof_runtime_likely_cause(
+                    &proof_summary_for_output,
+                    up_process_failure,
+                    &up_log_artifact_path,
+                );
 
                 match format {
                     OutputFormat::Text => CommandOutput {
@@ -2171,6 +2176,7 @@ pub fn proof_runtime(
                             &topology_artifact_display,
                             &doctor_artifact_display,
                             &up_log_artifact_display,
+                            proof_likely_cause.as_deref(),
                             cleanup_error.as_deref(),
                             cleanup_next.as_deref(),
                         ),
@@ -2192,6 +2198,7 @@ pub fn proof_runtime(
                             }),
                             failure_class: proof_failure_class,
                             error: proof_error.as_deref(),
+                            likely_cause: proof_likely_cause,
                             next: proof_next.as_deref(),
                         }),
                         stderr: None,
@@ -9378,6 +9385,7 @@ fn build_assist_add_task_proposal(
         category: None,
         context: None,
         env: BTreeMap::new(),
+        env_files: Vec::new(),
         env_bindings: BTreeMap::new(),
         inputs: BTreeMap::new(),
         targets: BTreeMap::new(),
@@ -11788,6 +11796,14 @@ fn build_env_report_with_overrides(
                 }
                 .to_string());
             };
+            let backend = effective_task_execution(contract, task_name, overrides).backend;
+            ensure_task_env_files_ready(
+                task_name,
+                task,
+                backend,
+                contract_working_dir(contract_path),
+            )
+            .map_err(|error| error.to_string())?;
             (
                 effective_task_env_for_selection(
                     contract,
@@ -42263,6 +42279,49 @@ tasks:
     }
 
     #[test]
+    fn build_env_report_with_overrides_rejects_invalid_task_env_files() {
+        let temp = TempDir::new().unwrap();
+        let contract_path = temp.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    env_files:
+      - .env.compose
+    run: docker compose up
+"#,
+        )
+        .unwrap();
+        fs::write(
+            temp.path().join(".env.compose"),
+            "REDIS_HOST=redis\nINVALID LINE\n",
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let error = build_env_report_with_overrides(
+            &contract,
+            &contract_path,
+            Some("docker-build"),
+            ExecutionOverrides::default(),
+        )
+        .err()
+        .expect("invalid task env file should fail env report");
+        assert!(
+            error.contains(
+                "env file `.env.compose` declared in `env_files` is not valid dotenv content"
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn wait_for_proof_runtime_readiness_short_circuits_on_immediate_up_exit() {
         let _guard = cwd_mutex_lock();
         let contract_dir = TempDir::new().unwrap();
@@ -43568,6 +43627,7 @@ workflows:
             "up.log",
             None,
             None,
+            None,
         ));
 
         assert!(rendered.contains("missing-check-command"));
@@ -43603,6 +43663,7 @@ workflows:
             "topology.json",
             "doctor.json",
             "up.log",
+            None,
             None,
             None,
         ));
@@ -43784,11 +43845,51 @@ workflows:
             "up.log",
             None,
             None,
+            None,
         ));
 
         assert!(rendered.contains("Run task exited before readiness"));
         assert!(rendered.contains("inspect up.log and rerun `ota proof runtime`"));
         assert!(!rendered.contains("Surface readiness failed: app"));
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_surfaces_loopback_service_drift() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/docker-build");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "worker | Error: connect ECONNREFUSED 127.0.0.1:6379\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert!(likely.contains("Redis"), "{likely}");
+        assert!(likely.contains("task `env_files`"), "{likely}");
     }
 
     #[test]
@@ -44067,6 +44168,7 @@ tasks:
             notes: None,
             category: None,
             env: &env,
+            env_files: Vec::new(),
             inputs: &inputs,
             kind: "script",
             run: None,
@@ -44138,6 +44240,7 @@ tasks:
             notes: None,
             category: None,
             env: &env,
+            env_files: Vec::new(),
             inputs: &inputs,
             kind: "script",
             run: None,
@@ -44190,6 +44293,7 @@ tasks:
             notes: None,
             category: Some("test"),
             env: &env,
+            env_files: Vec::new(),
             inputs: &inputs,
             kind: "aggregate",
             run: None,
@@ -44254,6 +44358,7 @@ tasks:
             notes: None,
             category: None,
             env: &env,
+            env_files: Vec::new(),
             inputs: &inputs,
             kind: "script",
             run: Some("pnpm dev"),
@@ -44328,6 +44433,7 @@ tasks:
             notes: None,
             category: None,
             env: &env,
+            env_files: Vec::new(),
             inputs: &inputs,
             kind: "script",
             run: None,
@@ -44664,6 +44770,7 @@ workflows:
                 notes: None,
                 category: None,
                 env: &env,
+                env_files: Vec::new(),
                 inputs: &inputs,
                 kind: "command",
                 run: None,
@@ -72945,6 +73052,41 @@ fn proof_runtime_failure_class(
     Some(String::from("primary_blocker"))
 }
 
+fn proof_runtime_likely_cause(
+    summary: &DoctorSummary,
+    up_process_failure: Option<&str>,
+    up_log_artifact_path: &Path,
+) -> Option<String> {
+    let primary = proof_runtime_blocking_primary_blocker(summary);
+    let looks_like_readiness_failure = primary.is_some_and(|primary| {
+        primary.summary == "Run task exited before readiness"
+            || primary.summary.starts_with("Surface readiness failed:")
+            || primary.summary.starts_with("Surface readiness timed out:")
+            || primary
+                .summary
+                .starts_with("Signal surface readiness failed:")
+            || primary
+                .summary
+                .starts_with("Signal surface readiness timed out:")
+    }) || up_process_failure
+        .is_some_and(|failure| failure.contains("timed out while waiting for readiness"));
+    if !looks_like_readiness_failure {
+        return None;
+    }
+
+    let artifact_dir = up_log_artifact_path.parent()?;
+    for candidate in [
+        artifact_dir.join("up-detached-run.log"),
+        up_log_artifact_path.to_path_buf(),
+    ] {
+        let Some(cause) = runtime_loopback_drift_hint_from_log(candidate.as_path()) else {
+            continue;
+        };
+        return Some(cause);
+    }
+    None
+}
+
 fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path: &Path) -> bool {
     let Ok(log) = fs::read_to_string(up_log_artifact_path) else {
         return false;
@@ -73055,6 +73197,7 @@ fn render_proof_runtime_text(
     topology_artifact: &str,
     doctor_artifact: &str,
     up_log_artifact: &str,
+    likely_cause: Option<&str>,
     cleanup_error: Option<&str>,
     cleanup_next: Option<&str>,
 ) -> String {
@@ -73152,6 +73295,13 @@ fn render_proof_runtime_text(
                     &format!("inspect {} and rerun `ota proof runtime`", up_log_artifact),
                     None,
                 )
+            ));
+        }
+        if let Some(likely_cause) = likely_cause {
+            stdout.push_str(&format!(
+                "\n{} {}",
+                finding_detail_key(FindingSeverity::Error, "Likely cause:"),
+                render_backticked_text(likely_cause, None),
             ));
         }
     }
@@ -79036,6 +79186,38 @@ fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
         }
     }
     fallback.map(|line| format!("detached run output: {line}"))
+}
+
+fn runtime_loopback_drift_hint_from_log(path: &Path) -> Option<String> {
+    let contents = fs::read_to_string(path).ok()?;
+    for raw_line in contents.lines() {
+        let line = strip_ansi_codes(raw_line);
+        let lowered = line.to_ascii_lowercase();
+        if !(lowered.contains("econnrefused")
+            || lowered.contains("connection refused")
+            || lowered.contains("connect refused"))
+        {
+            continue;
+        }
+        if !(lowered.contains("127.0.0.1") || lowered.contains("localhost")) {
+            continue;
+        }
+
+        let service = if lowered.contains(":6379") {
+            "Redis"
+        } else if lowered.contains(":5432") {
+            "Postgres"
+        } else if lowered.contains(":8123") || lowered.contains(":9000") {
+            "ClickHouse"
+        } else {
+            "a dependent service"
+        };
+
+        return Some(format!(
+            "likely config drift: the runtime is still targeting {service} on loopback inside a multi-service startup path; move that host binding into a workflow-scoped env overlay or task `env_files` instead of `127.0.0.1` / `localhost`"
+        ));
+    }
+    None
 }
 
 fn up_declared_readiness_endpoint_hint(

@@ -81,6 +81,14 @@ If a repo standardizes on `ota run` or `ota up`, ota can functionally replace in
 for many projects. If developers still start the app directly outside ota, then shell exports or the
 app's own dotenv loader may still matter.
 
+Task-local dotenv overlays are separate from repo-level declared env sources:
+
+- `env.sources` is repo readiness truth and participates in declared env resolution
+- `tasks.<name>.env_files` and `tasks.<name>.execution.modes.<mode>.env_files` are execution-only
+  dotenv overlays for one selected task path
+- task `env_files` must stay repo-relative and parse cleanly; ota fails the task path instead of
+  silently ignoring a broken declared overlay
+
 ## Fields
 
 ### `env.vars.<NAME>`
@@ -209,6 +217,8 @@ Execution env layers are separate from root `env.vars` resolution.
 
 - root `env.vars` decides which repo-owned values are real readiness and execution inputs
 - `execution.contexts.<name>.env` adds context-wide execution defaults
+- `tasks.<name>.env_files` adds ordered task-local dotenv overlays for every backend path the task owns
+- `tasks.<name>.execution.modes.<mode>.env_files` appends mode-specific dotenv overlays after the task-level list
 - `tasks.<name>.env` overrides those defaults for one task
 - `tasks.<name>.execution.modes.<mode>.env` overrides the selected execution mode branch
 - ota also injects `OTA_WORKSPACE` automatically and derives fallback cache env for known
@@ -220,7 +230,14 @@ Execution env precedence for those injected layers is:
 1. selected task mode env
 2. task env
 3. context env
-4. ota-derived fallback execution env
+4. selected task mode `env_files`
+5. task `env_files`
+6. ota-derived fallback execution env
+
+`env_files` is for task-path ownership, not repo-wide env governance. If the repo relies on one
+dotenv or properties file as readiness truth across commands, declare that file under
+`env.sources`. If only one workflow/runtime path needs an overlay, keep it on the task through
+`env_files`.
 
 If a declared source is present but invalid, ota fails instead of silently skipping it.
 If a declared source has `must_exist: true` and is missing, ota reports that as a readiness failure

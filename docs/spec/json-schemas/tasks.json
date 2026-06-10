@@ -112,6 +112,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "value": { "type": "string" },
+                  "mode": { "enum": ["missing", "replace"] },
                   "random": {
                     "type": "object",
                     "additionalProperties": false,
@@ -236,6 +237,10 @@
               "category": { "type": "string" },
               "context": { "type": "string" },
               "default_mode": { "enum": ["native", "container", "remote"] },
+              "env_files": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
               "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
@@ -292,6 +297,10 @@
                   "properties": {
                     "mode": { "enum": ["native", "container", "remote"] },
                     "context": { "type": "string" },
+                    "env_files": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
                     "lifecycle": { "enum": ["persistent", "ephemeral"] },
                     "kind": { "enum": ["run", "script", "command", "container"] },
                     "run": { "type": "string" },
@@ -367,6 +376,10 @@
                     "category": { "type": "string" },
                     "context": { "type": "string" },
                     "default_mode": { "enum": ["native", "container", "remote"] },
+                    "env_files": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
                     "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },

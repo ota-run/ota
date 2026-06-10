@@ -604,6 +604,8 @@ Text output:
 - success output includes a compact `Steps` section, final `READY` line, and `Artifacts` paths
 - blocked output keeps the shared `NOT READY` / `BLOCKED` status language, shows the failing proof
   phase, and surfaces one primary `Why` / `Next` lane without duplicating the full doctor report
+- blocked proof output may also include `Likely cause` when ota can derive a higher-confidence
+  runtime-drift hint from captured proof logs
 - timeout output uses `TIMEOUT` and phase `timeout` when runtime-proof wait budget is exhausted
 - interruption output uses `INTERRUPTED` and phase `interrupted` when runtime proof is terminated
   by a signal (for example CI cancellation)
@@ -611,7 +613,8 @@ Text output:
 JSON output:
 
 - success or blocked proof output: `ok`, `path`, `mode`, optional `workflow`, `phase`, shared
-  `summary`, optional `artifacts`, and optional cleanup `error` / `next`
+  `summary`, optional `artifacts`, optional advisory `likely_cause`, and optional cleanup
+  `error` / `next`
 - contract load or validation failures still use the standard validation failure surface instead of
   inventing a second invalid-contract payload
 

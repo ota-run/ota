@@ -2177,6 +2177,8 @@ pub struct ProofRuntimeStatus<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub likely_cause: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<&'a str>,
 }
 
@@ -2909,6 +2911,8 @@ pub struct TaskSummary<'a> {
     pub category: Option<&'a str>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: &'a BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<&'a str>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub inputs: &'a BTreeMap<String, TaskInputSpec>,
     pub kind: &'a str,
@@ -3017,6 +3021,7 @@ impl<'a> TaskSummary<'a> {
             notes: task.notes.as_deref(),
             category: task.category.as_deref(),
             env: &task.env,
+            env_files: task.env_files.iter().map(String::as_str).collect(),
             inputs: &task.inputs,
             kind: resolved_execution.kind,
             run: (resolved_execution.kind == "run")
@@ -3078,6 +3083,7 @@ impl<'a> TaskSummary<'a> {
                             TaskModeView {
                                 mode: task_mode_name(backend),
                                 context: branch_effective.context_name,
+                                env_files: branch.env_files.iter().map(String::as_str).collect(),
                                 lifecycle: branch.lifecycle.map(format_lifecycle),
                                 kind: branch_execution.map(|execution| execution.kind),
                                 run: branch.run.as_deref(),
@@ -3132,6 +3138,8 @@ pub struct TaskModeView<'a> {
     pub mode: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]

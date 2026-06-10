@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added first-class task `env_files` overlays for run-path process ownership, widened
+  `action.kind: ensure_env_file` with deterministic `mode: replace`, and sharpened
+  `ota proof runtime --json` with optional `likely_cause` hints for high-confidence loopback
+  service-drift failures discovered in captured proof logs; invalid task `env_files` now fail
+  `ota env --task`, run preview, and task execution before env resolution falls through to
+  misleading missing-env diagnostics
 - widened managed-service topology modeling so service endpoint identity is no longer forced to
   equal execution-context identity: `services.<name>.endpoints.<name>.context`,
   `services.<name>.readiness.endpoint`, and `tasks.<name>.env_bindings.<VAR>.from_service.endpoint`

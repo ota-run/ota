@@ -59,6 +59,11 @@ What this gives you:
 - `ota run <task>` executes a declared task through the same contract
 - `ota proof runtime` proves one declared front door becomes operational and captures the same canonical artifacts ota already uses internally
 
+When one workflow path needs its own dotenv overlay, declare it on the task with
+`tasks.<name>.env_files` instead of hard-coding `--env-file` or inline exports into the shell body.
+When the repo also needs deterministic local env bootstrap, use a native `action` task such as
+`copy_if_missing` or `ensure_env_file` and point workflow `prepare.task` at that finite host step.
+
 If you are not sure which task to run next, use:
 
 ```bash
