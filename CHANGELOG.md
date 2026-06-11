@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- hardened finding identity across governance surfaces: advisory-backed doctor findings now carry
+  explicit stable identity, `ota explain --json` preserves that code through `steps[].code`
+  instead of re-deriving advisory identity from rendered summary text, and `ota annotations`
+  now renders additive `Code:` segments when input finding JSON includes a stable code
 - widened `ota env` with `--workflow` selection so the env read path can inspect the selected
   workflow’s env profile truth directly; text and JSON output now report the selected workflow,
   selected profile, and any workflow-owned rendered env artifacts such as rendered dotenv files

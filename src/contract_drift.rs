@@ -59,6 +59,7 @@ pub(crate) fn append_contract_drift_findings(
     {
         let existing = change.existing.unwrap_or_default();
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: format!("Contract drift: `{}` differs from repo signals", change.field),
             why: format!(
@@ -78,6 +79,7 @@ pub(crate) fn append_contract_drift_findings(
 
     for removal in collect_detect_drift_removals(contract, &detect_report.contract) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: format!("Contract drift: `{}` is no longer detected", removal.field),
             why: format!(

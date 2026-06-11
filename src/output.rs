@@ -201,6 +201,8 @@ pub struct DoctorPrimaryBlocker {
     pub why: String,
     pub next: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance_key: Option<String>,
@@ -975,7 +977,7 @@ pub struct ExecutionTopologyTargetServiceSummary {
 #[derive(Debug, Serialize)]
 pub struct ExplainStep {
     pub order: usize,
-    pub code: &'static str,
+    pub code: String,
     pub severity: FindingSeverity,
     pub summary: String,
     pub why: String,
@@ -1036,6 +1038,8 @@ pub struct WorkspacePrimaryBlocker {
     pub summary: String,
     pub why: String,
     pub next: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

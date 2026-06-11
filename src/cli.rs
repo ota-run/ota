@@ -28891,6 +28891,7 @@ agent:
     #[test]
     fn doctor_without_contract_marks_no_signals_finding_with_repo_signal_provenance() {
         let finding = Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("No strong repo signals were detected yet"),
             why: String::from("`./repo` did not expose obvious repo markers yet"),

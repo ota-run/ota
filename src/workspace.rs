@@ -1109,6 +1109,7 @@ fn adjust_repo_findings(report: DoctorReport, required: bool) -> DoctorReport {
 
 fn repo_finding(required: bool, summary: String, why: String, next: String) -> Finding {
     Finding {
+        identity: None,
         severity: if required {
             FindingSeverity::Error
         } else {

@@ -306,6 +306,7 @@ mod tests {
                 phase: String::from("provisioning"),
                 findings: vec![
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Warn,
                         summary: String::from("Contract drift: `tools.maven`"),
                         why: String::from(
@@ -316,6 +317,7 @@ mod tests {
                         ),
                     },
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Warn,
                         summary: String::from("Contract drift: `tools.node`"),
                         why: String::from(
@@ -326,6 +328,7 @@ mod tests {
                         ),
                     },
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Info,
                         summary: String::from("Policy-backed provisioning sources are declared"),
                         why: String::from(
@@ -336,6 +339,7 @@ mod tests {
                         ),
                     },
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Info,
                         summary: String::from("Adapter bootstrap sources are declared"),
                         why: String::from(
@@ -346,6 +350,7 @@ mod tests {
                         ),
                     },
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Info,
                         summary: String::from("Adapter bootstrap sources are declared"),
                         why: String::from(
@@ -436,6 +441,7 @@ mod tests {
                 phase: String::from("provisioning"),
                 findings: vec![
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Error,
                         summary: String::from("Version mismatch for runtime: java"),
                         why: String::from(
@@ -446,6 +452,7 @@ mod tests {
                         ),
                     },
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Error,
                         summary: String::from("Version mismatch for tool: curl"),
                         why: String::from(
@@ -502,6 +509,7 @@ mod tests {
                 behind: Some(2),
                 dirty: false,
                 findings: vec![Finding {
+                    identity: None,
                     severity: FindingSeverity::Warn,
                     summary: String::from("Repo drift detected: api"),
                     why: String::from(
@@ -590,6 +598,7 @@ mod tests {
                 behind: None,
                 dirty: true,
                 findings: vec![Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Missing setup task"),
                     why: String::from("repo is not ready"),
