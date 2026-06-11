@@ -1880,6 +1880,15 @@ not need to recompute them. When there is at least one finding, the summary may 
 question “what should I fix first?” without scanning the full list. When that blocker maps back to
 a finding with stable identity, `summary.primary_blocker.code` is included additively.
 
+For the main structured doctor finding families, `findings[].code`, `findings[].category`, and
+`findings[].owner` are now emitted from explicit finding identity instead of being re-derived from
+rendered English summary text. That includes contract advisories plus the main service, check,
+runtime/tool, env-value and env-source, native prerequisite, backend/remote topology, workflow
+probe/surface readiness, policy, repo-hygiene, and contract-drift finding lanes.
+
+Policy-backed version-rule and strict-version findings also preserve the same `org_policy`
+provenance and `policy_*` metadata as the older policy blocker and provisioning lanes.
+
 When the repo contract declares an `agent` block, the additive `agent` summary can also include
 `inferred_boundary_reviewed`. `false` means the current writable and protected boundary still comes
 from starter or detector inference and has not been confirmed by the repo author yet.

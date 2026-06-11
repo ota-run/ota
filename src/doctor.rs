@@ -317,16 +317,18 @@ fn unsupported_host_context_findings(
         if context.only_arch.is_some() {
             constraints.push(format!("`only_arch: [{supported_arch}]`"));
         }
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!("Unsupported host platform for context: {context_name}"),
-            why: format!(
+        findings.push(Finding::identified(
+            "OTA_CONTEXT_HOST_PLATFORM_UNSUPPORTED",
+            "execution",
+            "host",
+            FindingSeverity::Error,
+            format!("Unsupported host platform for context: {context_name}"),
+            format!(
                 "the selected workflow/task path resolves `execution.contexts.{context_name}`, but that context declares {} and the current host is `{current_os}/{current_arch}`",
                 constraints.join(" and ")
             ),
             next,
-        });
+        ));
     }
 
     findings
@@ -1058,13 +1060,15 @@ fn remote_target_os_probe_finding(context_name: Option<&str>, why: String) -> Fi
                 remote_os_probe_command()
             )
         });
-    Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: format!("Remote target operating system could not be determined{suffix}"),
+    Finding::identified(
+        "OTA_REMOTE_TARGET_OS_UNDETERMINED",
+        "remote",
+        "remote_backend",
+        FindingSeverity::Error,
+        format!("Remote target operating system could not be determined{suffix}"),
         why,
         next,
-    }
+    )
 }
 
 fn probe_remote_target_os(
@@ -1158,15 +1162,15 @@ fn remote_doctor_probe_contexts(
         let backend = match resolve_context_execution_backend(contract, name) {
             Ok(backend) => backend,
             Err(error) => {
-                findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Error,
-                    summary: format!("Remote execution context is not executable: {name}"),
-                    why: error.to_string(),
-                    next: format!(
+                findings.push(remote_backend_finding(
+                    "OTA_REMOTE_CONTEXT_UNEXECUTABLE",
+                    FindingSeverity::Error,
+                    format!("Remote execution context is not executable: {name}"),
+                    error.to_string(),
+                    format!(
                         "repair `execution.contexts.{name}` so ota can execute that remote context, then rerun `ota doctor --mode remote`"
                     ),
-                });
+                ));
                 continue;
             }
         };
@@ -1483,356 +1487,353 @@ pub(crate) fn provisioning_installability_finding(
     };
     let remote_suffix = remote_context_summary_suffix(remote_context);
     let remote_label = remote_target_label(remote_context);
+    let owner = match target {
+        ProvisioningExecutionTarget::Container { .. } => "container_target",
+        ProvisioningExecutionTarget::Native => "host",
+        ProvisioningExecutionTarget::Remote { .. } => "remote_target",
+    };
 
-    match (&target, diagnosis.backend.as_str(), diagnosis.kind) {
+    let (code, summary, why, next) = match (&target, diagnosis.backend.as_str(), diagnosis.kind) {
         (
             ProvisioningExecutionTarget::Container { .. },
             "apt",
             ProvisioningFailureKind::VersionUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE",
+            format!(
                 "Container apt cannot install pinned package version: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the Linux/container target requests {}, but the configured apt sources do not provide that version",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!(
+            format!(
                 "update the selected container image{image_hint} or its apt sources, or relax the Linux/container version pin for `{}`, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Container { .. },
             "apt",
             ProvisioningFailureKind::PackageUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE",
+            format!(
                 "Container apt cannot locate required package: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the Linux/container target requests `{}`, but the configured apt sources do not provide that package",
                 diagnosis.name
             ),
-            next: format!(
+            format!(
                 "update the selected container image{image_hint} or its apt sources so `{}` is available, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Container { .. },
             "apt",
             ProvisioningFailureKind::IndexUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_CONTAINER_APT_INDEX_UNAVAILABLE",
+            format!(
                 "Container apt cannot refresh configured sources: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the Linux/container target could not refresh apt indexes, so ota could not verify or install {}",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!(
+            format!(
                 "fix apt repository access in the selected container image{image_hint}, then rerun `{rerun_command}`"
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Container { .. },
             backend,
             ProvisioningFailureKind::VersionUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE",
+            format!(
                 "Container {backend} cannot install pinned version: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the Linux/container target requests {}, but the configured `{backend}` provisioning path does not provide that version inside container image `{}`",
                 provisioning_diagnosis_requirement_summary(diagnosis),
                 image.unwrap_or("unknown")
             ),
-            next: format!(
+            format!(
                 "fix the selected container image{image_hint} or the configured `{backend}` provisioning path, or relax the version pin for `{}`, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Container { .. },
             backend,
             ProvisioningFailureKind::PackageUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE",
+            format!(
                 "Container {backend} cannot locate required package: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the Linux/container target requests `{}`, but the configured `{backend}` provisioning path does not provide that package inside container image `{}`",
                 diagnosis.name,
                 image.unwrap_or("unknown")
             ),
-            next: format!(
+            format!(
                 "fix the selected container image{image_hint} or the configured `{backend}` provisioning path so `{}` is available, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Container { .. },
             backend,
             ProvisioningFailureKind::IndexUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE",
+            format!(
                 "Container {backend} cannot refresh configured sources: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the Linux/container target could not refresh the configured `{backend}` sources, so ota could not verify or install {}",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!(
+            format!(
                 "fix `{backend}` repository access in the selected container image{image_hint}, then rerun `{rerun_command}`"
             ),
-        },
-        (ProvisioningExecutionTarget::Container { .. }, backend, _) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ),
+        (ProvisioningExecutionTarget::Container { .. }, backend, _) => (
+            "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED",
+            format!(
                 "Container {backend} cannot install requested prerequisite: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the Linux/container target requests {}, but the configured `{backend}` provisioning path could not satisfy it inside container image `{}`",
                 provisioning_diagnosis_requirement_summary(diagnosis),
                 image.unwrap_or("unknown")
             ),
-            next: format!(
+            format!(
                 "fix the selected container image{image_hint} or the configured `{backend}` provisioning path for `{}`, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Native,
             backend,
             ProvisioningFailureKind::VersionUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE",
+            format!(
                 "Host {backend} cannot install pinned version: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the host target requests {}, but the configured `{backend}` provisioning path could not provide that version",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!(
+            format!(
                 "fix the host `{backend}` provisioning path or relax the version pin for `{}`, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Native,
             backend,
             ProvisioningFailureKind::PackageUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE",
+            format!(
                 "Host {backend} cannot locate required package: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the host target requests `{}`, but the configured `{backend}` provisioning path does not provide that package",
                 diagnosis.name
             ),
-            next: format!(
+            format!(
                 "fix the host `{backend}` provisioning path so `{}` is available, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Native,
             backend,
             ProvisioningFailureKind::IndexUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE",
+            format!(
                 "Host {backend} cannot refresh configured sources: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the host target could not refresh the configured `{backend}` sources, so ota could not verify or install {}",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!(
+            format!(
                 "fix the host `{backend}` repository access, then rerun `{rerun_command}`"
             ),
-        },
-        (ProvisioningExecutionTarget::Native, backend, _) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ),
+        (ProvisioningExecutionTarget::Native, backend, _) => (
+            "OTA_HOST_PROVISIONING_BACKEND_FAILED",
+            format!(
                 "Host {backend} cannot install requested prerequisite: {}",
                 diagnosis.name
             ),
-            why: format!(
+            format!(
                 "the host target requests {}, but the configured `{backend}` provisioning path could not satisfy it",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!(
+            format!(
                 "fix the host `{backend}` provisioning path for `{}`, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Remote { .. },
             "apt",
             ProvisioningFailureKind::VersionUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_REMOTE_APT_VERSION_UNAVAILABLE",
+            format!(
                 "Remote apt cannot install pinned package version: {}{}",
                 diagnosis.name, remote_suffix
             ),
-            why: format!(
+            format!(
                 "{remote_label} requests {}, but the configured apt sources do not provide that version",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!(
+            format!(
                 "fix the remote apt sources or relax the version pin for `{}`, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Remote { .. },
             "apt",
             ProvisioningFailureKind::PackageUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE",
+            format!(
                 "Remote apt cannot locate required package: {}{}",
                 diagnosis.name, remote_suffix
             ),
-            why: format!(
+            format!(
                 "{remote_label} requests `{}`, but the configured apt sources do not provide that package",
                 diagnosis.name
             ),
-            next: format!(
+            format!(
                 "fix the remote apt sources so `{}` is available, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Remote { .. },
             "apt",
             ProvisioningFailureKind::IndexUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_REMOTE_APT_INDEX_UNAVAILABLE",
+            format!(
                 "Remote apt cannot refresh configured sources: {}{}",
                 diagnosis.name, remote_suffix
             ),
-            why: format!(
+            format!(
                 "{remote_label} could not refresh apt indexes, so ota could not verify or install {}",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!("fix remote apt repository access, then rerun `{rerun_command}`"),
-        },
+            format!("fix remote apt repository access, then rerun `{rerun_command}`"),
+        ),
         (
             ProvisioningExecutionTarget::Remote { .. },
             backend,
             ProvisioningFailureKind::VersionUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE",
+            format!(
                 "Remote {backend} cannot install pinned version: {}{}",
                 diagnosis.name, remote_suffix
             ),
-            why: format!(
+            format!(
                 "{remote_label} requests {}, but the configured `{backend}` provisioning path does not provide that version",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!(
+            format!(
                 "fix the remote `{backend}` provisioning path or relax the version pin for `{}`, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Remote { .. },
             backend,
             ProvisioningFailureKind::PackageUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE",
+            format!(
                 "Remote {backend} cannot locate required package: {}{}",
                 diagnosis.name, remote_suffix
             ),
-            why: format!(
+            format!(
                 "{remote_label} requests `{}`, but the configured `{backend}` provisioning path does not provide that package",
                 diagnosis.name
             ),
-            next: format!(
+            format!(
                 "fix the remote `{backend}` provisioning path so `{}` is available, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
+        ),
         (
             ProvisioningExecutionTarget::Remote { .. },
             backend,
             ProvisioningFailureKind::IndexUnavailable,
-        ) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ) => (
+            "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE",
+            format!(
                 "Remote {backend} cannot refresh configured sources: {}{}",
                 diagnosis.name, remote_suffix
             ),
-            why: format!(
+            format!(
                 "{remote_label} could not refresh the configured `{backend}` sources, so ota could not verify or install {}",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!(
+            format!(
                 "fix the remote `{backend}` repository access, then rerun `{rerun_command}`"
             ),
-        },
-        (ProvisioningExecutionTarget::Remote { .. }, backend, _) => Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!(
+        ),
+        (ProvisioningExecutionTarget::Remote { .. }, backend, _) => (
+            "OTA_REMOTE_PROVISIONING_BACKEND_FAILED",
+            format!(
                 "Remote {backend} cannot install requested prerequisite: {}{}",
                 diagnosis.name, remote_suffix
             ),
-            why: format!(
+            format!(
                 "{remote_label} requests {}, but the configured `{backend}` provisioning path could not satisfy it",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            next: format!(
+            format!(
                 "fix the remote `{backend}` provisioning path for `{}`, then rerun `{rerun_command}`",
                 diagnosis.name
             ),
-        },
-    }
+        ),
+    };
+
+    Finding::identified(code, "provisioning", owner, FindingSeverity::Error, summary, why, next)
 }
 
 impl FindingIdentity {
+    pub(crate) fn new(code: &str, category: &str, owner: &str) -> Self {
+        Self {
+            code: code.to_string(),
+            category: category.to_string(),
+            owner: owner.to_string(),
+        }
+    }
+
     fn from_contract_advisory(advisory: &ContractAdvisory) -> Self {
         Self {
             code: advisory.code().to_string(),
@@ -1843,9 +1844,27 @@ impl FindingIdentity {
 }
 
 impl Finding {
+    pub(crate) fn identified(
+        code: &str,
+        category: &str,
+        owner: &str,
+        severity: FindingSeverity,
+        summary: impl Into<String>,
+        why: impl Into<String>,
+        next: impl Into<String>,
+    ) -> Self {
+        Self {
+            identity: Some(FindingIdentity::new(code, category, owner)),
+            severity,
+            summary: summary.into(),
+            why: why.into(),
+            next: next.into(),
+        }
+    }
+
     fn policy_context(&self) -> Option<PolicyFindingContext<'_>> {
-        match self.summary.as_str() {
-            "Repo does not satisfy org policy pack" => {
+        match self.code() {
+            "OTA_POLICY_PACK_VIOLATION" => {
                 let has_sections = self.why.contains("missing contract sections:");
                 let has_files = self.why.contains("missing files:");
                 let reason = match (has_sections, has_files) {
@@ -1863,21 +1882,28 @@ impl Finding {
                     mutation_allowed: false,
                 })
             }
-            "Policy-backed provisioning sources are declared" => Some(PolicyFindingContext {
+            "OTA_POLICY_BACKED_VERSION_RULES_DECLARED" => Some(PolicyFindingContext {
+                outcome: "policy_surface_available",
+                reason: "policy_backed_version_rules_declared",
+                source: "org",
+                install_scope: "repo_local",
+                mutation_allowed: false,
+            }),
+            "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => Some(PolicyFindingContext {
                 outcome: "policy_surface_available",
                 reason: "policy_backed_provisioning_declared",
                 source: "org",
                 install_scope: "repo_local",
                 mutation_allowed: false,
             }),
-            "Adapter bootstrap sources are declared" => Some(PolicyFindingContext {
+            "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => Some(PolicyFindingContext {
                 outcome: "policy_surface_available",
                 reason: "policy_backed_adapter_bootstrap_declared",
                 source: "org",
                 install_scope: "repo_local",
                 mutation_allowed: false,
             }),
-            "Policy provisioning needs explicit package identifiers" => {
+            "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => {
                 Some(PolicyFindingContext {
                     outcome: "blocked_by_policy",
                     reason: "missing_package_identifiers",
@@ -1886,7 +1912,14 @@ impl Finding {
                     mutation_allowed: false,
                 })
             }
-            "Invalid org policy pack" => Some(PolicyFindingContext {
+            "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => Some(PolicyFindingContext {
+                outcome: "blocked_by_policy",
+                reason: "strict_version_noncompliance",
+                source: "org",
+                install_scope: "repo_local",
+                mutation_allowed: false,
+            }),
+            "OTA_POLICY_PACK_INVALID" => Some(PolicyFindingContext {
                 outcome: "blocked_by_integrity_policy",
                 reason: "invalid_org_policy_pack",
                 source: "org",
@@ -2580,6 +2613,13 @@ impl Finding {
                 String::new(),
                 String::new(),
             ),
+            "OTA_POLICY_BACKED_VERSION_RULES_DECLARED" => (
+                "the org policy pack declares approved repo version rules".to_string(),
+                "the org policy pack has no approved repo version rules declared".to_string(),
+                "org_policy".to_string(),
+                String::new(),
+                String::new(),
+            ),
             "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => (
                 "the org policy pack declares approved provisioning sources".to_string(),
                 "the org policy pack has no provisioning sources declared".to_string(),
@@ -2597,6 +2637,14 @@ impl Finding {
             "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => (
                 "the org policy pack declares approved adapter bootstrap sources".to_string(),
                 "the org policy pack has no adapter bootstrap sources declared".to_string(),
+                "org_policy".to_string(),
+                String::new(),
+                String::new(),
+            ),
+            "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => (
+                "the installed version satisfies the repo contract but violates strict org policy"
+                    .to_string(),
+                "the installed version also complies with strict org policy".to_string(),
                 "org_policy".to_string(),
                 String::new(),
                 String::new(),
@@ -2795,6 +2843,26 @@ impl Finding {
         self.provenance_context()
             .map(|context| context.provenance_key.to_string())
     }
+}
+
+fn policy_finding(
+    code: &str,
+    severity: FindingSeverity,
+    summary: impl Into<String>,
+    why: impl Into<String>,
+    next: impl Into<String>,
+) -> Finding {
+    Finding::identified(code, "policy", "org_policy", severity, summary, why, next)
+}
+
+fn remote_backend_finding(
+    code: &str,
+    severity: FindingSeverity,
+    summary: impl Into<String>,
+    why: impl Into<String>,
+    next: impl Into<String>,
+) -> Finding {
+    Finding::identified(code, "remote", "remote_backend", severity, summary, why, next)
 }
 
 impl Serialize for Finding {
@@ -3660,17 +3728,15 @@ fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
         FindingSeverity::Error
     };
 
-    findings.push(Finding {
-        identity: None,
+    findings.push(Finding::identified(
+        "OTA_TASKS_MISSING",
+        "contract",
+        "repo_contract",
         severity,
-        summary: String::from("No tasks defined in contract"),
-        why: String::from(
-            "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
-        ),
-        next: String::from(
-            "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task",
-        ),
-    });
+        "No tasks defined in contract",
+        "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
+        "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task",
+    ));
 }
 
 fn diagnose_contract_advisories(
@@ -3862,55 +3928,51 @@ fn diagnose_selected_task_effects(
     }
 
     if !broad_network_tasks.is_empty() {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: format!(
+        findings.push(Finding::identified(
+            "OTA_SELECTED_TASK_PATH_NETWORK_REQUIRED",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Info,
+            format!(
                 "Selected task path requires network access: {}",
                 broad_network_tasks.join(", ")
             ),
-            why: String::from(
-                "the selected task path includes tasks with `effects.network: true`, so readiness may still depend on registry, API, or remote service reachability even when repo write boundaries are otherwise narrow",
-            ),
-            next: String::from(
-                "treat the selected path as network-dependent in CI and agent execution, and keep `effects.network: true` explicit on those tasks",
-            ),
-        });
+            "the selected task path includes tasks with `effects.network: true`, so readiness may still depend on registry, API, or remote service reachability even when repo write boundaries are otherwise narrow",
+            "treat the selected path as network-dependent in CI and agent execution, and keep `effects.network: true` explicit on those tasks",
+        ));
     }
 
     if !hydration_network_tasks.is_empty() {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: format!(
+        findings.push(Finding::identified(
+            "OTA_SELECTED_TASK_PATH_DEPENDENCY_HYDRATION",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Info,
+            format!(
                 "Selected task path performs network dependency hydration: {}",
                 hydration_network_tasks.join(", ")
             ),
-            why: String::from(
-                "the selected task path includes tasks with `effects.network_kind: dependency_hydration`; this is a narrower network lane (for example lockfile-backed package-manager fetches), but still depends on registry reachability",
-            ),
-            next: String::from(
-                "keep lockfiles and package-manager provenance strict for these tasks, and keep `effects.network_kind: dependency_hydration` explicit on that path",
-            ),
-        });
+            "the selected task path includes tasks with `effects.network_kind: dependency_hydration`; this is a narrower network lane (for example lockfile-backed package-manager fetches), but still depends on registry reachability",
+            "keep lockfiles and package-manager provenance strict for these tasks, and keep `effects.network_kind: dependency_hydration` explicit on that path",
+        ));
     }
 
     if !external_state_tasks.is_empty() {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Warn,
-            summary: format!(
+        findings.push(Finding::identified(
+            "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Warn,
+            format!(
                 "Selected task path mutates external state: {}",
                 external_state_systems.into_iter().collect::<Vec<_>>().join(", ")
             ),
-            why: format!(
+            format!(
                 "the selected task path includes `{}`, which declares `effects.external_state`; repo write boundaries do not cover that out-of-repo mutation",
                 external_state_tasks.join(", ")
             ),
-            next: String::from(
-                "run the selected path only when those external systems are meant to change, and keep `effects.external_state` explicit on the mutating tasks",
-            ),
-        });
+            "run the selected path only when those external systems are meant to change, and keep `effects.external_state` explicit on the mutating tasks",
+        ));
     }
 }
 
@@ -3972,17 +4034,15 @@ fn diagnose_agent_boundary_review(contract: &Contract, findings: &mut Vec<Findin
         return;
     }
 
-    findings.push(Finding {
-        identity: None,
-        severity: FindingSeverity::Warn,
-        summary: String::from("Agent boundary is inferred and unreviewed"),
-        why: String::from(
-            "`agent.inferred_boundary.reviewed: false` means Ota inferred the current writable and protected paths, but the repo owner has not confirmed that boundary yet",
-        ),
-        next: String::from(
-            "review `agent.writable_paths` and `agent.protected_paths`, set `agent.inferred_boundary.reviewed: true`, then rerun `ota validate`",
-        ),
-    });
+    findings.push(Finding::identified(
+        "OTA_AGENT_BOUNDARY_UNREVIEWED",
+        "contract",
+        "repo_contract",
+        FindingSeverity::Warn,
+        "Agent boundary is inferred and unreviewed",
+        "`agent.inferred_boundary.reviewed: false` means Ota inferred the current writable and protected paths, but the repo owner has not confirmed that boundary yet",
+        "review `agent.writable_paths` and `agent.protected_paths`, set `agent.inferred_boundary.reviewed: true`, then rerun `ota validate`",
+    ));
 }
 
 fn project_type_allows_no_tasks(contract: &Contract) -> bool {
@@ -4027,27 +4087,25 @@ fn diagnose_lifecycle(
                 "use `ota run <task>` for isolated execution; use `ota up` for readiness only",
             ),
         };
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Warn,
-            summary: String::from("Ephemeral lifecycle is execution-only"),
-            why: String::from(
-                "`execution.lifecycle: ephemeral` only applies to task execution. Diagnosis, healthchecks, and teardown are not covered.",
-            ),
+        findings.push(Finding::identified(
+            "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Warn,
+            "Ephemeral lifecycle is execution-only",
+            "`execution.lifecycle: ephemeral` only applies to task execution. Diagnosis, healthchecks, and teardown are not covered.",
             next,
-        });
+        ));
     } else {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Warn,
-            summary: String::from("Ephemeral lifecycle is advisory in native mode"),
-            why: String::from(
-                "`execution.lifecycle: ephemeral` is advisory in native mode only. Native execution still runs in the host shell.",
-            ),
-            next: String::from(
-                "use `ota run <task>` for isolated execution; use `ota up` for readiness only",
-            ),
-        });
+        findings.push(Finding::identified(
+            "OTA_LIFECYCLE_EPHEMERAL_ADVISORY",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Warn,
+            "Ephemeral lifecycle is advisory in native mode",
+            "`execution.lifecycle: ephemeral` is advisory in native mode only. Native execution still runs in the host shell.",
+            "use `ota run <task>` for isolated execution; use `ota up` for readiness only",
+        ));
     }
 }
 
@@ -4145,48 +4203,42 @@ fn diagnose_execution_backend(
             "kubectl" => Some("kubectl"),
             other => {
                 let Some(extension) = contract.extensions.get(other) else {
-                    findings.push(Finding {
-                        identity: None,
-                        severity: FindingSeverity::Error,
-                        summary: format!("Unsupported remote execution backend provider: {other}"),
-                        why: format!(
+                    findings.push(remote_backend_finding(
+                        "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED",
+                        FindingSeverity::Error,
+                        format!("Unsupported remote execution backend provider: {other}"),
+                        format!(
                             "the contract requests remote diagnosis with provider `{other}`, but current Ota only supports built-in providers or a matching `backend_provider` extension"
                         ),
-                        next: String::from(
-                            "change `execution.backends.remote.provider` to `daytona`, `ssh`, `tsh`, or `kubectl`, or declare a matching `backend_provider` extension",
-                        ),
-                    });
+                        "change `execution.backends.remote.provider` to `daytona`, `ssh`, `tsh`, or `kubectl`, or declare a matching `backend_provider` extension",
+                    ));
                     return None;
                 };
 
                 if extension.kind != ExtensionKind::BackendProvider {
-                    findings.push(Finding {
-                        identity: None,
-                        severity: FindingSeverity::Error,
-                        summary: format!("Unsupported remote execution backend provider: {other}"),
-                        why: format!(
+                    findings.push(remote_backend_finding(
+                        "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED",
+                        FindingSeverity::Error,
+                        format!("Unsupported remote execution backend provider: {other}"),
+                        format!(
                             "the contract requests remote diagnosis with provider `{other}`, but the matching extension is not a `backend_provider`"
                         ),
-                        next: String::from(
-                            "change the extension kind to `backend_provider` or change the remote provider name",
-                        ),
-                    });
+                        "change the extension kind to `backend_provider` or change the remote provider name",
+                    ));
                     return None;
                 }
 
                 if extension.api_version != 1 {
-                    findings.push(Finding {
-                        identity: None,
-                        severity: FindingSeverity::Error,
-                        summary: format!("Unsupported backend provider api_version: {other}"),
-                        why: format!(
+                    findings.push(remote_backend_finding(
+                        "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED",
+                        FindingSeverity::Error,
+                        format!("Unsupported backend provider api_version: {other}"),
+                        format!(
                             "the matching backend provider extension declares unsupported `api_version {}`",
                             extension.api_version
                         ),
-                        next: String::from(
-                            "bump the backend provider extension to `api_version: 1`",
-                        ),
-                    });
+                        "bump the backend provider extension to `api_version: 1`",
+                    ));
                     return None;
                 }
 
@@ -4225,48 +4277,42 @@ fn diagnose_execution_backend(
                 "kubectl" => Some("kubectl"),
                 other => {
                     let Some(extension) = contract.extensions.get(other) else {
-                        findings.push(Finding {
-                            identity: None,
-                            severity: FindingSeverity::Error,
-                            summary: format!("Unsupported remote execution backend provider: {other}"),
-                            why: format!(
+                        findings.push(remote_backend_finding(
+                            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED",
+                            FindingSeverity::Error,
+                            format!("Unsupported remote execution backend provider: {other}"),
+                            format!(
                                 "the contract requests `execution.preferred: remote` with provider `{other}`, but current Ota only supports built-in providers or a matching `backend_provider` extension"
                             ),
-                            next: String::from(
-                                "change `execution.backends.remote.provider` to `daytona`, `ssh`, `tsh`, or `kubectl`, or declare a matching `backend_provider` extension",
-                            ),
-                        });
+                            "change `execution.backends.remote.provider` to `daytona`, `ssh`, `tsh`, or `kubectl`, or declare a matching `backend_provider` extension",
+                        ));
                         return None;
                     };
 
                     if extension.kind != ExtensionKind::BackendProvider {
-                        findings.push(Finding {
-                            identity: None,
-                            severity: FindingSeverity::Error,
-                            summary: format!("Unsupported remote execution backend provider: {other}"),
-                            why: format!(
+                        findings.push(remote_backend_finding(
+                            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED",
+                            FindingSeverity::Error,
+                            format!("Unsupported remote execution backend provider: {other}"),
+                            format!(
                                 "the contract requests `execution.preferred: remote` with provider `{other}`, but the matching extension is not a `backend_provider`"
                             ),
-                            next: String::from(
-                                "change the extension kind to `backend_provider` or change the remote provider name",
-                            ),
-                        });
+                            "change the extension kind to `backend_provider` or change the remote provider name",
+                        ));
                         return None;
                     }
 
                     if extension.api_version != 1 {
-                        findings.push(Finding {
-                            identity: None,
-                            severity: FindingSeverity::Error,
-                            summary: format!("Unsupported backend provider api_version: {other}"),
-                            why: format!(
+                        findings.push(remote_backend_finding(
+                            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED",
+                            FindingSeverity::Error,
+                            format!("Unsupported backend provider api_version: {other}"),
+                            format!(
                                 "the matching backend provider extension declares unsupported `api_version {}`",
                                 extension.api_version
                             ),
-                            next: String::from(
-                                "bump the backend provider extension to `api_version: 1`",
-                            ),
-                        });
+                            "bump the backend provider extension to `api_version: 1`",
+                        ));
                         return None;
                     }
 
@@ -4304,31 +4350,27 @@ fn diagnose_execution_backend(
 }
 
 fn container_mode_not_configured_finding() -> Finding {
-    Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: String::from("Container execution is not configured"),
-        why: String::from(
-            "container diagnosis requires `execution.backends.container.image` so Ota can inspect the execution image that actually runs tasks",
-        ),
-        next: String::from(
-            "add `execution.backends.container.image`, then rerun `ota doctor --mode container`",
-        ),
-    }
+    Finding::identified(
+        "OTA_CONTAINER_MODE_NOT_CONFIGURED",
+        "execution",
+        "repo_contract",
+        FindingSeverity::Error,
+        "Container execution is not configured",
+        "container diagnosis requires `execution.backends.container.image` so Ota can inspect the execution image that actually runs tasks",
+        "add `execution.backends.container.image`, then rerun `ota doctor --mode container`",
+    )
 }
 
 fn remote_mode_not_configured_finding() -> Finding {
-    Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: String::from("Remote execution is not configured"),
-        why: String::from(
-            "remote diagnosis requires `execution.backends.remote.provider` and a targetable remote execution context so Ota can inspect the remote backend that actually runs tasks",
-        ),
-        next: String::from(
-            "add `execution.backends.remote.provider` plus `execution.backends.remote.target`, or rerun `ota doctor` without `--mode remote`",
-        ),
-    }
+    Finding::identified(
+        "OTA_REMOTE_MODE_NOT_CONFIGURED",
+        "remote",
+        "repo_contract",
+        FindingSeverity::Error,
+        "Remote execution is not configured",
+        "remote diagnosis requires `execution.backends.remote.provider` and a targetable remote execution context so Ota can inspect the remote backend that actually runs tasks",
+        "add `execution.backends.remote.provider` plus `execution.backends.remote.target`, or rerun `ota doctor` without `--mode remote`",
+    )
 }
 
 fn contract_has_host_bound_readiness_surfaces(contract: &Contract) -> bool {
@@ -4355,33 +4397,27 @@ fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
 
     let verb = "remain";
     let skipped = skipped.join(", ");
-    Finding {
-        identity: None,
-        severity: FindingSeverity::Info,
-        summary: String::from("Container readiness does not include host-only checks"),
-        why: format!(
+    Finding::identified(
+        "OTA_CONTAINER_DOCTOR_HOST_SCOPE_NOTE",
+        "execution",
+        "repo_contract",
+        FindingSeverity::Info,
+        "Container readiness does not include host-only checks",
+        format!(
             "container mode validated the selected execution image and container execution path; {skipped} {verb} host-bound and would mix contexts"
         ),
-        next: String::from(
-            "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
-        ),
-    }
+        "use `ota doctor --mode native` for host readiness, or run declared tasks with `ota run <task> --mode container` through the validated container path",
+    )
 }
 
 fn remote_mode_scope_note_finding() -> Finding {
-    Finding {
-        identity: None,
-        severity: FindingSeverity::Info,
-        summary: String::from(
-            "Remote execution contexts are only partially evaluated in native mode",
-        ),
-        why: String::from(
-            "native doctor mode can validate remote backend declarations and run contextual readiness probes from executable remote contexts, but runtime and tool version checks still evaluate the local host rather than the declared remote environment",
-        ),
-        next: String::from(
-            "use `ota doctor --mode remote` to probe remote contexts directly, and `ota execution plan --mode remote` to inspect the remote backend contract when debugging topology",
-        ),
-    }
+    remote_backend_finding(
+        "OTA_REMOTE_DOCTOR_PARTIAL",
+        FindingSeverity::Info,
+        "Remote execution contexts are only partially evaluated in native mode",
+        "native doctor mode can validate remote backend declarations and run contextual readiness probes from executable remote contexts, but runtime and tool version checks still evaluate the local host rather than the declared remote environment",
+        "use `ota doctor --mode remote` to probe remote contexts directly, and `ota execution plan --mode remote` to inspect the remote backend contract when debugging topology",
+    )
 }
 
 fn remote_policy_subject(context_name: Option<&str>) -> String {
@@ -4408,17 +4444,15 @@ fn remote_mode_host_scope_note_finding(contract: &Contract) -> Option<Finding> {
         "remain"
     };
     let skipped = skipped.join(", ");
-    Some(Finding {
-        identity: None,
-        severity: FindingSeverity::Info,
-        summary: String::from("Host-bound readiness checks are not evaluated in remote mode"),
-        why: format!(
+    Some(remote_backend_finding(
+        "OTA_REMOTE_DOCTOR_HOST_SCOPE_NOTE",
+        FindingSeverity::Info,
+        "Host-bound readiness checks are not evaluated in remote mode",
+        format!(
             "remote mode checks the declared remote execution backend; {skipped} {verb} host-bound and would mix contexts"
         ),
-        next: String::from(
-            "use `ota doctor --mode native` for host readiness, or declare `services.<name>.readiness.from` on an executable context for topology-aware remote checks",
-        ),
-    })
+        "use `ota doctor --mode native` for host readiness, or declare `services.<name>.readiness.from` on an executable context for topology-aware remote checks",
+    ))
 }
 
 fn diagnose_remote_target_shape(provider: &str, target: &str, findings: &mut Vec<Finding>) {
@@ -4430,32 +4464,30 @@ fn diagnose_remote_target_shape(provider: &str, target: &str, findings: &mut Vec
     match provider {
         "ssh" | "tsh" => {
             if !target.contains('@') {
-                findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Warn,
-                    summary: format!("Suspicious remote target for {provider}: {target}"),
-                    why: format!(
+                findings.push(remote_backend_finding(
+                    "OTA_REMOTE_TARGET_SUSPICIOUS",
+                    FindingSeverity::Warn,
+                    format!("Suspicious remote target for {provider}: {target}"),
+                    format!(
                         "remote provider `{provider}` usually expects a `user@host` style target, but current target `{target}` has no `@` separator"
                     ),
-                    next: format!(
+                    format!(
                         "set `execution.backends.remote.target` to a host target such as `user@host` for provider `{provider}`"
                     ),
-                });
+                ));
             }
         }
         "kubectl" => {
             if !target.starts_with("pod/") {
-                findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Warn,
-                    summary: format!("Suspicious remote target for kubectl: {target}"),
-                    why: format!(
+                findings.push(remote_backend_finding(
+                    "OTA_REMOTE_TARGET_SUSPICIOUS",
+                    FindingSeverity::Warn,
+                    format!("Suspicious remote target for kubectl: {target}"),
+                    format!(
                         "remote provider `kubectl` is currently validated for `pod/<name>` style targets, but current target `{target}` does not start with `pod/`"
                     ),
-                    next: String::from(
-                        "set `execution.backends.remote.target` to a pod target such as `pod/ota-dev`",
-                    ),
-                });
+                    "set `execution.backends.remote.target` to a pod target such as `pod/ota-dev`",
+                ));
             }
         }
         _ => {}
@@ -4503,6 +4535,11 @@ fn service_finding(
     lifecycle: Option<Lifecycle>,
 ) -> Option<Finding> {
     let rerun_doctor = rerun_doctor_command(mode, lifecycle);
+    let service_severity = if service.required {
+        FindingSeverity::Error
+    } else {
+        FindingSeverity::Warn
+    };
     if let Some(producer) = service.producer.as_ref() {
         return producer_owned_service_finding(
             name,
@@ -4517,44 +4554,40 @@ fn service_finding(
         let from_context = readiness.from_context().unwrap_or_default();
         return match run_service_readiness(contract, name, service, working_dir, readiness) {
             Ok(CheckStatus::Passed) => None,
-            Ok(CheckStatus::Failed) => Some(Finding {
-                identity: None,
-                severity: if service.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Service readiness failed: {name}"),
-                why: service_readiness_failure_why(
+            Ok(CheckStatus::Failed) => Some(Finding::identified(
+                "OTA_SERVICE_READINESS_FAILED",
+                "service",
+                "service",
+                service_severity,
+                format!("Service readiness failed: {name}"),
+                service_readiness_failure_why(
                     name,
                     resolve_service_readiness_endpoint(service, readiness),
                     from_context,
                 ),
-                next: match service.start_command(name) {
+                match service.start_command(name) {
                     Some(start) => format!("run `{start}` and rerun `{rerun_doctor}`"),
                     None => format!(
                         "repair `{name}` from context `{}` and rerun `{rerun_doctor}`",
                         from_context,
                     ),
                 },
-            }),
+            )),
             Ok(CheckStatus::TimedOut(_)) => None,
-            Err(error) => Some(Finding {
-                identity: None,
-                severity: if service.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Service readiness context is not executable: {name}"),
-                why: service_readiness_execution_why(
+            Err(error) => Some(Finding::identified(
+                "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE",
+                "service",
+                "service",
+                service_severity,
+                format!("Service readiness context is not executable: {name}"),
+                service_readiness_execution_why(
                     name,
                     resolve_service_readiness_endpoint(service, readiness),
                     from_context,
                     &error,
                 ),
-                next: service_readiness_execution_next(name, from_context, mode, lifecycle),
-            }),
+                service_readiness_execution_next(name, from_context, mode, lifecycle),
+            )),
         };
     }
 
@@ -4564,35 +4597,31 @@ fn service_finding(
         }
         return match run_service_healthcheck(name, service, working_dir, healthcheck) {
             CheckStatus::Passed => None,
-            CheckStatus::Failed => Some(Finding {
-                identity: None,
-                severity: if service.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Service healthcheck failed: {name}"),
-                why: format!("service `{name}` did not pass its configured healthcheck"),
-                next: match service.start_command(name) {
+            CheckStatus::Failed => Some(Finding::identified(
+                "OTA_SERVICE_CHECK_FAILED",
+                "service",
+                "service",
+                service_severity,
+                format!("Service healthcheck failed: {name}"),
+                format!("service `{name}` did not pass its configured healthcheck"),
+                match service.start_command(name) {
                     Some(start) => format!("run `{start}` and rerun `{rerun_doctor}`"),
                     None => format!(
                         "start or repair `{name}` and rerun its healthcheck: {healthcheck}, then rerun `{rerun_doctor}`"
                     ),
                 },
-            }),
-            CheckStatus::TimedOut(timeout) => Some(Finding {
-                identity: None,
-                severity: if service.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Service healthcheck timed out: {name}"),
-                why: format!("service `{name}` did not become ready within {}ms", timeout),
-                next: format!(
+            )),
+            CheckStatus::TimedOut(timeout) => Some(Finding::identified(
+                "OTA_SERVICE_CHECK_TIMED_OUT",
+                "service",
+                "service",
+                service_severity,
+                format!("Service healthcheck timed out: {name}"),
+                format!("service `{name}` did not become ready within {}ms", timeout),
+                format!(
                     "make `services.{name}.healthcheck` complete faster or raise `services.{name}.timeout`, then rerun `{rerun_doctor}`"
                 ),
-            }),
+            )),
         };
     }
 
@@ -4636,13 +4665,15 @@ fn service_finding(
             )
         };
 
-        return Some(Finding {
-            identity: None,
-            severity: FindingSeverity::Warn,
-            summary: format!("Required service cannot be verified: {name}"),
+        return Some(Finding::identified(
+            "OTA_SERVICE_UNVERIFIABLE",
+            "service",
+            "service",
+            FindingSeverity::Warn,
+            format!("Required service cannot be verified: {name}"),
             why,
             next,
-        });
+        ));
     }
 
     None
@@ -4657,6 +4688,11 @@ fn producer_owned_service_finding(
     lifecycle: Option<Lifecycle>,
 ) -> Option<Finding> {
     let rerun_doctor = rerun_doctor_command(mode, lifecycle);
+    let service_severity = if service.required {
+        FindingSeverity::Error
+    } else {
+        FindingSeverity::Warn
+    };
     let (producer_contract, producer_contract_path) = match load_contract_for_workspace_repo_ref(
         contract_path,
         producer.repo.as_str(),
@@ -4664,45 +4700,41 @@ fn producer_owned_service_finding(
     ) {
         Ok(value) => value,
         Err(error) => {
-            return Some(Finding {
-                identity: None,
-                severity: if service.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Required service cannot be verified: {name}"),
-                why: format!(
+            return Some(Finding::identified(
+                "OTA_SERVICE_UNVERIFIABLE",
+                "service",
+                "service",
+                service_severity,
+                format!("Required service cannot be verified: {name}"),
+                format!(
                     "service `{name}` is owned by workspace repo `{}` task `{}`, but Ota could not load that producer contract: {}",
                     producer.repo, producer.task, error
                 ),
-                next: format!(
+                format!(
                     "repair workspace repo `{}` or run `ota workspace up`, then rerun `{rerun_doctor}`",
                     producer.repo
                 ),
-            });
+            ));
         }
     };
     let producer_task = match producer_contract.tasks.get(producer.task.as_str()) {
         Some(task) => task,
         None => {
-            return Some(Finding {
-                identity: None,
-                severity: if service.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Required service cannot be verified: {name}"),
-                why: format!(
+            return Some(Finding::identified(
+                "OTA_SERVICE_UNVERIFIABLE",
+                "service",
+                "service",
+                service_severity,
+                format!("Required service cannot be verified: {name}"),
+                format!(
                     "service `{name}` is owned by workspace repo `{}` task `{}`, but that task is not declared",
                     producer.repo, producer.task
                 ),
-                next: format!(
+                format!(
                     "repair workspace repo `{}` task `{}` or run `ota workspace up`, then rerun `{rerun_doctor}`",
                     producer.repo, producer.task
                 ),
-            });
+            ));
         }
     };
     let listener_name = match resolve_producer_service_listener_name(
@@ -4711,23 +4743,21 @@ fn producer_owned_service_finding(
     ) {
         Ok(name) => name,
         Err(error) => {
-            return Some(Finding {
-                identity: None,
-                severity: if service.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Required service cannot be verified: {name}"),
-                why: format!(
+            return Some(Finding::identified(
+                "OTA_SERVICE_UNVERIFIABLE",
+                "service",
+                "service",
+                service_severity,
+                format!("Required service cannot be verified: {name}"),
+                format!(
                     "service `{name}` is owned by workspace repo `{}` task `{}`, but {}",
                     producer.repo, producer.task, error
                 ),
-                next: format!(
+                format!(
                     "repair workspace repo `{}` task `{}` or refine `services.{name}.producer.listener`, then rerun `{rerun_doctor}`",
                     producer.repo, producer.task
                 ),
-            });
+            ));
         }
     };
     let backend = match crate::runner::resolve_execution_backend_with_contract_path(
@@ -4743,23 +4773,21 @@ fn producer_owned_service_finding(
             ResolvedExecutionBackend::BackendProvider { .. } => Backend::Remote,
         },
         Err(error) => {
-            return Some(Finding {
-                identity: None,
-                severity: if service.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Required service cannot be verified: {name}"),
-                why: format!(
+            return Some(Finding::identified(
+                "OTA_SERVICE_UNVERIFIABLE",
+                "service",
+                "service",
+                service_severity,
+                format!("Required service cannot be verified: {name}"),
+                format!(
                     "service `{name}` is owned by workspace repo `{}` task `{}`, but Ota could not resolve that producer runtime: {}",
                     producer.repo, producer.task, error
                 ),
-                next: format!(
+                format!(
                     "repair workspace repo `{}` task `{}` or run `ota workspace up`, then rerun `{rerun_doctor}`",
                     producer.repo, producer.task
                 ),
-            });
+            ));
         }
     };
     let probe = match task_runtime_host_readiness_probe_for_backend(
@@ -4770,42 +4798,38 @@ fn producer_owned_service_finding(
     ) {
         Ok(probe) => probe,
         Err(error) => {
-            return Some(Finding {
-                identity: None,
-                severity: if service.required {
-                    FindingSeverity::Error
-                } else {
-                    FindingSeverity::Warn
-                },
-                summary: format!("Required service cannot be verified: {name}"),
-                why: format!(
+            return Some(Finding::identified(
+                "OTA_SERVICE_UNVERIFIABLE",
+                "service",
+                "service",
+                service_severity,
+                format!("Required service cannot be verified: {name}"),
+                format!(
                     "service `{name}` is owned by workspace repo `{}` task `{}`, but {}",
                     producer.repo, producer.task, error
                 ),
-                next: format!(
+                format!(
                     "repair workspace repo `{}` task `{}` listener `{}` or run `ota workspace up`, then rerun `{rerun_doctor}`",
                     producer.repo, producer.task, listener_name
                 ),
-            });
+            ));
         }
     };
     if host_runtime_readiness_observed(&probe, None) {
         return None;
     }
 
-    Some(Finding {
-        identity: None,
-        severity: if service.required {
-            FindingSeverity::Error
-        } else {
-            FindingSeverity::Warn
-        },
-        summary: format!("Service producer is not ready: {name}"),
-        why: format!(
+    Some(Finding::identified(
+        "OTA_SERVICE_CHECK_FAILED",
+        "service",
+        "service",
+        service_severity,
+        format!("Service producer is not ready: {name}"),
+        format!(
             "service `{name}` is owned by workspace repo `{}` task `{}` listener `{}` and its projected host endpoint `{}:{}` is not ready",
             producer.repo, producer.task, probe.listener, probe.address, probe.port
         ),
-        next: format!(
+        format!(
             "run `ota workspace up` to prepare the workspace end to end, or run `ota run {} {}` for workspace repo `{}` before rerunning `{rerun_doctor}`",
             producer.task,
             doctor_shell_quote(
@@ -4823,7 +4847,7 @@ fn producer_owned_service_finding(
             ),
             producer.repo
         ),
-    })
+    ))
 }
 
 fn resolve_producer_service_listener_name(
@@ -5534,64 +5558,71 @@ fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: 
         match source.status {
             DeclaredEnvSourceStatus::Loaded => {}
             DeclaredEnvSourceStatus::MissingOptional => {}
-            DeclaredEnvSourceStatus::MissingRequired => findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Error,
-                summary: format!("Missing required environment source: {}", source.label()),
-                why: format!(
+            DeclaredEnvSourceStatus::MissingRequired => findings.push(Finding::identified(
+                "OTA_ENV_SOURCE_MISSING_REQUIRED",
+                "environment",
+                "repo_contract",
+                FindingSeverity::Error,
+                format!("Missing required environment source: {}", source.label()),
+                format!(
                     "the repo declares `{}:{}` with `must_exist: true`, but that file is missing",
                     source.kind, source.path
                 ),
-                next: format!(
+                format!(
                     "create `{}` or update `env.sources`, then rerun `ota doctor`",
                     source.path
                 ),
-            }),
-            DeclaredEnvSourceStatus::ParseFailed => findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Error,
-                summary: format!("Environment source parse failed: {}", source.label()),
-                why: format!(
+            )),
+            DeclaredEnvSourceStatus::ParseFailed => findings.push(Finding::identified(
+                "OTA_ENV_SOURCE_PARSE_FAILED",
+                "environment",
+                "repo_contract",
+                FindingSeverity::Error,
+                format!("Environment source parse failed: {}", source.label()),
+                format!(
                     "ota could not read declared source `{}:{}`: {}",
                     source.kind,
                     source.path,
                     source.details.as_deref().unwrap_or("unknown parse error")
                 ),
-                next: format!(
+                format!(
                     "fix `{}` so ota can parse declared source `{}`, then rerun `ota doctor`",
-                    source.path
-                    ,
+                    source.path,
                     source.label()
                 ),
-            }),
-            DeclaredEnvSourceStatus::InvalidStructure => findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Error,
-                summary: format!("Environment source has invalid structure: {}", source.label()),
-                why: format!(
+            )),
+            DeclaredEnvSourceStatus::InvalidStructure => findings.push(Finding::identified(
+                "OTA_ENV_SOURCE_INVALID_STRUCTURE",
+                "environment",
+                "repo_contract",
+                FindingSeverity::Error,
+                format!("Environment source has invalid structure: {}", source.label()),
+                format!(
                     "declared source `{}` loaded as text, but its structure is not supported: {}",
                     source.label(),
                     source.details.as_deref().unwrap_or("unknown structure error")
                 ),
-                next: format!(
+                format!(
                     "replace unsupported values in `{}` with scalar env-shaped values only, then rerun `ota doctor`",
                     source.path
                 ),
-            }),
-            DeclaredEnvSourceStatus::Collision => findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Error,
-                summary: format!("Environment source key collision: {}", source.label()),
-                why: format!(
+            )),
+            DeclaredEnvSourceStatus::Collision => findings.push(Finding::identified(
+                "OTA_ENV_SOURCE_KEY_COLLISION",
+                "environment",
+                "repo_contract",
+                FindingSeverity::Error,
+                format!("Environment source key collision: {}", source.label()),
+                format!(
                     "declared source `{}` contains multiple keys that normalize to the same env name: {}",
                     source.label(),
                     source.details.as_deref().unwrap_or("unknown collision")
                 ),
-                next: format!(
+                format!(
                     "rename the colliding keys in `{}` so each normalized env name is unique, then rerun `ota doctor`",
                     source.path
                 ),
-            }),
+            )),
         }
     }
 }
@@ -5626,33 +5657,37 @@ fn diagnose_env(
                 if !requirement.allowed.is_empty()
                     && !requirement.allowed.iter().any(|allowed| allowed == &value)
                 {
-                    findings.push(Finding {
-                        identity: None,
-                        severity: FindingSeverity::Error,
-                        summary: format!("Invalid environment value: {name}"),
-                        why: format!(
+                    findings.push(Finding::identified(
+                        "OTA_ENV_INVALID",
+                        "environment",
+                        "host",
+                        FindingSeverity::Error,
+                        format!("Invalid environment value: {name}"),
+                        format!(
                             "{name} resolved to `{value}`, which is outside the allowed values"
                         ),
-                        next: format!(
+                        format!(
                             "run `ota env` to inspect the resolved source for {name}, then set {name} to one of: {}",
                             requirement.allowed.join(", ")
                         ),
-                    });
+                    ));
                 }
             }
-            None if required_for_selected_path => findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Error,
-                summary: format!("Missing environment variable: {name}"),
-                why: if requirement.required {
+            None if required_for_selected_path => findings.push(Finding::identified(
+                "OTA_ENV_MISSING",
+                "environment",
+                "host",
+                FindingSeverity::Error,
+                format!("Missing environment variable: {name}"),
+                if requirement.required {
                     format!("{name} is required by this repo contract")
                 } else {
                     format!("{name} is required by the selected task or workflow path")
                 },
-                next: format!(
+                format!(
                     "run `ota env` to inspect the current precedence, then set {name} in policy env, the shell, or a declared env source before running tasks"
                 ),
-            }),
+            )),
             None => {}
         }
     }
@@ -5997,13 +6032,15 @@ fn missing_toolchain_provider_finding(
         surface,
         &rerun_doctor_command(mode, None),
     );
-    Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: narrative.summary,
-        why: narrative.why,
-        next: narrative.next,
-    }
+    Finding::identified(
+        "OTA_TOOLCHAIN_PROVIDER_MISSING",
+        "environment",
+        command_version_finding_owner(mode),
+        FindingSeverity::Error,
+        narrative.summary,
+        narrative.why,
+        narrative.next,
+    )
 }
 
 fn toolchain_provider_probe_failed_finding(
@@ -6019,13 +6056,15 @@ fn toolchain_provider_probe_failed_finding(
         &details,
         &rerun_doctor_command(mode, None),
     );
-    Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: narrative.summary,
-        why: narrative.why,
-        next: narrative.next,
-    }
+    Finding::identified(
+        "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED",
+        "environment",
+        command_version_finding_owner(mode),
+        FindingSeverity::Error,
+        narrative.summary,
+        narrative.why,
+        narrative.next,
+    )
 }
 
 fn missing_toolchain_managed_surface_finding(
@@ -6041,13 +6080,19 @@ fn missing_toolchain_managed_surface_finding(
         entry,
         &rerun_doctor_command(mode, None),
     );
-    Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: narrative.summary,
-        why: narrative.why,
-        next: narrative.next,
-    }
+    let code = match kind {
+        ToolchainManagedSurfaceKind::Component => "OTA_TOOLCHAIN_COMPONENT_MISSING",
+        ToolchainManagedSurfaceKind::Target => "OTA_TOOLCHAIN_TARGET_MISSING",
+    };
+    Finding::identified(
+        code,
+        "environment",
+        command_version_finding_owner(mode),
+        FindingSeverity::Error,
+        narrative.summary,
+        narrative.why,
+        narrative.next,
+    )
 }
 
 fn diagnose_native_prerequisites(
@@ -6255,19 +6300,25 @@ fn native_prerequisite_finding(
         .filter(|value| !value.is_empty())
         .map(|value| format!(" (details: {value})"))
         .unwrap_or_default();
-    Finding {
-        identity: None,
-        severity: if prerequisite.required {
+    Finding::identified(
+        if timed_out {
+            "OTA_NATIVE_PREREQUISITE_TIMED_OUT"
+        } else {
+            "OTA_NATIVE_PREREQUISITE_MISSING"
+        },
+        "environment",
+        "host",
+        if prerequisite.required {
             FindingSeverity::Error
         } else {
             FindingSeverity::Warn
         },
         summary,
-        why: format!(
+        format!(
             "{description}; {check_context} on {target_os}, so ota cannot prove the native prerequisite is available{failure_suffix}"
         ),
-        next: native_prerequisite_next(name, prerequisite, target_os),
-    }
+        native_prerequisite_next(name, prerequisite, target_os),
+    )
 }
 
 fn native_prerequisite_next(
@@ -6390,6 +6441,28 @@ fn runtime_provider_hint<'a>(requirement: &'a RuntimeRequirement, os: &str) -> O
     requirement.provider_for_os(os)
 }
 
+fn command_version_finding_owner(mode: DoctorMode) -> &'static str {
+    match mode {
+        DoctorMode::Container => "container_target",
+        DoctorMode::Remote => "remote_target",
+        DoctorMode::Native => "host",
+    }
+}
+
+fn command_version_code(kind: &str, status: &str) -> &'static str {
+    match (kind, status) {
+        ("runtime", "missing") => "OTA_RUNTIME_MISSING",
+        ("runtime", "probe_failed") => "OTA_RUNTIME_PROBE_FAILED",
+        ("runtime", "unparseable") => "OTA_RUNTIME_VERSION_UNPARSEABLE",
+        ("runtime", "mismatch") => "OTA_RUNTIME_VERSION_MISMATCH",
+        ("tool", "missing") => "OTA_TOOL_MISSING",
+        ("tool", "probe_failed") => "OTA_TOOL_PROBE_FAILED",
+        ("tool", "unparseable") => "OTA_TOOL_VERSION_UNPARSEABLE",
+        ("tool", "mismatch") => "OTA_TOOL_VERSION_MISMATCH",
+        _ => "OTA_DOCTOR_FINDING_UNKNOWN",
+    }
+}
+
 fn diagnose_org_policy(
     contract: &Contract,
     contract_path: &Path,
@@ -6455,19 +6528,17 @@ fn diagnose_org_policy(
                 rules.push(format!("tool {name} ({approved_versions})"));
             }
 
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Policy-backed version rules are declared"),
-                why: format!(
+            findings.push(policy_finding(
+                "OTA_POLICY_BACKED_VERSION_RULES_DECLARED",
+                FindingSeverity::Info,
+                "Policy-backed version rules are declared",
+                format!(
                     "`{}` declares approved repo version rules: {}",
                     compact_display_path(&policy_path),
                     rules.join(", ")
                 ),
-                next: String::from(
-                    "use `ota policy review` to inspect the active policy source, or keep these approved version rules in mind when repo runtimes or tools need a governed version",
-                ),
-            });
+                "use `ota policy review` to inspect the active policy source, or keep these approved version rules in mind when repo runtimes or tools need a governed version",
+            ));
         }
 
         let provisioning_plan = policy_pack
@@ -6494,18 +6565,16 @@ fn diagnose_org_policy(
             .collect();
 
         if !missing_packages.is_empty() {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Warn,
-                summary: String::from("Policy provisioning needs explicit package identifiers"),
-                why: format!(
+            findings.push(policy_finding(
+                "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING",
+                FindingSeverity::Warn,
+                "Policy provisioning needs explicit package identifiers",
+                format!(
                     "policy-backed provisioning cannot proceed for {}",
                     missing_packages.join("; ")
                 ),
-                next: String::from(
-                    "add `package` to the matching `policies.provisioning.<name>` rule or platform override, then rerun `ota doctor`",
-                ),
-            });
+                "add `package` to the matching `policies.provisioning.<name>` rule or platform override, then rerun `ota doctor`",
+            ));
         }
 
         if !policy_pack.policies.provisioning.is_empty() {
@@ -6544,11 +6613,11 @@ fn diagnose_org_policy(
                 .map(|entry| provisioning_action_audit_summary(&entry))
                 .collect();
 
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Policy-backed provisioning sources are declared"),
-                why: if matched_targets.is_empty() {
+            findings.push(policy_finding(
+                "OTA_POLICY_BACKED_PROVISIONING_DECLARED",
+                FindingSeverity::Info,
+                "Policy-backed provisioning sources are declared",
+                if matched_targets.is_empty() {
                     format!(
                         "`{}` declares approved provisioning sources: {}",
                         compact_display_path(&policy_path),
@@ -6562,10 +6631,8 @@ fn diagnose_org_policy(
                         matched_targets.join(", ")
                     )
                 },
-                next: String::from(
-                    "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
-                ),
-            });
+                "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when repo prerequisites need a governed install path",
+            ));
         }
 
         return Some(ProvisioningDiagnostics {
@@ -6591,16 +6658,16 @@ fn diagnose_org_policy(
         ));
     }
 
-    findings.push(Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: String::from("Repo does not satisfy org policy pack"),
-        why: format!(
+    findings.push(policy_finding(
+        "OTA_POLICY_PACK_VIOLATION",
+        FindingSeverity::Error,
+        "Repo does not satisfy org policy pack",
+        format!(
             "`{}` requires {}",
             compact_display_path(&policy_path),
             why_parts.join(" and ")
         ),
-        next: if version_violations.is_empty() {
+        if version_violations.is_empty() {
             format!(
                 "add the missing items or update `{}`",
                 compact_display_path(&policy_path)
@@ -6616,7 +6683,7 @@ fn diagnose_org_policy(
                 compact_display_path(&policy_path)
             )
         },
-    });
+    ));
 
     None
 }
@@ -6697,20 +6764,20 @@ fn diagnose_remote_org_policy(
             why_parts.push(format!("missing files: {}", missing_files.join(", ")));
         }
 
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: String::from("Repo does not satisfy org policy pack"),
-            why: format!(
+        findings.push(policy_finding(
+            "OTA_POLICY_PACK_VIOLATION",
+            FindingSeverity::Error,
+            "Repo does not satisfy org policy pack",
+            format!(
                 "`{}` requires {}",
                 compact_display_path(policy_path),
                 why_parts.join(" and ")
             ),
-            next: format!(
+            format!(
                 "add the missing items or update `{}`",
                 compact_display_path(policy_path)
             ),
-        });
+        ));
         return;
     }
 
@@ -6721,20 +6788,20 @@ fn diagnose_remote_org_policy(
             &remote_probe.policy_requirement_surface,
         );
         if !version_violations.is_empty() {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Error,
-                summary: String::from("Repo does not satisfy org policy pack"),
-                why: format!(
+            findings.push(policy_finding(
+                "OTA_POLICY_PACK_VIOLATION",
+                FindingSeverity::Error,
+                "Repo does not satisfy org policy pack",
+                format!(
                     "`{}` requires {context_label} to stay within approved versions, but version policy violations: {}",
                     compact_display_path(policy_path),
                     version_violations.join("; ")
                 ),
-                next: format!(
+                format!(
                     "update the requirements for {context_label}, or widen `{}`",
                     compact_display_path(policy_path)
                 ),
-            });
+            ));
             continue;
         }
 
@@ -6744,19 +6811,17 @@ fn diagnose_remote_org_policy(
             &remote_probe.policy_requirement_surface,
         );
         if !version_rules.is_empty() {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Policy-backed version rules are declared"),
-                why: format!(
+            findings.push(policy_finding(
+                "OTA_POLICY_BACKED_VERSION_RULES_DECLARED",
+                FindingSeverity::Info,
+                "Policy-backed version rules are declared",
+                format!(
                     "`{}` declares approved repo version rules for {context_label}: {}",
                     compact_display_path(policy_path),
                     version_rules.join(", ")
                 ),
-                next: String::from(
-                    "use `ota policy review` to inspect the active policy source, or keep these approved version rules in mind when remote context requirements need a governed version",
-                ),
-            });
+                "use `ota policy review` to inspect the active policy source, or keep these approved version rules in mind when remote context requirements need a governed version",
+            ));
         }
 
         let provisioning_plan = policy_pack.provisioning_plan_for_requirement_surface_os(
@@ -6778,18 +6843,18 @@ fn diagnose_remote_org_policy(
             .collect();
 
         if !missing_packages.is_empty() {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Warn,
-                summary: String::from("Policy provisioning needs explicit package identifiers"),
-                why: format!(
+            findings.push(policy_finding(
+                "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING",
+                FindingSeverity::Warn,
+                "Policy provisioning needs explicit package identifiers",
+                format!(
                     "policy-backed provisioning cannot proceed for {context_label}: {}",
                     missing_packages.join("; ")
                 ),
-                next: format!(
+                format!(
                     "add `package` to the matching `policies.provisioning.<name>` rule or platform override, then rerun `ota doctor --mode remote` for {context_label}",
                 ),
-            });
+            ));
         }
 
         if !remote_probe.provisioning_actions.is_empty() {
@@ -6798,20 +6863,18 @@ fn diagnose_remote_org_policy(
                 .iter()
                 .map(provisioning_action_audit_summary)
                 .collect();
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Policy-backed provisioning sources are declared"),
-                why: format!(
+            findings.push(policy_finding(
+                "OTA_POLICY_BACKED_PROVISIONING_DECLARED",
+                FindingSeverity::Info,
+                "Policy-backed provisioning sources are declared",
+                format!(
                     "`{}` declares approved provisioning sources for {context_label}: {}. This repo's declared prerequisites can be provisioned through: {}",
                     compact_display_path(policy_path),
                     matched_targets.join(", "),
                     matched_targets.join(", ")
                 ),
-                next: String::from(
-                    "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when remote context prerequisites need a governed install path",
-                ),
-            });
+                "use `ota policy review` to inspect the active policy source, or keep these approved sources in mind when remote context prerequisites need a governed install path",
+            ));
         }
     }
 }
@@ -6889,35 +6952,33 @@ fn diagnose_adapter_bootstrap(
             .map(|action| format!("{} via {}", action.name, action.source))
             .collect();
 
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Adapter bootstrap sources are declared"),
-            why: format!(
+        findings.push(policy_finding(
+            "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED",
+            FindingSeverity::Info,
+            "Adapter bootstrap sources are declared",
+            format!(
                 "`{}` can bootstrap missing adapter binaries through: {}",
                 compact_display_path(&policy_path),
                 sources.join(", ")
             ),
-            next: String::from(
-                "use `ota policy review` to inspect the active policy source, or keep these approved bootstrap surfaces in mind when adapter install needs approval or audit",
-            ),
-        });
+            "use `ota policy review` to inspect the active policy source, or keep these approved bootstrap surfaces in mind when adapter install needs approval or audit",
+        ));
     }
 
     Some(AdapterBootstrapDiagnostics { plan, request })
 }
 
 fn policy_error_finding(err: LoadPolicyPackError) -> Finding {
-    Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: String::from("Invalid org policy pack"),
-        why: err.to_string(),
-        next: format!(
+    policy_finding(
+        "OTA_POLICY_PACK_INVALID",
+        FindingSeverity::Error,
+        "Invalid org policy pack",
+        err.to_string(),
+        format!(
             "repair `{}` and rerun `ota doctor`",
             compact_display_path(Path::new(err.path()))
         ),
-    }
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7172,17 +7233,19 @@ fn unsupported_toolchain_opportunity_finding(
         _ => "a managed ecosystem surface",
     };
 
-    Some(Finding {
-        identity: None,
-        severity: FindingSeverity::Info,
-        summary: format!("Managed toolchain opportunity: {ecosystem}"),
-        why: format!(
+    Some(Finding::identified(
+        "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED",
+        "contract",
+        "repo_contract",
+        FindingSeverity::Info,
+        format!("Managed toolchain opportunity: {ecosystem}"),
+        format!(
             "this repo uses {ecosystem_label} and currently models it through {fallback_model}; repo signals: {signal_summary}; ota does not ship a {ecosystem} toolchain provider yet"
         ),
-        next: format!(
+        format!(
             "keep {fallback_model} for now; ota can model this more cleanly once {ecosystem} toolchain support is shipped"
         ),
-    })
+    ))
 }
 
 fn diagnose_unsupported_toolchain_opportunities(
@@ -7500,28 +7563,28 @@ fn diagnose_command_version(
     let Some(actual) = actual else {
         if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
             let provider_requirement = tool_acquisition_provider_requirement(acquisition);
-            findings.push(Finding {
-                identity: None,
-                severity: if required {
+            findings.push(Finding::identified(
+                "OTA_TOOL_ACTIVATION_PROVIDER_MISSING",
+                "environment",
+                "host",
+                if required {
                     FindingSeverity::Error
                 } else {
                     FindingSeverity::Warn
                 },
-                summary: format!(
-                    "Missing tool activation provider: {provider_requirement}"
-                ),
-                why: format!(
+                format!("Missing tool activation provider: {provider_requirement}"),
+                format!(
                     "{display_name} is required by the selected workflow/task prerequisites, but the contract acquires it through `{}` and `{provider_requirement}` is not available on PATH",
                     match acquisition.provider {
                         ToolAcquisitionProvider::Corepack => "corepack",
                         ToolAcquisitionProvider::Command => "command activation",
                     }
                 ),
-                next: format!(
+                format!(
                     "install `{provider_requirement}` or change the tool acquisition path, then run `{}` and rerun `{rerun_doctor}`",
                     tool_acquisition_command(acquisition)
                 ),
-            });
+            ));
             return probe_started;
         }
 
@@ -7749,20 +7812,19 @@ fn diagnose_command_version(
                             (why, next)
                         }
                     };
-                    findings.push(Finding {
-                        identity: None,
-                        severity: if required {
+                    findings.push(Finding::identified(
+                        command_version_code(kind, "probe_failed"),
+                        "environment",
+                        command_version_finding_owner(mode),
+                        if required {
                             FindingSeverity::Error
                         } else {
                             FindingSeverity::Warn
                         },
-                        summary: format!(
-                            "{} probe failed: {finding_display_name}",
-                            kind_label(kind)
-                        ),
+                        format!("{} probe failed: {finding_display_name}", kind_label(kind)),
                         why,
                         next,
-                    });
+                    ));
                     return probe_started;
                 }
                 CommandVersionProbeOutcome::Unparseable => {
@@ -7809,17 +7871,19 @@ fn diagnose_command_version(
                             (why, next)
                         }
                     };
-                    findings.push(Finding {
-                        identity: None,
-                        severity: if required {
+                    findings.push(Finding::identified(
+                        command_version_code(kind, "unparseable"),
+                        "environment",
+                        command_version_finding_owner(mode),
+                        if required {
                             FindingSeverity::Error
                         } else {
                             FindingSeverity::Warn
                         },
-                        summary: format!("Unparseable version for {kind}: {finding_display_name}"),
+                        format!("Unparseable version for {kind}: {finding_display_name}"),
                         why,
                         next,
-                    });
+                    ));
                     return probe_started;
                 }
                 CommandVersionProbeOutcome::Version(_) => {}
@@ -7845,15 +7909,17 @@ fn diagnose_command_version(
             return probe_started;
         }
         let container_image = container_probe.map(|probe| probe.image.as_str());
-        findings.push(Finding {
-            identity: None,
-            severity: if required {
+        findings.push(Finding::identified(
+            command_version_code(kind, "missing"),
+            "environment",
+            command_version_finding_owner(mode),
+            if required {
                 FindingSeverity::Error
             } else {
                 FindingSeverity::Warn
             },
-            summary: format!("Missing {kind}: {finding_display_name}"),
-            why: match (mode, container_image) {
+            format!("Missing {kind}: {finding_display_name}"),
+            match (mode, container_image) {
                 (DoctorMode::Container, Some(image)) => format!(
                     "{display_name} is declared in the contract but is not available inside container image `{image}`"
                 ),
@@ -7873,7 +7939,7 @@ fn diagnose_command_version(
                     }),
                 _ => format!("{display_name} is declared in the contract but is not available on PATH"),
             },
-            next: match (mode, container_image) {
+            match (mode, container_image) {
                 (DoctorMode::Container, Some(image)) => format!(
                     "update `execution.backends.container.image` (currently `{image}`) so `{display_name}` is available, then rerun `{rerun_doctor}`"
                 ),
@@ -7899,7 +7965,7 @@ fn diagnose_command_version(
                         )
                     }),
             },
-        });
+        ));
         return probe_started;
     };
 
@@ -7943,21 +8009,19 @@ fn diagnose_command_version(
                     })
                 })
                 .unwrap_or_default();
-            findings.push(Finding {
-                identity: None,
-                severity: if required {
+            findings.push(policy_finding(
+                "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT",
+                if required {
                     FindingSeverity::Error
                 } else {
                     FindingSeverity::Warn
                 },
-                summary: format!(
-                    "Installed {kind} is not compliant with org policy: {finding_display_name}"
-                ),
-                why: format!(
+                format!("Installed {kind} is not compliant with org policy: {finding_display_name}"),
+                format!(
                     "{display_name} resolved to `{actual}` and satisfies the repo contract `{requirement}`, but `{}` enforces strict version compliance and {policy_violation}{probe_suffix}",
                     compact_display_path(&loaded_policy.path)
                 ),
-                next: match mode {
+                match mode {
                     DoctorMode::Container => format!(
                         "update the selected execution environment so `{display_name}` uses an approved version, or widen `{}`",
                         compact_display_path(&loaded_policy.path)
@@ -7971,7 +8035,7 @@ fn diagnose_command_version(
                         compact_display_path(&loaded_policy.path)
                     ),
                 },
-            });
+            ));
         }
         return probe_started;
     }
@@ -8113,26 +8177,28 @@ fn diagnose_command_version(
 
     if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
         let provider_requirement = tool_acquisition_provider_requirement(acquisition);
-        findings.push(Finding {
-            identity: None,
-            severity: if required {
+        findings.push(Finding::identified(
+            "OTA_TOOL_ACTIVATION_PROVIDER_MISSING",
+            "environment",
+            "host",
+            if required {
                 FindingSeverity::Error
             } else {
                 FindingSeverity::Warn
             },
-            summary: format!("Missing tool activation provider: {provider_requirement}"),
-            why: format!(
+            format!("Missing tool activation provider: {provider_requirement}"),
+            format!(
                 "{display_name} is required by the selected workflow/task prerequisites, but the contract upgrades it through `{}` and `{provider_requirement}` is not available on PATH",
                 match acquisition.provider {
                     ToolAcquisitionProvider::Corepack => "corepack",
                     ToolAcquisitionProvider::Command => "command activation",
                 }
             ),
-            next: format!(
+            format!(
                 "install `{provider_requirement}` or change the tool acquisition path, then run `{}` and rerun `{rerun_doctor}`",
                 tool_acquisition_command(acquisition)
             ),
-        });
+        ));
         return probe_started;
     }
 
@@ -8179,15 +8245,17 @@ fn diagnose_command_version(
             )
         })
         .or(exact_remediation);
-    findings.push(Finding {
-        identity: None,
-        severity: if required {
+    findings.push(Finding::identified(
+        command_version_code(kind, "mismatch"),
+        "environment",
+        command_version_finding_owner(mode),
+        if required {
             FindingSeverity::Error
         } else {
             FindingSeverity::Warn
         },
-        summary: format!("Version mismatch for {kind}: {finding_display_name}"),
-        why: match (mode, container_image) {
+        format!("Version mismatch for {kind}: {finding_display_name}"),
+        match (mode, container_image) {
             (DoctorMode::Container, Some(image)) => format!(
                 "{display_name} resolved to `{actual}` inside container image `{image}` but the contract requires `{requirement}`"
             ),
@@ -8209,7 +8277,7 @@ fn diagnose_command_version(
                 "{display_name} resolved to `{actual}` but the contract requires `{requirement}`{probe_suffix}"
             ),
         },
-        next: match (mode, container_image) {
+        match (mode, container_image) {
             (DoctorMode::Container, Some(image)) => format!(
                 "update `execution.backends.container.image` (currently `{image}`) so `{display_name}` satisfies `{requirement}`, then rerun `{rerun_doctor}`"
             ),
@@ -8235,7 +8303,7 @@ fn diagnose_command_version(
                     )
                 }),
         },
-    });
+    ));
     probe_started
 }
 
@@ -8397,17 +8465,19 @@ fn push_container_image_acquisition_finding(
                 container_probe.engine, container_probe.image
             )
         });
-    findings.push(Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
+    findings.push(Finding::identified(
+        "OTA_CONTAINER_IMAGE_UNAVAILABLE",
+        "execution",
+        "container_target",
+        FindingSeverity::Error,
         summary,
-        why: format!(
+        format!(
             "ota could not start configured container image `{}` before running runtime/tool probes: {}",
             container_probe.image,
             compact_probe_failure_message(message)
         ),
         next,
-    });
+    ));
     true
 }
 
@@ -8600,13 +8670,15 @@ fn diagnose_backend_cli(name: &str, backend: &str, findings: &mut Vec<Finding>) 
         return;
     }
 
-    findings.push(Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: format!("Missing execution backend CLI: {name}"),
-        why: format!("{backend} requires `{name}` to be available on PATH"),
-        next: format!("install {name} and make it available on PATH, then rerun `ota doctor`"),
-    });
+    findings.push(Finding::identified(
+        "OTA_BACKEND_CLI_MISSING",
+        "execution",
+        "host",
+        FindingSeverity::Error,
+        format!("Missing execution backend CLI: {name}"),
+        format!("{backend} requires `{name}` to be available on PATH"),
+        format!("install {name} and make it available on PATH, then rerun `ota doctor`"),
+    ));
 }
 
 fn diagnose_container_backend_cli(contract: &Contract, findings: &mut Vec<Finding>) {
@@ -8634,17 +8706,17 @@ fn diagnose_container_backend_cli_for_candidates(
         .collect::<Vec<_>>();
     if available_engines.is_empty() {
         let supported = engines.join(", ");
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!("Missing container execution backend CLI: {supported}"),
-            why: format!(
+        findings.push(Finding::identified(
+            "OTA_CONTAINER_BACKEND_CLI_MISSING",
+            "execution",
+            "host",
+            FindingSeverity::Error,
+            format!("Missing container execution backend CLI: {supported}"),
+            format!(
                 "container execution requires one of these CLIs to be available on PATH: {supported}"
             ),
-            next: String::from(
-                "install one of the supported container engines or use `--mode native` if the contract allows it, then rerun `ota doctor`",
-            ),
-        });
+            "install one of the supported container engines or use `--mode native` if the contract allows it, then rerun `ota doctor`",
+        ));
         return;
     }
     let mut first_failure = None;
@@ -8664,18 +8736,18 @@ fn diagnose_container_backend_cli_for_candidates(
 }
 
 fn container_backend_unavailable_finding(engine: &str, details: &str) -> Finding {
-    Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: format!("Container execution backend unavailable: {engine}"),
-        why: format!(
+    Finding::identified(
+        "OTA_CONTAINER_BACKEND_UNAVAILABLE",
+        "execution",
+        "host",
+        FindingSeverity::Error,
+        format!("Container execution backend unavailable: {engine}"),
+        format!(
             "container execution resolved `{engine}`, but `{} info` could not reach a usable container backend: {details}",
             engine
         ),
-        next: String::from(
-            "start or repair the selected container engine, or use `--mode native` if the contract allows it, then rerun `ota doctor`",
-        ),
-    }
+        "start or repair the selected container engine, or use `--mode native` if the contract allows it, then rerun `ota doctor`",
+    )
 }
 
 fn tool_executable_name(name: &str) -> &str {
@@ -8780,28 +8852,28 @@ fn diagnose_checks(
 
         match run_declared_check(contract, contract_path, check, working_dir, None, overrides) {
             CheckStatus::Passed => continue,
-            CheckStatus::Failed => findings.push(Finding {
-                identity: None,
-                severity: if is_selected_signal {
+            CheckStatus::Failed => findings.push(check_status_finding(
+                contract,
+                workflow_name,
+                check,
+                if is_selected_signal {
                     FindingSeverity::Info
                 } else {
                     map_check_severity(check.severity)
                 },
-                summary: failed_check_summary(check),
-                why: failed_check_why(contract, check),
-                next: failed_check_next(contract, workflow_name, check),
-            }),
-            CheckStatus::TimedOut(timeout) => findings.push(Finding {
-                identity: None,
-                severity: if is_selected_signal {
+                None,
+            )),
+            CheckStatus::TimedOut(timeout) => findings.push(check_status_finding(
+                contract,
+                workflow_name,
+                check,
+                if is_selected_signal {
                     FindingSeverity::Info
                 } else {
                     map_check_severity(check.severity)
                 },
-                summary: timed_out_check_summary(check),
-                why: timed_out_check_why(contract, check, timeout),
-                next: timed_out_check_next(contract, check),
-            }),
+                Some(timeout),
+            )),
         }
     }
 
@@ -8820,27 +8892,31 @@ fn diagnose_checks(
                 .expect("checked probe existence above");
             match run_named_probe(contract, contract_path, probe_name, None, overrides) {
                 CheckStatus::Passed => continue,
-                CheckStatus::Failed => findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Error,
-                    summary: format!("Probe failed: {probe_name}"),
-                    why: format!(
+                CheckStatus::Failed => findings.push(Finding::identified(
+                    "OTA_WORKFLOW_PROBE_FAILED",
+                    "execution",
+                    "repo_contract",
+                    FindingSeverity::Error,
+                    format!("Probe failed: {probe_name}"),
+                    format!(
                         "the configured workflow readiness probe `{probe_name}` ({}) did not succeed",
                         probe_source_description(contract, probe_name)
                     ),
-                    next: failed_probe_next(probe_name, probe),
-                }),
-                CheckStatus::TimedOut(timeout) => findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Error,
-                    summary: format!("Probe timed out: {probe_name}"),
-                    why: format!(
+                    failed_probe_next(probe_name, probe),
+                )),
+                CheckStatus::TimedOut(timeout) => findings.push(Finding::identified(
+                    "OTA_WORKFLOW_PROBE_TIMED_OUT",
+                    "execution",
+                    "repo_contract",
+                    FindingSeverity::Error,
+                    format!("Probe timed out: {probe_name}"),
+                    format!(
                         "the configured workflow readiness probe `{probe_name}` ({}) did not finish within {}ms",
                         probe_source_description(contract, probe_name),
                         timeout
                     ),
-                    next: timed_out_probe_next(probe_name, probe),
-                }),
+                    timed_out_probe_next(probe_name, probe),
+                )),
             }
         }
     }
@@ -8860,27 +8936,31 @@ fn diagnose_checks(
                 .expect("checked probe existence above");
             match run_named_probe(contract, contract_path, probe_name, None, overrides) {
                 CheckStatus::Passed => continue,
-                CheckStatus::Failed => findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Info,
-                    summary: format!("Signal probe failed: {probe_name}"),
-                    why: format!(
+                CheckStatus::Failed => findings.push(Finding::identified(
+                    "OTA_WORKFLOW_SIGNAL_PROBE_FAILED",
+                    "execution",
+                    "repo_contract",
+                    FindingSeverity::Info,
+                    format!("Signal probe failed: {probe_name}"),
+                    format!(
                         "the configured workflow signal probe `{probe_name}` ({}) did not succeed",
                         probe_source_description(contract, probe_name)
                     ),
-                    next: failed_probe_next(probe_name, probe),
-                }),
-                CheckStatus::TimedOut(timeout) => findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Info,
-                    summary: format!("Signal probe timed out: {probe_name}"),
-                    why: format!(
+                    failed_probe_next(probe_name, probe),
+                )),
+                CheckStatus::TimedOut(timeout) => findings.push(Finding::identified(
+                    "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT",
+                    "execution",
+                    "repo_contract",
+                    FindingSeverity::Info,
+                    format!("Signal probe timed out: {probe_name}"),
+                    format!(
                         "the configured workflow signal probe `{probe_name}` ({}) did not finish within {}ms",
                         probe_source_description(contract, probe_name),
                         timeout
                     ),
-                    next: timed_out_probe_next(probe_name, probe),
-                }),
+                    timed_out_probe_next(probe_name, probe),
+                )),
             }
         }
     }
@@ -8904,11 +8984,13 @@ fn diagnose_checks(
                 overrides,
             ) {
                 Ok(observation) if observation.status == CheckStatus::Passed => continue,
-                Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Error,
-                    summary: format!("Surface readiness failed: {surface_name}"),
-                    why: format!(
+                Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding::identified(
+                    "OTA_WORKFLOW_SURFACE_READINESS_FAILED",
+                    "execution",
+                    "repo_contract",
+                    FindingSeverity::Error,
+                    format!("Surface readiness failed: {surface_name}"),
+                    format!(
                         "the selected workflow surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready after {} checks",
                         observation.run_task_name,
                         observation.backend_label,
@@ -8916,19 +8998,21 @@ fn diagnose_checks(
                         observation.port,
                         observation.attempts
                     ),
-                    next: format!(
+                    format!(
                         "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
                         observation.run_task_name,
                         rerun_command,
                         observation.run_task_name,
                         rerun_command
                     ),
-                }),
-                Ok(observation) => findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Error,
-                    summary: format!("Surface readiness timed out: {surface_name}"),
-                    why: format!(
+                )),
+                Ok(observation) => findings.push(Finding::identified(
+                    "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT",
+                    "execution",
+                    "repo_contract",
+                    FindingSeverity::Error,
+                    format!("Surface readiness timed out: {surface_name}"),
+                    format!(
                         "the selected workflow surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready within {}ms across {} checks",
                         observation.run_task_name,
                         observation.backend_label,
@@ -8937,19 +9021,21 @@ fn diagnose_checks(
                         observation.timeout_ms,
                         observation.attempts
                     ),
-                    next: format!(
+                    format!(
                         "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
                         observation.run_task_name,
                         rerun_command,
                         observation.run_task_name,
                         rerun_command
                     ),
-                }),
-                Err(error) => findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Error,
-                    summary: format!("Surface readiness could not be evaluated: {surface_name}"),
-                    why: format!(
+                )),
+                Err(error) => findings.push(Finding::identified(
+                    "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE",
+                    "execution",
+                    "repo_contract",
+                    FindingSeverity::Error,
+                    format!("Surface readiness could not be evaluated: {surface_name}"),
+                    format!(
                         "the selected workflow surface `{surface_name}` on run task `{}` could not be resolved or checked: {error}",
                         contract
                             .selected_workflow(workflow_name)
@@ -8957,7 +9043,7 @@ fn diagnose_checks(
                             .map(|run| run.task.as_str())
                             .unwrap_or("-")
                     ),
-                    next: format!(
+                    format!(
                         "repair workflow run task `{}` surface attachment/readiness and rerun `{}`",
                         contract
                             .selected_workflow(workflow_name)
@@ -8966,7 +9052,7 @@ fn diagnose_checks(
                             .unwrap_or("-"),
                         rerun_command
                     ),
-                }),
+                )),
             }
         }
     }
@@ -8982,11 +9068,13 @@ fn diagnose_checks(
                 overrides,
             ) {
                 Ok(observation) if observation.status == CheckStatus::Passed => continue,
-                Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Info,
-                    summary: format!("Signal surface readiness failed: {surface_name}"),
-                    why: format!(
+                Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding::identified(
+                    "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED",
+                    "execution",
+                    "repo_contract",
+                    FindingSeverity::Info,
+                    format!("Signal surface readiness failed: {surface_name}"),
+                    format!(
                         "the configured workflow signal surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready after {} checks",
                         observation.run_task_name,
                         observation.backend_label,
@@ -8994,19 +9082,21 @@ fn diagnose_checks(
                         observation.port,
                         observation.attempts
                     ),
-                    next: format!(
+                    format!(
                         "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
                         observation.run_task_name,
                         rerun_command,
                         observation.run_task_name,
                         rerun_command
                     ),
-                }),
-                Ok(observation) => findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Info,
-                    summary: format!("Signal surface readiness timed out: {surface_name}"),
-                    why: format!(
+                )),
+                Ok(observation) => findings.push(Finding::identified(
+                    "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT",
+                    "execution",
+                    "repo_contract",
+                    FindingSeverity::Info,
+                    format!("Signal surface readiness timed out: {surface_name}"),
+                    format!(
                         "the configured workflow signal surface `{surface_name}` on run task `{}` (backend `{}`; endpoint `{}:{}`) did not become ready within {}ms across {} checks",
                         observation.run_task_name,
                         observation.backend_label,
@@ -9015,19 +9105,21 @@ fn diagnose_checks(
                         observation.timeout_ms,
                         observation.attempts
                     ),
-                    next: format!(
+                    format!(
                         "if workflow run task `{}` is still booting, wait and rerun `{}`; otherwise start or repair `{}` and rerun `{}`",
                         observation.run_task_name,
                         rerun_command,
                         observation.run_task_name,
                         rerun_command
                     ),
-                }),
-                Err(error) => findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Info,
-                    summary: format!("Signal surface readiness could not be evaluated: {surface_name}"),
-                    why: format!(
+                )),
+                Err(error) => findings.push(Finding::identified(
+                    "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE",
+                    "execution",
+                    "repo_contract",
+                    FindingSeverity::Info,
+                    format!("Signal surface readiness could not be evaluated: {surface_name}"),
+                    format!(
                         "the configured workflow signal surface `{surface_name}` on run task `{}` could not be resolved or checked: {error}",
                         contract
                             .selected_workflow(workflow_name)
@@ -9035,7 +9127,7 @@ fn diagnose_checks(
                             .map(|run| run.task.as_str())
                             .unwrap_or("-")
                     ),
-                    next: format!(
+                    format!(
                         "repair workflow run task `{}` surface attachment/readiness and rerun `{}`",
                         contract
                             .selected_workflow(workflow_name)
@@ -9044,7 +9136,7 @@ fn diagnose_checks(
                             .unwrap_or("-"),
                         rerun_command
                     ),
-                }),
+                )),
             }
         }
     }
@@ -10048,6 +10140,48 @@ fn failed_check_summary(check: &crate::schema::CheckSpec) -> String {
     }
 }
 
+fn check_status_finding(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    check: &crate::schema::CheckSpec,
+    severity: FindingSeverity,
+    timed_out: Option<u64>,
+) -> Finding {
+    let (code, summary, why, next) = if let Some(timeout) = timed_out {
+        (
+            if check.kind == crate::schema::CheckKind::File {
+                "OTA_FILE_CHECK_TIMED_OUT"
+            } else {
+                "OTA_CHECK_TIMED_OUT"
+            },
+            timed_out_check_summary(check),
+            timed_out_check_why(contract, check, timeout),
+            timed_out_check_next(contract, check),
+        )
+    } else {
+        (
+            if check.kind == crate::schema::CheckKind::File {
+                "OTA_FILE_CHECK_FAILED"
+            } else {
+                "OTA_CHECK_FAILED"
+            },
+            failed_check_summary(check),
+            failed_check_why(contract, check),
+            failed_check_next(contract, workflow_name, check),
+        )
+    };
+
+    Finding::identified(
+        code,
+        "execution",
+        "repo_contract",
+        severity,
+        summary,
+        why,
+        next,
+    )
+}
+
 fn failed_check_why(contract: &Contract, check: &crate::schema::CheckSpec) -> String {
     if check.kind == crate::schema::CheckKind::File {
         let path = check.path.as_deref().unwrap_or("-");
@@ -10866,27 +11000,27 @@ pub(crate) fn repo_missing_ota_state_gitignore(root: &Path) -> Result<bool, Stri
 pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option<Finding> {
     let root = contract_working_dir(contract_path);
     match repo_missing_ota_state_gitignore(root) {
-        Ok(true) => Some(Finding {
-            identity: None,
-            severity: FindingSeverity::Warn,
-            summary: String::from("Repo local Ota artifacts are not ignored by git"),
-            why: String::from(
-                "`.ota/state/`, `.ota/receipts/`, and `.ota/proof/` store Ota-owned local runtime artifacts; if they are tracked by git, execution residue, archived receipts, and runtime proof artifacts can pollute repo diffs and diagnosis artifacts",
-            ),
-            next: String::from(
-                "run `ota doctor --fix --dry-run` to preview adding `.ota/state/`, `.ota/receipts/`, and `.ota/proof/` to `.gitignore`, or add the ignore rules manually",
-            ),
-        }),
+        Ok(true) => Some(Finding::identified(
+            "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE",
+            "contract",
+            "repo_contract",
+            FindingSeverity::Warn,
+            "Repo local Ota artifacts are not ignored by git",
+            "`.ota/state/`, `.ota/receipts/`, and `.ota/proof/` store Ota-owned local runtime artifacts; if they are tracked by git, execution residue, archived receipts, and runtime proof artifacts can pollute repo diffs and diagnosis artifacts",
+            "run `ota doctor --fix --dry-run` to preview adding `.ota/state/`, `.ota/receipts/`, and `.ota/proof/` to `.gitignore`, or add the ignore rules manually",
+        )),
         Ok(false) => None,
-        Err(error) => Some(Finding {
-            identity: None,
-            severity: FindingSeverity::Warn,
-            summary: String::from("Repo `.gitignore` could not be inspected"),
-            why: format!(
+        Err(error) => Some(Finding::identified(
+            "OTA_REPO_HYGIENE_GITIGNORE_UNREADABLE",
+            "contract",
+            "repo_contract",
+            FindingSeverity::Warn,
+            "Repo `.gitignore` could not be inspected",
+            format!(
                 "ota could not inspect whether `.ota/state/`, `.ota/receipts/`, and `.ota/proof/` are ignored: {error}"
             ),
-            next: String::from("repair `.gitignore` readability and rerun `ota doctor`"),
-        }),
+            "repair `.gitignore` readability and rerun `ota doctor`",
+        )),
     }
 }
 
@@ -10930,19 +11064,21 @@ fn detect_devcontainer_runtime_drift(
         return None;
     }
 
-    Some(Finding {
-        identity: None,
-        severity: FindingSeverity::Warn,
-        summary: String::from("Devcontainer drift: Node image differs from repo runtime"),
-        why: format!(
+    Some(Finding::identified(
+        "OTA_DEVCONTAINER_RUNTIME_DRIFT",
+        "contract",
+        "repo_contract",
+        FindingSeverity::Warn,
+        "Devcontainer drift: Node image differs from repo runtime",
+        format!(
             "`{}` declares image `{image}`, which hints Node `{hinted_node}`, but the repo contract requires Node version `{required}`",
             compact_display_path(&devcontainer_path)
         ),
-        next: format!(
+        format!(
             "update `{}` to a Node image satisfying `{required}`, or narrow the repo contract if the devcontainer is intentionally legacy",
             compact_display_path(&devcontainer_path)
         ),
-    })
+    ))
 }
 
 fn detect_devcontainer_package_manager_drift(
@@ -10966,21 +11102,23 @@ fn detect_devcontainer_package_manager_drift(
         return None;
     }
 
-    Some(Finding {
-        identity: None,
-        severity: FindingSeverity::Warn,
-        summary: format!(
+    Some(Finding::identified(
+        "OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT",
+        "contract",
+        "repo_contract",
+        FindingSeverity::Warn,
+        format!(
             "Devcontainer drift: bootstrap command uses `{actual_manager}` instead of repo package manager `{expected_manager}`"
         ),
-        why: format!(
+        format!(
             "`{}` declares `postCreateCommand: {post_create}`, but the repo contract's Node package manager truth is `{expected_manager}`",
             compact_display_path(&devcontainer_path)
         ),
-        next: format!(
+        format!(
             "update `{}` so `postCreateCommand` uses `{expected_manager}`, or narrow the repo contract if a different package manager is intentionally canonical",
             compact_display_path(&devcontainer_path)
         ),
-    })
+    ))
 }
 
 fn repo_node_package_manager_truth(contract: &Contract) -> Option<&str> {
@@ -13488,6 +13626,9 @@ workflows:
             .iter()
             .find(|finding| finding.summary == "Unsupported host platform for context: host")
             .expect("expected unsupported host finding");
+        assert_eq!(finding.code(), "OTA_CONTEXT_HOST_PLATFORM_UNSUPPORTED");
+        assert_eq!(finding.category(), "execution");
+        assert_eq!(finding.owner(), "host");
         assert!(finding.why.contains("execution.contexts.host"));
         assert!(finding.why.contains("only_on"));
         assert!(finding.next.contains("ota doctor --workflow app"));
@@ -14395,6 +14536,9 @@ tasks:
             .iter()
             .find(|finding| finding.summary == "Remote execution is not configured")
             .expect("expected remote configuration blocker");
+        assert_eq!(finding.code(), "OTA_REMOTE_MODE_NOT_CONFIGURED");
+        assert_eq!(finding.category(), "remote");
+        assert_eq!(finding.owner(), "repo_contract");
         assert_eq!(finding.severity, FindingSeverity::Error);
         assert!(finding.next.contains("ota doctor"));
         assert!(finding.next.contains("--mode remote"));
@@ -14895,6 +15039,14 @@ tasks:
                 |finding| finding.summary == "Missing required environment source: dotenv:.env"
             )
         );
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Missing required environment source: dotenv:.env")
+            .expect("missing required env source should be present");
+        assert_eq!(finding.code(), "OTA_ENV_SOURCE_MISSING_REQUIRED");
+        assert_eq!(finding.category(), "environment");
+        assert_eq!(finding.owner(), "repo_contract");
     }
 
     #[test]
@@ -14929,6 +15081,14 @@ tasks:
                 |finding| finding.summary == "Missing required environment source: dotenv:.env"
             )
         );
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Missing required environment source: dotenv:.env")
+            .expect("missing required env source should be present");
+        assert_eq!(finding.code(), "OTA_ENV_SOURCE_MISSING_REQUIRED");
+        assert_eq!(finding.category(), "environment");
+        assert_eq!(finding.owner(), "repo_contract");
     }
 
     #[test]
@@ -14958,6 +15118,16 @@ tasks:
                     .why
                     .contains("ota could not read declared source `properties:app.properties`")
         }));
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary == "Environment source parse failed: properties:app.properties"
+            })
+            .expect("env source parse failure should be present");
+        assert_eq!(finding.code(), "OTA_ENV_SOURCE_PARSE_FAILED");
+        assert_eq!(finding.category(), "environment");
+        assert_eq!(finding.owner(), "repo_contract");
     }
 
     #[test]
@@ -15194,6 +15364,9 @@ checks:
             report.findings[0].summary,
             "Probe check failed: backend-ready"
         );
+        assert_eq!(report.findings[0].code(), "OTA_CHECK_FAILED");
+        assert_eq!(report.findings[0].category(), "execution");
+        assert_eq!(report.findings[0].owner(), "repo_contract");
         assert!(report.findings[0].why.contains("probe-backed check"));
         assert!(report.findings[0].why.contains("did not succeed"));
     }
@@ -15434,10 +15607,15 @@ workflows:
         );
 
         assert!(report.ok, "{report:?}");
-        assert!(report.findings.iter().any(|finding| {
-            finding.summary == "Signal probe failed: backend-ready"
-                && finding.severity == FindingSeverity::Info
-        }));
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Signal probe failed: backend-ready")
+            .expect("signal probe failure should be present");
+        assert_eq!(finding.severity, FindingSeverity::Info);
+        assert_eq!(finding.code(), "OTA_WORKFLOW_SIGNAL_PROBE_FAILED");
+        assert_eq!(finding.category(), "execution");
+        assert_eq!(finding.owner(), "repo_contract");
     }
 
     #[test]
@@ -15680,6 +15858,14 @@ workflows:
                 .any(|finding| finding.summary == "Env check failed: compose-env-ready"),
             "{report:?}"
         );
+        let env_finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Env check failed: compose-env-ready")
+            .expect("env check finding should be present");
+        assert_eq!(env_finding.code(), "OTA_CHECK_FAILED");
+        assert_eq!(env_finding.category(), "execution");
+        assert_eq!(env_finding.owner(), "repo_contract");
         assert!(
             report
                 .findings
@@ -16007,6 +16193,21 @@ workflows:
             }),
             "{report:?}"
         );
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary == "Surface readiness failed: backend"
+                    || finding.summary == "Surface readiness timed out: backend"
+            })
+            .expect("surface readiness finding should be present");
+        assert!(matches!(
+            finding.code(),
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+                | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+        ));
+        assert_eq!(finding.category(), "execution");
+        assert_eq!(finding.owner(), "repo_contract");
     }
 
     #[test]
@@ -16073,6 +16274,13 @@ workflows:
                     || finding.summary == "Surface readiness timed out: backend"
             })
             .expect("surface timeout finding should be present");
+        assert!(matches!(
+            finding.code(),
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+                | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+        ));
+        assert_eq!(finding.category(), "execution");
+        assert_eq!(finding.owner(), "repo_contract");
         if finding.summary == "Surface readiness timed out: backend" {
             assert!(finding.why.contains("within 200ms across"), "{report:?}");
             assert!(!finding.why.contains("within 0ms"), "{report:?}");
@@ -16154,11 +16362,22 @@ workflows:
         );
 
         assert!(report.ok, "{report:?}");
-        assert!(report.findings.iter().any(|finding| {
-            (finding.summary == "Signal surface readiness failed: backend"
-                || finding.summary == "Signal surface readiness timed out: backend")
-                && finding.severity == FindingSeverity::Info
-        }));
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary == "Signal surface readiness failed: backend"
+                    || finding.summary == "Signal surface readiness timed out: backend"
+            })
+            .expect("signal surface readiness finding should be present");
+        assert_eq!(finding.severity, FindingSeverity::Info);
+        assert!(matches!(
+            finding.code(),
+            "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
+                | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
+        ));
+        assert_eq!(finding.category(), "execution");
+        assert_eq!(finding.owner(), "repo_contract");
     }
 
     #[test]
@@ -17440,6 +17659,9 @@ tasks:
             report.findings[0].summary,
             "Version mismatch for tool: rustc"
         );
+        assert_eq!(report.findings[0].code(), "OTA_TOOL_VERSION_MISMATCH");
+        assert_eq!(report.findings[0].category(), "environment");
+        assert_eq!(report.findings[0].owner(), "host");
     }
 
     #[test]
@@ -17475,6 +17697,9 @@ tasks:
             report.findings[0].summary,
             "Service healthcheck failed: postgres"
         );
+        assert_eq!(report.findings[0].code(), "OTA_SERVICE_CHECK_FAILED");
+        assert_eq!(report.findings[0].category(), "service");
+        assert_eq!(report.findings[0].owner(), "service");
     }
 
     #[test]
@@ -17516,6 +17741,9 @@ tasks:
             report.findings[0].summary,
             "Service readiness failed: postgres"
         );
+        assert_eq!(report.findings[0].code(), "OTA_SERVICE_READINESS_FAILED");
+        assert_eq!(report.findings[0].category(), "service");
+        assert_eq!(report.findings[0].owner(), "service");
         assert!(
             report.findings[0]
                 .why
@@ -17920,6 +18148,9 @@ tasks:
             finding.summary,
             "Service readiness context is not executable: postgres"
         );
+        assert_eq!(finding.code(), "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE");
+        assert_eq!(finding.category(), "service");
+        assert_eq!(finding.owner(), "service");
         assert!(finding.why.contains("context `remote-db`"));
         assert!(finding.why.contains("postgres.internal:5432"));
         assert!(
@@ -19106,6 +19337,12 @@ tasks:
                     || finding.summary == "Missing toolchain provider: rustup"
             })
             .expect("expected rustfmt component or missing provider finding");
+        assert!(matches!(
+            finding.code(),
+            "OTA_TOOLCHAIN_COMPONENT_MISSING" | "OTA_TOOLCHAIN_PROVIDER_MISSING"
+        ));
+        assert_eq!(finding.category(), "environment");
+        assert_eq!(finding.owner(), "host");
         assert_eq!(finding.severity, FindingSeverity::Error);
         assert!(
             finding.next.contains("rustup component add rustfmt")
@@ -19201,6 +19438,9 @@ unexpected: true
         assert!(!report.ok, "{report:?}");
         assert_eq!(report.findings.len(), 1);
         assert_eq!(report.findings[0].summary, "Invalid org policy pack");
+        assert_eq!(report.findings[0].code(), "OTA_POLICY_PACK_INVALID");
+        assert_eq!(report.findings[0].category(), "policy");
+        assert_eq!(report.findings[0].owner(), "org_policy");
         assert!(report.findings[0].why.contains("org-policy.yaml"));
     }
 
@@ -19256,6 +19496,9 @@ policies:
             .iter()
             .find(|finding| finding.summary == "Policy-backed provisioning sources are declared")
             .expect("policy-backed provisioning finding should be present");
+        assert_eq!(finding.code(), "OTA_POLICY_BACKED_PROVISIONING_DECLARED");
+        assert_eq!(finding.category(), "policy");
+        assert_eq!(finding.owner(), "org_policy");
         assert_eq!(finding.severity, FindingSeverity::Info);
         assert!(finding.why.contains("java via org-mirror"));
         assert!(finding.why.contains("runtime java 22 via org-mirror"));
@@ -19493,6 +19736,17 @@ policies:
             .iter()
             .find(|finding| finding.summary == "Policy-backed version rules are declared")
             .expect("policy-backed version finding should be present");
+        assert_eq!(version_finding.code(), "OTA_POLICY_BACKED_VERSION_RULES_DECLARED");
+        assert_eq!(version_finding.category(), "policy");
+        assert_eq!(version_finding.owner(), "org_policy");
+        assert_eq!(version_finding.provenance().as_deref(), Some("org policy"));
+        assert_eq!(version_finding.provenance_key().as_deref(), Some("org_policy"));
+        let version_json =
+            serde_json::to_value(version_finding).expect("policy-backed version finding should serialize");
+        assert_eq!(
+            version_json.get("policy_reason").and_then(|value| value.as_str()),
+            Some("policy_backed_version_rules_declared")
+        );
         assert!(
             version_finding
                 .why
@@ -19505,6 +19759,12 @@ policies:
             .iter()
             .find(|finding| finding.summary == "Policy-backed provisioning sources are declared")
             .expect("policy-backed provisioning finding should be present");
+        assert_eq!(
+            provisioning_finding.code(),
+            "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
+        );
+        assert_eq!(provisioning_finding.category(), "policy");
+        assert_eq!(provisioning_finding.owner(), "org_policy");
         assert!(
             provisioning_finding
                 .why
@@ -19584,6 +19844,12 @@ policies:
                 finding.summary == "Policy provisioning needs explicit package identifiers"
             })
             .expect("missing package warning should be present");
+        assert_eq!(
+            finding.code(),
+            "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
+        );
+        assert_eq!(finding.category(), "policy");
+        assert_eq!(finding.owner(), "org_policy");
         assert_eq!(finding.severity, FindingSeverity::Warn);
         assert!(finding.why.contains("requires an explicit `package`"));
     }
@@ -20529,6 +20795,17 @@ policies:
                 finding.summary == "Installed tool is not compliant with org policy: yq"
             })
             .expect("strict policy compliance finding should be present");
+        assert_eq!(finding.code(), "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT");
+        assert_eq!(finding.category(), "policy");
+        assert_eq!(finding.owner(), "org_policy");
+        assert_eq!(finding.provenance().as_deref(), Some("org policy"));
+        assert_eq!(finding.provenance_key().as_deref(), Some("org_policy"));
+        let json =
+            serde_json::to_value(finding).expect("strict policy compliance finding should serialize");
+        assert_eq!(
+            json.get("policy_reason").and_then(|value| value.as_str()),
+            Some("strict_version_noncompliance")
+        );
         assert!(
             finding
                 .why
