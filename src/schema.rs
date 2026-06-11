@@ -393,6 +393,22 @@ impl Contract {
         names
     }
 
+    pub fn selected_workflow_env_profile_name(&self, workflow_name: Option<&str>) -> Option<&str> {
+        self.selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.env.as_ref())
+            .and_then(|env| env.profile.as_deref())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+    }
+
+    pub fn selected_workflow_env_profile(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Option<&EnvProfileSpec> {
+        self.selected_workflow_env_profile_name(workflow_name)
+            .and_then(|name| self.env.profiles.get(name))
+    }
+
     fn collect_task_dependency_closure(
         &self,
         name: &str,
@@ -448,6 +464,8 @@ pub struct WorkflowSpec {
     #[serde(default)]
     pub notes: Option<String>,
     #[serde(default)]
+    pub env: Option<WorkflowEnvSpec>,
+    #[serde(default)]
     pub prepare: Option<WorkflowTaskRefSpec>,
     #[serde(default)]
     pub setup: Option<WorkflowTaskRefSpec>,
@@ -465,6 +483,13 @@ pub struct WorkflowSpec {
 #[serde(deny_unknown_fields)]
 pub struct WorkflowTaskRefSpec {
     pub task: String,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowEnvSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
@@ -2270,15 +2295,17 @@ pub struct EnvConfig {
     pub vars: BTreeMap<String, EnvRequirement>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<EnvSource>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub profiles: BTreeMap<String, EnvProfileSpec>,
 }
 
 impl EnvConfig {
     pub fn is_empty(&self) -> bool {
-        self.vars.is_empty() && self.sources.is_empty()
+        self.vars.is_empty() && self.sources.is_empty() && self.profiles.is_empty()
     }
 
     pub fn len(&self) -> usize {
-        self.vars.len() + self.sources.len()
+        self.vars.len() + self.sources.len() + self.profiles.len()
     }
 
     pub fn contains_key(&self, name: &str) -> bool {
@@ -2328,6 +2355,34 @@ pub struct EnvSource {
     pub path: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub must_exist: bool,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EnvProfileSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<EnvSource>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render: Option<EnvProfileRenderSpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EnvProfileRenderSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dotenv: Option<EnvProfileDotenvRenderSpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EnvProfileDotenvRenderSpec {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -3074,6 +3129,8 @@ pub struct ServiceManagerSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
 }
 
@@ -3153,6 +3210,14 @@ health=$(docker inspect --format '{{{{if .State.Health}}}}{{{{.State.Health.Stat
             args.push(String::from("-f"));
             args.push(file.to_string());
         }
+        if let Some(env_file) = self
+            .env_file
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            args.push(String::from("--env-file"));
+            args.push(env_file.to_string());
+        }
         if let Some(name) = self
             .name
             .as_deref()
@@ -3179,6 +3244,14 @@ health=$(docker inspect --format '{{{{if .State.Health}}}}{{{{.State.Health.Stat
         if let Some(file) = self.file.as_deref().filter(|file| !file.trim().is_empty()) {
             command.push_str(" -f ");
             command.push_str(&shell_single_quote(file));
+        }
+        if let Some(env_file) = self
+            .env_file
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            command.push_str(" --env-file ");
+            command.push_str(&shell_single_quote(env_file));
         }
         if let Some(name) = self.name.as_deref().filter(|name| !name.trim().is_empty()) {
             command.push_str(" -p ");
@@ -4196,7 +4269,14 @@ impl TaskActionSpec {
                 let seed = action
                     .template
                     .as_deref()
-                    .map(|template| format!(" from template `{template}`"))
+                    .map(|template| match action.template_mode {
+                        TaskEnsureEnvFileTemplateMode::Missing => {
+                            format!(" from template `{template}` when missing")
+                        }
+                        TaskEnsureEnvFileTemplateMode::Replace => {
+                            format!(" by deriving from template `{template}`")
+                        }
+                    })
                     .unwrap_or_default();
                 format!(
                     "ensure env file `{}`{seed} and inject missing keys",
@@ -4476,8 +4556,27 @@ pub struct TaskEnsureEnvFileActionSpec {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub template: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "is_default_task_ensure_env_file_template_mode"
+    )]
+    pub template_mode: TaskEnsureEnvFileTemplateMode,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub vars: BTreeMap<String, TaskEnsureEnvVarSpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskEnsureEnvFileTemplateMode {
+    #[default]
+    Missing,
+    Replace,
+}
+
+const fn is_default_task_ensure_env_file_template_mode(
+    value: &TaskEnsureEnvFileTemplateMode,
+) -> bool {
+    matches!(value, TaskEnsureEnvFileTemplateMode::Missing)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -4521,6 +4620,8 @@ pub struct TaskEnsureEnvVarSpec {
     pub value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub random: Option<TaskEnsureEnvRandomSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_env: Option<String>,
     #[serde(default, skip_serializing_if = "is_default_task_ensure_env_var_mode")]
     pub mode: TaskEnsureEnvVarMode,
 }
@@ -4531,6 +4632,7 @@ pub enum TaskEnsureEnvVarMode {
     #[default]
     Missing,
     Replace,
+    Remove,
 }
 
 const fn is_default_task_ensure_env_var_mode(value: &TaskEnsureEnvVarMode) -> bool {
@@ -5201,6 +5303,8 @@ pub struct CheckSpec {
     pub timeout: Option<u64>,
     #[serde(default)]
     pub changed_files: Option<ChangedFilesCheckSpec>,
+    #[serde(default)]
+    pub env: Option<EnvCheckSpec>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -5209,8 +5313,55 @@ pub enum CheckKind {
     Precondition,
     Health,
     File,
+    Env,
     #[serde(rename = "changed_files")]
     ChangedFiles,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EnvCheckSpec {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assertions: Vec<EnvCheckAssertionSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EnvCheckAssertionSpec {
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equals: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub not_equals: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<EnvCheckAssertionState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<EnvCheckHostAssertionSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_host: Option<EnvCheckHostAssertionSpec>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvCheckAssertionState {
+    Present,
+    Missing,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EnvCheckHostAssertionSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<EnvCheckHostPolicy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvCheckHostPolicy {
+    NotLoopback,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -5468,6 +5619,51 @@ tasks:
         assert_eq!(env.get("BAR").map(String::as_str), Some("task"));
         assert_eq!(env.get("BAZ").map(String::as_str), Some("mode"));
         assert_eq!(env.get("QUX").map(String::as_str), Some("mode"));
+    }
+
+    #[test]
+    fn compose_service_manager_commands_include_env_file() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    manager:
+      kind: compose
+      name: local
+      file: compose.yaml
+      env_file: .env.compose
+      service: redis
+    healthcheck: redis-cli ping
+"#,
+        )
+        .unwrap();
+
+        let manager = contract.services["redis"].manager.as_ref().unwrap();
+        assert_eq!(
+            manager.start_command("redis").as_deref(),
+            Some(
+                "docker compose -f 'compose.yaml' --env-file '.env.compose' -p 'local' up -d 'redis'"
+            )
+        );
+        assert_eq!(
+            manager.compose_ps_command_argv("redis").unwrap(),
+            vec![
+                String::from("compose"),
+                String::from("-f"),
+                String::from("compose.yaml"),
+                String::from("--env-file"),
+                String::from(".env.compose"),
+                String::from("-p"),
+                String::from("local"),
+                String::from("ps"),
+                String::from("-q"),
+                String::from("redis"),
+            ]
+        );
     }
 
     #[test]

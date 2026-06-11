@@ -26,12 +26,59 @@
 
 ## Unreleased
 
+- widened `ota env` with `--workflow` selection so the env read path can inspect the selected
+  workflow’s env profile truth directly; text and JSON output now report the selected workflow,
+  selected profile, and any workflow-owned rendered env artifacts such as rendered dotenv files
+- widened execution-truth reporting for workflow-owned rendered env artifacts: `ota execution plan`,
+  execution receipts, and `ota proof runtime --json` now surface the selected workflow env
+  artifacts plus consuming task/service lanes, and validate/doctor now warn when tasks duplicate
+  ownership of a workflow-rendered env file that Ota already auto-projects into the workflow task
+  closure
 - added first-class task `env_files` overlays for run-path process ownership, widened
-  `action.kind: ensure_env_file` with deterministic `mode: replace`, and sharpened
-  `ota proof runtime --json` with optional `likely_cause` hints for high-confidence loopback
-  service-drift failures discovered in captured proof logs; invalid task `env_files` now fail
-  `ota env --task`, run preview, and task execution before env resolution falls through to
-  misleading missing-env diagnostics
+  `action.kind: ensure_env_file` with deterministic `mode: replace`, `mode: remove`, and
+  `from_env` projection from resolved Ota env truth, and sharpened `ota proof runtime --json`
+  with optional `likely_cause` hints for high-confidence loopback service drift or detached-run
+  failure excerpts discovered in captured proof logs; proof phase reporting now refines blocked
+  runs from captured `up.log` so repo check / precondition failures do not collapse into
+  misleading `service readiness` proof phases; invalid task `env_files` now fail `ota env --task`,
+  run preview, and task execution before env resolution falls through to misleading missing-env
+  diagnostics
+- added first-class `env.profiles` plus `workflows.<name>.env.profile`, so selected workflow
+  doctor/up/proof paths can prepend workflow-owned declared env sources and inject ordered
+  workflow-scoped `env_files` / literal env overlays without repeating that ownership across task
+  shells or task-local duplication
+- widened `env.profiles` with first-class `render.dotenv` artifact materialization, so `ota up`
+  can now render workflow-owned dotenv files from selected profile truth before service startup
+  and setup, removing the remaining need for a separate `ensure_env_file` prepare task when the
+  workflow only needed a compose/runtime interpolation artifact
+- widened first-class check governance with `checks[].kind: env`, a deterministic dotenv-backed
+  assertion surface for repo-relative env files; contracts can now replace shell `grep` / `findstr`
+  glue with governed `env.path` assertions over exact values, host values, or URL hosts using the
+  initial `policy: not_loopback` surface plus first-class `state: present|missing` assertions, and
+  `requirements.checks` / `when.checks` now accept those env checks directly; validate/doctor now
+  also warn on obvious shell file-state and env-file checks that should be rewritten as
+  first-class `kind: file` or `kind: env` checks
+- widened `checks[].kind: env` host governance with `host.allowed` and `url_host.allowed`, so
+  contracts can now assert one env key or URL/DSN host resolves to one of a small set of truthful
+  service hostnames without falling back to shell `grep` glue
+- widened `checks[].kind: env` with `not_equals`, so contracts can ban a small set of known-bad
+  exact env values without shell assertions
+- widened `workflows.<name>.prepare.task` from native `action`-only to native finite task bodies
+  (`run`, `script`, `prepare`, or `action`) so workflow-scoped normalization and bootstrap steps
+  no longer need to hide behind task dependencies; service-like prepare tasks still remain invalid
+  through `launch`, `runtime`, and `requires_services` rejection
+- added `services.<name>.manager.env_file` for `manager.kind: compose`, so Ota-owned compose
+  service start/stop/ps/health command paths can carry one declarative `docker compose --env-file`
+  input instead of forcing repo-local shell duplication
+- validate/doctor now also warn on obvious shell `.env*` rewrite tasks so deterministic env-file
+  mutation can move to `action.kind: ensure_env_file` with explicit replacement keys instead of
+  platform-specific `sed` / `perl` glue
+- validate/doctor now warn when task bodies hard-code `docker compose --env-file ...`, pushing
+  compose interpolation ownership toward declarative task `env_files` or
+  `services.<name>.manager.env_file`
+- widened `action.kind: ensure_env_file` with `action.template_mode: replace`, so Ota can
+  re-derive an env file from its template on every run before applying explicit key replacements;
+  this closes the shell copy-plus-`sed` env normalization gap with one governed action surface
 - widened managed-service topology modeling so service endpoint identity is no longer forced to
   equal execution-context identity: `services.<name>.endpoints.<name>.context`,
   `services.<name>.readiness.endpoint`, and `tasks.<name>.env_bindings.<VAR>.from_service.endpoint`

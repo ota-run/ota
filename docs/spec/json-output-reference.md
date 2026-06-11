@@ -307,6 +307,8 @@ Success:
 {
   "ok": true,
   "path": "/abs/path/to/ota.yaml",
+  "workflow": "docker-build",
+  "profile": "docker-build",
   "summary": {
     "contract_count": 3,
     "source_count": 2,
@@ -337,6 +339,14 @@ Success:
       "label": "yaml:env/runtime.yaml",
       "must_exist": false,
       "status": "loaded"
+    }
+  ],
+  "rendered_artifacts": [
+    {
+      "path": ".env.docker-build",
+      "kind": "dotenv",
+      "includes": ["DISCORD_TOKEN", "DOCS_SITE_BASE_URL"],
+      "exists": true
     }
   ],
   "env": [
@@ -371,6 +381,11 @@ Success:
   ]
 }
 ```
+
+When a workflow is selected, success output may also include `workflow`, `profile`, and
+`rendered_artifacts`. `rendered_artifacts` reports workflow-owned env materialization such as a
+rendered dotenv file, including its repo-relative `path`, artifact `kind`, ordered `includes`, and
+whether that artifact currently exists on disk.
 
 When a declared source is missing or invalid, `sources` carries additive source metadata:
 `kind`, `path`, `label`, `status`, optional `detail`, and optional `next`. Resolved env entries
@@ -434,6 +449,9 @@ task when the workflow does not declare a run phase. `workflow.prepare_task` is 
 context only; it does not replace the concrete execution `task` because host file prep is not the
 selected runtime identity. The workflow object may also include additive `notes` and
 `readiness_probes` when the selected workflow declares notes or references reusable named probes.
+When the selected workflow owns a rendered env artifact, success output also includes
+`workflow_env_artifacts[]` with the artifact `path`, `kind`, `profile`, ordered `includes`,
+current `exists` state, and consuming task/service lanes.
 
 Success:
 
@@ -455,6 +473,16 @@ Success:
     "exposes": ["http://127.0.0.1:5678"]
   },
   "task": "dev",
+  "workflow_env_artifacts": [
+    {
+      "path": ".env.docker-build",
+      "kind": "dotenv",
+      "profile": "docker-build",
+      "includes": ["DATABASE_URL"],
+      "exists": true,
+      "consumers": ["task:dev", "service:postgres"]
+    }
+  ],
   "contract_identity": {
     "version": 1,
     "project": {
@@ -684,12 +712,13 @@ Notes:
 
 - `mode` is always `runtime-proof`
 - `workflow` is present when the proof targeted one explicit or effective workflow
-- `phase` stays machine-stable and uses the underlying proof phase keys such as `preconditions`,
-  `provisioning`, `activation`, `setup`, `run`, `services`, `post-up diagnosis`, `timeout`,
-  `interrupted`, and `cleanup`
+- `phase` stays machine-stable and uses the proof phase keys `preconditions`, `prepare`,
+  `setup`, `services`, `run`, `readiness`, `cleanup`, and `interrupted`
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
 - `artifacts` points at the captured canonical payloads; machine consumers should inspect those
   files directly when they need the full topology or doctor surface
+- `workflow_env_artifacts` is additive and reports workflow-owned rendered env files plus the
+  consuming task/service lanes that proof exercised
 - `likely_cause` is optional and appears only when ota can derive a higher-confidence runtime-drift
   hint from captured proof logs; treat it as advisory, not a replacement for `doctor.json` or
   `up.log`
@@ -698,6 +727,8 @@ Notes:
 - timeout-only failures without a blocking primary doctor finding are normalized to
   `failure_class: readiness_timeout`
 - signal-terminated proof runs are normalized to `failure_class: interrupted`
+- pre-runtime blockers are normalized to phase `preconditions` with
+  `failure_class: precondition_blocked`
 
 Success:
 
@@ -707,7 +738,7 @@ Success:
   "path": "/abs/path/to/ota.yaml",
   "mode": "runtime-proof",
   "workflow": "app",
-  "phase": "post-up diagnosis",
+  "phase": "readiness",
   "summary": {
     "verdict": "ready",
     "agent_verdict": "ready",
@@ -719,7 +750,17 @@ Success:
     "topology": "./.ota/proof/app/topology.json",
     "doctor": "./.ota/proof/app/doctor.json",
     "up_log": "./.ota/proof/app/up.log"
-  }
+  },
+  "workflow_env_artifacts": [
+    {
+      "path": ".env.docker-build",
+      "kind": "dotenv",
+      "profile": "docker-build",
+      "includes": ["DATABASE_URL"],
+      "exists": true,
+      "consumers": ["task:app", "service:postgres"]
+    }
+  ]
 }
 ```
 
@@ -3108,15 +3149,15 @@ Optional fields:
 
 Phase values:
 
-- `preconditions`: prerequisite diagnosis blocked before provisioning or setup
-- `provisioning`: policy-backed provisioning failed before setup
-- `activation`: selected prerequisite activation (for example Corepack-managed tool activation)
-  failed before setup
-- `services`: required service start or readiness failed
+- `preconditions`: prerequisite diagnosis or host/runtime gating blocked before prepare or setup
+- `prepare`: workflow prepare execution failed
 - `setup`: setup task execution failed
-- `run`: selected workflow run task execution failed
-- `post-up diagnosis`: setup and service orchestration completed, but final readiness was still not
-  satisfied
+- `services`: required service start or readiness failed
+- `run`: selected workflow run task exited before readiness was confirmed
+- `readiness`: the runtime started, but readiness probes, surfaces, or readiness checks still
+  failed or were the final proof-success boundary
+- `cleanup`: runtime proof cleanup failed after artifact capture
+- `interrupted`: runtime proof was interrupted by a signal
 
 Example service-start failure:
 
@@ -3220,7 +3261,9 @@ skip plan without provisioning, starting services, or writing repo files. See
 `ota receipt --json` is the read-only repo receipt artifact. It runs the same readiness scan as
 repo diagnosis in the selected execution context, packages the result as an execution receipt, and
 keeps the findings array alongside the receipt for CI and archival consumers. Contract
-load/validation failures still emit the shared `ValidateFailure` JSON shape on stdout.
+load/validation failures still emit the shared `ValidateFailure` JSON shape on stdout. When the
+selected or effective workflow owns a rendered env artifact, receipt JSON keeps that under
+`receipt.workflow_env_artifacts[]`.
 
 ```json
 {
@@ -3254,6 +3297,16 @@ load/validation failures still emit the shared `ValidateFailure` JSON shape on s
       }
     },
     "backend": "native",
+    "workflow_env_artifacts": [
+      {
+        "path": ".env.docker-build",
+        "kind": "dotenv",
+        "profile": "docker-build",
+        "includes": ["DATABASE_URL"],
+        "exists": true,
+        "consumers": ["task:build", "service:postgres"]
+      }
+    ],
     "steps": [
       {
         "order": 1,
@@ -3286,6 +3339,9 @@ The nested `receipt` object can also include:
 
 - `contract_identity` with the declared project, selected metadata, execution intent, and compact contract counts
 - `backend`
+- `workflow_env_artifacts` when the selected or effective workflow owns one rendered env artifact;
+  each entry reports `path`, `kind`, `profile`, `includes`, `exists`, and the consuming
+  task/service lanes
 - `lifecycle`
 - `image` when container execution is selected
 - `target` when the recorded execution phase had a real named target, such as a persistent container, a named ephemeral task or diagnosis container, or a remote target

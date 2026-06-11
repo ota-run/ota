@@ -2556,7 +2556,7 @@ toolchains:
             provider
                 .requirement_detail_parts(toolchain, "linux")
                 .iter()
-                .any(|part| part.contains("uv `>=0.11.8`"))
+                .any(|part| part.contains("package managers `uv@>=0.11.8`"))
         );
         let tool_requirements = provider.owned_tool_requirements(toolchain, "linux");
         assert_eq!(

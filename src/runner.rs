@@ -6394,6 +6394,19 @@ fn execute_task_with_hooks(
         return Ok(exit_code);
     }
 
+    let prep_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
+
+    maybe_prepare_task_orchestrator_on_run_path(
+        contract,
+        contract_path,
+        task_name,
+        task,
+        backend_kind,
+        &backend,
+        &prep_env,
+        state,
+    )?;
+
     let backend_fulfillment_preparation = maybe_fulfill_backend_requirements_on_run_path(
         contract,
         contract_path,
@@ -6408,7 +6421,6 @@ fn execute_task_with_hooks(
         state,
     )?;
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
-    let prep_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
 
     maybe_activate_corepack_shims_on_run_path(
         contract,
@@ -6484,17 +6496,6 @@ fn execute_task_with_hooks(
     }
 
     ensure_task_env_files_ready(task_name, task, backend_kind, working_dir)?;
-
-    maybe_prepare_task_orchestrator_on_run_path(
-        contract,
-        contract_path,
-        task_name,
-        task,
-        backend_kind,
-        &backend,
-        &prep_env,
-        state,
-    )?;
 
     maybe_fulfill_toolchains_on_run_path(
         contract,
@@ -6874,10 +6875,127 @@ fn should_skip_task_for_conditions(
 fn evaluate_task_condition_check(check: &CheckSpec, working_dir: &Path) -> TaskConditionStatus {
     match check.kind {
         CheckKind::ChangedFiles => run_task_condition_changed_files_check(check, working_dir),
+        CheckKind::Env => run_task_condition_env_check(check, working_dir),
         CheckKind::File => run_task_condition_file_check(check, working_dir),
         CheckKind::Precondition => run_task_condition_command_check(check, working_dir),
         CheckKind::Health => TaskConditionStatus::Failed,
     }
+}
+
+pub(crate) fn evaluate_declared_env_check(check: &CheckSpec, working_dir: &Path) -> bool {
+    let Some(env_check) = check.env.as_ref() else {
+        return false;
+    };
+    let Ok(values) = load_env_check_values(working_dir.join(env_check.path.trim()).as_path())
+    else {
+        return false;
+    };
+
+    for assertion in &env_check.assertions {
+        let value = values.get(assertion.key.as_str());
+        if let Some(state) = assertion.state {
+            let present = value.is_some();
+            let expected = matches!(state, crate::schema::EnvCheckAssertionState::Present);
+            if present != expected {
+                return false;
+            }
+            continue;
+        }
+        let Some(value) = value else {
+            return false;
+        };
+        if let Some(expected) = assertion.equals.as_deref() {
+            if value != expected {
+                return false;
+            }
+            continue;
+        }
+        if !assertion.not_equals.is_empty() {
+            if assertion
+                .not_equals
+                .iter()
+                .any(|disallowed| disallowed == value)
+            {
+                return false;
+            }
+            continue;
+        }
+        if let Some(host_assertion) = assertion.host.as_ref() {
+            if !env_check_host_value_satisfies_assertion(value, host_assertion) {
+                return false;
+            }
+            continue;
+        }
+        if let Some(host_assertion) = assertion.url_host.as_ref() {
+            let Some(host) = extract_env_check_url_host(value) else {
+                return false;
+            };
+            if !env_check_host_value_satisfies_assertion(host, host_assertion) {
+                return false;
+            }
+            continue;
+        }
+        return false;
+    }
+
+    true
+}
+
+fn run_task_condition_env_check(check: &CheckSpec, working_dir: &Path) -> TaskConditionStatus {
+    if evaluate_declared_env_check(check, working_dir) {
+        TaskConditionStatus::Passed
+    } else {
+        TaskConditionStatus::Failed
+    }
+}
+
+fn load_env_check_values(path: &Path) -> Result<BTreeMap<String, String>, ()> {
+    let Ok(file) = fs::File::open(path) else {
+        return Err(());
+    };
+    let mut values = BTreeMap::new();
+    for entry in dotenvy::from_read_iter(file) {
+        let Ok((name, value)) = entry else {
+            return Err(());
+        };
+        values.insert(name, value);
+    }
+    Ok(values)
+}
+
+fn env_check_host_value_satisfies_assertion(
+    value: &str,
+    assertion: &crate::schema::EnvCheckHostAssertionSpec,
+) -> bool {
+    let normalized = value.trim().trim_matches(|ch| ch == '"' || ch == '\'');
+    if let Some(policy) = assertion.policy {
+        return match policy {
+            crate::schema::EnvCheckHostPolicy::NotLoopback => {
+                !is_loopback_only_host_address(normalized)
+            }
+        };
+    }
+
+    if !assertion.allowed.is_empty() {
+        return assertion
+            .allowed
+            .iter()
+            .any(|allowed| allowed.trim().eq_ignore_ascii_case(normalized));
+    }
+
+    false
+}
+
+fn extract_env_check_url_host(value: &str) -> Option<&str> {
+    let scheme_index = value.find("://")?;
+    let remainder = &value[(scheme_index + 3)..];
+    let authority = remainder.split('/').next().unwrap_or(remainder);
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    if authority.starts_with('[') {
+        let end = authority.find(']')?;
+        return Some(&authority[1..end]);
+    }
+    authority.split(':').next().filter(|host| !host.is_empty())
 }
 
 fn run_task_condition_command_check(check: &CheckSpec, working_dir: &Path) -> TaskConditionStatus {
@@ -7471,7 +7589,7 @@ fn execute_task_command(
             mode,
         ),
         (_, PreparedTaskExecution::FileAction { action }) => {
-            execute_native_file_action_task(task_name, action, working_dir)
+            execute_native_file_action_task(contract, task_name, action, working_dir, env_overrides)
         }
         (_, PreparedTaskExecution::Preparation { prepare }) => execute_prepare_task(
             contract,
@@ -7821,9 +7939,11 @@ fn requested_interrupt_cleanup_command(
 }
 
 fn execute_native_file_action_task(
+    contract: Option<&Contract>,
     task_name: &str,
     action: &crate::schema::TaskActionSpec,
     working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
 ) -> Result<TaskCommandOutput, RunError> {
     match action {
         crate::schema::TaskActionSpec::CopyIfMissing(copy) => {
@@ -7867,7 +7987,7 @@ fn execute_native_file_action_task(
             )))
         }
         crate::schema::TaskActionSpec::EnsureEnvFile(spec) => {
-            execute_ensure_env_file_action(task_name, spec, working_dir)
+            execute_ensure_env_file_action(contract, task_name, spec, working_dir, env_overrides)
         }
         crate::schema::TaskActionSpec::EnsureFile(spec) => {
             execute_ensure_file_action(task_name, spec, working_dir)
@@ -7876,15 +7996,17 @@ fn execute_native_file_action_task(
             execute_ensure_directory_action(task_name, spec, working_dir)
         }
         crate::schema::TaskActionSpec::EnsureBundle(spec) => {
-            execute_ensure_bundle_action(task_name, spec, working_dir)
+            execute_ensure_bundle_action(contract, task_name, spec, working_dir, env_overrides)
         }
     }
 }
 
 fn execute_ensure_bundle_action(
+    contract: Option<&Contract>,
     task_name: &str,
     spec: &crate::schema::TaskEnsureBundleActionSpec,
     working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
 ) -> Result<TaskCommandOutput, RunError> {
     if spec.steps.is_empty() {
         return Err(RunError::FileActionFailed {
@@ -7896,16 +8018,19 @@ fn execute_ensure_bundle_action(
     }
     let mut stdout = String::new();
     for step in &spec.steps {
-        let step_output = execute_ensure_bundle_step(task_name, step, working_dir)?;
+        let step_output =
+            execute_ensure_bundle_step(contract, task_name, step, working_dir, env_overrides)?;
         stdout.push_str(step_output.stdout.as_str());
     }
     Ok(file_action_output(stdout))
 }
 
 fn execute_ensure_bundle_step(
+    contract: Option<&Contract>,
     task_name: &str,
     step: &crate::schema::TaskEnsureBundleStepSpec,
     working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
 ) -> Result<TaskCommandOutput, RunError> {
     match step {
         crate::schema::TaskEnsureBundleStepSpec::CopyIfMissing(copy) => {
@@ -7949,7 +8074,7 @@ fn execute_ensure_bundle_step(
             )))
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureEnvFile(spec) => {
-            execute_ensure_env_file_action(task_name, spec, working_dir)
+            execute_ensure_env_file_action(contract, task_name, spec, working_dir, env_overrides)
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureFile(spec) => {
             execute_ensure_file_action(task_name, spec, working_dir)
@@ -7961,12 +8086,15 @@ fn execute_ensure_bundle_step(
 }
 
 fn execute_ensure_env_file_action(
+    contract: Option<&Contract>,
     task_name: &str,
     spec: &crate::schema::TaskEnsureEnvFileActionSpec,
     working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
 ) -> Result<TaskCommandOutput, RunError> {
     let path = working_dir.join(spec.path.trim());
     let mut created = false;
+    let mut reseeded = false;
     if !path.exists() {
         if let Some(parent) = path.parent()
             && !parent.exists()
@@ -8002,6 +8130,35 @@ fn execute_ensure_env_file_action(
             })?;
         }
         created = true;
+    } else if matches!(
+        spec.template_mode,
+        crate::schema::TaskEnsureEnvFileTemplateMode::Replace
+    ) {
+        let Some(template) = spec.template.as_deref() else {
+            return Err(RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "action `ensure_env_file` for `{}` must declare `template` when `template_mode: replace` is used",
+                    spec.path.trim()
+                ),
+            });
+        };
+        let template_path = working_dir.join(template.trim());
+        if !template_path.is_file() {
+            return Err(RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!("template `{}` is not a file", template.trim()),
+            });
+        }
+        std::fs::copy(&template_path, &path).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not recopy template `{}` to `{}`: {source}",
+                template.trim(),
+                spec.path.trim(),
+            ),
+        })?;
+        reseeded = true;
     }
 
     let content = std::fs::read_to_string(&path).map_err(|source| RunError::FileActionFailed {
@@ -8009,20 +8166,52 @@ fn execute_ensure_env_file_action(
         message: format!("could not read `{}`: {source}", spec.path.trim()),
     })?;
     let existing_keys = parse_env_keys(content.as_str());
-    let mut updates = Vec::<(String, String, crate::schema::TaskEnsureEnvVarMode)>::new();
+    let declared_env = if spec
+        .vars
+        .values()
+        .any(|value_spec| value_spec.from_env.is_some())
+    {
+        let Some(contract) = contract else {
+            return Err(RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: String::from(
+                    "action `ensure_env_file` with `from_env` requires contract-backed env resolution",
+                ),
+            });
+        };
+        Some(resolve_task_env_details_for_task(
+            contract,
+            working_dir,
+            task_name,
+            Some(env_overrides),
+        )?)
+    } else {
+        None
+    };
+    let mut updates = Vec::<(String, Option<String>, crate::schema::TaskEnsureEnvVarMode)>::new();
     for (key, value_spec) in &spec.vars {
-        if matches!(
-            value_spec.mode,
-            crate::schema::TaskEnsureEnvVarMode::Missing
-        ) && existing_keys.contains(key.as_str())
-        {
-            continue;
+        match value_spec.mode {
+            crate::schema::TaskEnsureEnvVarMode::Missing => {
+                if existing_keys.contains(key.as_str()) {
+                    continue;
+                }
+            }
+            crate::schema::TaskEnsureEnvVarMode::Remove => {
+                updates.push((key.clone(), None, value_spec.mode));
+                continue;
+            }
+            crate::schema::TaskEnsureEnvVarMode::Replace => {}
         }
-        let value = resolve_ensure_env_var_value(task_name, key.as_str(), value_spec)?;
-        updates.push((key.clone(), value, value_spec.mode));
+        let value = resolve_ensure_env_var_value(
+            task_name,
+            key.as_str(),
+            value_spec,
+            declared_env.as_ref(),
+        )?;
+        updates.push((key.clone(), Some(value), value_spec.mode));
     }
 
-    let (next_content, replaced_count, appended_count) =
+    let (next_content, replaced_count, appended_count, removed_count) =
         apply_ensure_env_updates(content.as_str(), &updates);
     if next_content != content {
         std::fs::write(&path, next_content).map_err(|source| RunError::FileActionFailed {
@@ -8033,17 +8222,27 @@ fn execute_ensure_env_file_action(
 
     let summary = if created {
         format!(
-            "ensured `{}` (created), appended {} env key(s), replaced {} env key(s)\n",
+            "ensured `{}` (created), appended {} env key(s), replaced {} env key(s), removed {} env key(s)\n",
             spec.path.trim(),
             appended_count,
-            replaced_count
+            replaced_count,
+            removed_count
+        )
+    } else if reseeded {
+        format!(
+            "ensured `{}` (reseeded from template), appended {} env key(s), replaced {} env key(s), removed {} env key(s)\n",
+            spec.path.trim(),
+            appended_count,
+            replaced_count,
+            removed_count
         )
     } else {
         format!(
-            "ensured `{}`, appended {} env key(s), replaced {} env key(s)\n",
+            "ensured `{}`, appended {} env key(s), replaced {} env key(s), removed {} env key(s)\n",
             spec.path.trim(),
             appended_count,
-            replaced_count
+            replaced_count,
+            removed_count
         )
     };
     Ok(file_action_output(summary))
@@ -8185,16 +8384,17 @@ fn parse_env_keys(content: &str) -> BTreeSet<String> {
 
 fn apply_ensure_env_updates(
     content: &str,
-    updates: &[(String, String, crate::schema::TaskEnsureEnvVarMode)],
-) -> (String, usize, usize) {
+    updates: &[(String, Option<String>, crate::schema::TaskEnsureEnvVarMode)],
+) -> (String, usize, usize, usize) {
     if updates.is_empty() {
-        return (content.to_string(), 0, 0);
+        return (content.to_string(), 0, 0, 0);
     }
 
     let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
     let had_trailing_newline = content.ends_with('\n');
     let mut replaced = 0;
     let mut appended = 0;
+    let mut removed = 0;
 
     for (key, value, mode) in updates {
         let mut matched_index = None;
@@ -8214,12 +8414,17 @@ fn apply_ensure_env_updates(
 
         match (mode, matched_index) {
             (crate::schema::TaskEnsureEnvVarMode::Replace, Some(index)) => {
-                lines[index] = format!("{key}={value}");
+                lines[index] = format!("{key}={}", value.as_deref().unwrap_or_default());
                 replaced += 1;
             }
+            (crate::schema::TaskEnsureEnvVarMode::Remove, Some(index)) => {
+                lines.remove(index);
+                removed += 1;
+            }
+            (crate::schema::TaskEnsureEnvVarMode::Remove, None) => {}
             (_, Some(_)) => {}
             _ => {
-                lines.push(format!("{key}={value}"));
+                lines.push(format!("{key}={}", value.as_deref().unwrap_or_default()));
                 appended += 1;
             }
         }
@@ -8229,13 +8434,14 @@ fn apply_ensure_env_updates(
     if had_trailing_newline || !next.is_empty() {
         next.push('\n');
     }
-    (next, replaced, appended)
+    (next, replaced, appended, removed)
 }
 
 fn resolve_ensure_env_var_value(
     task_name: &str,
     key: &str,
     value_spec: &crate::schema::TaskEnsureEnvVarSpec,
+    declared_env: Option<&BTreeMap<String, ResolvedEnvValue>>,
 ) -> Result<String, RunError> {
     if let Some(value) = value_spec.value.as_deref() {
         return Ok(value.to_string());
@@ -8252,10 +8458,21 @@ fn resolve_ensure_env_var_value(
             crate::schema::TaskEnsureEnvRandomEncoding::Base64 => encode_base64(buffer.as_slice()),
         });
     }
+    if let Some(from_env) = value_spec.from_env.as_deref() {
+        if let Some(resolved) = declared_env.and_then(|values| values.get(from_env)) {
+            return Ok(resolved.value.clone());
+        }
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not resolve env source `{from_env}` for env key `{key}` while ensuring env file"
+            ),
+        });
+    }
     Err(RunError::FileActionFailed {
         task: task_name.to_string(),
         message: format!(
-            "env key `{key}` must declare either `value` or `random` in `action.vars`"
+            "env key `{key}` must declare one of `value`, `random`, or `from_env` in `action.vars`"
         ),
     })
 }
@@ -37472,6 +37689,216 @@ tasks:
     }
 
     #[test]
+    fn task_when_env_checks_skip_task_when_env_assertion_fails() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: compose-env-ready
+    kind: env
+    severity: error
+    env:
+      path: .env.compose
+      assertions:
+        - key: REDIS_HOST
+          host:
+            policy: not_loopback
+tasks:
+  build:
+    when:
+      checks:
+        - compose-env-ready
+    action:
+      kind: ensure_file
+      path: ran.txt
+      value: executed
+"#,
+        );
+        fixture.write(".env.compose", "REDIS_HOST=127.0.0.1\n");
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "build")
+            .expect("task run should succeed when env condition skips");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(!fixture.dir.path().join("ran.txt").exists());
+        let note = outcome.execution_note.as_deref().expect("skip note");
+        assert!(note.contains("skipped by `when.checks`"), "{note}");
+    }
+
+    #[test]
+    fn task_when_env_checks_allow_task_when_env_assertion_passes() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: compose-env-ready
+    kind: env
+    severity: error
+    env:
+      path: .env.compose
+      assertions:
+        - key: REDIS_HOST
+          host:
+            policy: not_loopback
+        - key: DATABASE_URL
+          url_host:
+            policy: not_loopback
+tasks:
+  build:
+    when:
+      checks:
+        - compose-env-ready
+    action:
+      kind: ensure_file
+      path: ran.txt
+      value: executed
+"#,
+        );
+        fixture.write(
+            ".env.compose",
+            "REDIS_HOST=redis\nDATABASE_URL=postgres://user:pass@postgres:5432/app\n",
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "build")
+            .expect("task run should succeed");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(fixture.dir.path().join("ran.txt").exists());
+    }
+
+    #[test]
+    fn task_when_env_checks_support_present_and_missing_state_assertions() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: compose-env-ready
+    kind: env
+    severity: error
+    env:
+      path: .env.compose
+      assertions:
+        - key: REDIS_HOST
+          state: present
+        - key: LOCAL_ONLY
+          state: missing
+tasks:
+  build:
+    when:
+      checks:
+        - compose-env-ready
+    action:
+      kind: ensure_file
+      path: ran.txt
+      value: executed
+"#,
+        );
+        fixture.write(".env.compose", "REDIS_HOST=redis\n");
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "build")
+            .expect("task run should succeed");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(fixture.dir.path().join("ran.txt").exists());
+    }
+
+    #[test]
+    fn task_when_env_checks_support_allowed_host_assertions() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: compose-env-ready
+    kind: env
+    severity: error
+    env:
+      path: .env.compose
+      assertions:
+        - key: REDIS_HOST
+          host:
+            allowed:
+              - redis
+              - cache
+        - key: DATABASE_URL
+          url_host:
+            allowed:
+              - postgres
+              - db
+tasks:
+  build:
+    when:
+      checks:
+        - compose-env-ready
+    action:
+      kind: ensure_file
+      path: ran.txt
+      value: executed
+"#,
+        );
+        fixture.write(
+            ".env.compose",
+            "REDIS_HOST=cache\nDATABASE_URL=postgres://user:pass@db:5432/app\n",
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "build")
+            .expect("task run should succeed");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(fixture.dir.path().join("ran.txt").exists());
+    }
+
+    #[test]
+    fn task_when_env_checks_support_not_equals_assertions() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: compose-env-ready
+    kind: env
+    severity: error
+    env:
+      path: .env.compose
+      assertions:
+        - key: REDIS_HOST
+          not_equals:
+            - localhost
+            - 127.0.0.1
+tasks:
+  build:
+    when:
+      checks:
+        - compose-env-ready
+    action:
+      kind: ensure_file
+      path: ran.txt
+      value: executed
+"#,
+        );
+        fixture.write(".env.compose", "REDIS_HOST=redis\n");
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "build")
+            .expect("task run should succeed");
+
+        assert_eq!(outcome.exit_code, 0);
+        assert!(fixture.dir.path().join("ran.txt").exists());
+    }
+
+    #[test]
     fn reruns_after_success_tasks_even_if_completed_as_dependencies() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -38320,6 +38747,33 @@ case "${1:-}" in
       printf 'Config files in /workspace/mise.toml are not trusted.\n' >&2
       exit 1
     fi
+    cat > "$script_dir/node" <<'EOF'
+#!/bin/sh
+printf 'v24.15.0\n'
+EOF
+    chmod +x "$script_dir/node"
+    cat > "$script_dir/pnpm" <<'EOF'
+#!/bin/sh
+printf '10.33.4\n'
+EOF
+    chmod +x "$script_dir/pnpm"
+    exit 0
+    ;;
+  which)
+    case "$2" in
+      node)
+        printf '%s/node\n' "$script_dir"
+        ;;
+      pnpm)
+        printf '%s/pnpm\n' "$script_dir"
+        ;;
+      *)
+        :
+        ;;
+    esac
+    exit 0
+    ;;
+  use)
     exit 0
     ;;
   exec)
@@ -48625,6 +49079,13 @@ tasks:
 version: 1
 project:
   name: ota
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  sources:
+    - kind: dotenv
+      path: .env.runtime
 tasks:
   setup:env-local:
     action:
@@ -48638,9 +49099,15 @@ tasks:
             bytes: 8
         PG_DATABASE_PASSWORD:
           value: postgres
+        DATABASE_URL:
+          from_env: DATABASE_URL
+          mode: replace
+        STALE_ONLY:
+          mode: remove
 "#,
         );
         fixture.write(".env.example", "EXISTING=1\n");
+        fixture.write(".env.runtime", "DATABASE_URL=postgres://runtime\n");
 
         let first = run_task(&fixture.contract, fixture.file_path(), "setup:env-local")
             .expect("ensure env action should run");
@@ -48652,11 +49119,15 @@ tasks:
             first_content.contains("PG_DATABASE_PASSWORD=postgres\n"),
             "{first_content}"
         );
+        assert!(
+            first_content.contains("DATABASE_URL=postgres://runtime\n"),
+            "{first_content}"
+        );
         assert!(first_content.lines().any(|line| {
             line.starts_with("TOKEN=") && line.trim().len() == "TOKEN=".len() + 16
         }));
         assert!(
-            first.stdout.contains("appended 2 env key(s)"),
+            first.stdout.contains("appended 3 env key(s)"),
             "{}",
             first.stdout
         );
@@ -48692,9 +49163,14 @@ tasks:
           mode: replace
         REDIS_PORT:
           value: "6379"
+        STALE_ONLY:
+          mode: remove
 "#,
         );
-        fixture.write(".env.local", "REDIS_HOST=127.0.0.1\nEXISTING=1\n");
+        fixture.write(
+            ".env.local",
+            "REDIS_HOST=127.0.0.1\nEXISTING=1\nSTALE_ONLY=1\n",
+        );
 
         let output = run_task(&fixture.contract, fixture.file_path(), "setup:env-local")
             .expect("ensure env action should run");
@@ -48703,6 +49179,7 @@ tasks:
         assert!(content.contains("REDIS_HOST=redis\n"), "{content}");
         assert!(content.contains("REDIS_PORT=6379\n"), "{content}");
         assert!(content.contains("EXISTING=1\n"), "{content}");
+        assert!(!content.contains("STALE_ONLY=1\n"), "{content}");
         assert!(
             output.stdout.contains("appended 1 env key(s)"),
             "{}",
@@ -48710,6 +49187,69 @@ tasks:
         );
         assert!(
             output.stdout.contains("replaced 1 env key(s)"),
+            "{}",
+            output.stdout
+        );
+        assert!(
+            output.stdout.contains("removed 1 env key(s)"),
+            "{}",
+            output.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_env_file_action_reseeds_from_template_when_requested() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env-compose:
+    action:
+      kind: ensure_env_file
+      path: .env.compose
+      template: .env.example
+      template_mode: replace
+      vars:
+        REDIS_HOST:
+          value: redis
+          mode: replace
+        DATABASE_URL:
+          value: postgres://user:pass@postgres:5432/app
+          mode: replace
+"#,
+        );
+        fixture.write(
+            ".env.example",
+            "REDIS_HOST=127.0.0.1\nDATABASE_URL=postgres://user:pass@127.0.0.1:5432/app\nCLICKHOUSE_URL=http://clickhouse:8123\n",
+        );
+        fixture.write(
+            ".env.compose",
+            "REDIS_HOST=old\nDATABASE_URL=postgres://old\nSTALE_ONLY=1\n",
+        );
+
+        let output = run_task(&fixture.contract, fixture.file_path(), "setup:env-compose")
+            .expect("ensure env action should run");
+        assert_eq!(output.exit_code, 0);
+        let content = fs::read_to_string(fixture.dir.path().join(".env.compose")).unwrap();
+        assert!(content.contains("REDIS_HOST=redis\n"), "{content}");
+        assert!(
+            content.contains("DATABASE_URL=postgres://user:pass@postgres:5432/app\n"),
+            "{content}"
+        );
+        assert!(
+            content.contains("CLICKHOUSE_URL=http://clickhouse:8123\n"),
+            "{content}"
+        );
+        assert!(!content.contains("STALE_ONLY=1\n"), "{content}");
+        assert!(
+            output.stdout.contains("reseeded from template"),
+            "{}",
+            output.stdout
+        );
+        assert!(
+            output.stdout.contains("replaced 2 env key(s)"),
             "{}",
             output.stdout
         );
@@ -48756,6 +49296,7 @@ tasks:
 
     #[test]
     fn invalid_task_env_file_fails_before_missing_required_env_resolution() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1
@@ -49163,11 +49704,24 @@ tasks:
         - node_modules
       network: true
       network_kind: dependency_hydration
+        "#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  strict_versions: false
 "#,
         );
         fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.15.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'v24.15.0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "node", node_body);
         let pnpm_body = if cfg!(windows) {
             "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo 10.33.4\r\n  exit /b 0\r\n)\r\n>> \"%OTA_PNPM_LOG%\" echo %CD%^|%*\r\n"
         } else {
@@ -49250,11 +49804,24 @@ tasks:
         - .yarn/install-state.gz
       network: true
       network_kind: dependency_hydration
+        "#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  strict_versions: false
 "#,
         );
         fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.15.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'v24.15.0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "node", node_body);
         let yarn_body = if cfg!(windows) {
             "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo 4.11.0\r\n  exit /b 0\r\n)\r\n>> \"%OTA_YARN_LOG%\" echo %CD%^|%*\r\n"
         } else {
@@ -49414,11 +49981,24 @@ tasks:
         - vendor/bundle
       network: true
       network_kind: dependency_hydration
+        "#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  strict_versions: false
 "#,
         );
         fs::create_dir_all(fixture.dir.path().join("api")).unwrap();
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        let ruby_body = if cfg!(windows) {
+            "@echo off\r\necho ruby 3.3.11p0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'ruby 3.3.11p0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "ruby", ruby_body);
         let bundle_body = if cfg!(windows) {
             "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo Bundler version 2.5.3\r\n  exit /b 0\r\n)\r\n>> \"%OTA_BUNDLE_LOG%\" echo %CD%^|%*\r\n"
         } else {
@@ -50248,6 +50828,7 @@ toolchains:
 
     #[test]
     fn aggregate_task_executes_children_before_recording_parent_step() {
+        let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
 version: 1

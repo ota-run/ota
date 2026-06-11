@@ -5,7 +5,18 @@ state in Ota.
 
 ## Open Maturity Work
 
-No open maturity items are tracked in this ledger branch.
+The current open maturity program is tracked in
+[trust-and-governance-hardening.md](trust-and-governance-hardening.md).
+
+| Gap | Status | Planned Workstream |
+| --- | --- | --- |
+| Proof phase truth is still too loose | Open | Proof Trust |
+| Env compatibility policy is still too shell-shaped | Open | Env Governance |
+| Replaceable shell glue still lacks strong governance warnings | Open | Contract Governance |
+| Env overlay transformation is not yet a first-class governed surface | Open | Env Governance |
+| Adapter/runtime input ownership is still partly shell-carried | Open | Adapter Ownership Cleanup |
+| Proof root-cause diagnostics are still too narrow | Open | Proof Trust |
+| Governance advisories are not yet broadly productized | Open | Contract Governance |
 
 ## Closed In Current Branch
 

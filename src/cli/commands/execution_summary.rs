@@ -793,6 +793,7 @@ mod tests {
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,

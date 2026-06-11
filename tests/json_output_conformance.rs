@@ -349,7 +349,7 @@ workflows:
         fixture.path(),
     );
     assert_matches_schema("proof-runtime.json", &json);
-    assert_eq!(json["phase"], "post-up diagnosis");
+    assert_eq!(json["phase"], "readiness");
     let up_log = fixture
         .path()
         .join(".ota")
@@ -408,7 +408,7 @@ workflows:
     );
     assert_matches_schema("proof-runtime.json", &json);
     assert_eq!(json["ok"], false);
-    assert_eq!(json["failure_class"], "primary_blocker");
+    assert_eq!(json["failure_class"], "precondition_blocked");
 }
 
 #[test]
