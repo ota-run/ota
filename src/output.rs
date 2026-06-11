@@ -2282,6 +2282,8 @@ pub struct ValidateSuccess<'a> {
     pub summary: Option<ValidateSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warning_details: Vec<ValidateWarning>,
 }
 
 #[derive(Debug, Serialize, Default, Clone, Copy, PartialEq, Eq)]
@@ -2299,9 +2301,22 @@ pub struct ValidateFailure<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warning_details: Vec<ValidateWarning>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub errors: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ValidateWarning {
+    pub code: String,
+    pub category: String,
+    pub owner: String,
+    pub severity: String,
+    pub summary: String,
+    pub why: String,
+    pub next: String,
 }
 
 #[derive(Debug, Serialize)]

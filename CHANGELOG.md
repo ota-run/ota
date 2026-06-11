@@ -271,6 +271,12 @@
   requires a real filesystem-mutation signal tied to the isolated path, so unrelated task failures
   (for example long-running Go test timeouts with `.go` paths in stack traces) keep their true
   primary diagnosis instead of being misclassified as isolated-path mutation errors
+- added a governance advisory for long-running service task paths that still resolve to shell
+  `run` or `script` with `runtime.kind: service`, so `ota validate` / `ota doctor` now push
+  those paths toward `launch.kind: command` plus runtime-owned exposure/readiness truth
+- added stable contract-advisory codes across validate/doctor governance output: `ota validate
+  --json` now exposes additive structured `warning_details[]`, and advisory-backed
+  `ota doctor --json` findings now classify under durable `OTA_CONTRACT_ADVISORY_*` codes
 - added a contract advisory for container contexts that isolate `.yarn`/`.yarn/releases` while
   Yarn tasks run in that same context, so `ota doctor` warns before runtime about container
   isolation shadowing committed `.yarn/releases/yarn-*.cjs` artifacts

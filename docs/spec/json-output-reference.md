@@ -262,9 +262,15 @@ Success:
   "summary": {
     "error_count": 0,
     "warn_count": 0
-  }
+  },
+  "warnings": [],
+  "warning_details": []
 }
 ```
+
+When validate warnings exist, `warnings[]` remains the backward-compatible string lane and
+`warning_details[]` carries the stable machine-readable advisory objects with:
+`code`, `category`, `owner`, `severity`, `summary`, `why`, and `next`.
 
 Failure shape can also include:
 

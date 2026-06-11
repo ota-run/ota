@@ -97,7 +97,8 @@ use crate::output::{
     RunPreviewPlan, RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure,
     ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
     ToolchainSelectionSummary, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
-    ValidateFailure, ValidateSuccess, ValidateSummary, WorkflowSummary, WorkflowsFailure,
+    ValidateFailure, ValidateSuccess, ValidateSummary, ValidateWarning, WorkflowSummary,
+    WorkflowsFailure,
     WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
     WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
     WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
@@ -1101,6 +1102,8 @@ pub fn validate(
                     OutputFormat::Json => {
                         let warnings =
                             collect_validate_warnings(&target.contract, Some(&resolved_path));
+                        let warning_details =
+                            collect_validate_warning_details(&target.contract, Some(&resolved_path));
                         CommandOutput::success(to_json(&ValidateSuccess {
                             ok: true,
                             path: &path_display,
@@ -1109,6 +1112,7 @@ pub fn validate(
                                 warn_count: warnings.len(),
                             }),
                             warnings,
+                            warning_details,
                         }))
                     }
                 },
@@ -1150,6 +1154,7 @@ pub fn validate(
                         warn_count: 0,
                     }),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                 })),
@@ -1170,6 +1175,7 @@ pub fn validate(
                         warn_count: 0,
                     }),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                 })),
@@ -1184,6 +1190,24 @@ fn collect_validate_warnings(contract: &Contract, contract_path: Option<&Path>) 
     collect_contract_advisories_with_contract_path(contract, contract_path)
         .into_iter()
         .map(|advisory| format!("{} | Why: {}", advisory.summary(), advisory.why()))
+        .collect()
+}
+
+fn collect_validate_warning_details(
+    contract: &Contract,
+    contract_path: Option<&Path>,
+) -> Vec<ValidateWarning> {
+    collect_contract_advisories_with_contract_path(contract, contract_path)
+        .into_iter()
+        .map(|advisory| ValidateWarning {
+            code: advisory.code().to_string(),
+            category: advisory.category().to_string(),
+            owner: advisory.owner().to_string(),
+            severity: String::from("warn"),
+            summary: advisory.summary(),
+            why: advisory.why(),
+            next: advisory.next(),
+        })
         .collect()
 }
 
@@ -1301,6 +1325,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
                 .join(", "),
             paint_key("Risk:"),
             render_validate_warning_detail("standalone Poetry ownership"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
+        ContractAdvisory::ServiceUsesOpaqueShellStart(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Path:"),
+            render_validate_warning_detail(&value.body_location),
             paint_key("Why:"),
             render_validate_warning_detail(&advisory.why()),
             paint_key("Next:"),
@@ -1964,6 +1999,7 @@ pub fn proof_runtime(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     })),
                 },
                 debug,
@@ -2326,6 +2362,7 @@ pub fn proof_runtime(
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(ContractProblem::Load(error)) => match format {
@@ -2365,6 +2402,7 @@ pub fn proof_runtime(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -14656,6 +14694,7 @@ fn render_run_preview_contract_problem(
                 errors: errors.errors().iter().map(ToString::to_string).collect(),
                 error: None,
                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
             })),
         },
         ContractProblem::Load(error) => match format {
@@ -14692,6 +14731,7 @@ fn render_run_preview_contract_problem(
                 errors: Vec::new(),
                 error: Some(error.to_string()),
                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
             })),
         },
     }
@@ -17123,6 +17163,7 @@ fn wrong_repo_contract_target_output(
                 warn_count: 0,
             }),
             warnings: Vec::new(),
+                    warning_details: Vec::new(),
             errors: why_lines
                 .iter()
                 .map(|line| compact_backticked_paths(line))
@@ -17300,6 +17341,7 @@ fn invalid_repo_contract_output(
                 warn_count: 0,
             }),
             warnings: Vec::new(),
+                    warning_details: Vec::new(),
             errors: why_lines
                 .iter()
                 .map(|line| compact_backticked_paths(line))
@@ -18742,6 +18784,7 @@ pub fn doctor(
                                                             .collect(),
                                                         error: None,
                                                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -18763,6 +18806,7 @@ pub fn doctor(
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
                                                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -19003,6 +19047,7 @@ pub fn doctor(
                                                     .collect(),
                                                 error: None,
                                                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                             }))
                                         }
                                     },
@@ -19024,6 +19069,7 @@ pub fn doctor(
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
                                                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                             }))
                                         }
                                     },
@@ -19151,6 +19197,7 @@ pub fn doctor(
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -19172,6 +19219,7 @@ pub fn doctor(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -21368,6 +21416,7 @@ pub fn check(
                                                             .collect(),
                                                         error: None,
                                                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -21425,6 +21474,7 @@ pub fn check(
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
                                                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -21658,6 +21708,7 @@ pub fn check(
                                                     .collect(),
                                                 error: None,
                                                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                             }))
                                         }
                                     },
@@ -21713,6 +21764,7 @@ pub fn check(
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
                                                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                             }))
                                         }
                                     },
@@ -21829,6 +21881,7 @@ pub fn check(
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -21869,6 +21922,7 @@ pub fn check(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -21913,6 +21967,7 @@ pub fn receipt(
                                 errors,
                                 error: None,
                                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
                             }),
                             stderr: None,
                             exit_code: 1,
@@ -21948,6 +22003,7 @@ pub fn receipt(
                                 errors,
                                 error: None,
                                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
                             }),
                             stderr: None,
                             exit_code: 1,
@@ -22169,6 +22225,7 @@ pub fn receipt(
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -22209,6 +22266,7 @@ pub fn receipt(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -22496,6 +22554,7 @@ pub fn extensions(
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
                                                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -22661,6 +22720,7 @@ pub fn extensions(
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
                                                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                             }))
                                         }
                                     },
@@ -22752,6 +22812,7 @@ pub fn extensions(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -23355,6 +23416,7 @@ pub fn agents(
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     })),
                 },
                 debug,
@@ -23400,6 +23462,7 @@ pub fn agents(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     })),
                 },
                 debug,
@@ -24145,6 +24208,7 @@ pub fn up(
                                                             .collect(),
                                                         error: None,
                                                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             };
@@ -24162,6 +24226,7 @@ pub fn up(
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
                                                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             };
@@ -24262,6 +24327,7 @@ pub fn up(
                                                     .collect(),
                                                 error: None,
                                                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                             }))
                                         }
                                     };
@@ -24279,6 +24345,7 @@ pub fn up(
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
                                                 warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                             }))
                                         }
                                     };
@@ -24371,6 +24438,7 @@ pub fn up(
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     })),
                 },
                 Err(ContractProblem::Load(error)) => match format {
@@ -24410,6 +24478,7 @@ pub fn up(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     })),
                 },
             },
@@ -25806,6 +25875,7 @@ pub fn workspace_validate(
                         warn_count: 0,
                     }),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Validation(errors)) => match format {
@@ -25826,6 +25896,7 @@ pub fn workspace_validate(
                         warn_count: 0,
                     }),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                 })),
@@ -25844,6 +25915,7 @@ pub fn workspace_validate(
                         warn_count: 0,
                     }),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                 })),
@@ -25891,6 +25963,7 @@ fn invalid_workspace_contract_output(
                 warn_count: 0,
             }),
             warnings: Vec::new(),
+                    warning_details: Vec::new(),
             errors: compact_why_lines,
             error: Some(String::from("Invalid workspace contract")),
         })),
@@ -27442,6 +27515,7 @@ pub fn workspace_tasks(
                                         errors: Vec::new(),
                                         error: Some(error.to_string()),
                                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                     }))
                                 }
                             };
@@ -27476,6 +27550,7 @@ pub fn workspace_tasks(
                                         .collect(),
                                     error: None,
                                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                 }))
                             }
                         };
@@ -27577,6 +27652,7 @@ pub fn workspace_tasks(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -27675,6 +27751,7 @@ pub fn workspace_list(
                                     errors: Vec::new(),
                                     error: Some(error),
                                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                 }))
                             }
                         };
@@ -27805,6 +27882,7 @@ pub fn workspace_list(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -27917,6 +27995,7 @@ pub fn workspace_execution_plan(
                                     errors: Vec::new(),
                                     error: Some(error),
                                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                 }))
                             }
                         };
@@ -27957,6 +28036,7 @@ pub fn workspace_execution_plan(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -28067,6 +28147,7 @@ pub fn workspace_doctor(
                                     errors: Vec::new(),
                                     error: Some(error),
                                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                                 }))
                             }
                         };
@@ -28114,6 +28195,7 @@ pub fn workspace_doctor(
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -28131,6 +28213,7 @@ pub fn workspace_doctor(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -28235,6 +28318,7 @@ pub fn workspace_explain(
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -28252,6 +28336,7 @@ pub fn workspace_explain(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -28347,6 +28432,7 @@ pub fn workspace_check(
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -28364,6 +28450,7 @@ pub fn workspace_check(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -28474,6 +28561,7 @@ pub fn workspace_up(
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -28491,6 +28579,7 @@ pub fn workspace_up(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -28617,6 +28706,7 @@ pub fn workspace_refresh(
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -28634,6 +28724,7 @@ pub fn workspace_refresh(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -28707,6 +28798,7 @@ pub fn workspace_diff(
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -28724,6 +28816,7 @@ pub fn workspace_diff(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -28797,6 +28890,7 @@ pub fn workspace_status(
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -28814,6 +28908,7 @@ pub fn workspace_status(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -28923,6 +29018,7 @@ pub fn workspace_receipt(
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -28940,6 +29036,7 @@ pub fn workspace_receipt(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -29055,6 +29152,7 @@ pub fn workspace_run(
                     errors: errors.errors().iter().map(ToString::to_string).collect(),
                     error: None,
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
             Err(WorkspaceProblem::Load(error)) => match format {
@@ -29072,6 +29170,7 @@ pub fn workspace_run(
                     errors: Vec::new(),
                     error: Some(error.to_string()),
                     warnings: Vec::new(),
+                    warning_details: Vec::new(),
                 })),
             },
         },
@@ -30939,6 +31038,7 @@ fn render_repo_receipt_diff(
                         errors: vec![error],
                         error: None,
                         warnings: Vec::new(),
+                    warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -55380,6 +55480,73 @@ tasks:
             ),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn render_validate_success_output_renders_service_shell_governance_warning() {
+        let advisories = vec![ContractAdvisory::ServiceUsesOpaqueShellStart(
+            crate::validator::ServiceUsesOpaqueShellStartAdvisory {
+                task_name: String::from("dev"),
+                body_kind: String::from("run"),
+                body_location: String::from("tasks.dev.run"),
+                runtime_location: String::from("tasks.dev.runtime"),
+                launch_location: String::from("tasks.dev.launch"),
+            },
+        )];
+        let rendered = strip_ansi_codes(&render_validate_success_output(
+            Path::new("/tmp/ota.yaml"),
+            None,
+            "./ota.yaml",
+            &advisories,
+        ));
+
+        assert!(rendered.contains("Warnings"), "{rendered}");
+        assert!(rendered.contains("task `dev`"), "{rendered}");
+        assert!(rendered.contains("Path: tasks.dev.run"), "{rendered}");
+        assert!(
+            rendered.contains("Why: task `dev` declares `runtime.kind: service`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Next: replace `tasks.dev.run` with `tasks.dev.launch` modeled as `kind: command`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn collect_validate_warning_details_exposes_stable_advisory_code() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    script: |
+      bundle exec rails server -b 0.0.0.0 -p 3000
+    runtime:
+      kind: service
+      listeners:
+        api:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        )
+        .unwrap();
+
+        let warnings = super::collect_validate_warning_details(&contract, None);
+        assert!(warnings.iter().any(|warning| {
+            warning.code == "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
+                && warning.category == "contract"
+                && warning.owner == "repo_contract"
+                && warning.severity == "warn"
+                && warning.summary.contains("opaque shell `script`")
+        }));
     }
 
     #[test]

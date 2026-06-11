@@ -2002,8 +2002,67 @@ impl Finding {
             s if s.starts_with("File check failed: ") => "OTA_FILE_CHECK_FAILED",
             s if s.starts_with("File check timed out: ") => "OTA_FILE_CHECK_TIMED_OUT",
             s if s.starts_with("Contract drift:") => "OTA_CONTRACT_DRIFT",
+            s if s.starts_with("Task `") && s.contains(" depends_on `") && s.contains(" across different execution boundaries") => {
+                "OTA_CONTRACT_ADVISORY_DEPENDS_ON_BOUNDARY"
+            }
+            s if s.starts_with("Attachment `") && s.contains(" may be unused in context `") => {
+                "OTA_CONTRACT_ADVISORY_LIKELY_UNUSED_ATTACHMENT"
+            }
+            s if s.starts_with("Isolated path `")
+                && s.contains(" may shadow required Yarn release artifacts in context `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_ISOLATED_YARN_RELEASE_SHADOW"
+            }
+            s if s.starts_with("Node contract uses split ownership (`runtimes.node` + tools: ") => {
+                "OTA_CONTRACT_ADVISORY_LEGACY_NODE_RUNTIME_TOOL_SPLIT"
+            }
+            s if s.starts_with("Poetry is modeled as a standalone tool (") => {
+                "OTA_CONTRACT_ADVISORY_LEGACY_STANDALONE_POETRY"
+            }
+            s if s.starts_with("task `")
+                && s.contains(" uses opaque shell `")
+                && s.contains(" for long-running service path `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
+            }
+            s if s.starts_with("check `") && s.contains(" uses replaceable shell file glue for `") => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_FILE_CHECK"
+            }
+            s if s.starts_with("check `") && s.contains(" uses replaceable shell env-file glue for `") => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_CHECK"
+            }
+            s if s.starts_with("task `") && s.contains(" uses replaceable shell env-file mutation") => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_MUTATION"
+            }
+            s if s.starts_with("task `") && s.contains(" hard-codes compose env-file ownership in shell") => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP"
+            }
+            s if s.starts_with("workflow `")
+                && s.contains(" profile `")
+                && s.contains(" duplicates rendered env artifact ownership in task `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP"
+            }
+            s if s.starts_with("`agent.writable_paths` includes sensitive ") => {
+                "OTA_CONTRACT_ADVISORY_SENSITIVE_AGENT_WRITABLE_PATH"
+            }
+            s if s.starts_with("`agent.exceptions.sensitive_writes` includes unnecessary path `") => {
+                "OTA_CONTRACT_ADVISORY_SENSITIVE_WRITE_EXCEPTION"
+            }
+            s if s.starts_with("`agent.bootstrap.ota.") && s.ends_with("` should pin the ota release version") => {
+                "OTA_CONTRACT_ADVISORY_AGENT_BOOTSTRAP_UNPINNED"
+            }
+            s if s.starts_with("Agent-safe task `") && s.contains(" performs network dependency hydration") => {
+                "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_DEPENDENCY_HYDRATION"
+            }
+            s if s.starts_with("Agent-safe task `") && s.contains(" requires network access") => {
+                "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK"
+            }
+            s if s.starts_with("Agent-safe task `") && s.contains(" mutates external state: ") => {
+                "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_EXTERNAL_STATE"
+            }
             s if s.starts_with("Task `") && s.contains(" mutates managed isolated path `") => {
-                "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH"
+                "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH"
             }
             _ => "OTA_DOCTOR_FINDING_UNKNOWN",
         }
@@ -2060,12 +2119,13 @@ impl Finding {
             | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
             | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
             | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => "policy",
+            s if s.starts_with("OTA_CONTRACT_ADVISORY_") => "contract",
             "OTA_CHECK_FAILED"
             | "OTA_CHECK_TIMED_OUT"
             | "OTA_FILE_CHECK_FAILED"
             | "OTA_FILE_CHECK_TIMED_OUT" => "execution",
             "OTA_CONTRACT_DRIFT" | "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => "contract",
-            "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "contract",
+            "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "contract",
             _ => "contract",
         }
     }
@@ -2078,7 +2138,8 @@ impl Finding {
             | "OTA_CHECK_TIMED_OUT"
             | "OTA_FILE_CHECK_FAILED"
             | "OTA_FILE_CHECK_TIMED_OUT"
-            | "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "repo_contract",
+            | "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "repo_contract",
+            s if s.starts_with("OTA_CONTRACT_ADVISORY_") => "repo_contract",
             "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => {
                 "repo_contract"
             }
@@ -2509,7 +2570,7 @@ impl Finding {
                 String::new(),
                 String::new(),
             ),
-            "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => (
+            "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => (
                 "a task body appears to mutate an ota-managed isolated attachment path"
                     .to_string(),
                 "task bodies leave ota-managed isolated attachment paths to the underlying tool"
@@ -2628,7 +2689,7 @@ impl Finding {
             | "OTA_CHECK_TIMED_OUT"
             | "OTA_FILE_CHECK_FAILED"
             | "OTA_FILE_CHECK_TIMED_OUT"
-            | "OTA_TASK_MUTATES_MANAGED_ISOLATED_PATH" => Some(FindingProvenanceContext {
+            | "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => Some(FindingProvenanceContext {
                 provenance: "repo contract",
                 provenance_key: "repo_contract",
             }),
@@ -3580,6 +3641,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::LegacyStandalonePoetry(advisory) => {
                 ContractAdvisory::LegacyStandalonePoetry(advisory)
             }
+            ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => {
+                ContractAdvisory::ServiceUsesOpaqueShellStart(advisory)
+            }
             ContractAdvisory::ReplaceableShellCheck(advisory) => {
                 ContractAdvisory::ReplaceableShellCheck(advisory)
             }
@@ -3673,6 +3737,12 @@ fn diagnose_contract_advisories(
                 ),
                 why: ContractAdvisory::LegacyStandalonePoetry(advisory.clone()).why(),
                 next: ContractAdvisory::LegacyStandalonePoetry(advisory).next(),
+            },
+            ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: ContractAdvisory::ServiceUsesOpaqueShellStart(advisory.clone()).summary(),
+                why: ContractAdvisory::ServiceUsesOpaqueShellStart(advisory.clone()).why(),
+                next: ContractAdvisory::ServiceUsesOpaqueShellStart(advisory).next(),
             },
             ContractAdvisory::ReplaceableShellCheck(advisory) => Finding {
                 severity: FindingSeverity::Warn,
@@ -19151,6 +19221,67 @@ tasks:
                 .iter()
                 .all(|finding| finding.summary != "Managed toolchain opportunity: python")
         );
+    }
+
+    #[test]
+    fn finding_code_classifies_contract_advisory_service_shell_start() {
+        let finding = Finding {
+            severity: FindingSeverity::Warn,
+            summary: String::from(
+                "task `dev` uses opaque shell `script` for long-running service path `tasks.dev.script`",
+            ),
+            why: String::from("service launch is hidden in shell"),
+            next: String::from("move to launch.kind: command"),
+        };
+
+        assert_eq!(
+            finding.code(),
+            "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
+        );
+        assert_eq!(finding.category(), "contract");
+        assert_eq!(finding.owner(), "repo_contract");
+    }
+
+    #[test]
+    fn finding_code_classifies_contract_advisory_agent_safe_network_and_external_state() {
+        let network = Finding {
+            severity: FindingSeverity::Warn,
+            summary: String::from("Agent-safe task `setup` requires network access"),
+            why: String::from("networked task"),
+            next: String::from("keep effects explicit"),
+        };
+        let external_state = Finding {
+            severity: FindingSeverity::Warn,
+            summary: String::from("Agent-safe task `setup` mutates external state: postgres"),
+            why: String::from("external state mutation"),
+            next: String::from("remove from safe tasks"),
+        };
+
+        assert_eq!(
+            network.code(),
+            "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK"
+        );
+        assert_eq!(
+            external_state.code(),
+            "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_EXTERNAL_STATE"
+        );
+    }
+
+    #[test]
+    fn finding_code_classifies_contract_advisory_managed_isolated_path() {
+        let finding = Finding {
+            severity: FindingSeverity::Warn,
+            summary: String::from("Task `build` mutates managed isolated path `.next`"),
+            why: String::from("managed isolated path mutation"),
+            next: String::from("let ota own the path"),
+        };
+
+        assert_eq!(
+            finding.code(),
+            "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH"
+        );
+        assert_eq!(finding.category(), "contract");
+        assert_eq!(finding.owner(), "repo_contract");
     }
 
     #[test]

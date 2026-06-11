@@ -1902,12 +1902,17 @@ step kind, and keeps validation/error reporting inside the contract surface.
   hiding everything inside one shell string
 - `action` is for small built-in setup mutations that should stay deterministic and
   cross-platform instead of becoming shell-specific snippets
-- for long-running service processes, prefer `launch.kind: command` over opaque `run`
+- for long-running service processes, prefer `launch.kind: command` over opaque shell `run` or
+  `script`
 - pair `launch.kind: command` with `runtime.kind: service` plus `runtime.surfaces` or
   `runtime.listeners`; `launch` starts the process, while `runtime` declares what becomes reachable
   and how readiness is proved
+- `ota validate` and `ota doctor` warn when a task path resolves to shell `run` or `script`
+  together with `runtime.kind: service`; migrate that path to `launch.kind: command` unless the
+  task is truly a shell-oriented finite escape hatch
 - reserve `run` for finite shell tasks, pipelines, or real escape-hatch cases where a structured
   executable shape would be misleading or unavailable
+- reserve `script` for multiline finite shell escape hatches, not long-running service ownership
 - `launch.kind: command` reuses existing task env, input, receipt, dependency, and agent-safety
   behavior
 - `launch.kind: container` is a task launch source, not an execution context
