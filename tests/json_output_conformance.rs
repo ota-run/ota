@@ -565,6 +565,39 @@ agent:
 }
 
 #[test]
+fn doctor_remote_json_output_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: doctor-remote-demo
+tasks:
+  test:
+    run: cargo test
+"#,
+    );
+
+    let json = run_ota_failure_stdout_json(
+        &[
+            "doctor",
+            "--mode",
+            "remote",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("doctor.json", &json);
+    assert_eq!(json["mode"], "remote");
+    assert_eq!(
+        json["summary"]["primary_blocker"]["code"],
+        "OTA_REMOTE_MODE_NOT_CONFIGURED"
+    );
+}
+
+#[test]
 fn workspace_tasks_json_output_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_workspace_contract(

@@ -8979,6 +8979,18 @@ tasks:
             members[0]["findings"][0]["summary"],
             "Missing environment variable: OTA_MEMBER_REQUIRED"
         );
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            members[0]["findings"][0]["summary"]
+        );
+        assert_eq!(
+            json["summary"]["primary_blocker"]["next"],
+            members[0]["findings"][0]["next"]
+        );
+        assert_eq!(
+            json["summary"]["primary_blocker"]["provenance_key"],
+            members[0]["findings"][0]["provenance_key"]
+        );
     }
 
     #[test]
@@ -40866,6 +40878,18 @@ env:
             json["repos"][0]["primary_blocker"]["summary"],
             "Missing environment variable: OTA_WORKSPACE_REQUIRED"
         );
+        assert_eq!(
+            json["summary"]["primary_blocker"]["repo"],
+            json["repos"][0]["name"]
+        );
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            json["repos"][0]["primary_blocker"]["summary"]
+        );
+        assert_eq!(
+            json["summary"]["primary_blocker"]["code"],
+            json["repos"][0]["primary_blocker"]["code"]
+        );
     }
 
     #[test]
@@ -41151,6 +41175,18 @@ repos:
             json["repos"][0]["findings"][0]["summary"],
             "Repo not acquired: web"
         );
+        assert_eq!(
+            json["repos"][0]["findings"][0]["code"],
+            "OTA_WORKSPACE_REPO_NOT_ACQUIRED"
+        );
+        assert_eq!(
+            json["repos"][0]["primary_blocker"]["code"],
+            "OTA_WORKSPACE_REPO_NOT_ACQUIRED"
+        );
+        assert_eq!(
+            json["summary"]["primary_blocker"]["code"],
+            "OTA_WORKSPACE_REPO_NOT_ACQUIRED"
+        );
     }
 
     #[test]
@@ -41292,6 +41328,15 @@ checks:
         assert_eq!(
             json["repos"][0]["findings"][0]["summary"],
             "Check failed: health-check"
+        );
+        assert_eq!(json["summary"]["primary_blocker"]["repo"], "web");
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"],
+            json["repos"][0]["findings"][0]["summary"]
+        );
+        assert_eq!(
+            json["summary"]["primary_blocker"]["code"],
+            json["repos"][0]["primary_blocker"]["code"]
         );
     }
 

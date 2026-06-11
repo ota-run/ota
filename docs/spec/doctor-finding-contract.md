@@ -29,9 +29,11 @@ Status: draft.
 Source direction:
 
 - current doctor and finding serialization in `src/doctor.rs`
+- workspace doctor finding serialization in `src/workspace.rs`
 - doctor output rendering in `src/cli/commands.rs`
 - shared finding schema in `docs/spec/json-schemas/shared.json`
 - JSON output reference in `docs/spec/json-output-reference.md`
+- generated finding catalog reference in `docs/spec/doctor-finding-reference.md`
 
 ## Purpose
 
@@ -49,6 +51,11 @@ This contract applies to:
 
 This contract does not define the hosted control plane, waiver lifecycle, or fleet reporting.
 Those belong to later enterprise work.
+
+The generated code-to-surface reference lives in
+[`doctor-finding-reference.md`](doctor-finding-reference.md). Use it when you need the shipped
+finding code catalog and its published `category` / `owner` / `provenance_key` surfaces without
+reading Rust source directly.
 
 ## Required finding shape
 

@@ -1371,6 +1371,715 @@ struct FindingResolvedMetadata<'a> {
     policy: Option<PolicyFindingContext<'a>>,
 }
 
+#[derive(Clone, Copy)]
+struct FindingRegistryEntry {
+    resolver: for<'a> fn(&'a Finding) -> FindingResolvedMetadata<'a>,
+}
+
+fn static_finding_evidence(observed: &str, expected: &str, source: &str) -> FindingEvidence {
+    FindingEvidence {
+        observed: observed.to_string(),
+        expected: expected.to_string(),
+        source: source.to_string(),
+        checked_at: String::new(),
+        command: String::new(),
+        path: String::new(),
+    }
+}
+
+fn repo_contract_provenance() -> Option<FindingProvenanceContext<'static>> {
+    Some(FindingProvenanceContext {
+        provenance: "repo contract",
+        provenance_key: "repo_contract",
+    })
+}
+
+fn org_policy_provenance() -> Option<FindingProvenanceContext<'static>> {
+    Some(FindingProvenanceContext {
+        provenance: "org policy",
+        provenance_key: "org_policy",
+    })
+}
+
+fn repo_signals_provenance() -> Option<FindingProvenanceContext<'static>> {
+    Some(FindingProvenanceContext {
+        provenance: "repo signals",
+        provenance_key: "repo_signals",
+    })
+}
+
+fn finding_probe_target_owner(finding: &Finding) -> &'static str {
+    if finding_targets_container_image(&finding.why) {
+        "container_target"
+    } else if finding_targets_remote_backend(&finding.why) {
+        "remote_target"
+    } else {
+        "host"
+    }
+}
+
+fn probe_finding_evidence(finding: &Finding, observed: &str, expected: &str) -> FindingEvidence {
+    FindingEvidence {
+        observed: observed.to_string(),
+        expected: expected.to_string(),
+        source: finding_probe_target_owner(finding).to_string(),
+        checked_at: String::new(),
+        command: finding_probe_command(&finding.why).unwrap_or_default(),
+        path: finding_probe_path(&finding.why).unwrap_or_default(),
+    }
+}
+
+fn resolve_contract_core_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
+    let evidence = match finding.code() {
+        "OTA_TASKS_MISSING" => Some(static_finding_evidence(
+            "no runnable task entry was declared",
+            "at least one runnable task is declared",
+            "contract",
+        )),
+        "OTA_CONTRACT_DRIFT" => Some(static_finding_evidence(
+            "repo signals differ from the declared contract",
+            "repo signals match the declared contract",
+            "detect",
+        )),
+        "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => Some(
+            static_finding_evidence(
+                "a task body appears to mutate an ota-managed isolated attachment path",
+                "task bodies leave ota-managed isolated attachment paths to the underlying tool",
+                "contract",
+            ),
+        ),
+        _ => None,
+    };
+
+    FindingResolvedMetadata {
+        category: "contract",
+        owner: "repo_contract",
+        evidence,
+        provenance: repo_contract_provenance(),
+        policy: None,
+    }
+}
+
+fn resolve_execution_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
+    let evidence = match finding.code() {
+        "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => {
+            Some(static_finding_evidence(
+                "ephemeral lifecycle was requested",
+                "isolated backend-backed execution is available",
+                "execution",
+            ))
+        }
+        "OTA_CHECK_FAILED" => Some(static_finding_evidence(
+            "the configured check failed",
+            "the configured check succeeds",
+            "execution",
+        )),
+        "OTA_CHECK_TIMED_OUT" => Some(static_finding_evidence(
+            "the configured check timed out",
+            "the configured check completes within the timeout",
+            "execution",
+        )),
+        "OTA_FILE_CHECK_FAILED" => Some(static_finding_evidence(
+            "the configured file check failed",
+            "the configured file state matches the contract",
+            "repo filesystem",
+        )),
+        "OTA_FILE_CHECK_TIMED_OUT" => Some(static_finding_evidence(
+            "the configured file check timed out",
+            "the configured file check completes within the timeout",
+            "repo filesystem",
+        )),
+        "OTA_WORKFLOW_PROBE_FAILED" | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED" => {
+            Some(static_finding_evidence(
+                "the configured workflow probe did not succeed",
+                "the configured workflow probe succeeds",
+                "execution",
+            ))
+        }
+        "OTA_WORKFLOW_PROBE_TIMED_OUT" | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT" => {
+            Some(static_finding_evidence(
+                "the configured workflow probe timed out",
+                "the configured workflow probe completes within its timeout",
+                "execution",
+            ))
+        }
+        "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED" => Some(static_finding_evidence(
+            "the selected workflow surface did not become ready",
+            "the selected workflow surface becomes ready",
+            "execution",
+        )),
+        "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT" => Some(static_finding_evidence(
+            "the selected workflow surface did not become ready before timing out",
+            "the selected workflow surface becomes ready within its timeout",
+            "execution",
+        )),
+        "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => Some(static_finding_evidence(
+            "the selected workflow surface could not be resolved or checked",
+            "the selected workflow surface can be resolved and checked",
+            "execution",
+        )),
+        _ => None,
+    };
+
+    FindingResolvedMetadata {
+        category: "execution",
+        owner: "repo_contract",
+        evidence,
+        provenance: repo_contract_provenance(),
+        policy: None,
+    }
+}
+
+fn resolve_backend_cli_finding_metadata(_: &Finding) -> FindingResolvedMetadata<'_> {
+    FindingResolvedMetadata {
+        category: "execution",
+        owner: "host",
+        evidence: Some(static_finding_evidence(
+            "required backend CLI was not found on PATH",
+            "a supported backend CLI is available on PATH",
+            "host",
+        )),
+        provenance: repo_contract_provenance(),
+        policy: None,
+    }
+}
+
+fn resolve_container_backend_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
+    FindingResolvedMetadata {
+        category: "execution",
+        owner: if finding.code() == "OTA_CONTAINER_IMAGE_UNAVAILABLE" {
+            "container_target"
+        } else {
+            "host"
+        },
+        evidence: None,
+        provenance: repo_contract_provenance(),
+        policy: None,
+    }
+}
+
+fn resolve_remote_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
+    let code = finding.code();
+    let evidence = match code {
+        "OTA_REMOTE_MODE_NOT_CONFIGURED" => Some(static_finding_evidence(
+            "the selected remote execution path is not declared",
+            "the contract declares a remote execution path",
+            "repo_contract",
+        )),
+        "OTA_REMOTE_DOCTOR_PARTIAL" | "OTA_REMOTE_DOCTOR_HOST_SCOPE_NOTE" => {
+            Some(static_finding_evidence(
+                "remote doctor mode is still constrained by host-scoped checks",
+                "remote doctor mode can evaluate the selected remote path end-to-end",
+                "repo_contract",
+            ))
+        }
+        "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" => Some(static_finding_evidence(
+            "the declared remote backend provider is unsupported",
+            "a supported remote backend provider is declared",
+            "remote_backend",
+        )),
+        "OTA_REMOTE_TARGET_SUSPICIOUS" => Some(static_finding_evidence(
+            "the remote target shape did not match provider expectations",
+            "a provider-compatible remote target is declared",
+            "remote_backend",
+        )),
+        "OTA_REMOTE_CONTEXT_UNEXECUTABLE" => Some(static_finding_evidence(
+            "the named remote execution context could not be resolved",
+            "the named remote execution context is executable",
+            "remote_backend",
+        )),
+        "OTA_REMOTE_TARGET_OS_UNDETERMINED" => Some(FindingEvidence {
+            observed: String::from("ota could not determine the remote target operating system"),
+            expected: String::from(
+                "ota can determine the remote target operating system",
+            ),
+            source: String::from("remote_backend"),
+            checked_at: String::new(),
+            command: remote_os_probe_command().to_string(),
+            path: String::new(),
+        }),
+        _ => None,
+    };
+
+    FindingResolvedMetadata {
+        category: "remote",
+        owner: if code == "OTA_REMOTE_MODE_NOT_CONFIGURED" {
+            "repo_contract"
+        } else {
+            "remote_backend"
+        },
+        evidence,
+        provenance: repo_contract_provenance(),
+        policy: None,
+    }
+}
+
+fn resolve_service_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
+    let evidence = match finding.code() {
+        "OTA_SERVICE_READINESS_FAILED" => Some(static_finding_evidence(
+            "the configured service readiness probe failed",
+            "the service readiness probe passes from its declared context",
+            "service",
+        )),
+        "OTA_SERVICE_CHECK_FAILED" => Some(static_finding_evidence(
+            "the configured service healthcheck failed",
+            "the service healthcheck passes",
+            "service",
+        )),
+        "OTA_SERVICE_CHECK_TIMED_OUT" => Some(static_finding_evidence(
+            "the configured service healthcheck timed out",
+            "the service healthcheck completes within its timeout",
+            "service",
+        )),
+        "OTA_SERVICE_UNVERIFIABLE" => Some(static_finding_evidence(
+            "the service cannot be verified from the contract",
+            "the service declares enough information to verify readiness",
+            "service",
+        )),
+        _ => None,
+    };
+
+    FindingResolvedMetadata {
+        category: "service",
+        owner: "service",
+        evidence,
+        provenance: repo_contract_provenance(),
+        policy: None,
+    }
+}
+
+fn resolve_environment_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
+    let code = finding.code();
+    let evidence = match code {
+        "OTA_ENV_MISSING" => Some(static_finding_evidence(
+            "a required environment variable was missing",
+            "the environment variable is present",
+            "contract",
+        )),
+        "OTA_ENV_INVALID" => Some(static_finding_evidence(
+            "the resolved environment value is outside the allowed set",
+            "the environment value satisfies the allowed set",
+            "contract",
+        )),
+        "OTA_ENV_SOURCE_MISSING_REQUIRED" => Some(static_finding_evidence(
+            "a required declared environment source was missing",
+            "the declared environment source exists",
+            "repo filesystem",
+        )),
+        "OTA_ENV_SOURCE_PARSE_FAILED" => Some(static_finding_evidence(
+            "a declared environment source could not be parsed",
+            "the declared environment source parses successfully",
+            "repo filesystem",
+        )),
+        "OTA_ENV_SOURCE_INVALID_STRUCTURE" => Some(static_finding_evidence(
+            "a declared environment source had unsupported structure",
+            "the declared environment source has supported structure",
+            "repo filesystem",
+        )),
+        "OTA_ENV_SOURCE_KEY_COLLISION" => Some(static_finding_evidence(
+            "declared environment sources produced conflicting keys",
+            "declared environment sources resolve without key collisions",
+            "repo filesystem",
+        )),
+        "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH" => Some(
+            probe_finding_evidence(
+                finding,
+                "the installed version did not match the contract requirement",
+                "the installed version satisfies the contract requirement",
+            ),
+        ),
+        "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING" => Some(FindingEvidence {
+            observed: String::from("the required runtime or tool was not available"),
+            expected: String::from("the required runtime or tool is available on PATH"),
+            source: finding_probe_target_owner(finding).to_string(),
+            checked_at: String::new(),
+            command: String::new(),
+            path: String::new(),
+        }),
+        "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => Some(static_finding_evidence(
+            "the selected repo path is using fallback runtime/tool declarations for an ecosystem Ota does not yet ship as a managed toolchain",
+            "a shipped toolchain provider exists for that ecosystem or the repo intentionally stays on the fallback runtime/tool model",
+            "repo_signals",
+        )),
+        "OTA_RUNTIME_PROBE_FAILED" | "OTA_TOOL_PROBE_FAILED" => Some(probe_finding_evidence(
+            finding,
+            "the resolved executable could not report a version",
+            "the resolved executable reports a version that satisfies the contract",
+        )),
+        "OTA_RUNTIME_VERSION_UNPARSEABLE" | "OTA_TOOL_VERSION_UNPARSEABLE" => Some(
+            probe_finding_evidence(
+                finding,
+                "the resolved executable did not emit a parseable version",
+                "the resolved executable emits a parseable version that satisfies the contract",
+            ),
+        ),
+        "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
+            Some(static_finding_evidence(
+                "the selected native prerequisite check did not pass",
+                "the selected native prerequisite check passes",
+                "host",
+            ))
+        }
+        _ => None,
+    };
+
+    FindingResolvedMetadata {
+        category: "environment",
+        owner: match code {
+            "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => finding_probe_target_owner(finding),
+            "OTA_ENV_SOURCE_MISSING_REQUIRED"
+            | "OTA_ENV_SOURCE_PARSE_FAILED"
+            | "OTA_ENV_SOURCE_INVALID_STRUCTURE"
+            | "OTA_ENV_SOURCE_KEY_COLLISION" => "repo_contract",
+            _ => finding_probe_target_owner(finding),
+        },
+        evidence,
+        provenance: if code == "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" {
+            repo_signals_provenance()
+        } else {
+            repo_contract_provenance()
+        },
+        policy: None,
+    }
+}
+
+fn resolve_provisioning_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
+    let code = finding.code();
+    let (observed, expected, source) = match code {
+        "OTA_CONTAINER_APT_VERSION_UNAVAILABLE" => (
+            "the configured container apt sources do not provide the pinned package version",
+            "the configured container apt sources provide the pinned package version",
+            "container_apt",
+        ),
+        "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE" => (
+            "the configured container apt sources do not provide the requested package",
+            "the configured container apt sources provide the requested package",
+            "container_apt",
+        ),
+        "OTA_CONTAINER_APT_INDEX_UNAVAILABLE" => (
+            "the configured container apt sources could not refresh indexes",
+            "the configured container apt sources refresh successfully",
+            "container_apt",
+        ),
+        "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE" => (
+            "the configured container provisioning backend could not provide the pinned version",
+            "the configured container provisioning backend provides the pinned version",
+            "container_provisioning",
+        ),
+        "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE" => (
+            "the configured container provisioning backend could not provide the requested package",
+            "the configured container provisioning backend provides the requested package",
+            "container_provisioning",
+        ),
+        "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE" => (
+            "the configured container provisioning backend could not refresh its sources",
+            "the configured container provisioning backend refreshes its sources successfully",
+            "container_provisioning",
+        ),
+        "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => (
+            "the configured container provisioning backend could not satisfy the requested prerequisite",
+            "the configured container provisioning backend satisfies the requested prerequisite",
+            "container_provisioning",
+        ),
+        "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE" => (
+            "the configured host provisioning backend could not provide the pinned version",
+            "the configured host provisioning backend provides the pinned version",
+            "host_provisioning",
+        ),
+        "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE" => (
+            "the configured host provisioning backend could not provide the requested package",
+            "the configured host provisioning backend provides the requested package",
+            "host_provisioning",
+        ),
+        "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE" => (
+            "the configured host provisioning backend could not refresh its sources",
+            "the configured host provisioning backend refreshes its sources successfully",
+            "host_provisioning",
+        ),
+        "OTA_HOST_PROVISIONING_BACKEND_FAILED" => (
+            "the configured host provisioning backend could not satisfy the requested prerequisite",
+            "the configured host provisioning backend satisfies the requested prerequisite",
+            "host_provisioning",
+        ),
+        "OTA_REMOTE_APT_VERSION_UNAVAILABLE" => (
+            "the configured remote apt sources do not provide the pinned package version",
+            "the configured remote apt sources provide the pinned package version",
+            "remote_provisioning",
+        ),
+        "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE" => (
+            "the configured remote apt sources do not provide the requested package",
+            "the configured remote apt sources provide the requested package",
+            "remote_provisioning",
+        ),
+        "OTA_REMOTE_APT_INDEX_UNAVAILABLE" => (
+            "the configured remote apt sources could not refresh indexes",
+            "the configured remote apt sources refresh successfully",
+            "remote_provisioning",
+        ),
+        "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE" => (
+            "the configured remote provisioning backend could not provide the pinned version",
+            "the configured remote provisioning backend provides the pinned version",
+            "remote_provisioning",
+        ),
+        "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE" => (
+            "the configured remote provisioning backend could not provide the requested package",
+            "the configured remote provisioning backend provides the requested package",
+            "remote_provisioning",
+        ),
+        "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE" => (
+            "the configured remote provisioning backend could not refresh its sources",
+            "the configured remote provisioning backend refreshes its sources successfully",
+            "remote_provisioning",
+        ),
+        _ => (
+            "the configured remote provisioning backend could not satisfy the requested prerequisite",
+            "the configured remote provisioning backend satisfies the requested prerequisite",
+            "remote_provisioning",
+        ),
+    };
+    let owner = match code {
+        "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
+        | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
+        | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+        | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
+        | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
+        | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
+        | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => "container_target",
+        "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+        | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
+        | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
+        | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "host",
+        _ => "remote_target",
+    };
+
+    FindingResolvedMetadata {
+        category: "provisioning",
+        owner,
+        evidence: Some(static_finding_evidence(observed, expected, source)),
+        provenance: org_policy_provenance(),
+        policy: None,
+    }
+}
+
+fn resolve_policy_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
+    let code = finding.code();
+    let evidence = match code {
+        "OTA_POLICY_PACK_VIOLATION" => Some(static_finding_evidence(
+            "the repo failed org policy validation",
+            "the repo satisfies the org policy pack",
+            "org_policy",
+        )),
+        "OTA_POLICY_PACK_INVALID" => Some(static_finding_evidence(
+            "the org policy pack failed to load or validate",
+            "the org policy pack loads and validates",
+            "org_policy",
+        )),
+        "OTA_POLICY_BACKED_VERSION_RULES_DECLARED" => Some(static_finding_evidence(
+            "the org policy pack declares approved repo version rules",
+            "the org policy pack has no approved repo version rules declared",
+            "org_policy",
+        )),
+        "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => Some(static_finding_evidence(
+            "the org policy pack declares approved provisioning sources",
+            "the org policy pack has no provisioning sources declared",
+            "org_policy",
+        )),
+        "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => Some(static_finding_evidence(
+            "policy-backed provisioning is missing required package identifiers",
+            "policy-backed provisioning rules declare required package identifiers for OS package managers",
+            "org_policy",
+        )),
+        "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => Some(static_finding_evidence(
+            "the org policy pack declares approved adapter bootstrap sources",
+            "the org policy pack has no adapter bootstrap sources declared",
+            "org_policy",
+        )),
+        _ => Some(static_finding_evidence(
+            "the installed version satisfies the repo contract but violates strict org policy",
+            "the installed version also complies with strict org policy",
+            "org_policy",
+        )),
+    };
+    let policy = match code {
+        "OTA_POLICY_PACK_VIOLATION" => {
+            let has_sections = finding.why.contains("missing contract sections:");
+            let has_files = finding.why.contains("missing files:");
+            let reason = match (has_sections, has_files) {
+                (true, true) => "missing_required_sections_and_files",
+                (true, false) => "missing_required_sections",
+                (false, true) => "missing_required_files",
+                (false, false) => "org_policy_pack_violation",
+            };
+            Some(PolicyFindingContext {
+                outcome: "blocked_by_policy",
+                reason,
+                source: "org",
+                install_scope: "repo_local",
+                mutation_allowed: false,
+            })
+        }
+        "OTA_POLICY_BACKED_VERSION_RULES_DECLARED" => Some(PolicyFindingContext {
+            outcome: "policy_surface_available",
+            reason: "policy_backed_version_rules_declared",
+            source: "org",
+            install_scope: "repo_local",
+            mutation_allowed: false,
+        }),
+        "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => Some(PolicyFindingContext {
+            outcome: "policy_surface_available",
+            reason: "policy_backed_provisioning_declared",
+            source: "org",
+            install_scope: "repo_local",
+            mutation_allowed: false,
+        }),
+        "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => Some(PolicyFindingContext {
+            outcome: "policy_surface_available",
+            reason: "policy_backed_adapter_bootstrap_declared",
+            source: "org",
+            install_scope: "repo_local",
+            mutation_allowed: false,
+        }),
+        "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => Some(PolicyFindingContext {
+            outcome: "blocked_by_policy",
+            reason: "missing_package_identifiers",
+            source: "org",
+            install_scope: "repo_local",
+            mutation_allowed: false,
+        }),
+        "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => Some(PolicyFindingContext {
+            outcome: "blocked_by_policy",
+            reason: "strict_version_noncompliance",
+            source: "org",
+            install_scope: "repo_local",
+            mutation_allowed: false,
+        }),
+        _ => Some(PolicyFindingContext {
+            outcome: "blocked_by_integrity_policy",
+            reason: "invalid_org_policy_pack",
+            source: "org",
+            install_scope: "repo_local",
+            mutation_allowed: false,
+        }),
+    };
+
+    FindingResolvedMetadata {
+        category: "policy",
+        owner: "org_policy",
+        evidence,
+        provenance: org_policy_provenance(),
+        policy,
+    }
+}
+
+fn finding_registry_entry(code: &str) -> Option<FindingRegistryEntry> {
+    let resolver = match code {
+        "OTA_TASKS_MISSING"
+        | "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE"
+        | "OTA_REPO_HYGIENE_GITIGNORE_UNREADABLE"
+        | "OTA_AGENT_BOUNDARY_UNREVIEWED"
+        | "OTA_DEVCONTAINER_RUNTIME_DRIFT"
+        | "OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT"
+        | "OTA_CONTRACT_DRIFT"
+        | "OTA_SELECTED_TASK_PATH_NETWORK_REQUIRED"
+        | "OTA_SELECTED_TASK_PATH_DEPENDENCY_HYDRATION"
+        | "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE"
+        | "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => {
+            resolve_contract_core_finding_metadata as for<'a> fn(&'a Finding) -> FindingResolvedMetadata<'a>
+        }
+        "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY"
+        | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY"
+        | "OTA_CONTAINER_MODE_NOT_CONFIGURED"
+        | "OTA_CONTAINER_DOCTOR_HOST_SCOPE_NOTE"
+        | "OTA_WORKFLOW_PROBE_FAILED"
+        | "OTA_WORKFLOW_PROBE_TIMED_OUT"
+        | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
+        | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT"
+        | "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+        | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+        | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE"
+        | "OTA_CONTEXT_HOST_PLATFORM_UNSUPPORTED"
+        | "OTA_CHECK_FAILED"
+        | "OTA_CHECK_TIMED_OUT"
+        | "OTA_FILE_CHECK_FAILED"
+        | "OTA_FILE_CHECK_TIMED_OUT" => resolve_execution_finding_metadata,
+        "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => {
+            resolve_backend_cli_finding_metadata
+        }
+        "OTA_CONTAINER_BACKEND_UNAVAILABLE" | "OTA_CONTAINER_IMAGE_UNAVAILABLE" => {
+            resolve_container_backend_finding_metadata
+        }
+        "OTA_REMOTE_MODE_NOT_CONFIGURED"
+        | "OTA_REMOTE_DOCTOR_PARTIAL"
+        | "OTA_REMOTE_DOCTOR_HOST_SCOPE_NOTE"
+        | "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
+        | "OTA_REMOTE_TARGET_SUSPICIOUS"
+        | "OTA_REMOTE_CONTEXT_UNEXECUTABLE"
+        | "OTA_REMOTE_TARGET_OS_UNDETERMINED" => resolve_remote_finding_metadata,
+        "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
+        | "OTA_SERVICE_READINESS_FAILED"
+        | "OTA_SERVICE_CHECK_FAILED"
+        | "OTA_SERVICE_CHECK_TIMED_OUT"
+        | "OTA_SERVICE_UNVERIFIABLE" => resolve_service_finding_metadata,
+        "OTA_ENV_MISSING"
+        | "OTA_ENV_INVALID"
+        | "OTA_ENV_SOURCE_MISSING_REQUIRED"
+        | "OTA_ENV_SOURCE_PARSE_FAILED"
+        | "OTA_ENV_SOURCE_INVALID_STRUCTURE"
+        | "OTA_ENV_SOURCE_KEY_COLLISION"
+        | "OTA_RUNTIME_VERSION_MISMATCH"
+        | "OTA_RUNTIME_MISSING"
+        | "OTA_RUNTIME_PROBE_FAILED"
+        | "OTA_RUNTIME_VERSION_UNPARSEABLE"
+        | "OTA_TOOL_VERSION_MISMATCH"
+        | "OTA_TOOL_MISSING"
+        | "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"
+        | "OTA_TOOLCHAIN_PROVIDER_MISSING"
+        | "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED"
+        | "OTA_TOOLCHAIN_COMPONENT_MISSING"
+        | "OTA_TOOLCHAIN_TARGET_MISSING"
+        | "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"
+        | "OTA_TOOL_PROBE_FAILED"
+        | "OTA_TOOL_VERSION_UNPARSEABLE"
+        | "OTA_NATIVE_PREREQUISITE_MISSING"
+        | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => resolve_environment_finding_metadata,
+        "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
+        | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
+        | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+        | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
+        | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
+        | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
+        | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
+        | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+        | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
+        | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
+        | "OTA_HOST_PROVISIONING_BACKEND_FAILED"
+        | "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
+        | "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
+        | "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
+        | "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
+        | "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
+        | "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
+        | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED" => resolve_provisioning_finding_metadata,
+        "OTA_POLICY_PACK_VIOLATION"
+        | "OTA_POLICY_PACK_INVALID"
+        | "OTA_POLICY_BACKED_VERSION_RULES_DECLARED"
+        | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
+        | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
+        | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED"
+        | "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => resolve_policy_finding_metadata,
+        s if s.starts_with("OTA_CONTRACT_ADVISORY_") => resolve_contract_core_finding_metadata,
+        _ => return None,
+    };
+
+    Some(FindingRegistryEntry { resolver })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProvisioningDiagnostics {
     pub plan: ProvisioningPlan,
@@ -1883,686 +2592,7 @@ impl Finding {
     }
 
     fn resolved_metadata(&self) -> Option<FindingResolvedMetadata<'_>> {
-        let code = self.code();
-        let probe_target_owner = || {
-            if finding_targets_container_image(&self.why) {
-                "container_target"
-            } else if finding_targets_remote_backend(&self.why) {
-                "remote_target"
-            } else {
-                "host"
-            }
-        };
-        let probe_command = || finding_probe_command(&self.why).unwrap_or_default();
-        let probe_path = || finding_probe_path(&self.why).unwrap_or_default();
-        let static_evidence = |observed: &str, expected: &str, source: &str| FindingEvidence {
-            observed: observed.to_string(),
-            expected: expected.to_string(),
-            source: source.to_string(),
-            checked_at: String::new(),
-            command: String::new(),
-            path: String::new(),
-        };
-        let probe_evidence = |observed: &str, expected: &str| FindingEvidence {
-            observed: observed.to_string(),
-            expected: expected.to_string(),
-            source: probe_target_owner().to_string(),
-            checked_at: String::new(),
-            command: probe_command(),
-            path: probe_path(),
-        };
-        let repo_contract = Some(FindingProvenanceContext {
-            provenance: "repo contract",
-            provenance_key: "repo_contract",
-        });
-        let org_policy = Some(FindingProvenanceContext {
-            provenance: "org policy",
-            provenance_key: "org_policy",
-        });
-        let repo_signals = Some(FindingProvenanceContext {
-            provenance: "repo signals",
-            provenance_key: "repo_signals",
-        });
-
-        let metadata = match code {
-            "OTA_TASKS_MISSING" => FindingResolvedMetadata {
-                category: "contract",
-                owner: "repo_contract",
-                evidence: Some(static_evidence(
-                    "no runnable task entry was declared",
-                    "at least one runnable task is declared",
-                    "contract",
-                )),
-                provenance: repo_contract,
-                policy: None,
-            },
-            "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE"
-            | "OTA_REPO_HYGIENE_GITIGNORE_UNREADABLE"
-            | "OTA_AGENT_BOUNDARY_UNREVIEWED"
-            | "OTA_DEVCONTAINER_RUNTIME_DRIFT"
-            | "OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT"
-            | "OTA_CONTRACT_DRIFT"
-            | "OTA_SELECTED_TASK_PATH_NETWORK_REQUIRED"
-            | "OTA_SELECTED_TASK_PATH_DEPENDENCY_HYDRATION"
-            | "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE"
-            | "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => {
-                let evidence = match code {
-                    "OTA_CONTRACT_DRIFT" => Some(static_evidence(
-                        "repo signals differ from the declared contract",
-                        "repo signals match the declared contract",
-                        "detect",
-                    )),
-                    "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => {
-                        Some(static_evidence(
-                            "a task body appears to mutate an ota-managed isolated attachment path",
-                            "task bodies leave ota-managed isolated attachment paths to the underlying tool",
-                            "contract",
-                        ))
-                    }
-                    _ => None,
-                };
-                FindingResolvedMetadata {
-                    category: "contract",
-                    owner: "repo_contract",
-                    evidence,
-                    provenance: repo_contract,
-                    policy: None,
-                }
-            }
-            "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY"
-            | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY"
-            | "OTA_CONTAINER_MODE_NOT_CONFIGURED"
-            | "OTA_CONTAINER_DOCTOR_HOST_SCOPE_NOTE"
-            | "OTA_WORKFLOW_PROBE_FAILED"
-            | "OTA_WORKFLOW_PROBE_TIMED_OUT"
-            | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
-            | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT"
-            | "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
-            | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
-            | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
-            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
-            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
-            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE"
-            | "OTA_CONTEXT_HOST_PLATFORM_UNSUPPORTED"
-            | "OTA_CHECK_FAILED"
-            | "OTA_CHECK_TIMED_OUT"
-            | "OTA_FILE_CHECK_FAILED"
-            | "OTA_FILE_CHECK_TIMED_OUT" => {
-                let evidence = match code {
-                    "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY"
-                    | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => Some(static_evidence(
-                        "ephemeral lifecycle was requested",
-                        "isolated backend-backed execution is available",
-                        "execution",
-                    )),
-                    "OTA_CHECK_FAILED" => Some(static_evidence(
-                        "the configured check failed",
-                        "the configured check succeeds",
-                        "execution",
-                    )),
-                    "OTA_CHECK_TIMED_OUT" => Some(static_evidence(
-                        "the configured check timed out",
-                        "the configured check completes within the timeout",
-                        "execution",
-                    )),
-                    "OTA_FILE_CHECK_FAILED" => Some(static_evidence(
-                        "the configured file check failed",
-                        "the configured file state matches the contract",
-                        "repo filesystem",
-                    )),
-                    "OTA_FILE_CHECK_TIMED_OUT" => Some(static_evidence(
-                        "the configured file check timed out",
-                        "the configured file check completes within the timeout",
-                        "repo filesystem",
-                    )),
-                    "OTA_WORKFLOW_PROBE_FAILED" | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED" => Some(
-                        static_evidence(
-                            "the configured workflow probe did not succeed",
-                            "the configured workflow probe succeeds",
-                            "execution",
-                        ),
-                    ),
-                    "OTA_WORKFLOW_PROBE_TIMED_OUT" | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT" => {
-                        Some(static_evidence(
-                            "the configured workflow probe timed out",
-                            "the configured workflow probe completes within its timeout",
-                            "execution",
-                        ))
-                    }
-                    "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
-                    | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED" => Some(static_evidence(
-                        "the selected workflow surface did not become ready",
-                        "the selected workflow surface becomes ready",
-                        "execution",
-                    )),
-                    "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
-                    | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT" => Some(
-                        static_evidence(
-                            "the selected workflow surface did not become ready before timing out",
-                            "the selected workflow surface becomes ready within its timeout",
-                            "execution",
-                        ),
-                    ),
-                    "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
-                    | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => Some(
-                        static_evidence(
-                            "the selected workflow surface could not be resolved or checked",
-                            "the selected workflow surface can be resolved and checked",
-                            "execution",
-                        ),
-                    ),
-                    _ => None,
-                };
-                FindingResolvedMetadata {
-                    category: "execution",
-                    owner: "repo_contract",
-                    evidence,
-                    provenance: repo_contract,
-                    policy: None,
-                }
-            }
-            "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => {
-                FindingResolvedMetadata {
-                    category: "execution",
-                    owner: "host",
-                    evidence: Some(static_evidence(
-                        "required backend CLI was not found on PATH",
-                        "a supported backend CLI is available on PATH",
-                        "host",
-                    )),
-                    provenance: repo_contract,
-                    policy: None,
-                }
-            }
-            "OTA_CONTAINER_BACKEND_UNAVAILABLE" | "OTA_CONTAINER_IMAGE_UNAVAILABLE" => {
-                FindingResolvedMetadata {
-                    category: "execution",
-                    owner: if code == "OTA_CONTAINER_IMAGE_UNAVAILABLE" {
-                        "container_target"
-                    } else {
-                        "host"
-                    },
-                    evidence: None,
-                    provenance: repo_contract,
-                    policy: None,
-                }
-            }
-            "OTA_REMOTE_MODE_NOT_CONFIGURED"
-            | "OTA_REMOTE_DOCTOR_PARTIAL"
-            | "OTA_REMOTE_DOCTOR_HOST_SCOPE_NOTE"
-            | "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
-            | "OTA_REMOTE_TARGET_SUSPICIOUS"
-            | "OTA_REMOTE_CONTEXT_UNEXECUTABLE"
-            | "OTA_REMOTE_TARGET_OS_UNDETERMINED" => {
-                let evidence = match code {
-                    "OTA_REMOTE_MODE_NOT_CONFIGURED" => Some(static_evidence(
-                        "the selected remote execution path is not declared",
-                        "the contract declares a remote execution path",
-                        "repo_contract",
-                    )),
-                    "OTA_REMOTE_DOCTOR_PARTIAL" | "OTA_REMOTE_DOCTOR_HOST_SCOPE_NOTE" => {
-                        Some(static_evidence(
-                            "remote doctor mode is still constrained by host-scoped checks",
-                            "remote doctor mode can evaluate the selected remote path end-to-end",
-                            "repo_contract",
-                        ))
-                    }
-                    "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" => Some(static_evidence(
-                        "the declared remote backend provider is unsupported",
-                        "a supported remote backend provider is declared",
-                        "remote_backend",
-                    )),
-                    "OTA_REMOTE_TARGET_SUSPICIOUS" => Some(static_evidence(
-                        "the remote target shape did not match provider expectations",
-                        "a provider-compatible remote target is declared",
-                        "remote_backend",
-                    )),
-                    "OTA_REMOTE_CONTEXT_UNEXECUTABLE" => Some(static_evidence(
-                        "the named remote execution context could not be resolved",
-                        "the named remote execution context is executable",
-                        "remote_backend",
-                    )),
-                    "OTA_REMOTE_TARGET_OS_UNDETERMINED" => Some(FindingEvidence {
-                        observed: String::from(
-                            "ota could not determine the remote target operating system",
-                        ),
-                        expected: String::from(
-                            "ota can determine the remote target operating system",
-                        ),
-                        source: String::from("remote_backend"),
-                        checked_at: String::new(),
-                        command: remote_os_probe_command().to_string(),
-                        path: String::new(),
-                    }),
-                    _ => None,
-                };
-                FindingResolvedMetadata {
-                    category: "remote",
-                    owner: if matches!(
-                        code,
-                        "OTA_REMOTE_MODE_NOT_CONFIGURED"
-                    ) {
-                        "repo_contract"
-                    } else {
-                        "remote_backend"
-                    },
-                    evidence,
-                    provenance: repo_contract,
-                    policy: None,
-                }
-            }
-            "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
-            | "OTA_SERVICE_READINESS_FAILED"
-            | "OTA_SERVICE_CHECK_FAILED"
-            | "OTA_SERVICE_CHECK_TIMED_OUT"
-            | "OTA_SERVICE_UNVERIFIABLE" => {
-                let evidence = match code {
-                    "OTA_SERVICE_READINESS_FAILED" => Some(static_evidence(
-                        "the configured service readiness probe failed",
-                        "the service readiness probe passes from its declared context",
-                        "service",
-                    )),
-                    "OTA_SERVICE_CHECK_FAILED" => Some(static_evidence(
-                        "the configured service healthcheck failed",
-                        "the service healthcheck passes",
-                        "service",
-                    )),
-                    "OTA_SERVICE_CHECK_TIMED_OUT" => Some(static_evidence(
-                        "the configured service healthcheck timed out",
-                        "the service healthcheck completes within its timeout",
-                        "service",
-                    )),
-                    "OTA_SERVICE_UNVERIFIABLE" => Some(static_evidence(
-                        "the service cannot be verified from the contract",
-                        "the service declares enough information to verify readiness",
-                        "service",
-                    )),
-                    _ => None,
-                };
-                FindingResolvedMetadata {
-                    category: "service",
-                    owner: "service",
-                    evidence,
-                    provenance: repo_contract,
-                    policy: None,
-                }
-            }
-            "OTA_ENV_MISSING"
-            | "OTA_ENV_INVALID"
-            | "OTA_ENV_SOURCE_MISSING_REQUIRED"
-            | "OTA_ENV_SOURCE_PARSE_FAILED"
-            | "OTA_ENV_SOURCE_INVALID_STRUCTURE"
-            | "OTA_ENV_SOURCE_KEY_COLLISION"
-            | "OTA_RUNTIME_VERSION_MISMATCH"
-            | "OTA_RUNTIME_MISSING"
-            | "OTA_RUNTIME_PROBE_FAILED"
-            | "OTA_RUNTIME_VERSION_UNPARSEABLE"
-            | "OTA_TOOL_VERSION_MISMATCH"
-            | "OTA_TOOL_MISSING"
-            | "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"
-            | "OTA_TOOLCHAIN_PROVIDER_MISSING"
-            | "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED"
-            | "OTA_TOOLCHAIN_COMPONENT_MISSING"
-            | "OTA_TOOLCHAIN_TARGET_MISSING"
-            | "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"
-            | "OTA_TOOL_PROBE_FAILED"
-            | "OTA_TOOL_VERSION_UNPARSEABLE"
-            | "OTA_NATIVE_PREREQUISITE_MISSING"
-            | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
-                let evidence = match code {
-                    "OTA_ENV_MISSING" => Some(static_evidence(
-                        "a required environment variable was missing",
-                        "the environment variable is present",
-                        "contract",
-                    )),
-                    "OTA_ENV_INVALID" => Some(static_evidence(
-                        "the resolved environment value is outside the allowed set",
-                        "the environment value satisfies the allowed set",
-                        "contract",
-                    )),
-                    "OTA_ENV_SOURCE_MISSING_REQUIRED" => Some(static_evidence(
-                        "a required declared environment source was missing",
-                        "the declared environment source exists",
-                        "repo filesystem",
-                    )),
-                    "OTA_ENV_SOURCE_PARSE_FAILED" => Some(static_evidence(
-                        "a declared environment source could not be parsed",
-                        "the declared environment source parses successfully",
-                        "repo filesystem",
-                    )),
-                    "OTA_ENV_SOURCE_INVALID_STRUCTURE" => Some(static_evidence(
-                        "a declared environment source had unsupported structure",
-                        "the declared environment source has supported structure",
-                        "repo filesystem",
-                    )),
-                    "OTA_ENV_SOURCE_KEY_COLLISION" => Some(static_evidence(
-                        "declared environment sources produced conflicting keys",
-                        "declared environment sources resolve without key collisions",
-                        "repo filesystem",
-                    )),
-                    "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH" => Some(
-                        probe_evidence(
-                            "the installed version did not match the contract requirement",
-                            "the installed version satisfies the contract requirement",
-                        ),
-                    ),
-                    "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING" => Some(FindingEvidence {
-                        observed: String::from("the required runtime or tool was not available"),
-                        expected: String::from(
-                            "the required runtime or tool is available on PATH",
-                        ),
-                        source: probe_target_owner().to_string(),
-                        checked_at: String::new(),
-                        command: String::new(),
-                        path: String::new(),
-                    }),
-                    "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => Some(static_evidence(
-                        "the selected repo path is using fallback runtime/tool declarations for an ecosystem Ota does not yet ship as a managed toolchain",
-                        "a shipped toolchain provider exists for that ecosystem or the repo intentionally stays on the fallback runtime/tool model",
-                        "repo_signals",
-                    )),
-                    "OTA_RUNTIME_PROBE_FAILED" | "OTA_TOOL_PROBE_FAILED" => Some(
-                        probe_evidence(
-                            "the resolved executable could not report a version",
-                            "the resolved executable reports a version that satisfies the contract",
-                        ),
-                    ),
-                    "OTA_RUNTIME_VERSION_UNPARSEABLE" | "OTA_TOOL_VERSION_UNPARSEABLE" => Some(
-                        probe_evidence(
-                            "the resolved executable did not emit a parseable version",
-                            "the resolved executable emits a parseable version that satisfies the contract",
-                        ),
-                    ),
-                    "OTA_NATIVE_PREREQUISITE_MISSING"
-                    | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => Some(static_evidence(
-                        "the selected native prerequisite check did not pass",
-                        "the selected native prerequisite check passes",
-                        "host",
-                    )),
-                    _ => None,
-                };
-                let provenance = if code == "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" {
-                    repo_signals
-                } else {
-                    repo_contract
-                };
-                FindingResolvedMetadata {
-                    category: "environment",
-                    owner: match code {
-                        "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => probe_target_owner(),
-                        "OTA_ENV_SOURCE_MISSING_REQUIRED"
-                        | "OTA_ENV_SOURCE_PARSE_FAILED"
-                        | "OTA_ENV_SOURCE_INVALID_STRUCTURE"
-                        | "OTA_ENV_SOURCE_KEY_COLLISION" => "repo_contract",
-                        _ => probe_target_owner(),
-                    },
-                    evidence,
-                    provenance,
-                    policy: None,
-                }
-            }
-            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
-            | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
-            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
-            | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_BACKEND_FAILED"
-            | "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
-            | "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
-            | "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED" => {
-                let (observed, expected, source) = match code {
-                    "OTA_CONTAINER_APT_VERSION_UNAVAILABLE" => (
-                        "the configured container apt sources do not provide the pinned package version",
-                        "the configured container apt sources provide the pinned package version",
-                        "container_apt",
-                    ),
-                    "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE" => (
-                        "the configured container apt sources do not provide the requested package",
-                        "the configured container apt sources provide the requested package",
-                        "container_apt",
-                    ),
-                    "OTA_CONTAINER_APT_INDEX_UNAVAILABLE" => (
-                        "the configured container apt sources could not refresh indexes",
-                        "the configured container apt sources refresh successfully",
-                        "container_apt",
-                    ),
-                    "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE" => (
-                        "the configured container provisioning backend could not provide the pinned version",
-                        "the configured container provisioning backend provides the pinned version",
-                        "container_provisioning",
-                    ),
-                    "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE" => (
-                        "the configured container provisioning backend could not provide the requested package",
-                        "the configured container provisioning backend provides the requested package",
-                        "container_provisioning",
-                    ),
-                    "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE" => (
-                        "the configured container provisioning backend could not refresh its sources",
-                        "the configured container provisioning backend refreshes its sources successfully",
-                        "container_provisioning",
-                    ),
-                    "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => (
-                        "the configured container provisioning backend could not satisfy the requested prerequisite",
-                        "the configured container provisioning backend satisfies the requested prerequisite",
-                        "container_provisioning",
-                    ),
-                    "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE" => (
-                        "the configured host provisioning backend could not provide the pinned version",
-                        "the configured host provisioning backend provides the pinned version",
-                        "host_provisioning",
-                    ),
-                    "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE" => (
-                        "the configured host provisioning backend could not provide the requested package",
-                        "the configured host provisioning backend provides the requested package",
-                        "host_provisioning",
-                    ),
-                    "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE" => (
-                        "the configured host provisioning backend could not refresh its sources",
-                        "the configured host provisioning backend refreshes its sources successfully",
-                        "host_provisioning",
-                    ),
-                    "OTA_HOST_PROVISIONING_BACKEND_FAILED" => (
-                        "the configured host provisioning backend could not satisfy the requested prerequisite",
-                        "the configured host provisioning backend satisfies the requested prerequisite",
-                        "host_provisioning",
-                    ),
-                    "OTA_REMOTE_APT_VERSION_UNAVAILABLE" => (
-                        "the configured remote apt sources do not provide the pinned package version",
-                        "the configured remote apt sources provide the pinned package version",
-                        "remote_provisioning",
-                    ),
-                    "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE" => (
-                        "the configured remote apt sources do not provide the requested package",
-                        "the configured remote apt sources provide the requested package",
-                        "remote_provisioning",
-                    ),
-                    "OTA_REMOTE_APT_INDEX_UNAVAILABLE" => (
-                        "the configured remote apt sources could not refresh indexes",
-                        "the configured remote apt sources refresh successfully",
-                        "remote_provisioning",
-                    ),
-                    "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE" => (
-                        "the configured remote provisioning backend could not provide the pinned version",
-                        "the configured remote provisioning backend provides the pinned version",
-                        "remote_provisioning",
-                    ),
-                    "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE" => (
-                        "the configured remote provisioning backend could not provide the requested package",
-                        "the configured remote provisioning backend provides the requested package",
-                        "remote_provisioning",
-                    ),
-                    "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE" => (
-                        "the configured remote provisioning backend could not refresh its sources",
-                        "the configured remote provisioning backend refreshes its sources successfully",
-                        "remote_provisioning",
-                    ),
-                    _ => (
-                        "the configured remote provisioning backend could not satisfy the requested prerequisite",
-                        "the configured remote provisioning backend satisfies the requested prerequisite",
-                        "remote_provisioning",
-                    ),
-                };
-                let owner = match code {
-                    "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
-                    | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
-                    | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
-                    | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
-                    | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
-                    | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
-                    | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => "container_target",
-                    "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
-                    | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
-                    | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
-                    | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "host",
-                    _ => "remote_target",
-                };
-                FindingResolvedMetadata {
-                    category: "provisioning",
-                    owner,
-                    evidence: Some(static_evidence(observed, expected, source)),
-                    provenance: org_policy,
-                    policy: None,
-                }
-            }
-            "OTA_POLICY_PACK_VIOLATION"
-            | "OTA_POLICY_PACK_INVALID"
-            | "OTA_POLICY_BACKED_VERSION_RULES_DECLARED"
-            | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
-            | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
-            | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED"
-            | "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => {
-                let evidence = match code {
-                    "OTA_POLICY_PACK_VIOLATION" => Some(static_evidence(
-                        "the repo failed org policy validation",
-                        "the repo satisfies the org policy pack",
-                        "org_policy",
-                    )),
-                    "OTA_POLICY_PACK_INVALID" => Some(static_evidence(
-                        "the org policy pack failed to load or validate",
-                        "the org policy pack loads and validates",
-                        "org_policy",
-                    )),
-                    "OTA_POLICY_BACKED_VERSION_RULES_DECLARED" => Some(static_evidence(
-                        "the org policy pack declares approved repo version rules",
-                        "the org policy pack has no approved repo version rules declared",
-                        "org_policy",
-                    )),
-                    "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => Some(static_evidence(
-                        "the org policy pack declares approved provisioning sources",
-                        "the org policy pack has no provisioning sources declared",
-                        "org_policy",
-                    )),
-                    "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => Some(static_evidence(
-                        "policy-backed provisioning is missing required package identifiers",
-                        "policy-backed provisioning rules declare required package identifiers for OS package managers",
-                        "org_policy",
-                    )),
-                    "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => Some(static_evidence(
-                        "the org policy pack declares approved adapter bootstrap sources",
-                        "the org policy pack has no adapter bootstrap sources declared",
-                        "org_policy",
-                    )),
-                    _ => Some(static_evidence(
-                        "the installed version satisfies the repo contract but violates strict org policy",
-                        "the installed version also complies with strict org policy",
-                        "org_policy",
-                    )),
-                };
-                let policy = match code {
-                    "OTA_POLICY_PACK_VIOLATION" => {
-                        let has_sections = self.why.contains("missing contract sections:");
-                        let has_files = self.why.contains("missing files:");
-                        let reason = match (has_sections, has_files) {
-                            (true, true) => "missing_required_sections_and_files",
-                            (true, false) => "missing_required_sections",
-                            (false, true) => "missing_required_files",
-                            (false, false) => "org_policy_pack_violation",
-                        };
-                        Some(PolicyFindingContext {
-                            outcome: "blocked_by_policy",
-                            reason,
-                            source: "org",
-                            install_scope: "repo_local",
-                            mutation_allowed: false,
-                        })
-                    }
-                    "OTA_POLICY_BACKED_VERSION_RULES_DECLARED" => Some(PolicyFindingContext {
-                        outcome: "policy_surface_available",
-                        reason: "policy_backed_version_rules_declared",
-                        source: "org",
-                        install_scope: "repo_local",
-                        mutation_allowed: false,
-                    }),
-                    "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => Some(PolicyFindingContext {
-                        outcome: "policy_surface_available",
-                        reason: "policy_backed_provisioning_declared",
-                        source: "org",
-                        install_scope: "repo_local",
-                        mutation_allowed: false,
-                    }),
-                    "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => Some(
-                        PolicyFindingContext {
-                            outcome: "policy_surface_available",
-                            reason: "policy_backed_adapter_bootstrap_declared",
-                            source: "org",
-                            install_scope: "repo_local",
-                            mutation_allowed: false,
-                        },
-                    ),
-                    "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => Some(
-                        PolicyFindingContext {
-                            outcome: "blocked_by_policy",
-                            reason: "missing_package_identifiers",
-                            source: "org",
-                            install_scope: "repo_local",
-                            mutation_allowed: false,
-                        },
-                    ),
-                    "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => Some(
-                        PolicyFindingContext {
-                            outcome: "blocked_by_policy",
-                            reason: "strict_version_noncompliance",
-                            source: "org",
-                            install_scope: "repo_local",
-                            mutation_allowed: false,
-                        },
-                    ),
-                    _ => Some(PolicyFindingContext {
-                        outcome: "blocked_by_integrity_policy",
-                        reason: "invalid_org_policy_pack",
-                        source: "org",
-                        install_scope: "repo_local",
-                        mutation_allowed: false,
-                    }),
-                };
-                FindingResolvedMetadata {
-                    category: "policy",
-                    owner: "org_policy",
-                    evidence,
-                    provenance: org_policy,
-                    policy,
-                }
-            }
-            s if s.starts_with("OTA_CONTRACT_ADVISORY_") => FindingResolvedMetadata {
-                category: "contract",
-                owner: "repo_contract",
-                evidence: None,
-                provenance: repo_contract,
-                policy: None,
-            },
-            _ => return None,
-        };
-
-        Some(metadata)
+        finding_registry_entry(self.code()).map(|entry| (entry.resolver)(self))
     }
 
     fn policy_context(&self) -> Option<PolicyFindingContext<'_>> {
@@ -2847,6 +2877,13 @@ impl Finding {
     }
 
     fn provenance_context(&self) -> Option<FindingProvenanceContext<'_>> {
+        if let Some(drift) = self.drift_context() {
+            return Some(FindingProvenanceContext {
+                provenance: drift.provenance,
+                provenance_key: drift.provenance_key,
+            });
+        }
+
         if let Some(metadata) = self.resolved_metadata()
             && let Some(provenance) = metadata.provenance
         {
@@ -2857,13 +2894,6 @@ impl Finding {
             return Some(FindingProvenanceContext {
                 provenance: "repo signals",
                 provenance_key: "repo_signals",
-            });
-        }
-
-        if let Some(drift) = self.drift_context() {
-            return Some(FindingProvenanceContext {
-                provenance: drift.provenance,
-                provenance_key: drift.provenance_key,
             });
         }
 
@@ -19975,19 +20005,982 @@ tasks:
         );
     }
 
-    #[test]
-    fn shipped_doctor_findings_require_explicit_identity_metadata() {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct DoctorFindingReferenceEntry {
+        code: &'static str,
+        category: &'static str,
+        owner_surface: &'static str,
+        provenance_key_surface: &'static str,
+    }
+
+    fn shipped_doctor_finding_reference_entries() -> &'static [DoctorFindingReferenceEntry] {
+        &[
+            DoctorFindingReferenceEntry {
+                code: "OTA_AGENT_BOUNDARY_UNREVIEWED",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_AGENT_BOOTSTRAP_UNPINNED",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_DEPENDENCY_HYDRATION",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_EXTERNAL_STATE",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_DEPENDS_ON_BOUNDARY",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_ISOLATED_YARN_RELEASE_SHADOW",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_LEGACY_NODE_RUNTIME_TOOL_SPLIT",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_LEGACY_STANDALONE_POETRY",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_LIKELY_UNUSED_ATTACHMENT",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_CHECK",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_MUTATION",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_FILE_CHECK",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_SENSITIVE_AGENT_WRITABLE_PATH",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_SENSITIVE_WRITE_EXCEPTION",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_DRIFT",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_signals",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_DEVCONTAINER_RUNTIME_DRIFT",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REPO_HYGIENE_GITIGNORE_UNREADABLE",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_SELECTED_TASK_PATH_DEPENDENCY_HYDRATION",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_SELECTED_TASK_PATH_NETWORK_REQUIRED",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TASKS_MISSING",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_BACKEND_CLI_MISSING",
+                category: "execution",
+                owner_surface: "host",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CHECK_FAILED",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CHECK_TIMED_OUT",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_BACKEND_CLI_MISSING",
+                category: "execution",
+                owner_surface: "host",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_BACKEND_UNAVAILABLE",
+                category: "execution",
+                owner_surface: "host",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_DOCTOR_HOST_SCOPE_NOTE",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_IMAGE_UNAVAILABLE",
+                category: "execution",
+                owner_surface: "container_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_MODE_NOT_CONFIGURED",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTEXT_HOST_PLATFORM_UNSUPPORTED",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_FILE_CHECK_FAILED",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_FILE_CHECK_TIMED_OUT",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_LIFECYCLE_EPHEMERAL_ADVISORY",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKFLOW_PROBE_FAILED",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKFLOW_PROBE_TIMED_OUT",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKFLOW_SIGNAL_PROBE_FAILED",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKFLOW_SURFACE_READINESS_FAILED",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE",
+                category: "execution",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED",
+                category: "remote",
+                owner_surface: "remote_backend",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_CONTEXT_UNEXECUTABLE",
+                category: "remote",
+                owner_surface: "remote_backend",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_DOCTOR_HOST_SCOPE_NOTE",
+                category: "remote",
+                owner_surface: "remote_backend",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_DOCTOR_PARTIAL",
+                category: "remote",
+                owner_surface: "remote_backend",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_MODE_NOT_CONFIGURED",
+                category: "remote",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_TARGET_OS_UNDETERMINED",
+                category: "remote",
+                owner_surface: "remote_backend",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_TARGET_SUSPICIOUS",
+                category: "remote",
+                owner_surface: "remote_backend",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_SERVICE_CHECK_FAILED",
+                category: "service",
+                owner_surface: "service",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_SERVICE_CHECK_TIMED_OUT",
+                category: "service",
+                owner_surface: "service",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE",
+                category: "service",
+                owner_surface: "service",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_SERVICE_READINESS_FAILED",
+                category: "service",
+                owner_surface: "service",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_SERVICE_UNVERIFIABLE",
+                category: "service",
+                owner_surface: "service",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_ENV_INVALID",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_ENV_MISSING",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_ENV_SOURCE_INVALID_STRUCTURE",
+                category: "environment",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_ENV_SOURCE_KEY_COLLISION",
+                category: "environment",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_ENV_SOURCE_MISSING_REQUIRED",
+                category: "environment",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_ENV_SOURCE_PARSE_FAILED",
+                category: "environment",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_NATIVE_PREREQUISITE_MISSING",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_NATIVE_PREREQUISITE_TIMED_OUT",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_RUNTIME_MISSING",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_RUNTIME_PROBE_FAILED",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_RUNTIME_VERSION_MISMATCH",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_RUNTIME_VERSION_UNPARSEABLE",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TOOLCHAIN_COMPONENT_MISSING",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_signals",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TOOLCHAIN_PROVIDER_MISSING",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TOOLCHAIN_TARGET_MISSING",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TOOL_ACTIVATION_PROVIDER_MISSING",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TOOL_MISSING",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TOOL_PROBE_FAILED",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TOOL_VERSION_MISMATCH",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_TOOL_VERSION_UNPARSEABLE",
+                category: "environment",
+                owner_surface: "host|container_target|remote_target",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_APT_INDEX_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "container_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "container_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_APT_VERSION_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "container_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED",
+                category: "provisioning",
+                owner_surface: "container_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "container_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "container_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "container_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_HOST_PROVISIONING_BACKEND_FAILED",
+                category: "provisioning",
+                owner_surface: "host",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "host",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "host",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "host",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_APT_INDEX_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "remote_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "remote_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_APT_VERSION_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "remote_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_PROVISIONING_BACKEND_FAILED",
+                category: "provisioning",
+                owner_surface: "remote_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "remote_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "remote_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE",
+                category: "provisioning",
+                owner_surface: "remote_target",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_BACKED_PROVISIONING_DECLARED",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_BACKED_VERSION_RULES_DECLARED",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_PACK_INVALID",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_PACK_VIOLATION",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+        ]
+    }
+
+    fn shipped_workspace_finding_reference_entries() -> &'static [DoctorFindingReferenceEntry] {
+        &[
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKSPACE_REPO_NOT_ACQUIRED",
+                category: "workspace",
+                owner_surface: "workspace_acquisition",
+                provenance_key_surface: "omitted",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKSPACE_REPO_CONTRACT_INVALID",
+                category: "workspace",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "omitted",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKSPACE_REPO_CONTRACT_MISSING",
+                category: "workspace",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "omitted",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_WORKSPACE_REPO_CONTRACT_UNREADABLE",
+                category: "workspace",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "omitted",
+            },
+        ]
+    }
+
+    fn doctor_production_source() -> String {
         let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/doctor.rs");
         let source = fs::read_to_string(&source_path).expect("doctor source should load");
         let (production_source, _) = source
             .split_once("#[cfg(test)]\nmod tests {")
             .expect("doctor tests module marker should exist");
+        production_source.to_string()
+    }
+
+    fn extract_ota_codes(source: &str) -> std::collections::BTreeSet<String> {
+        let mut codes = std::collections::BTreeSet::new();
+        let mut index = 0usize;
+        while let Some(offset) = source[index..].find("OTA_") {
+            let start = index + offset;
+            let mut end = start + 4;
+            while end < source.len() {
+                let ch = source.as_bytes()[end] as char;
+                if ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_' {
+                    end += 1;
+                } else {
+                    break;
+                }
+            }
+            codes.insert(source[start..end].to_string());
+            index = end;
+        }
+        codes
+    }
+
+    fn shipped_doctor_finding_codes_from_production_source() -> std::collections::BTreeSet<String> {
+        extract_ota_codes(&doctor_production_source())
+            .into_iter()
+            .filter(|code| {
+                code != "OTA_DOCTOR_FINDING_UNKNOWN"
+                    && code != "OTA_CONTRACT_ADVISORY_"
+                    && super::finding_registry_entry(code).is_some()
+            })
+            .collect()
+    }
+
+    fn shipped_workspace_finding_codes_from_production_source(
+    ) -> std::collections::BTreeSet<String> {
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/workspace.rs");
+        let source = fs::read_to_string(&source_path).expect("workspace source should load");
+        let diagnose_start = source
+            .find("pub(crate) fn diagnose_workspace_repo(")
+            .expect("workspace diagnosis entrypoint should exist");
+        let repo_finding_start = source[diagnose_start..]
+            .find("fn repo_finding(")
+            .map(|offset| diagnose_start + offset)
+            .expect("workspace repo_finding helper should exist");
+        let diagnose_surface = &source[diagnose_start..repo_finding_start];
+
+        let mut codes = std::collections::BTreeSet::new();
+        let mut cursor = diagnose_surface;
+        while let Some(call_start) = cursor.find("repo_finding(") {
+            let after_call = &cursor[call_start + "repo_finding(".len()..];
+            let Some(first_quote) = after_call.find('"') else {
+                break;
+            };
+            let after_first_quote = &after_call[first_quote + 1..];
+            let Some(second_quote) = after_first_quote.find('"') else {
+                break;
+            };
+            let code = &after_first_quote[..second_quote];
+            if code.starts_with("OTA_WORKSPACE_") {
+                codes.insert(code.to_string());
+            }
+            cursor = &after_first_quote[second_quote + 1..];
+        }
+        codes
+    }
+
+    fn surface_allows(surface: &str, value: &str) -> bool {
+        surface.split('|').any(|candidate| candidate == value)
+    }
+
+    fn markdown_code_cell(value: &str) -> String {
+        format!("`{}`", value.replace('|', "\\|"))
+    }
+
+    fn category_heading(category: &str) -> &'static str {
+        match category {
+            "contract" => "Contract",
+            "execution" => "Execution",
+            "remote" => "Remote",
+            "service" => "Service",
+            "environment" => "Environment",
+            "provisioning" => "Provisioning",
+            "policy" => "Policy",
+            "workspace" => "Workspace",
+            _ => "Other",
+        }
+    }
+
+    fn render_doctor_finding_reference_markdown() -> String {
+        let mut output = String::from(
+            r#"<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
+# Doctor Finding Reference
+
+Status: generated reference.
+
+This document is generated from the shipped doctor and workspace finding identity catalogs in
+`src/doctor.rs` and `src/workspace.rs`.
+Do not edit the rows by hand; update the catalog and rerun the sync tests.
+
+`owner_surface` and `provenance_key_surface` use `|` when the emitted value depends on the
+selected execution target instead of one fixed owner or provenance lane. `omitted` means the
+field is not emitted for that finding family.
+"#,
+        );
+        let categories = [
+            "contract",
+            "execution",
+            "remote",
+            "service",
+            "environment",
+            "provisioning",
+            "policy",
+            "workspace",
+        ];
+
+        for category in categories {
+            output.push_str(&format!("\n## {}\n\n", category_heading(category)));
+            output.push_str(
+                "| Code | Category | Owner Surface | Provenance Key Surface |\n\
+| --- | --- | --- | --- |\n",
+            );
+            for entry in shipped_doctor_finding_reference_entries()
+                .iter()
+                .chain(shipped_workspace_finding_reference_entries().iter())
+                .filter(|entry| entry.category == category)
+            {
+                output.push_str(&format!(
+                    "| {} | {} | {} | {} |\n",
+                    markdown_code_cell(entry.code),
+                    markdown_code_cell(entry.category),
+                    markdown_code_cell(entry.owner_surface),
+                    markdown_code_cell(entry.provenance_key_surface),
+                ));
+            }
+        }
+
+        output
+    }
+
+    #[test]
+    fn shipped_doctor_findings_require_explicit_identity_metadata() {
+        let production_source = doctor_production_source();
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/doctor.rs");
 
         assert!(
             !production_source.contains("identity: None,")
                 && !production_source.contains("identity: Default::default()"),
             "shipped doctor findings must carry explicit identity metadata: {}",
             source_path.display()
+        );
+    }
+
+    #[test]
+    fn doctor_finding_reference_catalog_stays_in_sync_with_registry_and_production_source() {
+        let reference_codes: std::collections::BTreeSet<_> =
+            shipped_doctor_finding_reference_entries()
+                .iter()
+                .chain(shipped_workspace_finding_reference_entries().iter())
+                .map(|entry| entry.code.to_string())
+                .collect();
+
+        let production_codes: std::collections::BTreeSet<_> =
+            shipped_doctor_finding_codes_from_production_source()
+                .into_iter()
+                .chain(shipped_workspace_finding_codes_from_production_source())
+                .collect();
+
+        assert_eq!(
+            reference_codes,
+            production_codes,
+            "doctor finding reference catalog must cover the full shipped repo and workspace production surface"
+        );
+
+        for entry in shipped_doctor_finding_reference_entries() {
+            let finding = Finding {
+                identity: Some(super::FindingIdentity::new(
+                    entry.code,
+                    entry.category,
+                    entry.owner_surface.split('|').next().unwrap_or("repo_contract"),
+                )),
+                severity: FindingSeverity::Warn,
+                summary: String::from("reference finding"),
+                why: String::from("reference finding"),
+                next: String::from("reference finding"),
+            };
+            finding
+                .resolved_metadata()
+                .unwrap_or_else(|| panic!("reference entry must resolve via registry: {}", entry.code));
+
+            assert_eq!(finding.category(), entry.category, "{}", entry.code);
+            assert!(
+                surface_allows(entry.owner_surface, finding.owner()),
+                "{} owner mismatch: expected {}, got {}",
+                entry.code,
+                entry.owner_surface,
+                finding.owner()
+            );
+            assert!(
+                surface_allows(
+                    entry.provenance_key_surface,
+                    finding.provenance_key().as_deref().unwrap_or(""),
+                ),
+                "{} provenance mismatch: expected {}, got {:?}",
+                entry.code,
+                entry.provenance_key_surface,
+                finding.provenance_key()
+            );
+        }
+
+        for entry in shipped_workspace_finding_reference_entries() {
+            let finding = Finding {
+                identity: Some(super::FindingIdentity::new(
+                    entry.code,
+                    entry.category,
+                    entry.owner_surface,
+                )),
+                severity: FindingSeverity::Warn,
+                summary: String::from("reference finding"),
+                why: String::from("reference finding"),
+                next: String::from("reference finding"),
+            };
+
+            assert_eq!(finding.category(), entry.category, "{}", entry.code);
+            assert_eq!(finding.owner(), entry.owner_surface, "{}", entry.code);
+            assert_eq!(
+                finding.provenance_key().as_deref().unwrap_or("omitted"),
+                entry.provenance_key_surface,
+                "{}",
+                entry.code
+            );
+        }
+    }
+
+    #[test]
+    fn doctor_finding_reference_markdown_matches_checked_in_doc() {
+        let doc_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/doctor-finding-reference.md");
+        let expected = render_doctor_finding_reference_markdown();
+        let actual = fs::read_to_string(&doc_path).expect("doctor finding reference should load");
+
+        assert_eq!(
+            actual, expected,
+            "doctor finding reference doc drifted: {}",
+            doc_path.display()
         );
     }
 

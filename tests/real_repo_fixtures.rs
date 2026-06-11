@@ -2667,6 +2667,105 @@ policies:
     assert!(finding["evidence"]["expected"].is_string());
 }
 
+#[test]
+fn doctor_json_report_summary_contract_tracks_primary_blocker_counts_and_ordering() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: doctor-summary-demo
+execution:
+  preferred: native
+  lifecycle: ephemeral
+tasks:
+  setup:
+    run: 'true'
+services:
+  postgres:
+    required: true
+    healthcheck: test -f .service-ready
+"#,
+    )
+    .unwrap();
+
+    let output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json_any(&output);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(json["ok"], false);
+    assert_eq!(json["mode"], "native");
+    assert_eq!(json["summary"]["verdict"], "not_ready");
+    assert_eq!(json["summary"]["agent_verdict"], "not_ready");
+    assert_eq!(json["summary"]["error_count"], 1);
+    assert_eq!(json["summary"]["warn_count"], 1);
+    assert_eq!(json["summary"]["info_count"], 0);
+    assert_eq!(
+        json["summary"]["primary_blocker"]["code"],
+        json["findings"][0]["code"]
+    );
+    assert_eq!(
+        json["summary"]["primary_blocker"]["summary"],
+        json["findings"][0]["summary"]
+    );
+    assert_eq!(
+        json["summary"]["primary_blocker"]["why"],
+        json["findings"][0]["why"]
+    );
+    assert_eq!(
+        json["summary"]["primary_blocker"]["next"],
+        json["findings"][0]["next"]
+    );
+    assert_eq!(
+        json["summary"]["primary_blocker"]["provenance_key"],
+        json["findings"][0]["provenance_key"]
+    );
+    assert_eq!(json["findings"][0]["severity"], "error");
+    assert_eq!(json["findings"][0]["summary"], "Service healthcheck failed: postgres");
+    assert_eq!(json["findings"][1]["severity"], "warn");
+    assert_eq!(
+        json["findings"][1]["summary"],
+        "Ephemeral lifecycle is advisory in native mode"
+    );
+}
+
+#[test]
+fn doctor_json_report_summary_contract_tracks_ready_without_primary_blocker() {
+    let fixture = TempDir::new().expect("temp dir should be created");
+    fs::write(
+        fixture.path().join("ota.yaml"),
+        r#"
+version: 1
+project:
+  name: doctor-ready-demo
+tasks:
+  setup:
+    run: 'true'
+agent:
+  entrypoint: setup
+  safe_tasks:
+    - setup
+  writable_paths:
+    - tmp
+"#,
+    )
+    .unwrap();
+
+    let output = run_ota(&["doctor", "--json", fixture.path().to_str().unwrap()]);
+    let json = stdout_json(&output);
+
+    assert_eq!(json["ok"], true);
+    assert_eq!(json["mode"], "native");
+    assert_eq!(json["summary"]["verdict"], "ready");
+    assert_eq!(json["summary"]["agent_verdict"], "ready");
+    assert_eq!(json["summary"]["error_count"], 0);
+    assert_eq!(json["summary"]["warn_count"], 0);
+    assert_eq!(json["summary"]["info_count"], 0);
+    assert!(json["summary"].get("primary_blocker").is_none());
+    assert_eq!(json["findings"], serde_json::json!([]));
+}
+
 #[cfg(unix)]
 #[test]
 fn doctor_json_uses_default_env_value_on_real_fixture() {

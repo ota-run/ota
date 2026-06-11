@@ -38,7 +38,17 @@
   findings now also preserve policy metadata/provenance consistently in doctor JSON
 - added a representative `ota doctor --json` contract pack across policy, workflow, service, env,
   provisioning, and remote finding lanes, and CI now fails if a shipped doctor finding is added
-  without explicit identity metadata
+  without explicit identity metadata; doctor report-level contract coverage now also locks summary
+  verdict/counts, primary-blocker mirroring, ready-without-blocker shape, and published schema
+  truth for `mode: remote` plus `summary.primary_blocker.code`; the shipped doctor code catalog is
+  now published in a generated reference doc synced from `src/doctor.rs`, and contract-drift
+  findings now publish the documented `repo_signals` provenance instead of falling back to generic
+  repo-contract provenance; monorepo aggregate `ota doctor --json` now also computes
+  `summary.primary_blocker` from the same rewritten emitted findings surfaced in `members[]`; the
+  published workspace doctor/check schemas now also expose top-level `summary.primary_blocker` and
+  blocker `code` fields in line with the shipped JSON output, and workspace repo acquisition /
+  repo-contract findings now also emit explicit stable workspace finding codes instead of falling
+  back to anonymous summary-only blockers
 - widened `ota env` with `--workflow` selection so the env read path can inspect the selected
   workflow’s env profile truth directly; text and JSON output now report the selected workflow,
   selected profile, and any workflow-owned rendered env artifacts such as rendered dotenv files

@@ -312,6 +312,8 @@ pub struct WorkspaceRepoPrimaryBlocker {
     pub why: String,
     pub next: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provenance_key: Option<String>,
@@ -858,6 +860,9 @@ pub(crate) fn diagnose_workspace_repo(
 ) -> WorkspaceRepoDoctorReport {
     if !repo.present {
         let findings = vec![repo_finding(
+            "OTA_WORKSPACE_REPO_NOT_ACQUIRED",
+            "workspace",
+            "workspace_acquisition",
             repo.required,
             format!("Repo not acquired: {}", repo.name),
             format!(
@@ -928,6 +933,9 @@ pub(crate) fn diagnose_workspace_repo(
                 .iter()
                 .map(|validation_error| {
                     repo_finding(
+                        "OTA_WORKSPACE_REPO_CONTRACT_INVALID",
+                        "workspace",
+                        "repo_contract",
                         repo.required,
                         format!("Invalid repo contract: {}", repo.name),
                         format!(
@@ -947,6 +955,9 @@ pub(crate) fn diagnose_workspace_repo(
                 .collect(),
         },
         Err(LoadContractError::Read { .. }) => vec![repo_finding(
+            "OTA_WORKSPACE_REPO_CONTRACT_MISSING",
+            "workspace",
+            "repo_contract",
             repo.required,
             format!("Missing repo contract: {}", repo.name),
             format!(
@@ -961,6 +972,9 @@ pub(crate) fn diagnose_workspace_repo(
             ),
         )],
         Err(error) => vec![repo_finding(
+            "OTA_WORKSPACE_REPO_CONTRACT_UNREADABLE",
+            "workspace",
+            "repo_contract",
             repo.required,
             format!("Unreadable repo contract: {}", repo.name),
             format!(
@@ -1107,10 +1121,20 @@ fn adjust_repo_findings(report: DoctorReport, required: bool) -> DoctorReport {
     }
 }
 
-fn repo_finding(required: bool, summary: String, why: String, next: String) -> Finding {
-    Finding {
-        identity: None,
-        severity: if required {
+fn repo_finding(
+    code: &str,
+    category: &str,
+    owner: &str,
+    required: bool,
+    summary: String,
+    why: String,
+    next: String,
+) -> Finding {
+    Finding::identified(
+        code,
+        category,
+        owner,
+        if required {
             FindingSeverity::Error
         } else {
             FindingSeverity::Warn
@@ -1118,7 +1142,7 @@ fn repo_finding(required: bool, summary: String, why: String, next: String) -> F
         summary,
         why,
         next,
-    }
+    )
 }
 
 pub(crate) fn agent_verdict_from_agent(

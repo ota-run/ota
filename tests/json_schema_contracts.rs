@@ -220,6 +220,10 @@ fn doctor_schema_includes_agent_summary() {
     assert!(properties.get("findings").is_some());
     assert!(properties.get("members").is_some());
     assert!(properties.get("mode").is_some());
+    assert_eq!(
+        properties["mode"]["enum"],
+        serde_json::json!(["native", "container", "remote"])
+    );
     assert!(agent_properties.get("protected_paths").is_some());
     assert!(agent_properties.get("inferred_boundary_reviewed").is_some());
     assert!(properties.get("provisioning").is_some());
@@ -255,6 +259,11 @@ fn doctor_schema_includes_agent_summary() {
     assert!(
         properties["summary"]["properties"]
             .get("agent_verdict")
+            .is_some()
+    );
+    assert!(
+        properties["summary"]["properties"]["primary_blocker"]["properties"]
+            .get("code")
             .is_some()
     );
 }
@@ -1091,6 +1100,8 @@ fn workspace_doctor_schema_exists_and_covers_repo_reports() {
     let schema = load_schema("docs/spec/json-schemas/workspace-doctor.json");
     let repo = &schema["properties"]["repos"]["items"]["properties"];
     let summary = &schema["properties"]["summary"]["properties"];
+    let summary_primary_blocker = &summary["primary_blocker"]["properties"];
+    let repo_primary_blocker = &repo["primary_blocker"]["properties"];
     let execution = &repo["execution"]["properties"];
     let execution_env = &execution["env"]["items"]["properties"];
 
@@ -1106,6 +1117,25 @@ fn workspace_doctor_schema_exists_and_covers_repo_reports() {
     assert!(execution_env.get("source").is_some());
     assert!(summary.get("verdict").is_some());
     assert!(summary.get("agent_verdict").is_some());
+    assert!(summary.get("primary_blocker").is_some());
+    assert!(summary_primary_blocker.get("repo").is_some());
+    assert!(summary_primary_blocker.get("code").is_some());
+    assert!(repo_primary_blocker.get("code").is_some());
+}
+
+#[test]
+fn workspace_check_schema_exists_and_covers_primary_blockers() {
+    let schema = load_schema("docs/spec/json-schemas/workspace-check.json");
+    let repo = &schema["properties"]["repos"]["items"]["properties"];
+    let summary = &schema["properties"]["summary"]["properties"];
+    let summary_primary_blocker = &summary["primary_blocker"]["properties"];
+    let repo_primary_blocker = &repo["primary_blocker"]["properties"];
+
+    assert!(summary.get("primary_blocker").is_some());
+    assert!(summary_primary_blocker.get("repo").is_some());
+    assert!(summary_primary_blocker.get("code").is_some());
+    assert!(repo.get("primary_blocker").is_some());
+    assert!(repo_primary_blocker.get("code").is_some());
 }
 
 #[test]
