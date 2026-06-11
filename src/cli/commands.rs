@@ -18741,8 +18741,14 @@ pub fn doctor(
                         &report,
                     )];
                     let mut member_results = Vec::new();
-                    let mut check_summary = doctor_summary(
-                        &report,
+                    let rewritten_findings = rewrite_doctor_findings_for_contract(
+                        &report.findings,
+                        &target.contract_path,
+                        Some(mode),
+                        doctor_lifecycle,
+                    );
+                    let mut check_summary = doctor_summary_from_findings(
+                        &rewritten_findings,
                         crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
                     );
 
@@ -18839,13 +18845,6 @@ pub fn doctor(
                             if !member_report.ok {
                                 overall_ok = false;
                             }
-                            add_doctor_summary(
-                                &mut check_summary,
-                                &member_report,
-                                crate::workspace::agent_verdict_from_agent(
-                                    member_target.contract.agent.as_ref(),
-                                ),
-                            );
                             let member_agent = member_target
                                 .contract
                                 .agent
@@ -18886,6 +18885,13 @@ pub fn doctor(
                                 &member_target.contract_path,
                                 Some(mode),
                                 doctor_lifecycle,
+                            );
+                            add_doctor_summary_from_findings(
+                                &mut check_summary,
+                                &rewritten_member_findings,
+                                crate::workspace::agent_verdict_from_agent(
+                                    member_target.contract.agent.as_ref(),
+                                ),
                             );
                             text_sections.push(render_doctor_section(
                                 &display_contract_target(
@@ -18928,12 +18934,6 @@ pub fn doctor(
                             output
                         }
                         OutputFormat::Json => {
-                            let rewritten_findings = rewrite_doctor_findings_for_contract(
-                                &report.findings,
-                                &target.contract_path,
-                                Some(mode),
-                                doctor_lifecycle,
-                            );
                             CommandOutput {
                                 stdout: to_json_value(json!({
                                     "ok": overall_ok,
@@ -18986,8 +18986,8 @@ pub fn doctor(
                                     ok: report.ok,
                                     path: &path_display,
                                     mode: mode.as_str(),
-                                    summary: doctor_summary(
-                                        &report,
+                                    summary: doctor_summary_from_findings(
+                                        &rewritten_findings,
                                         crate::workspace::agent_verdict_from_agent(
                                             target.contract.agent.as_ref(),
                                         ),
@@ -37250,17 +37250,24 @@ fn render_doctor_text(
 }
 
 fn doctor_summary(report: &DoctorReport, agent_verdict: DoctorVerdict) -> DoctorSummary {
+    doctor_summary_from_findings(&report.findings, agent_verdict)
+}
+
+fn doctor_summary_from_findings(
+    findings: &[Finding],
+    agent_verdict: DoctorVerdict,
+) -> DoctorSummary {
     let mut summary = DoctorSummary::default();
-    summary.verdict = repo_verdict_from_findings(&report.findings);
+    summary.verdict = repo_verdict_from_findings(findings);
     summary.agent_verdict = agent_verdict;
-    for finding in &report.findings {
+    for finding in findings {
         match finding.severity {
             FindingSeverity::Error => summary.error_count += 1,
             FindingSeverity::Warn => summary.warn_count += 1,
             FindingSeverity::Info => summary.info_count += 1,
         }
     }
-    summary.primary_blocker = primary_blocker_from_findings(&report.findings);
+    summary.primary_blocker = primary_blocker_from_findings(findings);
     summary
 }
 
@@ -37269,7 +37276,15 @@ fn add_doctor_summary(
     report: &DoctorReport,
     agent_verdict: DoctorVerdict,
 ) {
-    for finding in &report.findings {
+    add_doctor_summary_from_findings(summary, &report.findings, agent_verdict);
+}
+
+fn add_doctor_summary_from_findings(
+    summary: &mut DoctorSummary,
+    findings: &[Finding],
+    agent_verdict: DoctorVerdict,
+) {
+    for finding in findings {
         match finding.severity {
             FindingSeverity::Error => summary.error_count += 1,
             FindingSeverity::Warn => summary.warn_count += 1,
@@ -37278,10 +37293,10 @@ fn add_doctor_summary(
     }
     summary.verdict = worse_verdict(
         summary.verdict,
-        repo_verdict_from_findings(&report.findings),
+        repo_verdict_from_findings(findings),
     );
     summary.agent_verdict = worse_verdict(summary.agent_verdict, agent_verdict);
-    if let Some(candidate) = primary_blocker_from_findings(&report.findings) {
+    if let Some(candidate) = primary_blocker_from_findings(findings) {
         summary.primary_blocker = match summary.primary_blocker.take() {
             Some(existing)
                 if blocker_rank(existing.severity) >= blocker_rank(candidate.severity) =>
@@ -37447,7 +37462,7 @@ fn workspace_list_summary(repos: &[WorkspaceRepoListReport]) -> WorkspaceListSum
 
 fn primary_blocker_from_findings(findings: &[Finding]) -> Option<DoctorPrimaryBlocker> {
     findings.first().map(|finding| DoctorPrimaryBlocker {
-        code: Some(finding.code().to_string()),
+        code: finding.identity.as_ref().map(|identity| identity.code.clone()),
         severity: finding.severity,
         summary: finding.summary.clone(),
         why: finding.why.clone(),
@@ -37473,7 +37488,7 @@ fn workspace_primary_blocker(
     for repo in &report.repos {
         for finding in &repo.findings {
             let blocker = WorkspacePrimaryBlocker {
-                code: Some(finding.code().to_string()),
+                code: finding.identity.as_ref().map(|identity| identity.code.clone()),
                 repo: repo.name.clone(),
                 severity: finding.severity,
                 summary: finding.summary.clone(),
@@ -50050,6 +50065,44 @@ tasks:
                 .contains("**Code:** OTA\\_CONTRACT\\_ADVISORY\\_SERVICE\\_OPAQUE\\_SHELL\\_START"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn primary_blocker_code_is_omitted_without_explicit_identity() {
+        let finding = Finding {
+            identity: None,
+            severity: FindingSeverity::Error,
+            summary: String::from("anonymous blocker"),
+            why: String::from("anonymous blocker why"),
+            next: String::from("anonymous blocker next"),
+        };
+
+        let repo_blocker = super::primary_blocker_from_findings(std::slice::from_ref(&finding))
+            .expect("repo primary blocker should exist");
+        assert_eq!(repo_blocker.code, None);
+
+        let workspace_report = crate::workspace::WorkspaceDoctorReport {
+            ok: false,
+            repos: vec![crate::workspace::WorkspaceRepoDoctorReport {
+                name: String::from("web"),
+                path: String::from("apps/web"),
+                contract_path: String::from("apps/web/ota.yaml"),
+                workflow: None,
+                required: true,
+                ok: false,
+                agent_verdict: DoctorVerdict::NotReady,
+                primary_blocker: None,
+                execution: None,
+                provisioning: None,
+                adapter_bootstrap: None,
+                extensions: BTreeMap::new(),
+                findings: vec![finding.clone()],
+            }],
+        };
+
+        let workspace_blocker = super::workspace_primary_blocker(&workspace_report)
+            .expect("workspace primary blocker should exist");
+        assert_eq!(workspace_blocker.code, None);
     }
 
     #[test]

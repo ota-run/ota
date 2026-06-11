@@ -1878,7 +1878,8 @@ machine-readable `verdict` / `agent_verdict` values so hosted validation and edi
 not need to recompute them. When there is at least one finding, the summary may also include
 `primary_blocker` with the highest-priority blocker details so CI and editors can answer the
 question “what should I fix first?” without scanning the full list. When that blocker maps back to
-a finding with stable identity, `summary.primary_blocker.code` is included additively.
+a finding with stable identity, `summary.primary_blocker.code` is included additively alongside the
+same blocker text and provenance fields.
 
 For the main structured doctor finding families, `findings[].code`, `findings[].category`, and
 `findings[].owner` are now emitted from explicit finding identity instead of being re-derived from
@@ -1889,6 +1890,8 @@ probe/surface readiness, policy, repo-hygiene, and contract-drift finding lanes.
 That identity surface is now guarded in CI: representative policy, workflow, service, env,
 provisioning, and remote findings are contract-tested in JSON form, and shipped doctor findings are
 rejected in test if they are introduced without explicit identity metadata.
+The shipped code catalog and its published `category` / `owner` / `provenance_key` surfaces are
+also synced into [`doctor-finding-reference.md`](doctor-finding-reference.md).
 
 Policy-backed version-rule and strict-version findings also preserve the same `org_policy`
 provenance and `policy_*` metadata as the older policy blocker and provisioning lanes.
@@ -1898,9 +1901,9 @@ When the repo contract declares an `agent` block, the additive `agent` summary c
 from starter or detector inference and has not been confirmed by the repo author yet.
 
 `ota doctor --json` also includes a top-level `mode` string. It is `native` for host readiness
-diagnosis and `container` when the report was produced with `ota doctor --mode container`, so
-consumers can tell which execution context the findings describe without inferring it from the CLI
-invocation.
+diagnosis, `container` when the report was produced with `ota doctor --mode container`, and
+`remote` when the report was produced with `ota doctor --mode remote`, so consumers can tell which
+execution context the findings describe without inferring it from the CLI invocation.
 
 When the repo signals no longer match the declared contract, `ota doctor --json` may include
 warning findings that describe the drift and point back to `ota detect --merge --dry-run` for the
@@ -2172,9 +2175,19 @@ additive `primary_blocker.code`.
     "repo_count": 1,
     "ready_count": 0,
     "not_ready_count": 1,
+    "verdict": "not_ready",
+    "agent_verdict": "not_ready",
     "error_count": 1,
     "warn_count": 0,
-    "info_count": 0
+    "info_count": 0,
+    "primary_blocker": {
+      "repo": "web",
+      "severity": "error",
+      "summary": "Repo not acquired: web",
+      "why": "...",
+      "next": "...",
+      "code": "OTA_WORKSPACE_REPO_NOT_ACQUIRED"
+    }
   },
   "repos": [
     {
@@ -2488,7 +2501,8 @@ Failure shape can also include:
         "severity": "error",
         "summary": "Repo not acquired: web",
         "why": "...",
-        "next": "..."
+        "next": "...",
+        "code": "OTA_WORKSPACE_REPO_NOT_ACQUIRED"
       },
       "findings": [
         {
@@ -2744,9 +2758,19 @@ including additive `finding_groups` and per-repo `primary_blocker` when present:
     "repo_count": 1,
     "ready_count": 0,
     "not_ready_count": 1,
+    "verdict": "not_ready",
+    "agent_verdict": "not_ready",
     "error_count": 1,
     "warn_count": 0,
-    "info_count": 0
+    "info_count": 0,
+    "primary_blocker": {
+      "repo": "web",
+      "severity": "error",
+      "summary": "Check failed: health-check",
+      "why": "...",
+      "next": "...",
+      "code": "OTA_CHECK_FAILED"
+    }
   },
   "repos": [
     {
@@ -2759,7 +2783,8 @@ including additive `finding_groups` and per-repo `primary_blocker` when present:
         "severity": "error",
         "summary": "Check failed: health-check",
         "why": "...",
-        "next": "..."
+        "next": "...",
+        "code": "OTA_CHECK_FAILED"
       },
       "findings": [
         {

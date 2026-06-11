@@ -102,7 +102,7 @@
   "properties": {
     "ok": { "type": "boolean" },
     "path": { "type": "string" },
-    "mode": { "enum": ["native", "container"] },
+    "mode": { "enum": ["native", "container", "remote"] },
     "summary": {
       "type": "object",
       "additionalProperties": false,
@@ -126,6 +126,7 @@
             "summary": { "type": "string" },
             "why": { "type": "string" },
             "next": { "type": "string" },
+            "code": { "type": "string" },
             "provenance": { "type": "string" },
             "provenance_key": { "type": "string" }
           }
