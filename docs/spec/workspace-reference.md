@@ -153,6 +153,10 @@ Current workspace diagnosis behavior:
 - preserves repo-level diagnosis semantics for required repos
 - downgrades optional repo errors to warnings at the workspace layer
 - rejects required repos that depend on optional repos
+- `ota workspace doctor --json` and `ota workspace check --json` both publish workspace roll-up
+  `verdict` / `agent_verdict`, additive workspace `summary.primary_blocker`, and per-repo
+  `primary_blocker`; additive blocker `code` only appears when the blocker came from explicit
+  stable finding identity
 
 This keeps workspace behavior as orchestration over repo readiness, not a parallel readiness system.
 
