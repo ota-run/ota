@@ -58,42 +58,46 @@ pub(crate) fn append_contract_drift_findings(
             })
     {
         let existing = change.existing.unwrap_or_default();
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Warn,
-            summary: format!("Contract drift: `{}` differs from repo signals", change.field),
-            why: format!(
+        findings.push(Finding::identified(
+            "OTA_CONTRACT_DRIFT",
+            "contract",
+            "repo_contract",
+            FindingSeverity::Warn,
+            format!("Contract drift: `{}` differs from repo signals", change.field),
+            format!(
                 "`ota.yaml` still declares `{}` = `{}`, but repo inspection under `{}` now detects `{}`",
                 change.field,
                 existing,
                 compact_display_path(root),
                 change.detected
             ),
-            next: format!(
+            format!(
                 "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
                 compact_display_path(root),
                 compact_display_path(root)
             ),
-        });
+        ));
     }
 
     for removal in collect_detect_drift_removals(contract, &detect_report.contract) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Warn,
-            summary: format!("Contract drift: `{}` is no longer detected", removal.field),
-            why: format!(
+        findings.push(Finding::identified(
+            "OTA_CONTRACT_DRIFT",
+            "contract",
+            "repo_contract",
+            FindingSeverity::Warn,
+            format!("Contract drift: `{}` is no longer detected", removal.field),
+            format!(
                 "`ota.yaml` still declares `{}` = `{}`, but repo inspection under `{}` no longer detects it",
                 removal.field,
                 removal.existing,
                 compact_display_path(root)
             ),
-            next: format!(
+            format!(
                 "run `ota detect --merge --dry-run {}` to review the comparison, then `ota detect --merge {}` to apply matching updates",
                 compact_display_path(root),
                 compact_display_path(root)
             ),
-        });
+        ));
     }
 }
 

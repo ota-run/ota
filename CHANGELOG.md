@@ -29,7 +29,13 @@
 - hardened finding identity across governance surfaces: advisory-backed doctor findings now carry
   explicit stable identity, `ota explain --json` preserves that code through `steps[].code`
   instead of re-deriving advisory identity from rendered summary text, and `ota annotations`
-  now renders additive `Code:` segments when input finding JSON includes a stable code
+  now renders additive `Code:` segments when input finding JSON includes a stable code; the main
+  structured doctor finding families for service readiness, declared checks, runtime/tool
+  diagnosis, env value and env-source failures, backend/remote topology blockers, workflow
+  probe/surface readiness findings, policy-backed findings, repo hygiene findings, native
+  prerequisites, and contract drift now also emit explicit stable `code` / `category` / `owner`
+  identity instead of depending on summary parsing; policy-backed version-rule and strict-version
+  findings now also preserve policy metadata/provenance consistently in doctor JSON
 - widened `ota env` with `--workflow` selection so the env read path can inspect the selected
   workflow’s env profile truth directly; text and JSON output now report the selected workflow,
   selected profile, and any workflow-owned rendered env artifacts such as rendered dotenv files
