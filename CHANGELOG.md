@@ -36,6 +36,9 @@
   prerequisites, and contract drift now also emit explicit stable `code` / `category` / `owner`
   identity instead of depending on summary parsing; policy-backed version-rule and strict-version
   findings now also preserve policy metadata/provenance consistently in doctor JSON
+- added a representative `ota doctor --json` contract pack across policy, workflow, service, env,
+  provisioning, and remote finding lanes, and CI now fails if a shipped doctor finding is added
+  without explicit identity metadata
 - widened `ota env` with `--workflow` selection so the env read path can inspect the selected
   workflow’s env profile truth directly; text and JSON output now report the selected workflow,
   selected profile, and any workflow-owned rendered env artifacts such as rendered dotenv files
