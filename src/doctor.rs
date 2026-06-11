@@ -1362,6 +1362,15 @@ struct FindingProvenanceContext<'a> {
     provenance_key: &'a str,
 }
 
+#[derive(Debug, Clone)]
+struct FindingResolvedMetadata<'a> {
+    category: &'static str,
+    owner: &'static str,
+    evidence: Option<FindingEvidence>,
+    provenance: Option<FindingProvenanceContext<'a>>,
+    policy: Option<PolicyFindingContext<'a>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProvisioningDiagnostics {
     pub plan: ProvisioningPlan,
@@ -1862,72 +1871,702 @@ impl Finding {
         }
     }
 
-    fn policy_context(&self) -> Option<PolicyFindingContext<'_>> {
-        match self.code() {
-            "OTA_POLICY_PACK_VIOLATION" => {
-                let has_sections = self.why.contains("missing contract sections:");
-                let has_files = self.why.contains("missing files:");
-                let reason = match (has_sections, has_files) {
-                    (true, true) => "missing_required_sections_and_files",
-                    (true, false) => "missing_required_sections",
-                    (false, true) => "missing_required_files",
-                    (false, false) => "org_policy_pack_violation",
-                };
-
-                Some(PolicyFindingContext {
-                    outcome: "blocked_by_policy",
-                    reason,
-                    source: "org",
-                    install_scope: "repo_local",
-                    mutation_allowed: false,
-                })
-            }
-            "OTA_POLICY_BACKED_VERSION_RULES_DECLARED" => Some(PolicyFindingContext {
-                outcome: "policy_surface_available",
-                reason: "policy_backed_version_rules_declared",
-                source: "org",
-                install_scope: "repo_local",
-                mutation_allowed: false,
-            }),
-            "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => Some(PolicyFindingContext {
-                outcome: "policy_surface_available",
-                reason: "policy_backed_provisioning_declared",
-                source: "org",
-                install_scope: "repo_local",
-                mutation_allowed: false,
-            }),
-            "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => Some(PolicyFindingContext {
-                outcome: "policy_surface_available",
-                reason: "policy_backed_adapter_bootstrap_declared",
-                source: "org",
-                install_scope: "repo_local",
-                mutation_allowed: false,
-            }),
-            "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => {
-                Some(PolicyFindingContext {
-                    outcome: "blocked_by_policy",
-                    reason: "missing_package_identifiers",
-                    source: "org",
-                    install_scope: "repo_local",
-                    mutation_allowed: false,
-                })
-            }
-            "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => Some(PolicyFindingContext {
-                outcome: "blocked_by_policy",
-                reason: "strict_version_noncompliance",
-                source: "org",
-                install_scope: "repo_local",
-                mutation_allowed: false,
-            }),
-            "OTA_POLICY_PACK_INVALID" => Some(PolicyFindingContext {
-                outcome: "blocked_by_integrity_policy",
-                reason: "invalid_org_policy_pack",
-                source: "org",
-                install_scope: "repo_local",
-                mutation_allowed: false,
-            }),
-            _ => None,
+    fn generic_evidence(&self) -> FindingEvidence {
+        FindingEvidence {
+            observed: self.summary.clone(),
+            expected: self.why.clone(),
+            source: String::from("doctor"),
+            checked_at: String::new(),
+            command: String::new(),
+            path: String::new(),
         }
+    }
+
+    fn resolved_metadata(&self) -> Option<FindingResolvedMetadata<'_>> {
+        let code = self.code();
+        let probe_target_owner = || {
+            if finding_targets_container_image(&self.why) {
+                "container_target"
+            } else if finding_targets_remote_backend(&self.why) {
+                "remote_target"
+            } else {
+                "host"
+            }
+        };
+        let probe_command = || finding_probe_command(&self.why).unwrap_or_default();
+        let probe_path = || finding_probe_path(&self.why).unwrap_or_default();
+        let static_evidence = |observed: &str, expected: &str, source: &str| FindingEvidence {
+            observed: observed.to_string(),
+            expected: expected.to_string(),
+            source: source.to_string(),
+            checked_at: String::new(),
+            command: String::new(),
+            path: String::new(),
+        };
+        let probe_evidence = |observed: &str, expected: &str| FindingEvidence {
+            observed: observed.to_string(),
+            expected: expected.to_string(),
+            source: probe_target_owner().to_string(),
+            checked_at: String::new(),
+            command: probe_command(),
+            path: probe_path(),
+        };
+        let repo_contract = Some(FindingProvenanceContext {
+            provenance: "repo contract",
+            provenance_key: "repo_contract",
+        });
+        let org_policy = Some(FindingProvenanceContext {
+            provenance: "org policy",
+            provenance_key: "org_policy",
+        });
+        let repo_signals = Some(FindingProvenanceContext {
+            provenance: "repo signals",
+            provenance_key: "repo_signals",
+        });
+
+        let metadata = match code {
+            "OTA_TASKS_MISSING" => FindingResolvedMetadata {
+                category: "contract",
+                owner: "repo_contract",
+                evidence: Some(static_evidence(
+                    "no runnable task entry was declared",
+                    "at least one runnable task is declared",
+                    "contract",
+                )),
+                provenance: repo_contract,
+                policy: None,
+            },
+            "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE"
+            | "OTA_REPO_HYGIENE_GITIGNORE_UNREADABLE"
+            | "OTA_AGENT_BOUNDARY_UNREVIEWED"
+            | "OTA_DEVCONTAINER_RUNTIME_DRIFT"
+            | "OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT"
+            | "OTA_CONTRACT_DRIFT"
+            | "OTA_SELECTED_TASK_PATH_NETWORK_REQUIRED"
+            | "OTA_SELECTED_TASK_PATH_DEPENDENCY_HYDRATION"
+            | "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE"
+            | "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => {
+                let evidence = match code {
+                    "OTA_CONTRACT_DRIFT" => Some(static_evidence(
+                        "repo signals differ from the declared contract",
+                        "repo signals match the declared contract",
+                        "detect",
+                    )),
+                    "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => {
+                        Some(static_evidence(
+                            "a task body appears to mutate an ota-managed isolated attachment path",
+                            "task bodies leave ota-managed isolated attachment paths to the underlying tool",
+                            "contract",
+                        ))
+                    }
+                    _ => None,
+                };
+                FindingResolvedMetadata {
+                    category: "contract",
+                    owner: "repo_contract",
+                    evidence,
+                    provenance: repo_contract,
+                    policy: None,
+                }
+            }
+            "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY"
+            | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY"
+            | "OTA_CONTAINER_MODE_NOT_CONFIGURED"
+            | "OTA_CONTAINER_DOCTOR_HOST_SCOPE_NOTE"
+            | "OTA_WORKFLOW_PROBE_FAILED"
+            | "OTA_WORKFLOW_PROBE_TIMED_OUT"
+            | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
+            | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT"
+            | "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+            | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+            | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE"
+            | "OTA_CONTEXT_HOST_PLATFORM_UNSUPPORTED"
+            | "OTA_CHECK_FAILED"
+            | "OTA_CHECK_TIMED_OUT"
+            | "OTA_FILE_CHECK_FAILED"
+            | "OTA_FILE_CHECK_TIMED_OUT" => {
+                let evidence = match code {
+                    "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY"
+                    | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => Some(static_evidence(
+                        "ephemeral lifecycle was requested",
+                        "isolated backend-backed execution is available",
+                        "execution",
+                    )),
+                    "OTA_CHECK_FAILED" => Some(static_evidence(
+                        "the configured check failed",
+                        "the configured check succeeds",
+                        "execution",
+                    )),
+                    "OTA_CHECK_TIMED_OUT" => Some(static_evidence(
+                        "the configured check timed out",
+                        "the configured check completes within the timeout",
+                        "execution",
+                    )),
+                    "OTA_FILE_CHECK_FAILED" => Some(static_evidence(
+                        "the configured file check failed",
+                        "the configured file state matches the contract",
+                        "repo filesystem",
+                    )),
+                    "OTA_FILE_CHECK_TIMED_OUT" => Some(static_evidence(
+                        "the configured file check timed out",
+                        "the configured file check completes within the timeout",
+                        "repo filesystem",
+                    )),
+                    "OTA_WORKFLOW_PROBE_FAILED" | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED" => Some(
+                        static_evidence(
+                            "the configured workflow probe did not succeed",
+                            "the configured workflow probe succeeds",
+                            "execution",
+                        ),
+                    ),
+                    "OTA_WORKFLOW_PROBE_TIMED_OUT" | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT" => {
+                        Some(static_evidence(
+                            "the configured workflow probe timed out",
+                            "the configured workflow probe completes within its timeout",
+                            "execution",
+                        ))
+                    }
+                    "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+                    | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED" => Some(static_evidence(
+                        "the selected workflow surface did not become ready",
+                        "the selected workflow surface becomes ready",
+                        "execution",
+                    )),
+                    "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+                    | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT" => Some(
+                        static_evidence(
+                            "the selected workflow surface did not become ready before timing out",
+                            "the selected workflow surface becomes ready within its timeout",
+                            "execution",
+                        ),
+                    ),
+                    "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+                    | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => Some(
+                        static_evidence(
+                            "the selected workflow surface could not be resolved or checked",
+                            "the selected workflow surface can be resolved and checked",
+                            "execution",
+                        ),
+                    ),
+                    _ => None,
+                };
+                FindingResolvedMetadata {
+                    category: "execution",
+                    owner: "repo_contract",
+                    evidence,
+                    provenance: repo_contract,
+                    policy: None,
+                }
+            }
+            "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => {
+                FindingResolvedMetadata {
+                    category: "execution",
+                    owner: "host",
+                    evidence: Some(static_evidence(
+                        "required backend CLI was not found on PATH",
+                        "a supported backend CLI is available on PATH",
+                        "host",
+                    )),
+                    provenance: repo_contract,
+                    policy: None,
+                }
+            }
+            "OTA_CONTAINER_BACKEND_UNAVAILABLE" | "OTA_CONTAINER_IMAGE_UNAVAILABLE" => {
+                FindingResolvedMetadata {
+                    category: "execution",
+                    owner: if code == "OTA_CONTAINER_IMAGE_UNAVAILABLE" {
+                        "container_target"
+                    } else {
+                        "host"
+                    },
+                    evidence: None,
+                    provenance: repo_contract,
+                    policy: None,
+                }
+            }
+            "OTA_REMOTE_MODE_NOT_CONFIGURED"
+            | "OTA_REMOTE_DOCTOR_PARTIAL"
+            | "OTA_REMOTE_DOCTOR_HOST_SCOPE_NOTE"
+            | "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
+            | "OTA_REMOTE_TARGET_SUSPICIOUS"
+            | "OTA_REMOTE_CONTEXT_UNEXECUTABLE"
+            | "OTA_REMOTE_TARGET_OS_UNDETERMINED" => {
+                let evidence = match code {
+                    "OTA_REMOTE_MODE_NOT_CONFIGURED" => Some(static_evidence(
+                        "the selected remote execution path is not declared",
+                        "the contract declares a remote execution path",
+                        "repo_contract",
+                    )),
+                    "OTA_REMOTE_DOCTOR_PARTIAL" | "OTA_REMOTE_DOCTOR_HOST_SCOPE_NOTE" => {
+                        Some(static_evidence(
+                            "remote doctor mode is still constrained by host-scoped checks",
+                            "remote doctor mode can evaluate the selected remote path end-to-end",
+                            "repo_contract",
+                        ))
+                    }
+                    "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" => Some(static_evidence(
+                        "the declared remote backend provider is unsupported",
+                        "a supported remote backend provider is declared",
+                        "remote_backend",
+                    )),
+                    "OTA_REMOTE_TARGET_SUSPICIOUS" => Some(static_evidence(
+                        "the remote target shape did not match provider expectations",
+                        "a provider-compatible remote target is declared",
+                        "remote_backend",
+                    )),
+                    "OTA_REMOTE_CONTEXT_UNEXECUTABLE" => Some(static_evidence(
+                        "the named remote execution context could not be resolved",
+                        "the named remote execution context is executable",
+                        "remote_backend",
+                    )),
+                    "OTA_REMOTE_TARGET_OS_UNDETERMINED" => Some(FindingEvidence {
+                        observed: String::from(
+                            "ota could not determine the remote target operating system",
+                        ),
+                        expected: String::from(
+                            "ota can determine the remote target operating system",
+                        ),
+                        source: String::from("remote_backend"),
+                        checked_at: String::new(),
+                        command: remote_os_probe_command().to_string(),
+                        path: String::new(),
+                    }),
+                    _ => None,
+                };
+                FindingResolvedMetadata {
+                    category: "remote",
+                    owner: if matches!(
+                        code,
+                        "OTA_REMOTE_MODE_NOT_CONFIGURED"
+                    ) {
+                        "repo_contract"
+                    } else {
+                        "remote_backend"
+                    },
+                    evidence,
+                    provenance: repo_contract,
+                    policy: None,
+                }
+            }
+            "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
+            | "OTA_SERVICE_READINESS_FAILED"
+            | "OTA_SERVICE_CHECK_FAILED"
+            | "OTA_SERVICE_CHECK_TIMED_OUT"
+            | "OTA_SERVICE_UNVERIFIABLE" => {
+                let evidence = match code {
+                    "OTA_SERVICE_READINESS_FAILED" => Some(static_evidence(
+                        "the configured service readiness probe failed",
+                        "the service readiness probe passes from its declared context",
+                        "service",
+                    )),
+                    "OTA_SERVICE_CHECK_FAILED" => Some(static_evidence(
+                        "the configured service healthcheck failed",
+                        "the service healthcheck passes",
+                        "service",
+                    )),
+                    "OTA_SERVICE_CHECK_TIMED_OUT" => Some(static_evidence(
+                        "the configured service healthcheck timed out",
+                        "the service healthcheck completes within its timeout",
+                        "service",
+                    )),
+                    "OTA_SERVICE_UNVERIFIABLE" => Some(static_evidence(
+                        "the service cannot be verified from the contract",
+                        "the service declares enough information to verify readiness",
+                        "service",
+                    )),
+                    _ => None,
+                };
+                FindingResolvedMetadata {
+                    category: "service",
+                    owner: "service",
+                    evidence,
+                    provenance: repo_contract,
+                    policy: None,
+                }
+            }
+            "OTA_ENV_MISSING"
+            | "OTA_ENV_INVALID"
+            | "OTA_ENV_SOURCE_MISSING_REQUIRED"
+            | "OTA_ENV_SOURCE_PARSE_FAILED"
+            | "OTA_ENV_SOURCE_INVALID_STRUCTURE"
+            | "OTA_ENV_SOURCE_KEY_COLLISION"
+            | "OTA_RUNTIME_VERSION_MISMATCH"
+            | "OTA_RUNTIME_MISSING"
+            | "OTA_RUNTIME_PROBE_FAILED"
+            | "OTA_RUNTIME_VERSION_UNPARSEABLE"
+            | "OTA_TOOL_VERSION_MISMATCH"
+            | "OTA_TOOL_MISSING"
+            | "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"
+            | "OTA_TOOLCHAIN_PROVIDER_MISSING"
+            | "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED"
+            | "OTA_TOOLCHAIN_COMPONENT_MISSING"
+            | "OTA_TOOLCHAIN_TARGET_MISSING"
+            | "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"
+            | "OTA_TOOL_PROBE_FAILED"
+            | "OTA_TOOL_VERSION_UNPARSEABLE"
+            | "OTA_NATIVE_PREREQUISITE_MISSING"
+            | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
+                let evidence = match code {
+                    "OTA_ENV_MISSING" => Some(static_evidence(
+                        "a required environment variable was missing",
+                        "the environment variable is present",
+                        "contract",
+                    )),
+                    "OTA_ENV_INVALID" => Some(static_evidence(
+                        "the resolved environment value is outside the allowed set",
+                        "the environment value satisfies the allowed set",
+                        "contract",
+                    )),
+                    "OTA_ENV_SOURCE_MISSING_REQUIRED" => Some(static_evidence(
+                        "a required declared environment source was missing",
+                        "the declared environment source exists",
+                        "repo filesystem",
+                    )),
+                    "OTA_ENV_SOURCE_PARSE_FAILED" => Some(static_evidence(
+                        "a declared environment source could not be parsed",
+                        "the declared environment source parses successfully",
+                        "repo filesystem",
+                    )),
+                    "OTA_ENV_SOURCE_INVALID_STRUCTURE" => Some(static_evidence(
+                        "a declared environment source had unsupported structure",
+                        "the declared environment source has supported structure",
+                        "repo filesystem",
+                    )),
+                    "OTA_ENV_SOURCE_KEY_COLLISION" => Some(static_evidence(
+                        "declared environment sources produced conflicting keys",
+                        "declared environment sources resolve without key collisions",
+                        "repo filesystem",
+                    )),
+                    "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH" => Some(
+                        probe_evidence(
+                            "the installed version did not match the contract requirement",
+                            "the installed version satisfies the contract requirement",
+                        ),
+                    ),
+                    "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING" => Some(FindingEvidence {
+                        observed: String::from("the required runtime or tool was not available"),
+                        expected: String::from(
+                            "the required runtime or tool is available on PATH",
+                        ),
+                        source: probe_target_owner().to_string(),
+                        checked_at: String::new(),
+                        command: String::new(),
+                        path: String::new(),
+                    }),
+                    "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => Some(static_evidence(
+                        "the selected repo path is using fallback runtime/tool declarations for an ecosystem Ota does not yet ship as a managed toolchain",
+                        "a shipped toolchain provider exists for that ecosystem or the repo intentionally stays on the fallback runtime/tool model",
+                        "repo_signals",
+                    )),
+                    "OTA_RUNTIME_PROBE_FAILED" | "OTA_TOOL_PROBE_FAILED" => Some(
+                        probe_evidence(
+                            "the resolved executable could not report a version",
+                            "the resolved executable reports a version that satisfies the contract",
+                        ),
+                    ),
+                    "OTA_RUNTIME_VERSION_UNPARSEABLE" | "OTA_TOOL_VERSION_UNPARSEABLE" => Some(
+                        probe_evidence(
+                            "the resolved executable did not emit a parseable version",
+                            "the resolved executable emits a parseable version that satisfies the contract",
+                        ),
+                    ),
+                    "OTA_NATIVE_PREREQUISITE_MISSING"
+                    | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => Some(static_evidence(
+                        "the selected native prerequisite check did not pass",
+                        "the selected native prerequisite check passes",
+                        "host",
+                    )),
+                    _ => None,
+                };
+                let provenance = if code == "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" {
+                    repo_signals
+                } else {
+                    repo_contract
+                };
+                FindingResolvedMetadata {
+                    category: "environment",
+                    owner: match code {
+                        "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => probe_target_owner(),
+                        "OTA_ENV_SOURCE_MISSING_REQUIRED"
+                        | "OTA_ENV_SOURCE_PARSE_FAILED"
+                        | "OTA_ENV_SOURCE_INVALID_STRUCTURE"
+                        | "OTA_ENV_SOURCE_KEY_COLLISION" => "repo_contract",
+                        _ => probe_target_owner(),
+                    },
+                    evidence,
+                    provenance,
+                    policy: None,
+                }
+            }
+            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
+            | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
+            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
+            | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_HOST_PROVISIONING_BACKEND_FAILED"
+            | "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
+            | "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
+            | "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
+            | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED" => {
+                let (observed, expected, source) = match code {
+                    "OTA_CONTAINER_APT_VERSION_UNAVAILABLE" => (
+                        "the configured container apt sources do not provide the pinned package version",
+                        "the configured container apt sources provide the pinned package version",
+                        "container_apt",
+                    ),
+                    "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE" => (
+                        "the configured container apt sources do not provide the requested package",
+                        "the configured container apt sources provide the requested package",
+                        "container_apt",
+                    ),
+                    "OTA_CONTAINER_APT_INDEX_UNAVAILABLE" => (
+                        "the configured container apt sources could not refresh indexes",
+                        "the configured container apt sources refresh successfully",
+                        "container_apt",
+                    ),
+                    "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE" => (
+                        "the configured container provisioning backend could not provide the pinned version",
+                        "the configured container provisioning backend provides the pinned version",
+                        "container_provisioning",
+                    ),
+                    "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE" => (
+                        "the configured container provisioning backend could not provide the requested package",
+                        "the configured container provisioning backend provides the requested package",
+                        "container_provisioning",
+                    ),
+                    "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE" => (
+                        "the configured container provisioning backend could not refresh its sources",
+                        "the configured container provisioning backend refreshes its sources successfully",
+                        "container_provisioning",
+                    ),
+                    "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => (
+                        "the configured container provisioning backend could not satisfy the requested prerequisite",
+                        "the configured container provisioning backend satisfies the requested prerequisite",
+                        "container_provisioning",
+                    ),
+                    "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE" => (
+                        "the configured host provisioning backend could not provide the pinned version",
+                        "the configured host provisioning backend provides the pinned version",
+                        "host_provisioning",
+                    ),
+                    "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE" => (
+                        "the configured host provisioning backend could not provide the requested package",
+                        "the configured host provisioning backend provides the requested package",
+                        "host_provisioning",
+                    ),
+                    "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE" => (
+                        "the configured host provisioning backend could not refresh its sources",
+                        "the configured host provisioning backend refreshes its sources successfully",
+                        "host_provisioning",
+                    ),
+                    "OTA_HOST_PROVISIONING_BACKEND_FAILED" => (
+                        "the configured host provisioning backend could not satisfy the requested prerequisite",
+                        "the configured host provisioning backend satisfies the requested prerequisite",
+                        "host_provisioning",
+                    ),
+                    "OTA_REMOTE_APT_VERSION_UNAVAILABLE" => (
+                        "the configured remote apt sources do not provide the pinned package version",
+                        "the configured remote apt sources provide the pinned package version",
+                        "remote_provisioning",
+                    ),
+                    "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE" => (
+                        "the configured remote apt sources do not provide the requested package",
+                        "the configured remote apt sources provide the requested package",
+                        "remote_provisioning",
+                    ),
+                    "OTA_REMOTE_APT_INDEX_UNAVAILABLE" => (
+                        "the configured remote apt sources could not refresh indexes",
+                        "the configured remote apt sources refresh successfully",
+                        "remote_provisioning",
+                    ),
+                    "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE" => (
+                        "the configured remote provisioning backend could not provide the pinned version",
+                        "the configured remote provisioning backend provides the pinned version",
+                        "remote_provisioning",
+                    ),
+                    "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE" => (
+                        "the configured remote provisioning backend could not provide the requested package",
+                        "the configured remote provisioning backend provides the requested package",
+                        "remote_provisioning",
+                    ),
+                    "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE" => (
+                        "the configured remote provisioning backend could not refresh its sources",
+                        "the configured remote provisioning backend refreshes its sources successfully",
+                        "remote_provisioning",
+                    ),
+                    _ => (
+                        "the configured remote provisioning backend could not satisfy the requested prerequisite",
+                        "the configured remote provisioning backend satisfies the requested prerequisite",
+                        "remote_provisioning",
+                    ),
+                };
+                let owner = match code {
+                    "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
+                    | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
+                    | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
+                    | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
+                    | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
+                    | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
+                    | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => "container_target",
+                    "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
+                    | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
+                    | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
+                    | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "host",
+                    _ => "remote_target",
+                };
+                FindingResolvedMetadata {
+                    category: "provisioning",
+                    owner,
+                    evidence: Some(static_evidence(observed, expected, source)),
+                    provenance: org_policy,
+                    policy: None,
+                }
+            }
+            "OTA_POLICY_PACK_VIOLATION"
+            | "OTA_POLICY_PACK_INVALID"
+            | "OTA_POLICY_BACKED_VERSION_RULES_DECLARED"
+            | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
+            | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
+            | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED"
+            | "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => {
+                let evidence = match code {
+                    "OTA_POLICY_PACK_VIOLATION" => Some(static_evidence(
+                        "the repo failed org policy validation",
+                        "the repo satisfies the org policy pack",
+                        "org_policy",
+                    )),
+                    "OTA_POLICY_PACK_INVALID" => Some(static_evidence(
+                        "the org policy pack failed to load or validate",
+                        "the org policy pack loads and validates",
+                        "org_policy",
+                    )),
+                    "OTA_POLICY_BACKED_VERSION_RULES_DECLARED" => Some(static_evidence(
+                        "the org policy pack declares approved repo version rules",
+                        "the org policy pack has no approved repo version rules declared",
+                        "org_policy",
+                    )),
+                    "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => Some(static_evidence(
+                        "the org policy pack declares approved provisioning sources",
+                        "the org policy pack has no provisioning sources declared",
+                        "org_policy",
+                    )),
+                    "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => Some(static_evidence(
+                        "policy-backed provisioning is missing required package identifiers",
+                        "policy-backed provisioning rules declare required package identifiers for OS package managers",
+                        "org_policy",
+                    )),
+                    "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => Some(static_evidence(
+                        "the org policy pack declares approved adapter bootstrap sources",
+                        "the org policy pack has no adapter bootstrap sources declared",
+                        "org_policy",
+                    )),
+                    _ => Some(static_evidence(
+                        "the installed version satisfies the repo contract but violates strict org policy",
+                        "the installed version also complies with strict org policy",
+                        "org_policy",
+                    )),
+                };
+                let policy = match code {
+                    "OTA_POLICY_PACK_VIOLATION" => {
+                        let has_sections = self.why.contains("missing contract sections:");
+                        let has_files = self.why.contains("missing files:");
+                        let reason = match (has_sections, has_files) {
+                            (true, true) => "missing_required_sections_and_files",
+                            (true, false) => "missing_required_sections",
+                            (false, true) => "missing_required_files",
+                            (false, false) => "org_policy_pack_violation",
+                        };
+                        Some(PolicyFindingContext {
+                            outcome: "blocked_by_policy",
+                            reason,
+                            source: "org",
+                            install_scope: "repo_local",
+                            mutation_allowed: false,
+                        })
+                    }
+                    "OTA_POLICY_BACKED_VERSION_RULES_DECLARED" => Some(PolicyFindingContext {
+                        outcome: "policy_surface_available",
+                        reason: "policy_backed_version_rules_declared",
+                        source: "org",
+                        install_scope: "repo_local",
+                        mutation_allowed: false,
+                    }),
+                    "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => Some(PolicyFindingContext {
+                        outcome: "policy_surface_available",
+                        reason: "policy_backed_provisioning_declared",
+                        source: "org",
+                        install_scope: "repo_local",
+                        mutation_allowed: false,
+                    }),
+                    "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => Some(
+                        PolicyFindingContext {
+                            outcome: "policy_surface_available",
+                            reason: "policy_backed_adapter_bootstrap_declared",
+                            source: "org",
+                            install_scope: "repo_local",
+                            mutation_allowed: false,
+                        },
+                    ),
+                    "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => Some(
+                        PolicyFindingContext {
+                            outcome: "blocked_by_policy",
+                            reason: "missing_package_identifiers",
+                            source: "org",
+                            install_scope: "repo_local",
+                            mutation_allowed: false,
+                        },
+                    ),
+                    "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => Some(
+                        PolicyFindingContext {
+                            outcome: "blocked_by_policy",
+                            reason: "strict_version_noncompliance",
+                            source: "org",
+                            install_scope: "repo_local",
+                            mutation_allowed: false,
+                        },
+                    ),
+                    _ => Some(PolicyFindingContext {
+                        outcome: "blocked_by_integrity_policy",
+                        reason: "invalid_org_policy_pack",
+                        source: "org",
+                        install_scope: "repo_local",
+                        mutation_allowed: false,
+                    }),
+                };
+                FindingResolvedMetadata {
+                    category: "policy",
+                    owner: "org_policy",
+                    evidence,
+                    provenance: org_policy,
+                    policy,
+                }
+            }
+            s if s.starts_with("OTA_CONTRACT_ADVISORY_") => FindingResolvedMetadata {
+                category: "contract",
+                owner: "repo_contract",
+                evidence: None,
+                provenance: repo_contract,
+                policy: None,
+            },
+            _ => return None,
+        };
+
+        Some(metadata)
+    }
+
+    fn policy_context(&self) -> Option<PolicyFindingContext<'_>> {
+        self.resolved_metadata().and_then(|metadata| metadata.policy)
     }
 
     pub(crate) fn code(&self) -> &str {
@@ -2162,558 +2801,33 @@ impl Finding {
     }
 
     fn category(&self) -> &str {
-        if let Some(identity) = self.identity.as_ref() {
-            return identity.category.as_str();
-        }
-        match self.code() {
-            "OTA_TASKS_MISSING" => "contract",
-            "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => {
-                "execution"
-            }
-            "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => "execution",
-            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
-            | "OTA_REMOTE_TARGET_SUSPICIOUS"
-            | "OTA_REMOTE_CONTEXT_UNEXECUTABLE"
-            | "OTA_REMOTE_TARGET_OS_UNDETERMINED" => "remote",
-            "OTA_SERVICE_READINESS_FAILED"
-            | "OTA_SERVICE_CHECK_FAILED"
-            | "OTA_SERVICE_CHECK_TIMED_OUT"
-            | "OTA_SERVICE_UNVERIFIABLE" => "service",
-            "OTA_ENV_MISSING"
-            | "OTA_ENV_INVALID"
-            | "OTA_RUNTIME_VERSION_MISMATCH"
-            | "OTA_RUNTIME_MISSING"
-            | "OTA_RUNTIME_PROBE_FAILED"
-            | "OTA_RUNTIME_VERSION_UNPARSEABLE"
-            | "OTA_TOOL_VERSION_MISMATCH"
-            | "OTA_TOOL_MISSING"
-            | "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"
-            | "OTA_TOOL_PROBE_FAILED"
-            | "OTA_TOOL_VERSION_UNPARSEABLE"
-            | "OTA_NATIVE_PREREQUISITE_MISSING"
-            | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => "environment",
-            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
-            | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
-            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
-            | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_BACKEND_FAILED"
-            | "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
-            | "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
-            | "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED" => "provisioning",
-            "OTA_POLICY_PACK_VIOLATION"
-            | "OTA_POLICY_PACK_INVALID"
-            | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
-            | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
-            | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => "policy",
-            s if s.starts_with("OTA_CONTRACT_ADVISORY_") => "contract",
-            "OTA_CHECK_FAILED"
-            | "OTA_CHECK_TIMED_OUT"
-            | "OTA_FILE_CHECK_FAILED"
-            | "OTA_FILE_CHECK_TIMED_OUT" => "execution",
-            "OTA_CONTRACT_DRIFT" | "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => "contract",
-            "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "contract",
-            _ => "contract",
+        if let Some(metadata) = self.resolved_metadata() {
+            metadata.category
+        } else if let Some(identity) = self.identity.as_ref() {
+            identity.category.as_str()
+        } else {
+            "contract"
         }
     }
 
     fn owner(&self) -> &str {
-        if let Some(identity) = self.identity.as_ref() {
-            return identity.owner.as_str();
-        }
-        match self.code() {
-            "OTA_TASKS_MISSING"
-            | "OTA_CONTRACT_DRIFT"
-            | "OTA_CHECK_FAILED"
-            | "OTA_CHECK_TIMED_OUT"
-            | "OTA_FILE_CHECK_FAILED"
-            | "OTA_FILE_CHECK_TIMED_OUT"
-            | "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => "repo_contract",
-            s if s.starts_with("OTA_CONTRACT_ADVISORY_") => "repo_contract",
-            "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => {
-                "repo_contract"
-            }
-            "OTA_BACKEND_CLI_MISSING"
-            | "OTA_CONTAINER_BACKEND_CLI_MISSING"
-            | "OTA_ENV_MISSING"
-            | "OTA_ENV_INVALID"
-            | "OTA_RUNTIME_VERSION_MISMATCH"
-            | "OTA_RUNTIME_MISSING"
-            | "OTA_RUNTIME_PROBE_FAILED"
-            | "OTA_RUNTIME_VERSION_UNPARSEABLE"
-            | "OTA_TOOL_VERSION_MISMATCH"
-            | "OTA_TOOL_MISSING"
-            | "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED"
-            | "OTA_TOOL_PROBE_FAILED"
-            | "OTA_TOOL_VERSION_UNPARSEABLE"
-            | "OTA_NATIVE_PREREQUISITE_MISSING"
-            | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
-                if finding_targets_container_image(&self.why) {
-                    "container_target"
-                } else if finding_targets_remote_backend(&self.why) {
-                    "remote_target"
-                } else {
-                    "host"
-                }
-            }
-            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
-            | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
-            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => "container_target",
-            "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => "host",
-            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
-            | "OTA_REMOTE_TARGET_SUSPICIOUS"
-            | "OTA_REMOTE_CONTEXT_UNEXECUTABLE"
-            | "OTA_REMOTE_TARGET_OS_UNDETERMINED" => "remote_backend",
-            "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
-            | "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
-            | "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED" => "remote_target",
-            "OTA_SERVICE_READINESS_FAILED"
-            | "OTA_SERVICE_CHECK_FAILED"
-            | "OTA_SERVICE_CHECK_TIMED_OUT"
-            | "OTA_SERVICE_UNVERIFIABLE" => "service",
-            "OTA_POLICY_PACK_VIOLATION"
-            | "OTA_POLICY_PACK_INVALID"
-            | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
-            | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
-            | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => "org_policy",
-            _ => "repo_contract",
+        if let Some(metadata) = self.resolved_metadata() {
+            metadata.owner
+        } else if let Some(identity) = self.identity.as_ref() {
+            identity.owner.as_str()
+        } else {
+            "repo_contract"
         }
     }
 
     fn evidence(&self) -> FindingEvidence {
-        let (observed, expected, source, command, path) = match self.code() {
-            "OTA_TASKS_MISSING" => (
-                "no runnable task entry was declared".to_string(),
-                "at least one runnable task is declared".to_string(),
-                "contract".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => (
-                "ephemeral lifecycle was requested".to_string(),
-                "isolated backend-backed execution is available".to_string(),
-                "execution".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => (
-                "required backend CLI was not found on PATH".to_string(),
-                "a supported backend CLI is available on PATH".to_string(),
-                "host".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED" => (
-                "the declared remote backend provider is unsupported".to_string(),
-                "a supported remote backend provider is declared".to_string(),
-                "remote_backend".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_TARGET_SUSPICIOUS" => (
-                "the remote target shape did not match provider expectations".to_string(),
-                "a provider-compatible remote target is declared".to_string(),
-                "remote_backend".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_CONTEXT_UNEXECUTABLE" => (
-                "the named remote execution context could not be resolved".to_string(),
-                "the named remote execution context is executable".to_string(),
-                "remote_backend".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_TARGET_OS_UNDETERMINED" => (
-                "ota could not determine the remote target operating system".to_string(),
-                "ota can determine the remote target operating system".to_string(),
-                "remote_backend".to_string(),
-                remote_os_probe_command().to_string(),
-                String::new(),
-            ),
-            "OTA_SERVICE_READINESS_FAILED" => (
-                "the configured service readiness probe failed".to_string(),
-                "the service readiness probe passes from its declared context".to_string(),
-                "service".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_SERVICE_CHECK_FAILED" => (
-                "the configured service healthcheck failed".to_string(),
-                "the service healthcheck passes".to_string(),
-                "service".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_SERVICE_CHECK_TIMED_OUT" => (
-                "the configured service healthcheck timed out".to_string(),
-                "the service healthcheck completes within its timeout".to_string(),
-                "service".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_SERVICE_UNVERIFIABLE" => (
-                "the service cannot be verified from the contract".to_string(),
-                "the service declares enough information to verify readiness".to_string(),
-                "service".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_ENV_MISSING" => (
-                "a required environment variable was missing".to_string(),
-                "the environment variable is present".to_string(),
-                "contract".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_ENV_INVALID" => (
-                "the resolved environment value is outside the allowed set".to_string(),
-                "the environment value satisfies the allowed set".to_string(),
-                "contract".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH" => (
-                "the installed version did not match the contract requirement".to_string(),
-                "the installed version satisfies the contract requirement".to_string(),
-                if finding_targets_container_image(&self.why) {
-                    "container_target".to_string()
-                } else if finding_targets_remote_backend(&self.why) {
-                    "remote_target".to_string()
-                } else {
-                    "host".to_string()
-                },
-                finding_probe_command(&self.why).unwrap_or_default(),
-                finding_probe_path(&self.why).unwrap_or_default(),
-            ),
-            "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING" => (
-                "the required runtime or tool was not available".to_string(),
-                "the required runtime or tool is available on PATH".to_string(),
-                if finding_targets_container_image(&self.why) {
-                    "container_target".to_string()
-                } else if finding_targets_remote_backend(&self.why) {
-                    "remote_target".to_string()
-                } else {
-                    "host".to_string()
-                },
-                String::new(),
-                String::new(),
-            ),
-            "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" => (
-                "the selected repo path is using fallback runtime/tool declarations for an ecosystem Ota does not yet ship as a managed toolchain".to_string(),
-                "a shipped toolchain provider exists for that ecosystem or the repo intentionally stays on the fallback runtime/tool model".to_string(),
-                "repo_signals".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_RUNTIME_PROBE_FAILED" | "OTA_TOOL_PROBE_FAILED" => (
-                "the resolved executable could not report a version".to_string(),
-                "the resolved executable reports a version that satisfies the contract"
-                    .to_string(),
-                if finding_targets_container_image(&self.why) {
-                    "container_target".to_string()
-                } else if finding_targets_remote_backend(&self.why) {
-                    "remote_target".to_string()
-                } else {
-                    "host".to_string()
-                },
-                finding_probe_command(&self.why).unwrap_or_default(),
-                finding_probe_path(&self.why).unwrap_or_default(),
-            ),
-            "OTA_RUNTIME_VERSION_UNPARSEABLE" | "OTA_TOOL_VERSION_UNPARSEABLE" => (
-                "the resolved executable did not emit a parseable version".to_string(),
-                "the resolved executable emits a parseable version that satisfies the contract"
-                    .to_string(),
-                if finding_targets_container_image(&self.why) {
-                    "container_target".to_string()
-                } else if finding_targets_remote_backend(&self.why) {
-                    "remote_target".to_string()
-                } else {
-                    "host".to_string()
-                },
-                finding_probe_command(&self.why).unwrap_or_default(),
-                finding_probe_path(&self.why).unwrap_or_default(),
-            ),
-            "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => (
-                "the selected native prerequisite check did not pass".to_string(),
-                "the selected native prerequisite check passes".to_string(),
-                "host".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE" => (
-                "the configured container apt sources do not provide the pinned package version"
-                    .to_string(),
-                "the configured container apt sources provide the pinned package version"
-                    .to_string(),
-                "container_apt".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE" => (
-                "the configured container apt sources do not provide the requested package"
-                    .to_string(),
-                "the configured container apt sources provide the requested package".to_string(),
-                "container_apt".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CONTAINER_APT_INDEX_UNAVAILABLE" => (
-                "the configured container apt sources could not refresh indexes".to_string(),
-                "the configured container apt sources refresh successfully".to_string(),
-                "container_apt".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE" => (
-                "the configured container provisioning backend could not provide the pinned version".to_string(),
-                "the configured container provisioning backend provides the pinned version".to_string(),
-                "container_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE" => (
-                "the configured container provisioning backend could not provide the requested package".to_string(),
-                "the configured container provisioning backend provides the requested package".to_string(),
-                "container_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE" => (
-                "the configured container provisioning backend could not refresh its sources".to_string(),
-                "the configured container provisioning backend refreshes its sources successfully".to_string(),
-                "container_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED" => (
-                "the configured container provisioning backend could not satisfy the requested prerequisite".to_string(),
-                "the configured container provisioning backend satisfies the requested prerequisite".to_string(),
-                "container_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE" => (
-                "the configured host provisioning backend could not provide the pinned version".to_string(),
-                "the configured host provisioning backend provides the pinned version".to_string(),
-                "host_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE" => (
-                "the configured host provisioning backend could not provide the requested package".to_string(),
-                "the configured host provisioning backend provides the requested package".to_string(),
-                "host_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE" => (
-                "the configured host provisioning backend could not refresh its sources".to_string(),
-                "the configured host provisioning backend refreshes its sources successfully".to_string(),
-                "host_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_HOST_PROVISIONING_BACKEND_FAILED" => (
-                "the configured host provisioning backend could not satisfy the requested prerequisite".to_string(),
-                "the configured host provisioning backend satisfies the requested prerequisite".to_string(),
-                "host_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_APT_VERSION_UNAVAILABLE" => (
-                "the configured remote apt sources do not provide the pinned package version"
-                    .to_string(),
-                "the configured remote apt sources provide the pinned package version"
-                    .to_string(),
-                "remote_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE" => (
-                "the configured remote apt sources do not provide the requested package"
-                    .to_string(),
-                "the configured remote apt sources provide the requested package".to_string(),
-                "remote_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_APT_INDEX_UNAVAILABLE" => (
-                "the configured remote apt sources could not refresh indexes".to_string(),
-                "the configured remote apt sources refresh successfully".to_string(),
-                "remote_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE" => (
-                "the configured remote provisioning backend could not provide the pinned version"
-                    .to_string(),
-                "the configured remote provisioning backend provides the pinned version"
-                    .to_string(),
-                "remote_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE" => (
-                "the configured remote provisioning backend could not provide the requested package"
-                    .to_string(),
-                "the configured remote provisioning backend provides the requested package"
-                    .to_string(),
-                "remote_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE" => (
-                "the configured remote provisioning backend could not refresh its sources"
-                    .to_string(),
-                "the configured remote provisioning backend refreshes its sources successfully"
-                    .to_string(),
-                "remote_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_REMOTE_PROVISIONING_BACKEND_FAILED" => (
-                "the configured remote provisioning backend could not satisfy the requested prerequisite".to_string(),
-                "the configured remote provisioning backend satisfies the requested prerequisite".to_string(),
-                "remote_provisioning".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_POLICY_PACK_VIOLATION" => (
-                "the repo failed org policy validation".to_string(),
-                "the repo satisfies the org policy pack".to_string(),
-                "org_policy".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_POLICY_PACK_INVALID" => (
-                "the org policy pack failed to load or validate".to_string(),
-                "the org policy pack loads and validates".to_string(),
-                "org_policy".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_POLICY_BACKED_VERSION_RULES_DECLARED" => (
-                "the org policy pack declares approved repo version rules".to_string(),
-                "the org policy pack has no approved repo version rules declared".to_string(),
-                "org_policy".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_POLICY_BACKED_PROVISIONING_DECLARED" => (
-                "the org policy pack declares approved provisioning sources".to_string(),
-                "the org policy pack has no provisioning sources declared".to_string(),
-                "org_policy".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => (
-                "policy-backed provisioning is missing required package identifiers".to_string(),
-                "policy-backed provisioning rules declare required package identifiers for OS package managers".to_string(),
-                "org_policy".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => (
-                "the org policy pack declares approved adapter bootstrap sources".to_string(),
-                "the org policy pack has no adapter bootstrap sources declared".to_string(),
-                "org_policy".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => (
-                "the installed version satisfies the repo contract but violates strict org policy"
-                    .to_string(),
-                "the installed version also complies with strict org policy".to_string(),
-                "org_policy".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CHECK_FAILED" => (
-                "the configured check failed".to_string(),
-                "the configured check succeeds".to_string(),
-                "execution".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CHECK_TIMED_OUT" => (
-                "the configured check timed out".to_string(),
-                "the configured check completes within the timeout".to_string(),
-                "execution".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_FILE_CHECK_FAILED" => (
-                "the configured file check failed".to_string(),
-                "the configured file state matches the contract".to_string(),
-                "repo filesystem".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_FILE_CHECK_TIMED_OUT" => (
-                "the configured file check timed out".to_string(),
-                "the configured file check completes within the timeout".to_string(),
-                "repo filesystem".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CONTRACT_DRIFT" => (
-                "repo signals differ from the declared contract".to_string(),
-                "repo signals match the declared contract".to_string(),
-                "detect".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => (
-                "a task body appears to mutate an ota-managed isolated attachment path"
-                    .to_string(),
-                "task bodies leave ota-managed isolated attachment paths to the underlying tool"
-                    .to_string(),
-                "contract".to_string(),
-                String::new(),
-                String::new(),
-            ),
-            _ => (
-                self.summary.clone(),
-                self.why.clone(),
-                "doctor".to_string(),
-                String::new(),
-                String::new(),
-            ),
-        };
-
-        FindingEvidence {
-            observed,
-            expected,
-            source,
-            checked_at: String::new(),
-            command,
-            path,
-        }
+        self.resolved_metadata()
+            .and_then(|metadata| metadata.evidence)
+            .unwrap_or_else(|| self.generic_evidence())
     }
 
     fn drift_context(&self) -> Option<DriftFindingContext<'_>> {
-        if self.summary.starts_with("Contract drift:") {
+        if self.code() == "OTA_CONTRACT_DRIFT" {
             Some(DriftFindingContext {
                 owner_kind: "merged",
                 ownership: "repo_contract",
@@ -2733,11 +2847,10 @@ impl Finding {
     }
 
     fn provenance_context(&self) -> Option<FindingProvenanceContext<'_>> {
-        if self.policy_context().is_some() {
-            return Some(FindingProvenanceContext {
-                provenance: "org policy",
-                provenance_key: "org_policy",
-            });
+        if let Some(metadata) = self.resolved_metadata()
+            && let Some(provenance) = metadata.provenance
+        {
+            return Some(provenance);
         }
 
         if self.code() == "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" {
@@ -2776,62 +2889,7 @@ impl Finding {
             });
         }
 
-        match self.code() {
-            "OTA_TASKS_MISSING"
-            | "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY"
-            | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY"
-            | "OTA_BACKEND_CLI_MISSING"
-            | "OTA_CONTAINER_BACKEND_CLI_MISSING"
-            | "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
-            | "OTA_REMOTE_TARGET_SUSPICIOUS"
-            | "OTA_SERVICE_CHECK_FAILED"
-            | "OTA_SERVICE_CHECK_TIMED_OUT"
-            | "OTA_SERVICE_UNVERIFIABLE"
-            | "OTA_ENV_MISSING"
-            | "OTA_ENV_INVALID"
-            | "OTA_RUNTIME_VERSION_MISMATCH"
-            | "OTA_RUNTIME_MISSING"
-            | "OTA_RUNTIME_PROBE_FAILED"
-            | "OTA_RUNTIME_VERSION_UNPARSEABLE"
-            | "OTA_TOOL_VERSION_MISMATCH"
-            | "OTA_TOOL_MISSING"
-            | "OTA_TOOL_PROBE_FAILED"
-            | "OTA_TOOL_VERSION_UNPARSEABLE"
-            | "OTA_NATIVE_PREREQUISITE_MISSING"
-            | "OTA_NATIVE_PREREQUISITE_TIMED_OUT"
-            | "OTA_CHECK_FAILED"
-            | "OTA_CHECK_TIMED_OUT"
-            | "OTA_FILE_CHECK_FAILED"
-            | "OTA_FILE_CHECK_TIMED_OUT"
-            | "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => {
-                Some(FindingProvenanceContext {
-                    provenance: "repo contract",
-                    provenance_key: "repo_contract",
-                })
-            }
-            "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
-            | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
-            | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_CONTAINER_PROVISIONING_BACKEND_FAILED"
-            | "OTA_REMOTE_APT_VERSION_UNAVAILABLE"
-            | "OTA_REMOTE_APT_PACKAGE_UNAVAILABLE"
-            | "OTA_REMOTE_APT_INDEX_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED"
-            | "OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE"
-            | "OTA_HOST_PROVISIONING_BACKEND_FAILED" => Some(FindingProvenanceContext {
-                provenance: "org policy",
-                provenance_key: "org_policy",
-            }),
-            _ => None,
-        }
+        None
     }
 
     pub(crate) fn provenance(&self) -> Option<String> {
@@ -11436,6 +11494,9 @@ mod tests {
 
     use crate::parser::parse_contract_str;
     use crate::policy_pack::ProvisioningTargetKind;
+    use crate::provisioning::{
+        ProvisioningExecutionTarget, ProvisioningFailureDiagnosis, ProvisioningFailureKind,
+    };
     use crate::runner::{ExecutionOverrides, HttpReadinessRequest};
     use crate::schema::{ServiceSpec, ToolchainFulfillmentSource};
     #[cfg(windows)]
@@ -11463,6 +11524,24 @@ mod tests {
             dir.join("ota.yaml")
         })
         .as_path()
+    }
+
+    fn finding_contract_projection(lane: &str, finding: &Finding) -> serde_json::Value {
+        let json = serde_json::to_value(finding).expect("finding should serialize");
+        serde_json::json!({
+            "lane": lane,
+            "code": json.get("code").and_then(|value| value.as_str()).expect("finding code"),
+            "category": json.get("category").and_then(|value| value.as_str()).expect("finding category"),
+            "owner": json.get("owner").and_then(|value| value.as_str()).expect("finding owner"),
+            "severity": json.get("severity").and_then(|value| value.as_str()).expect("finding severity"),
+            "summary": json.get("summary").and_then(|value| value.as_str()).expect("finding summary"),
+            "evidence_source": json
+                .get("evidence")
+                .and_then(|value| value.get("source"))
+                .and_then(|value| value.as_str()),
+            "provenance_key": json.get("provenance_key").and_then(|value| value.as_str()),
+            "policy_reason": json.get("policy_reason").and_then(|value| value.as_str()),
+        })
     }
 
     #[cfg(windows)]
@@ -19646,6 +19725,270 @@ tasks:
 
         let json = serde_json::to_value(&finding).expect("finding should serialize");
         assert!(json.get("toolchain_opportunity").is_none(), "{json}");
+    }
+
+    #[test]
+    fn doctor_json_contract_pack_snapshots_representative_finding_identity_and_metadata() {
+        let mut findings = Vec::new();
+
+        let policy_fixture = TempDir::new().unwrap();
+        fs::write(
+            policy_fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(policy_fixture.path().join(".ota")).unwrap();
+        fs::write(
+            policy_fixture.path().join(".ota").join("org-policy.yaml"),
+            r#"
+policies:
+  required_sections:
+    - tasks
+unexpected: true
+"#,
+        )
+        .unwrap();
+        let policy_contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(policy_fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+        let policy_report =
+            diagnose_preconditions(&policy_contract, &policy_fixture.path().join("ota.yaml"));
+        let policy_finding = policy_report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Invalid org policy pack")
+            .expect("policy finding should be present");
+        findings.push(finding_contract_projection("policy", policy_finding));
+
+        let workflow_contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+readiness:
+  probes:
+    backend-ready:
+      kind: http
+      url: http://127.0.0.1:9/healthz/readiness
+      timeout: 100
+workflows:
+  default: backend
+  backend:
+    readiness:
+      signal:
+        probes:
+          - backend-ready
+"#,
+        )
+        .unwrap();
+        let workflow_report = super::diagnose_checks_only_for_workflow(
+            &workflow_contract,
+            synthetic_contract_path(),
+            Some("backend"),
+        );
+        let workflow_finding = workflow_report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Signal probe failed: backend-ready")
+            .expect("workflow signal finding should be present");
+        findings.push(finding_contract_projection("workflow", workflow_finding));
+
+        let service_contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    required: true
+    start: docker compose up -d postgres
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+        let service_report = diagnose_contract(&service_contract, synthetic_contract_path());
+        let service_finding = service_report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Required service cannot be verified: postgres")
+            .expect("service finding should be present");
+        findings.push(finding_contract_projection("service", service_finding));
+
+        let env_fixture = TempDir::new().unwrap();
+        let env_contract_path = env_fixture.path().join("ota.yaml");
+        let env_contract = parse_contract_str(
+            &env_contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    OTA_REQUIRED:
+      required: true
+  sources:
+    - kind: dotenv
+      path: .env
+      must_exist: true
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        let env_report = diagnose_contract(&env_contract, &env_contract_path);
+        let env_finding = env_report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Missing required environment source: dotenv:.env")
+            .expect("env source finding should be present");
+        findings.push(finding_contract_projection("env", env_finding));
+
+        let provisioning_finding = super::provisioning_installability_finding(
+            &ProvisioningFailureDiagnosis {
+                backend: String::from("apt"),
+                target_kind: ProvisioningTargetKind::Tool,
+                name: String::from("jq"),
+                requested_version: String::from("jq-1.8.1"),
+                resolved_version: None,
+                policy_match: None,
+                kind: ProvisioningFailureKind::PackageUnavailable,
+            },
+            &ProvisioningExecutionTarget::Native,
+            "ota doctor",
+        );
+        findings.push(finding_contract_projection(
+            "provisioning",
+            &provisioning_finding,
+        ));
+
+        let remote_contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+        let remote_report =
+            diagnose_contract_in_mode(&remote_contract, synthetic_contract_path(), DoctorMode::Remote);
+        let remote_finding = remote_report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Remote execution is not configured")
+            .expect("remote finding should be present");
+        findings.push(finding_contract_projection("remote", remote_finding));
+
+        assert_eq!(
+            findings,
+            vec![
+                serde_json::json!({
+                    "lane": "policy",
+                    "code": "OTA_POLICY_PACK_INVALID",
+                    "category": "policy",
+                    "owner": "org_policy",
+                    "severity": "error",
+                    "summary": "Invalid org policy pack",
+                    "evidence_source": "org_policy",
+                    "provenance_key": "org_policy",
+                    "policy_reason": "invalid_org_policy_pack",
+                }),
+                serde_json::json!({
+                    "lane": "workflow",
+                    "code": "OTA_WORKFLOW_SIGNAL_PROBE_FAILED",
+                    "category": "execution",
+                    "owner": "repo_contract",
+                    "severity": "info",
+                    "summary": "Signal probe failed: backend-ready",
+                    "evidence_source": "execution",
+                    "provenance_key": "repo_contract",
+                    "policy_reason": serde_json::Value::Null,
+                }),
+                serde_json::json!({
+                    "lane": "service",
+                    "code": "OTA_SERVICE_UNVERIFIABLE",
+                    "category": "service",
+                    "owner": "service",
+                    "severity": "warn",
+                    "summary": "Required service cannot be verified: postgres",
+                    "evidence_source": "service",
+                    "provenance_key": "repo_contract",
+                    "policy_reason": serde_json::Value::Null,
+                }),
+                serde_json::json!({
+                    "lane": "env",
+                    "code": "OTA_ENV_SOURCE_MISSING_REQUIRED",
+                    "category": "environment",
+                    "owner": "repo_contract",
+                    "severity": "error",
+                    "summary": "Missing required environment source: dotenv:.env",
+                    "evidence_source": "repo filesystem",
+                    "provenance_key": "repo_contract",
+                    "policy_reason": serde_json::Value::Null,
+                }),
+                serde_json::json!({
+                    "lane": "provisioning",
+                    "code": "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE",
+                    "category": "provisioning",
+                    "owner": "host",
+                    "severity": "error",
+                    "summary": "Host apt cannot locate required package: jq",
+                    "evidence_source": "host_provisioning",
+                    "provenance_key": "org_policy",
+                    "policy_reason": serde_json::Value::Null,
+                }),
+                serde_json::json!({
+                    "lane": "remote",
+                    "code": "OTA_REMOTE_MODE_NOT_CONFIGURED",
+                    "category": "remote",
+                    "owner": "repo_contract",
+                    "severity": "error",
+                    "summary": "Remote execution is not configured",
+                    "evidence_source": "repo_contract",
+                    "provenance_key": "repo_contract",
+                    "policy_reason": serde_json::Value::Null,
+                }),
+            ]
+        );
+    }
+
+    #[test]
+    fn shipped_doctor_findings_require_explicit_identity_metadata() {
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/doctor.rs");
+        let source = fs::read_to_string(&source_path).expect("doctor source should load");
+        let (production_source, _) = source
+            .split_once("#[cfg(test)]\nmod tests {")
+            .expect("doctor tests module marker should exist");
+
+        assert!(
+            !production_source.contains("identity: None,")
+                && !production_source.contains("identity: Default::default()"),
+            "shipped doctor findings must carry explicit identity metadata: {}",
+            source_path.display()
+        );
     }
 
     #[test]

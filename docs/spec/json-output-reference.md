@@ -1886,6 +1886,10 @@ rendered English summary text. That includes contract advisories plus the main s
 runtime/tool, env-value and env-source, native prerequisite, backend/remote topology, workflow
 probe/surface readiness, policy, repo-hygiene, and contract-drift finding lanes.
 
+That identity surface is now guarded in CI: representative policy, workflow, service, env,
+provisioning, and remote findings are contract-tested in JSON form, and shipped doctor findings are
+rejected in test if they are introduced without explicit identity metadata.
+
 Policy-backed version-rule and strict-version findings also preserve the same `org_policy`
 provenance and `policy_*` metadata as the older policy blocker and provisioning lanes.
 
