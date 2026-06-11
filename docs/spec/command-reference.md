@@ -2860,9 +2860,14 @@ JSON output:
 
 - `ok`
 - `path`
-- `summary` with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
+- `summary` with `repo_count`, `ready_count`, `not_ready_count`, `verdict`, `agent_verdict`,
+  `error_count`, `warn_count`, and `info_count`
+- `summary.primary_blocker` may be present with the workspace headline blocker, including the repo
+  name that currently owns it
 - each repo may include additive `primary_blocker` with that repo's current highest-priority
   `severity`, `summary`, `why`, and `next`
+- `summary.primary_blocker.code` and `repos[].primary_blocker.code` are additive and only appear
+  when the blocker comes from a finding with explicit stable identity
 - `repos`
 
 ## `ota workspace doctor`
@@ -2910,9 +2915,14 @@ JSON output:
 
 - `ok`
 - `path`
-- `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`, `not_ready_count`, `error_count`, `warn_count`, and `info_count`
+- `summary` mirroring the workspace doctor roll-up with `repo_count`, `ready_count`,
+  `not_ready_count`, `verdict`, `agent_verdict`, `error_count`, `warn_count`, and `info_count`
+- `summary.primary_blocker` may be present with the workspace headline blocker, including the repo
+  name that currently owns it
 - each repo may include additive `primary_blocker` with that repo's current highest-priority
   `severity`, `summary`, `why`, and `next`
+- `summary.primary_blocker.code` and `repos[].primary_blocker.code` are additive and only appear
+  when the blocker comes from a finding with explicit stable identity
 - repo execution metadata may include env provenance for inherited workspace policy values
 - `repos`
 
