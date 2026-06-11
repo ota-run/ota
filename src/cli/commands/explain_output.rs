@@ -483,7 +483,7 @@ pub(super) fn explain_steps(findings: &[Finding]) -> Vec<ExplainStep> {
         .enumerate()
         .map(|(index, finding)| ExplainStep {
             order: index + 1,
-            code: finding.code(),
+            code: finding.code().to_string(),
             severity: finding.severity,
             summary: finding.summary.clone(),
             why: finding.why.clone(),
@@ -504,6 +504,7 @@ mod tests {
 
         let findings = vec![
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Service readiness failed: postgres"),
                 why: String::from(
@@ -512,6 +513,7 @@ mod tests {
                 next: String::from("run `ota up` and rerun `ota explain`"),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed version rules are declared"),
                 why: String::from(
@@ -536,6 +538,7 @@ mod tests {
         set_plain_mode(true);
 
         let findings = vec![Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Check failed: node-installed"),
             why: String::from("the configured `node-installed` check did not finish within 10ms"),
@@ -556,10 +559,31 @@ mod tests {
     }
 
     #[test]
+    fn explain_steps_prefer_explicit_finding_identity() {
+        let steps = explain_steps(&[Finding {
+            identity: Some(crate::doctor::FindingIdentity {
+                code: String::from("OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"),
+                category: String::from("contract"),
+                owner: String::from("repo_contract"),
+            }),
+            severity: FindingSeverity::Warn,
+            summary: String::from("custom summary not used for identity"),
+            why: String::from("custom why"),
+            next: String::from("custom next"),
+        }]);
+
+        assert_eq!(
+            steps[0].code,
+            "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
+        );
+    }
+
+    #[test]
     fn explain_context_section_shares_policy_footer_once() {
         set_plain_mode(true);
 
         let first = Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Policy-backed provisioning sources are declared"),
             why: String::from(
@@ -570,6 +594,7 @@ mod tests {
             ),
         };
         let second = Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Policy-backed provisioning sources are declared"),
             why: String::from(
@@ -613,12 +638,14 @@ mod tests {
     fn explain_actions_prioritize_preview_and_assist_before_runtime_followups() {
         let findings = vec![
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Check failed: api-health"),
                 why: String::from("the health check failed"),
                 next: String::from("run `ota run smoke` and rerun `ota doctor`"),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("No tasks defined in contract"),
                 why: String::from("the contract cannot run anything yet"),
@@ -627,6 +654,7 @@ mod tests {
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("The required service `postgres` is not verifiable"),
                 why: String::from("the service has no readiness probe"),
@@ -635,6 +663,7 @@ mod tests {
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Required environment variable `DATABASE_URL` is missing"),
                 why: String::from("the current precedence did not resolve a value"),
@@ -674,6 +703,7 @@ mod tests {
         set_plain_mode(true);
 
         let finding = Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("No tasks defined in contract"),
             why: String::from("the contract cannot run anything yet"),
@@ -716,6 +746,7 @@ mod tests {
                     adapter_bootstrap: None,
                     extensions: BTreeMap::new(),
                     findings: vec![Finding {
+                        identity: None,
                         severity: FindingSeverity::Error,
                         summary: String::from("No tasks defined in contract"),
                         why: String::from("the contract cannot run anything yet"),
@@ -738,6 +769,7 @@ mod tests {
                     adapter_bootstrap: None,
                     extensions: BTreeMap::new(),
                     findings: vec![Finding {
+                        identity: None,
                         severity: FindingSeverity::Error,
                         summary: String::from(
                             "Required environment variable `DATABASE_URL` is missing",

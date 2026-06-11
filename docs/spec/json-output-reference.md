@@ -1877,7 +1877,8 @@ replace contract validation or finding-level detail.
 machine-readable `verdict` / `agent_verdict` values so hosted validation and editor tooling do
 not need to recompute them. When there is at least one finding, the summary may also include
 `primary_blocker` with the highest-priority blocker details so CI and editors can answer the
-question “what should I fix first?” without scanning the full list.
+question “what should I fix first?” without scanning the full list. When that blocker maps back to
+a finding with stable identity, `summary.primary_blocker.code` is included additively.
 
 When the repo contract declares an `agent` block, the additive `agent` summary can also include
 `inferred_boundary_reviewed`. `false` means the current writable and protected boundary still comes
@@ -2141,12 +2142,14 @@ workspace policy values.
 the underlying repo contract declares it. The descriptor shape matches `ota doctor --json`.
 
 Each repo item may also include additive `primary_blocker` with that repo's current highest-priority
-finding (`severity`, `summary`, `why`, `next`, and optional provenance fields).
+finding (`severity`, `summary`, `why`, `next`, optional `code`, and optional provenance fields).
 
 `ota workspace doctor --json` also includes a top-level `summary` object with repo and finding
 counts for hosted validation and editor consumers. The workspace summary also carries
 `verdict` / `agent_verdict` values. When there is at least one finding, the summary may also
 include `primary_blocker` with the highest-priority blocker details and the repo name that owns it.
+When that blocker maps back to a stable finding identity, the workspace summary also includes
+additive `primary_blocker.code`.
 
 ```json
 {
@@ -2213,7 +2216,9 @@ Explain JSON separates the grouped remediation plan from the detailed finding li
 - `steps` keeps the finding-level detail with stable codes for deeper drill-in
 
 Both actions and steps stay deterministic. Explain steps may also include `provenance` and
-`provenance_key` when ota can trace the diagnosis source for the underlying finding.
+`provenance_key` when ota can trace the diagnosis source for the underlying finding. When a
+finding already carries explicit identity, `steps[].code` preserves that stable code directly
+instead of re-deriving advisory identity from rendered summary text.
 
 ```json
 {

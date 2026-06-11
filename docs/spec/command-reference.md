@@ -988,7 +988,6 @@ If the repo does not yet have `ota.yaml`, start with `ota doctor`, then use `ota
 Text output:
 
 - `Plan` section with ordered remediation steps
-- stable finding code for each step
 - `Why` and `Next` lines for each step
 - `Provenance` lines when ota can trace the diagnosis source for that step
 - `Overview` counts at the end
@@ -999,6 +998,7 @@ JSON output:
 - `actions` is the ordered grouped remediation plan; each action includes `order`, `action_key`, `action_title`, `severity`, `count`, `why`, and `next`
 - `actions` may also include shared `provenance` when the grouped action maps back to one diagnosis source
 - `steps` keeps the finding-level detail; each step includes `order`, `code`, `severity`, `summary`, `why`, and `next`
+- `steps[].code` is the stable finding/advisory identity surface for machine consumers; advisory-backed steps carry the contract advisory code directly instead of re-deriving it from rendered summary text
 - steps may also include `provenance` and `provenance_key`
 - failure: `ok`, `path`, and `error`
 
@@ -1028,13 +1028,14 @@ Current behavior:
 - `--mode receipt-diff` expects `ota receipt --json --baseline ...` diff output and currently
   supports `--format markdown` only
 - scopes workspace findings with the repo name and path so annotations stay actionable
-- labels additive `Provenance:` and `Next:` segments when those fields are present in the input JSON
+- labels additive `Code:`, `Provenance:`, and `Next:` segments when those fields are present in the input JSON
 - serves as the canonical binary entrypoint for repo-local and CI annotation adapters
 
 Text output:
 
 - `ERROR: ...`, `WARNING: ...`, or `NOTICE: ...` for primary blockers depending on their severity
 - `ERROR: ...` and `WARNING: ...` for findings
+- primary-blocker and finding annotations append `Code: <stable-code>` when the input JSON includes one
 - markdown output uses `## <title>`, `Status`, `Counts`, optional `Primary blocker`, and `Findings`
   sections instead of one-line annotations
 - receipt-diff markdown output uses `Baseline source`, `Compare`, `Drift`, `Counts`, optional

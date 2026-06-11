@@ -99,10 +99,19 @@ pub enum FindingSeverity {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Finding {
+    #[serde(default)]
+    pub identity: Option<FindingIdentity>,
     pub severity: FindingSeverity,
     pub summary: String,
     pub why: String,
     pub next: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct FindingIdentity {
+    pub code: String,
+    pub category: String,
+    pub owner: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -309,6 +318,7 @@ fn unsupported_host_context_findings(
             constraints.push(format!("`only_arch: [{supported_arch}]`"));
         }
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!("Unsupported host platform for context: {context_name}"),
             why: format!(
@@ -1049,6 +1059,7 @@ fn remote_target_os_probe_finding(context_name: Option<&str>, why: String) -> Fi
             )
         });
     Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: format!("Remote target operating system could not be determined{suffix}"),
         why,
@@ -1148,6 +1159,7 @@ fn remote_doctor_probe_contexts(
             Ok(backend) => backend,
             Err(error) => {
                 findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: format!("Remote execution context is not executable: {name}"),
                     why: error.to_string(),
@@ -1478,6 +1490,7 @@ pub(crate) fn provisioning_installability_finding(
             "apt",
             ProvisioningFailureKind::VersionUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Container apt cannot install pinned package version: {}",
@@ -1497,6 +1510,7 @@ pub(crate) fn provisioning_installability_finding(
             "apt",
             ProvisioningFailureKind::PackageUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Container apt cannot locate required package: {}",
@@ -1516,6 +1530,7 @@ pub(crate) fn provisioning_installability_finding(
             "apt",
             ProvisioningFailureKind::IndexUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Container apt cannot refresh configured sources: {}",
@@ -1534,6 +1549,7 @@ pub(crate) fn provisioning_installability_finding(
             backend,
             ProvisioningFailureKind::VersionUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Container {backend} cannot install pinned version: {}",
@@ -1554,6 +1570,7 @@ pub(crate) fn provisioning_installability_finding(
             backend,
             ProvisioningFailureKind::PackageUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Container {backend} cannot locate required package: {}",
@@ -1574,6 +1591,7 @@ pub(crate) fn provisioning_installability_finding(
             backend,
             ProvisioningFailureKind::IndexUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Container {backend} cannot refresh configured sources: {}",
@@ -1588,6 +1606,7 @@ pub(crate) fn provisioning_installability_finding(
             ),
         },
         (ProvisioningExecutionTarget::Container { .. }, backend, _) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Container {backend} cannot install requested prerequisite: {}",
@@ -1608,6 +1627,7 @@ pub(crate) fn provisioning_installability_finding(
             backend,
             ProvisioningFailureKind::VersionUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Host {backend} cannot install pinned version: {}",
@@ -1627,6 +1647,7 @@ pub(crate) fn provisioning_installability_finding(
             backend,
             ProvisioningFailureKind::PackageUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Host {backend} cannot locate required package: {}",
@@ -1646,6 +1667,7 @@ pub(crate) fn provisioning_installability_finding(
             backend,
             ProvisioningFailureKind::IndexUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Host {backend} cannot refresh configured sources: {}",
@@ -1660,6 +1682,7 @@ pub(crate) fn provisioning_installability_finding(
             ),
         },
         (ProvisioningExecutionTarget::Native, backend, _) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Host {backend} cannot install requested prerequisite: {}",
@@ -1679,6 +1702,7 @@ pub(crate) fn provisioning_installability_finding(
             "apt",
             ProvisioningFailureKind::VersionUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Remote apt cannot install pinned package version: {}{}",
@@ -1698,6 +1722,7 @@ pub(crate) fn provisioning_installability_finding(
             "apt",
             ProvisioningFailureKind::PackageUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Remote apt cannot locate required package: {}{}",
@@ -1717,6 +1742,7 @@ pub(crate) fn provisioning_installability_finding(
             "apt",
             ProvisioningFailureKind::IndexUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Remote apt cannot refresh configured sources: {}{}",
@@ -1733,6 +1759,7 @@ pub(crate) fn provisioning_installability_finding(
             backend,
             ProvisioningFailureKind::VersionUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Remote {backend} cannot install pinned version: {}{}",
@@ -1752,6 +1779,7 @@ pub(crate) fn provisioning_installability_finding(
             backend,
             ProvisioningFailureKind::PackageUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Remote {backend} cannot locate required package: {}{}",
@@ -1771,6 +1799,7 @@ pub(crate) fn provisioning_installability_finding(
             backend,
             ProvisioningFailureKind::IndexUnavailable,
         ) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Remote {backend} cannot refresh configured sources: {}{}",
@@ -1785,6 +1814,7 @@ pub(crate) fn provisioning_installability_finding(
             ),
         },
         (ProvisioningExecutionTarget::Remote { .. }, backend, _) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Remote {backend} cannot install requested prerequisite: {}{}",
@@ -1799,6 +1829,16 @@ pub(crate) fn provisioning_installability_finding(
                 diagnosis.name
             ),
         },
+    }
+}
+
+impl FindingIdentity {
+    fn from_contract_advisory(advisory: &ContractAdvisory) -> Self {
+        Self {
+            code: advisory.code().to_string(),
+            category: advisory.category().to_string(),
+            owner: advisory.owner().to_string(),
+        }
     }
 }
 
@@ -1857,7 +1897,10 @@ impl Finding {
         }
     }
 
-    pub(crate) fn code(&self) -> &'static str {
+    pub(crate) fn code(&self) -> &str {
+        if let Some(identity) = self.identity.as_ref() {
+            return identity.code.as_str();
+        }
         match self.summary.as_str() {
             "No tasks defined in contract" => "OTA_TASKS_MISSING",
             "Repo local Ota artifacts are not ignored by git" => {
@@ -2002,7 +2045,10 @@ impl Finding {
             s if s.starts_with("File check failed: ") => "OTA_FILE_CHECK_FAILED",
             s if s.starts_with("File check timed out: ") => "OTA_FILE_CHECK_TIMED_OUT",
             s if s.starts_with("Contract drift:") => "OTA_CONTRACT_DRIFT",
-            s if s.starts_with("Task `") && s.contains(" depends_on `") && s.contains(" across different execution boundaries") => {
+            s if s.starts_with("Task `")
+                && s.contains(" depends_on `")
+                && s.contains(" across different execution boundaries") =>
+            {
                 "OTA_CONTRACT_ADVISORY_DEPENDS_ON_BOUNDARY"
             }
             s if s.starts_with("Attachment `") && s.contains(" may be unused in context `") => {
@@ -2025,16 +2071,24 @@ impl Finding {
             {
                 "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
             }
-            s if s.starts_with("check `") && s.contains(" uses replaceable shell file glue for `") => {
+            s if s.starts_with("check `")
+                && s.contains(" uses replaceable shell file glue for `") =>
+            {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_FILE_CHECK"
             }
-            s if s.starts_with("check `") && s.contains(" uses replaceable shell env-file glue for `") => {
+            s if s.starts_with("check `")
+                && s.contains(" uses replaceable shell env-file glue for `") =>
+            {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_CHECK"
             }
-            s if s.starts_with("task `") && s.contains(" uses replaceable shell env-file mutation") => {
+            s if s.starts_with("task `")
+                && s.contains(" uses replaceable shell env-file mutation") =>
+            {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_MUTATION"
             }
-            s if s.starts_with("task `") && s.contains(" hard-codes compose env-file ownership in shell") => {
+            s if s.starts_with("task `")
+                && s.contains(" hard-codes compose env-file ownership in shell") =>
+            {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP"
             }
             s if s.starts_with("workflow `")
@@ -2046,13 +2100,19 @@ impl Finding {
             s if s.starts_with("`agent.writable_paths` includes sensitive ") => {
                 "OTA_CONTRACT_ADVISORY_SENSITIVE_AGENT_WRITABLE_PATH"
             }
-            s if s.starts_with("`agent.exceptions.sensitive_writes` includes unnecessary path `") => {
+            s if s
+                .starts_with("`agent.exceptions.sensitive_writes` includes unnecessary path `") =>
+            {
                 "OTA_CONTRACT_ADVISORY_SENSITIVE_WRITE_EXCEPTION"
             }
-            s if s.starts_with("`agent.bootstrap.ota.") && s.ends_with("` should pin the ota release version") => {
+            s if s.starts_with("`agent.bootstrap.ota.")
+                && s.ends_with("` should pin the ota release version") =>
+            {
                 "OTA_CONTRACT_ADVISORY_AGENT_BOOTSTRAP_UNPINNED"
             }
-            s if s.starts_with("Agent-safe task `") && s.contains(" performs network dependency hydration") => {
+            s if s.starts_with("Agent-safe task `")
+                && s.contains(" performs network dependency hydration") =>
+            {
                 "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_DEPENDENCY_HYDRATION"
             }
             s if s.starts_with("Agent-safe task `") && s.contains(" requires network access") => {
@@ -2068,7 +2128,10 @@ impl Finding {
         }
     }
 
-    fn category(&self) -> &'static str {
+    fn category(&self) -> &str {
+        if let Some(identity) = self.identity.as_ref() {
+            return identity.category.as_str();
+        }
         match self.code() {
             "OTA_TASKS_MISSING" => "contract",
             "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY" | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY" => {
@@ -2130,7 +2193,10 @@ impl Finding {
         }
     }
 
-    fn owner(&self) -> &'static str {
+    fn owner(&self) -> &str {
+        if let Some(identity) = self.identity.as_ref() {
+            return identity.owner.as_str();
+        }
         match self.code() {
             "OTA_TASKS_MISSING"
             | "OTA_CONTRACT_DRIFT"
@@ -2689,10 +2755,12 @@ impl Finding {
             | "OTA_CHECK_TIMED_OUT"
             | "OTA_FILE_CHECK_FAILED"
             | "OTA_FILE_CHECK_TIMED_OUT"
-            | "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => Some(FindingProvenanceContext {
-                provenance: "repo contract",
-                provenance_key: "repo_contract",
-            }),
+            | "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => {
+                Some(FindingProvenanceContext {
+                    provenance: "repo contract",
+                    provenance_key: "repo_contract",
+                })
+            }
             "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
             | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
             | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
@@ -3593,6 +3661,7 @@ fn diagnose_tasks_surface(contract: &Contract, findings: &mut Vec<Finding>) {
     };
 
     findings.push(Finding {
+        identity: None,
         severity,
         summary: String::from("No tasks defined in contract"),
         why: String::from(
@@ -3683,144 +3752,77 @@ fn diagnose_contract_advisories(
             }
         };
 
-        findings.push(match advisory {
-            ContractAdvisory::DependsOnBoundary(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!(
-                    "Task `{}` depends_on `{}` across different execution boundaries",
-                    advisory.parent_task, advisory.dependency_task
-                ),
-                why: ContractAdvisory::DependsOnBoundary(advisory.clone()).why(),
-                next: ContractAdvisory::DependsOnBoundary(advisory).next(),
-            },
-            ContractAdvisory::LikelyUnusedAttachment(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!(
-                    "Attachment `{}` may be unused in context `{}`",
-                    advisory.isolated_path, advisory.context_name
-                ),
-                why: ContractAdvisory::LikelyUnusedAttachment(advisory.clone()).why(),
-                next: ContractAdvisory::LikelyUnusedAttachment(advisory).next(),
-            },
-            ContractAdvisory::IsolatedYarnReleaseShadow(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!(
-                    "Isolated path `{}` may shadow required Yarn release artifacts in context `{}`",
-                    advisory.isolated_path, advisory.context_name
-                ),
-                why: ContractAdvisory::IsolatedYarnReleaseShadow(advisory.clone()).why(),
-                next: ContractAdvisory::IsolatedYarnReleaseShadow(advisory).next(),
-            },
-            ContractAdvisory::MutatesManagedIsolatedPath(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!(
-                    "Task `{}` mutates managed isolated path `{}`",
-                    advisory.task_name, advisory.isolated_path
-                ),
-                why: ContractAdvisory::MutatesManagedIsolatedPath(advisory.clone()).why(),
-                next: ContractAdvisory::MutatesManagedIsolatedPath(advisory).next(),
-            },
-            ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!(
-                    "Node contract uses split ownership (`runtimes.node` + tools: {})",
-                    advisory.package_managers.join(", ")
-                ),
-                why: ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory.clone()).why(),
-                next: ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory).next(),
-            },
-            ContractAdvisory::LegacyStandalonePoetry(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!(
-                    "Poetry is modeled as a standalone tool ({})",
-                    advisory.locations.join(", ")
-                ),
-                why: ContractAdvisory::LegacyStandalonePoetry(advisory.clone()).why(),
-                next: ContractAdvisory::LegacyStandalonePoetry(advisory).next(),
-            },
-            ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: ContractAdvisory::ServiceUsesOpaqueShellStart(advisory.clone()).summary(),
-                why: ContractAdvisory::ServiceUsesOpaqueShellStart(advisory.clone()).why(),
-                next: ContractAdvisory::ServiceUsesOpaqueShellStart(advisory).next(),
-            },
-            ContractAdvisory::ReplaceableShellCheck(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: ContractAdvisory::ReplaceableShellCheck(advisory.clone()).summary(),
-                why: ContractAdvisory::ReplaceableShellCheck(advisory.clone()).why(),
-                next: ContractAdvisory::ReplaceableShellCheck(advisory).next(),
-            },
-            ContractAdvisory::ReplaceableShellEnvMutation(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: ContractAdvisory::ReplaceableShellEnvMutation(advisory.clone()).summary(),
-                why: ContractAdvisory::ReplaceableShellEnvMutation(advisory.clone()).why(),
-                next: ContractAdvisory::ReplaceableShellEnvMutation(advisory).next(),
-            },
-            ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory.clone())
-                    .summary(),
-                why: ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory.clone()).why(),
-                next: ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory).next(),
-            },
-            ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory.clone())
-                    .summary(),
-                why: ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory.clone())
-                    .why(),
-                next: ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory).next(),
-            },
-            ContractAdvisory::SensitiveAgentWritablePath(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!(
-                    "`agent.writable_paths` includes sensitive {} `{}`",
-                    advisory.category, advisory.path
-                ),
-                why: ContractAdvisory::SensitiveAgentWritablePath(advisory.clone()).why(),
-                next: ContractAdvisory::SensitiveAgentWritablePath(advisory).next(),
-            },
-            ContractAdvisory::SensitiveWriteException(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!(
-                    "`agent.exceptions.sensitive_writes` includes unnecessary path `{}`",
-                    advisory.path
-                ),
-                why: ContractAdvisory::SensitiveWriteException(advisory.clone()).why(),
-                next: ContractAdvisory::SensitiveWriteException(advisory).next(),
-            },
-            ContractAdvisory::AgentBootstrapUnpinned(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!("`{}` should pin the ota release version", advisory.field),
-                why: ContractAdvisory::AgentBootstrapUnpinned(advisory.clone()).why(),
-                next: ContractAdvisory::AgentBootstrapUnpinned(advisory).next(),
-            },
-            ContractAdvisory::AgentSafeTaskNetwork(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: match advisory.network_kind {
-                    TaskNetworkEffectKind::DependencyHydration => format!(
-                        "Agent-safe task `{}` performs network dependency hydration",
-                        advisory.task_name
-                    ),
-                    TaskNetworkEffectKind::Broad => format!(
-                        "Agent-safe task `{}` requires network access",
-                        advisory.task_name
-                    ),
-                },
-                why: ContractAdvisory::AgentSafeTaskNetwork(advisory.clone()).why(),
-                next: ContractAdvisory::AgentSafeTaskNetwork(advisory).next(),
-            },
-            ContractAdvisory::AgentSafeTaskExternalState(advisory) => Finding {
-                severity: FindingSeverity::Warn,
-                summary: format!(
-                    "Agent-safe task `{}` mutates external state: {}",
-                    advisory.task_name,
-                    advisory.systems.join(", ")
-                ),
-                why: ContractAdvisory::AgentSafeTaskExternalState(advisory.clone()).why(),
-                next: ContractAdvisory::AgentSafeTaskExternalState(advisory).next(),
-            },
-        });
+        findings.push(contract_advisory_finding(advisory));
+    }
+}
+
+fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
+    let summary = match &advisory {
+        ContractAdvisory::DependsOnBoundary(advisory) => format!(
+            "Task `{}` depends_on `{}` across different execution boundaries",
+            advisory.parent_task, advisory.dependency_task
+        ),
+        ContractAdvisory::LikelyUnusedAttachment(advisory) => format!(
+            "Attachment `{}` may be unused in context `{}`",
+            advisory.isolated_path, advisory.context_name
+        ),
+        ContractAdvisory::IsolatedYarnReleaseShadow(advisory) => format!(
+            "Isolated path `{}` may shadow required Yarn release artifacts in context `{}`",
+            advisory.isolated_path, advisory.context_name
+        ),
+        ContractAdvisory::MutatesManagedIsolatedPath(advisory) => format!(
+            "Task `{}` mutates managed isolated path `{}`",
+            advisory.task_name, advisory.isolated_path
+        ),
+        ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory) => format!(
+            "Node contract uses split ownership (`runtimes.node` + tools: {})",
+            advisory.package_managers.join(", ")
+        ),
+        ContractAdvisory::LegacyStandalonePoetry(advisory) => format!(
+            "Poetry is modeled as a standalone tool ({})",
+            advisory.locations.join(", ")
+        ),
+        ContractAdvisory::ServiceUsesOpaqueShellStart(_)
+        | ContractAdvisory::ReplaceableShellCheck(_)
+        | ContractAdvisory::ReplaceableShellEnvMutation(_)
+        | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
+        | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_) => advisory.summary(),
+        ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
+            "`agent.writable_paths` includes sensitive {} `{}`",
+            advisory.category, advisory.path
+        ),
+        ContractAdvisory::SensitiveWriteException(advisory) => format!(
+            "`agent.exceptions.sensitive_writes` includes unnecessary path `{}`",
+            advisory.path
+        ),
+        ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
+            format!("`{}` should pin the ota release version", advisory.field)
+        }
+        ContractAdvisory::AgentSafeTaskNetwork(advisory) => match advisory.network_kind {
+            TaskNetworkEffectKind::DependencyHydration => format!(
+                "Agent-safe task `{}` performs network dependency hydration",
+                advisory.task_name
+            ),
+            TaskNetworkEffectKind::Broad => {
+                format!(
+                    "Agent-safe task `{}` requires network access",
+                    advisory.task_name
+                )
+            }
+        },
+        ContractAdvisory::AgentSafeTaskExternalState(advisory) => format!(
+            "Agent-safe task `{}` mutates external state: {}",
+            advisory.task_name,
+            advisory.systems.join(", ")
+        ),
+    };
+
+    Finding {
+        identity: Some(FindingIdentity::from_contract_advisory(&advisory)),
+        severity: FindingSeverity::Warn,
+        summary,
+        why: advisory.why(),
+        next: advisory.next(),
     }
 }
 
@@ -3861,6 +3863,7 @@ fn diagnose_selected_task_effects(
 
     if !broad_network_tasks.is_empty() {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: format!(
                 "Selected task path requires network access: {}",
@@ -3877,6 +3880,7 @@ fn diagnose_selected_task_effects(
 
     if !hydration_network_tasks.is_empty() {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: format!(
                 "Selected task path performs network dependency hydration: {}",
@@ -3893,6 +3897,7 @@ fn diagnose_selected_task_effects(
 
     if !external_state_tasks.is_empty() {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: format!(
                 "Selected task path mutates external state: {}",
@@ -3968,6 +3973,7 @@ fn diagnose_agent_boundary_review(contract: &Contract, findings: &mut Vec<Findin
     }
 
     findings.push(Finding {
+        identity: None,
         severity: FindingSeverity::Warn,
         summary: String::from("Agent boundary is inferred and unreviewed"),
         why: String::from(
@@ -4022,6 +4028,7 @@ fn diagnose_lifecycle(
             ),
         };
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: String::from("Ephemeral lifecycle is execution-only"),
             why: String::from(
@@ -4031,6 +4038,7 @@ fn diagnose_lifecycle(
         });
     } else {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: String::from("Ephemeral lifecycle is advisory in native mode"),
             why: String::from(
@@ -4138,6 +4146,7 @@ fn diagnose_execution_backend(
             other => {
                 let Some(extension) = contract.extensions.get(other) else {
                     findings.push(Finding {
+                        identity: None,
                         severity: FindingSeverity::Error,
                         summary: format!("Unsupported remote execution backend provider: {other}"),
                         why: format!(
@@ -4152,6 +4161,7 @@ fn diagnose_execution_backend(
 
                 if extension.kind != ExtensionKind::BackendProvider {
                     findings.push(Finding {
+                        identity: None,
                         severity: FindingSeverity::Error,
                         summary: format!("Unsupported remote execution backend provider: {other}"),
                         why: format!(
@@ -4166,6 +4176,7 @@ fn diagnose_execution_backend(
 
                 if extension.api_version != 1 {
                     findings.push(Finding {
+                        identity: None,
                         severity: FindingSeverity::Error,
                         summary: format!("Unsupported backend provider api_version: {other}"),
                         why: format!(
@@ -4215,6 +4226,7 @@ fn diagnose_execution_backend(
                 other => {
                     let Some(extension) = contract.extensions.get(other) else {
                         findings.push(Finding {
+                            identity: None,
                             severity: FindingSeverity::Error,
                             summary: format!("Unsupported remote execution backend provider: {other}"),
                             why: format!(
@@ -4229,6 +4241,7 @@ fn diagnose_execution_backend(
 
                     if extension.kind != ExtensionKind::BackendProvider {
                         findings.push(Finding {
+                            identity: None,
                             severity: FindingSeverity::Error,
                             summary: format!("Unsupported remote execution backend provider: {other}"),
                             why: format!(
@@ -4243,6 +4256,7 @@ fn diagnose_execution_backend(
 
                     if extension.api_version != 1 {
                         findings.push(Finding {
+                            identity: None,
                             severity: FindingSeverity::Error,
                             summary: format!("Unsupported backend provider api_version: {other}"),
                             why: format!(
@@ -4291,6 +4305,7 @@ fn diagnose_execution_backend(
 
 fn container_mode_not_configured_finding() -> Finding {
     Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: String::from("Container execution is not configured"),
         why: String::from(
@@ -4304,6 +4319,7 @@ fn container_mode_not_configured_finding() -> Finding {
 
 fn remote_mode_not_configured_finding() -> Finding {
     Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: String::from("Remote execution is not configured"),
         why: String::from(
@@ -4340,6 +4356,7 @@ fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
     let verb = "remain";
     let skipped = skipped.join(", ");
     Finding {
+        identity: None,
         severity: FindingSeverity::Info,
         summary: String::from("Container readiness does not include host-only checks"),
         why: format!(
@@ -4353,6 +4370,7 @@ fn container_mode_scope_note_finding(contract: &Contract) -> Finding {
 
 fn remote_mode_scope_note_finding() -> Finding {
     Finding {
+        identity: None,
         severity: FindingSeverity::Info,
         summary: String::from(
             "Remote execution contexts are only partially evaluated in native mode",
@@ -4391,6 +4409,7 @@ fn remote_mode_host_scope_note_finding(contract: &Contract) -> Option<Finding> {
     };
     let skipped = skipped.join(", ");
     Some(Finding {
+        identity: None,
         severity: FindingSeverity::Info,
         summary: String::from("Host-bound readiness checks are not evaluated in remote mode"),
         why: format!(
@@ -4412,6 +4431,7 @@ fn diagnose_remote_target_shape(provider: &str, target: &str, findings: &mut Vec
         "ssh" | "tsh" => {
             if !target.contains('@') {
                 findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Warn,
                     summary: format!("Suspicious remote target for {provider}: {target}"),
                     why: format!(
@@ -4426,6 +4446,7 @@ fn diagnose_remote_target_shape(provider: &str, target: &str, findings: &mut Vec
         "kubectl" => {
             if !target.starts_with("pod/") {
                 findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Warn,
                     summary: format!("Suspicious remote target for kubectl: {target}"),
                     why: format!(
@@ -4497,6 +4518,7 @@ fn service_finding(
         return match run_service_readiness(contract, name, service, working_dir, readiness) {
             Ok(CheckStatus::Passed) => None,
             Ok(CheckStatus::Failed) => Some(Finding {
+                identity: None,
                 severity: if service.required {
                     FindingSeverity::Error
                 } else {
@@ -4518,6 +4540,7 @@ fn service_finding(
             }),
             Ok(CheckStatus::TimedOut(_)) => None,
             Err(error) => Some(Finding {
+                identity: None,
                 severity: if service.required {
                     FindingSeverity::Error
                 } else {
@@ -4542,6 +4565,7 @@ fn service_finding(
         return match run_service_healthcheck(name, service, working_dir, healthcheck) {
             CheckStatus::Passed => None,
             CheckStatus::Failed => Some(Finding {
+                identity: None,
                 severity: if service.required {
                     FindingSeverity::Error
                 } else {
@@ -4557,6 +4581,7 @@ fn service_finding(
                 },
             }),
             CheckStatus::TimedOut(timeout) => Some(Finding {
+                identity: None,
                 severity: if service.required {
                     FindingSeverity::Error
                 } else {
@@ -4612,6 +4637,7 @@ fn service_finding(
         };
 
         return Some(Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: format!("Required service cannot be verified: {name}"),
             why,
@@ -4639,6 +4665,7 @@ fn producer_owned_service_finding(
         Ok(value) => value,
         Err(error) => {
             return Some(Finding {
+                identity: None,
                 severity: if service.required {
                     FindingSeverity::Error
                 } else {
@@ -4660,6 +4687,7 @@ fn producer_owned_service_finding(
         Some(task) => task,
         None => {
             return Some(Finding {
+                identity: None,
                 severity: if service.required {
                     FindingSeverity::Error
                 } else {
@@ -4684,6 +4712,7 @@ fn producer_owned_service_finding(
         Ok(name) => name,
         Err(error) => {
             return Some(Finding {
+                identity: None,
                 severity: if service.required {
                     FindingSeverity::Error
                 } else {
@@ -4715,6 +4744,7 @@ fn producer_owned_service_finding(
         },
         Err(error) => {
             return Some(Finding {
+                identity: None,
                 severity: if service.required {
                     FindingSeverity::Error
                 } else {
@@ -4741,6 +4771,7 @@ fn producer_owned_service_finding(
         Ok(probe) => probe,
         Err(error) => {
             return Some(Finding {
+                identity: None,
                 severity: if service.required {
                     FindingSeverity::Error
                 } else {
@@ -4763,6 +4794,7 @@ fn producer_owned_service_finding(
     }
 
     Some(Finding {
+        identity: None,
         severity: if service.required {
             FindingSeverity::Error
         } else {
@@ -5503,6 +5535,7 @@ fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: 
             DeclaredEnvSourceStatus::Loaded => {}
             DeclaredEnvSourceStatus::MissingOptional => {}
             DeclaredEnvSourceStatus::MissingRequired => findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: format!("Missing required environment source: {}", source.label()),
                 why: format!(
@@ -5515,6 +5548,7 @@ fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: 
                 ),
             }),
             DeclaredEnvSourceStatus::ParseFailed => findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: format!("Environment source parse failed: {}", source.label()),
                 why: format!(
@@ -5531,6 +5565,7 @@ fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: 
                 ),
             }),
             DeclaredEnvSourceStatus::InvalidStructure => findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: format!("Environment source has invalid structure: {}", source.label()),
                 why: format!(
@@ -5544,6 +5579,7 @@ fn diagnose_env_sources(declared_sources: &[LoadedDeclaredEnvSource], findings: 
                 ),
             }),
             DeclaredEnvSourceStatus::Collision => findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: format!("Environment source key collision: {}", source.label()),
                 why: format!(
@@ -5591,6 +5627,7 @@ fn diagnose_env(
                     && !requirement.allowed.iter().any(|allowed| allowed == &value)
                 {
                     findings.push(Finding {
+                        identity: None,
                         severity: FindingSeverity::Error,
                         summary: format!("Invalid environment value: {name}"),
                         why: format!(
@@ -5604,6 +5641,7 @@ fn diagnose_env(
                 }
             }
             None if required_for_selected_path => findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: format!("Missing environment variable: {name}"),
                 why: if requirement.required {
@@ -5960,6 +5998,7 @@ fn missing_toolchain_provider_finding(
         &rerun_doctor_command(mode, None),
     );
     Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: narrative.summary,
         why: narrative.why,
@@ -5981,6 +6020,7 @@ fn toolchain_provider_probe_failed_finding(
         &rerun_doctor_command(mode, None),
     );
     Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: narrative.summary,
         why: narrative.why,
@@ -6002,6 +6042,7 @@ fn missing_toolchain_managed_surface_finding(
         &rerun_doctor_command(mode, None),
     );
     Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: narrative.summary,
         why: narrative.why,
@@ -6215,6 +6256,7 @@ fn native_prerequisite_finding(
         .map(|value| format!(" (details: {value})"))
         .unwrap_or_default();
     Finding {
+        identity: None,
         severity: if prerequisite.required {
             FindingSeverity::Error
         } else {
@@ -6414,6 +6456,7 @@ fn diagnose_org_policy(
             }
 
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed version rules are declared"),
                 why: format!(
@@ -6452,6 +6495,7 @@ fn diagnose_org_policy(
 
         if !missing_packages.is_empty() {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Warn,
                 summary: String::from("Policy provisioning needs explicit package identifiers"),
                 why: format!(
@@ -6501,6 +6545,7 @@ fn diagnose_org_policy(
                 .collect();
 
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed provisioning sources are declared"),
                 why: if matched_targets.is_empty() {
@@ -6547,6 +6592,7 @@ fn diagnose_org_policy(
     }
 
     findings.push(Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: String::from("Repo does not satisfy org policy pack"),
         why: format!(
@@ -6652,6 +6698,7 @@ fn diagnose_remote_org_policy(
         }
 
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Repo does not satisfy org policy pack"),
             why: format!(
@@ -6675,6 +6722,7 @@ fn diagnose_remote_org_policy(
         );
         if !version_violations.is_empty() {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Repo does not satisfy org policy pack"),
                 why: format!(
@@ -6697,6 +6745,7 @@ fn diagnose_remote_org_policy(
         );
         if !version_rules.is_empty() {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed version rules are declared"),
                 why: format!(
@@ -6730,6 +6779,7 @@ fn diagnose_remote_org_policy(
 
         if !missing_packages.is_empty() {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Warn,
                 summary: String::from("Policy provisioning needs explicit package identifiers"),
                 why: format!(
@@ -6749,6 +6799,7 @@ fn diagnose_remote_org_policy(
                 .map(provisioning_action_audit_summary)
                 .collect();
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed provisioning sources are declared"),
                 why: format!(
@@ -6839,6 +6890,7 @@ fn diagnose_adapter_bootstrap(
             .collect();
 
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Adapter bootstrap sources are declared"),
             why: format!(
@@ -6857,6 +6909,7 @@ fn diagnose_adapter_bootstrap(
 
 fn policy_error_finding(err: LoadPolicyPackError) -> Finding {
     Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: String::from("Invalid org policy pack"),
         why: err.to_string(),
@@ -7120,6 +7173,7 @@ fn unsupported_toolchain_opportunity_finding(
     };
 
     Some(Finding {
+        identity: None,
         severity: FindingSeverity::Info,
         summary: format!("Managed toolchain opportunity: {ecosystem}"),
         why: format!(
@@ -7447,6 +7501,7 @@ fn diagnose_command_version(
         if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
             let provider_requirement = tool_acquisition_provider_requirement(acquisition);
             findings.push(Finding {
+                identity: None,
                 severity: if required {
                     FindingSeverity::Error
                 } else {
@@ -7695,6 +7750,7 @@ fn diagnose_command_version(
                         }
                     };
                     findings.push(Finding {
+                        identity: None,
                         severity: if required {
                             FindingSeverity::Error
                         } else {
@@ -7754,6 +7810,7 @@ fn diagnose_command_version(
                         }
                     };
                     findings.push(Finding {
+                        identity: None,
                         severity: if required {
                             FindingSeverity::Error
                         } else {
@@ -7789,6 +7846,7 @@ fn diagnose_command_version(
         }
         let container_image = container_probe.map(|probe| probe.image.as_str());
         findings.push(Finding {
+            identity: None,
             severity: if required {
                 FindingSeverity::Error
             } else {
@@ -7886,6 +7944,7 @@ fn diagnose_command_version(
                 })
                 .unwrap_or_default();
             findings.push(Finding {
+                identity: None,
                 severity: if required {
                     FindingSeverity::Error
                 } else {
@@ -8055,6 +8114,7 @@ fn diagnose_command_version(
     if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
         let provider_requirement = tool_acquisition_provider_requirement(acquisition);
         findings.push(Finding {
+            identity: None,
             severity: if required {
                 FindingSeverity::Error
             } else {
@@ -8120,6 +8180,7 @@ fn diagnose_command_version(
         })
         .or(exact_remediation);
     findings.push(Finding {
+        identity: None,
         severity: if required {
             FindingSeverity::Error
         } else {
@@ -8337,6 +8398,7 @@ fn push_container_image_acquisition_finding(
             )
         });
     findings.push(Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary,
         why: format!(
@@ -8539,6 +8601,7 @@ fn diagnose_backend_cli(name: &str, backend: &str, findings: &mut Vec<Finding>) 
     }
 
     findings.push(Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: format!("Missing execution backend CLI: {name}"),
         why: format!("{backend} requires `{name}` to be available on PATH"),
@@ -8572,6 +8635,7 @@ fn diagnose_container_backend_cli_for_candidates(
     if available_engines.is_empty() {
         let supported = engines.join(", ");
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!("Missing container execution backend CLI: {supported}"),
             why: format!(
@@ -8601,6 +8665,7 @@ fn diagnose_container_backend_cli_for_candidates(
 
 fn container_backend_unavailable_finding(engine: &str, details: &str) -> Finding {
     Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: format!("Container execution backend unavailable: {engine}"),
         why: format!(
@@ -8716,6 +8781,7 @@ fn diagnose_checks(
         match run_declared_check(contract, contract_path, check, working_dir, None, overrides) {
             CheckStatus::Passed => continue,
             CheckStatus::Failed => findings.push(Finding {
+                identity: None,
                 severity: if is_selected_signal {
                     FindingSeverity::Info
                 } else {
@@ -8726,6 +8792,7 @@ fn diagnose_checks(
                 next: failed_check_next(contract, workflow_name, check),
             }),
             CheckStatus::TimedOut(timeout) => findings.push(Finding {
+                identity: None,
                 severity: if is_selected_signal {
                     FindingSeverity::Info
                 } else {
@@ -8754,6 +8821,7 @@ fn diagnose_checks(
             match run_named_probe(contract, contract_path, probe_name, None, overrides) {
                 CheckStatus::Passed => continue,
                 CheckStatus::Failed => findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: format!("Probe failed: {probe_name}"),
                     why: format!(
@@ -8763,6 +8831,7 @@ fn diagnose_checks(
                     next: failed_probe_next(probe_name, probe),
                 }),
                 CheckStatus::TimedOut(timeout) => findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: format!("Probe timed out: {probe_name}"),
                     why: format!(
@@ -8792,6 +8861,7 @@ fn diagnose_checks(
             match run_named_probe(contract, contract_path, probe_name, None, overrides) {
                 CheckStatus::Passed => continue,
                 CheckStatus::Failed => findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: format!("Signal probe failed: {probe_name}"),
                     why: format!(
@@ -8801,6 +8871,7 @@ fn diagnose_checks(
                     next: failed_probe_next(probe_name, probe),
                 }),
                 CheckStatus::TimedOut(timeout) => findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: format!("Signal probe timed out: {probe_name}"),
                     why: format!(
@@ -8834,6 +8905,7 @@ fn diagnose_checks(
             ) {
                 Ok(observation) if observation.status == CheckStatus::Passed => continue,
                 Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: format!("Surface readiness failed: {surface_name}"),
                     why: format!(
@@ -8853,6 +8925,7 @@ fn diagnose_checks(
                     ),
                 }),
                 Ok(observation) => findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: format!("Surface readiness timed out: {surface_name}"),
                     why: format!(
@@ -8873,6 +8946,7 @@ fn diagnose_checks(
                     ),
                 }),
                 Err(error) => findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: format!("Surface readiness could not be evaluated: {surface_name}"),
                     why: format!(
@@ -8909,6 +8983,7 @@ fn diagnose_checks(
             ) {
                 Ok(observation) if observation.status == CheckStatus::Passed => continue,
                 Ok(observation) if observation.status == CheckStatus::Failed => findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: format!("Signal surface readiness failed: {surface_name}"),
                     why: format!(
@@ -8928,6 +9003,7 @@ fn diagnose_checks(
                     ),
                 }),
                 Ok(observation) => findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: format!("Signal surface readiness timed out: {surface_name}"),
                     why: format!(
@@ -8948,6 +9024,7 @@ fn diagnose_checks(
                     ),
                 }),
                 Err(error) => findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: format!("Signal surface readiness could not be evaluated: {surface_name}"),
                     why: format!(
@@ -10790,6 +10867,7 @@ pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option
     let root = contract_working_dir(contract_path);
     match repo_missing_ota_state_gitignore(root) {
         Ok(true) => Some(Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: String::from("Repo local Ota artifacts are not ignored by git"),
             why: String::from(
@@ -10801,6 +10879,7 @@ pub(crate) fn detect_missing_ota_state_gitignore(contract_path: &Path) -> Option
         }),
         Ok(false) => None,
         Err(error) => Some(Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: String::from("Repo `.gitignore` could not be inspected"),
             why: format!(
@@ -10852,6 +10931,7 @@ fn detect_devcontainer_runtime_drift(
     }
 
     Some(Finding {
+        identity: None,
         severity: FindingSeverity::Warn,
         summary: String::from("Devcontainer drift: Node image differs from repo runtime"),
         why: format!(
@@ -10887,6 +10967,7 @@ fn detect_devcontainer_package_manager_drift(
     }
 
     Some(Finding {
+        identity: None,
         severity: FindingSeverity::Warn,
         summary: format!(
             "Devcontainer drift: bootstrap command uses `{actual_manager}` instead of repo package manager `{expected_manager}`"
@@ -19226,6 +19307,7 @@ tasks:
     #[test]
     fn finding_code_classifies_contract_advisory_service_shell_start() {
         let finding = Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: String::from(
                 "task `dev` uses opaque shell `script` for long-running service path `tasks.dev.script`",
@@ -19245,12 +19327,14 @@ tasks:
     #[test]
     fn finding_code_classifies_contract_advisory_agent_safe_network_and_external_state() {
         let network = Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: String::from("Agent-safe task `setup` requires network access"),
             why: String::from("networked task"),
             next: String::from("keep effects explicit"),
         };
         let external_state = Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: String::from("Agent-safe task `setup` mutates external state: postgres"),
             why: String::from("external state mutation"),
@@ -19270,6 +19354,7 @@ tasks:
     #[test]
     fn finding_code_classifies_contract_advisory_managed_isolated_path() {
         let finding = Finding {
+            identity: None,
             severity: FindingSeverity::Warn,
             summary: String::from("Task `build` mutates managed isolated path `.next`"),
             why: String::from("managed isolated path mutation"),
@@ -19285,8 +19370,31 @@ tasks:
     }
 
     #[test]
+    fn finding_identity_overrides_summary_derived_code() {
+        let finding = Finding {
+            identity: Some(super::FindingIdentity {
+                code: String::from("OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"),
+                category: String::from("contract"),
+                owner: String::from("repo_contract"),
+            }),
+            severity: FindingSeverity::Warn,
+            summary: String::from("custom summary"),
+            why: String::from("custom why"),
+            next: String::from("custom next"),
+        };
+
+        assert_eq!(
+            finding.code(),
+            "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
+        );
+        assert_eq!(finding.category(), "contract");
+        assert_eq!(finding.owner(), "repo_contract");
+    }
+
+    #[test]
     fn doctor_json_omits_toolchain_opportunity_agent_metadata_when_none_are_shipped() {
         let finding = Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Repository Ready"),
             why: String::from("all selected-path preconditions are satisfied"),

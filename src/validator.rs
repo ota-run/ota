@@ -6296,9 +6296,7 @@ pub struct TaskExecutionBoundary {
 impl ContractAdvisory {
     pub const fn code(&self) -> &'static str {
         match self {
-            ContractAdvisory::DependsOnBoundary(_) => {
-                "OTA_CONTRACT_ADVISORY_DEPENDS_ON_BOUNDARY"
-            }
+            ContractAdvisory::DependsOnBoundary(_) => "OTA_CONTRACT_ADVISORY_DEPENDS_ON_BOUNDARY",
             ContractAdvisory::LikelyUnusedAttachment(_) => {
                 "OTA_CONTRACT_ADVISORY_LIKELY_UNUSED_ATTACHMENT"
             }
@@ -6347,9 +6345,7 @@ impl ContractAdvisory {
                 TaskNetworkEffectKind::DependencyHydration => {
                     "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_DEPENDENCY_HYDRATION"
                 }
-                TaskNetworkEffectKind::Broad => {
-                    "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK"
-                }
+                TaskNetworkEffectKind::Broad => "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK",
             },
             ContractAdvisory::AgentSafeTaskExternalState(_) => {
                 "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_EXTERNAL_STATE"
@@ -6864,7 +6860,9 @@ fn collect_legacy_standalone_poetry_advisories(contract: &Contract) -> Vec<Contr
     )]
 }
 
-fn collect_service_uses_opaque_shell_start_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+fn collect_service_uses_opaque_shell_start_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
     let mut advisories = Vec::new();
 
     for (task_name, task) in &contract.tasks {
@@ -6874,7 +6872,8 @@ fn collect_service_uses_opaque_shell_start_advisories(contract: &Contract) -> Ve
                 .as_ref()
                 .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
         {
-            let top_level_shell = opaque_shell_task_body(task.run.as_deref(), task.script.as_deref());
+            let top_level_shell =
+                opaque_shell_task_body(task.run.as_deref(), task.script.as_deref());
             if let Some((body_kind, body_location)) = top_level_shell {
                 advisories.push(ContractAdvisory::ServiceUsesOpaqueShellStart(
                     ServiceUsesOpaqueShellStartAdvisory {

@@ -98,16 +98,15 @@ use crate::output::{
     ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
     ToolchainSelectionSummary, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
     ValidateFailure, ValidateSuccess, ValidateSummary, ValidateWarning, WorkflowSummary,
-    WorkflowsFailure,
-    WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary, WorkspaceDoctorSuccess,
-    WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess, WorkspaceExecutionPlanSummary,
-    WorkspaceExplainSuccess, WorkspaceExplainSummary, WorkspaceListSuccess, WorkspaceListSummary,
-    WorkspacePrimaryBlocker, WorkspaceReceiptSuccess, WorkspaceRepoDiffReport,
-    WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport, WorkspaceRepoListReport,
-    WorkspaceRepoRunReport, WorkspaceRepoStatusReport, WorkspaceRepoTasksReport,
-    WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess, WorkspaceStatusSummary,
-    WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary, WorkspaceTaskSummary,
-    WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary,
+    WorkspaceDoctorSuccess, WorkspaceDoctorSummary, WorkspaceExecutionPlanSuccess,
+    WorkspaceExecutionPlanSummary, WorkspaceExplainSuccess, WorkspaceExplainSummary,
+    WorkspaceListSuccess, WorkspaceListSummary, WorkspacePrimaryBlocker, WorkspaceReceiptSuccess,
+    WorkspaceRepoDiffReport, WorkspaceRepoExecutionPlanReport, WorkspaceRepoExplainReport,
+    WorkspaceRepoListReport, WorkspaceRepoRunReport, WorkspaceRepoStatusReport,
+    WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
+    WorkspaceStatusSummary, WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary,
+    WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -1102,8 +1101,10 @@ pub fn validate(
                     OutputFormat::Json => {
                         let warnings =
                             collect_validate_warnings(&target.contract, Some(&resolved_path));
-                        let warning_details =
-                            collect_validate_warning_details(&target.contract, Some(&resolved_path));
+                        let warning_details = collect_validate_warning_details(
+                            &target.contract,
+                            Some(&resolved_path),
+                        );
                         CommandOutput::success(to_json(&ValidateSuccess {
                             ok: true,
                             path: &path_display,
@@ -1999,7 +2000,7 @@ pub fn proof_runtime(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     })),
                 },
                 debug,
@@ -14694,7 +14695,7 @@ fn render_run_preview_contract_problem(
                 errors: errors.errors().iter().map(ToString::to_string).collect(),
                 error: None,
                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                warning_details: Vec::new(),
             })),
         },
         ContractProblem::Load(error) => match format {
@@ -14731,7 +14732,7 @@ fn render_run_preview_contract_problem(
                 errors: Vec::new(),
                 error: Some(error.to_string()),
                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                warning_details: Vec::new(),
             })),
         },
     }
@@ -14920,6 +14921,7 @@ fn append_safe_task_effect_policy_findings(
             ),
         };
         report.findings.push(Finding {
+            identity: None,
             severity,
             summary,
             why: format!(
@@ -15267,6 +15269,7 @@ fn run_preview_summary(
         summary.verdict = DoctorVerdict::NotReady;
         summary.error_count += 1;
         summary.primary_blocker = Some(DoctorPrimaryBlocker {
+            code: None,
             severity: FindingSeverity::Error,
             summary: String::from("Task is not declared"),
             why: format!("`{task_name}` is not declared in this contract"),
@@ -15293,6 +15296,7 @@ fn run_preview_env_primary_blocker(
         )
     }) {
         return Some(DoctorPrimaryBlocker {
+            code: None,
             severity: FindingSeverity::Error,
             summary: format!(
                 "Declared env source is {}",
@@ -15321,6 +15325,7 @@ fn run_preview_env_primary_blocker(
         .find(|entry| entry.status == EnvEntryStatus::Missing)
     {
         return Some(DoctorPrimaryBlocker {
+            code: None,
             severity: FindingSeverity::Error,
             summary: format!("Missing env: {}", entry.name),
             why: format!(
@@ -15342,6 +15347,7 @@ fn run_preview_env_primary_blocker(
         .iter()
         .find(|entry| entry.status == EnvEntryStatus::Invalid)
         .map(|entry| DoctorPrimaryBlocker {
+            code: None,
             severity: FindingSeverity::Error,
             summary: format!("Invalid env: {}", entry.name),
             why: format!(
@@ -15402,6 +15408,7 @@ fn run_preview_execution_primary_blocker(
         ),
     };
     DoctorPrimaryBlocker {
+        code: None,
         severity: FindingSeverity::Error,
         summary,
         why: execution_plan_error(error),
@@ -17163,7 +17170,7 @@ fn wrong_repo_contract_target_output(
                 warn_count: 0,
             }),
             warnings: Vec::new(),
-                    warning_details: Vec::new(),
+            warning_details: Vec::new(),
             errors: why_lines
                 .iter()
                 .map(|line| compact_backticked_paths(line))
@@ -17341,7 +17348,7 @@ fn invalid_repo_contract_output(
                 warn_count: 0,
             }),
             warnings: Vec::new(),
-                    warning_details: Vec::new(),
+            warning_details: Vec::new(),
             errors: why_lines
                 .iter()
                 .map(|line| compact_backticked_paths(line))
@@ -18784,7 +18791,7 @@ pub fn doctor(
                                                             .collect(),
                                                         error: None,
                                                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                        warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -18806,7 +18813,7 @@ pub fn doctor(
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
                                                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                        warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -19047,7 +19054,7 @@ pub fn doctor(
                                                     .collect(),
                                                 error: None,
                                                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                warning_details: Vec::new(),
                                             }))
                                         }
                                     },
@@ -19069,7 +19076,7 @@ pub fn doctor(
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
                                                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                warning_details: Vec::new(),
                                             }))
                                         }
                                     },
@@ -19197,7 +19204,7 @@ pub fn doctor(
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -19219,7 +19226,7 @@ pub fn doctor(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -19233,6 +19240,7 @@ pub fn doctor(
 
 fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
     let mut findings = vec![Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: String::from("Contract missing"),
         why: format!(
@@ -19246,6 +19254,7 @@ fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
         Ok(report) => Some(report),
         Err(error) => {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Warn,
                 summary: String::from("Could not inspect repo signals"),
                 why: format!("automatic repo detection failed: {error}"),
@@ -19451,6 +19460,7 @@ fn append_contractless_repo_findings(
         && source != "directory-name"
     {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: format!("Detected project name: {}", project.name),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -19476,6 +19486,7 @@ fn append_contractless_repo_findings(
             .map(|inference| inference.source.as_str())
             .unwrap_or("package.json");
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Node"),
             why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
@@ -19491,6 +19502,7 @@ fn append_contractless_repo_findings(
             .map(|inference| inference.source.as_str())
             .unwrap_or("package.json");
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: format!("Detected package manager: {package_manager}"),
             why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
@@ -19499,12 +19511,14 @@ fn append_contractless_repo_findings(
 
         match command_version(package_manager) {
             Some(version) => findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: format!("Host tool available: {package_manager}"),
                 why: format!("`{package_manager} --version` returned `{version}`"),
                 next: String::from("no action required"),
             }),
             None => findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: format!("Missing host tool: {package_manager}"),
                 why: format!(
@@ -19520,6 +19534,7 @@ fn append_contractless_repo_findings(
     let likely_tasks = contractless_repo_likely_tasks(report);
     if !likely_tasks.is_empty() {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: format!(
                 "Detected likely runnable tasks: {}",
@@ -19538,6 +19553,7 @@ fn append_contractless_repo_findings(
         &["requirements.txt", "uv.lock", ".python-version"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Python"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -19552,6 +19568,7 @@ fn append_contractless_repo_findings(
         );
         if let Some(tool) = contractless_repo_first_tool(report, &["uv", "pipenv", "pip"]) {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: format!("Detected dependency tool: {tool}"),
                 why: format!(
@@ -19587,6 +19604,7 @@ fn append_contractless_repo_findings(
     if let Some(source) = contractless_repo_source(report, &["go"], &[], &["go.mod#"], &["go.mod"])
     {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Go"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -19620,12 +19638,14 @@ fn append_contractless_repo_findings(
             _ => "C",
         };
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: format!("Detected repo type: {repo_type}"),
             why: format!("found `{}`", contractless_source_file(source)),
             next: format!("run `ota detect --dry-run` to review the inferred {repo_type} contract"),
         });
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected build tool: CMake"),
             why: format!(
@@ -19656,6 +19676,7 @@ fn append_contractless_repo_findings(
             .map(|inference| inference.source.as_str())
             .unwrap_or("Cargo.toml");
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected Rust repo"),
             why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
@@ -19664,12 +19685,14 @@ fn append_contractless_repo_findings(
 
         match command_version("cargo") {
             Some(version) => findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Host tool available: cargo"),
                 why: format!("`cargo --version` returned `{version}`"),
                 next: String::from("no action required"),
             }),
             None => findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing host tool: cargo"),
                 why: String::from("the repo looks like Rust, but `cargo` is not available on PATH"),
@@ -19682,6 +19705,7 @@ fn append_contractless_repo_findings(
         contractless_repo_source(report, &["fsharp"], &["dotnet"], &[], &["fsharp-project"])
     {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: F#"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -19704,6 +19728,7 @@ fn append_contractless_repo_findings(
         &["dune-project", ".ocaml-version", "opam-file"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: OCaml"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -19718,6 +19743,7 @@ fn append_contractless_repo_findings(
         );
         if report.contract.tools.contains_key("dune") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected build tool: dune"),
                 why: format!(
@@ -19740,6 +19766,7 @@ fn append_contractless_repo_findings(
         }
         if report.contract.tools.contains_key("opam") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected dependency tool: opam"),
                 why: format!(
@@ -19771,6 +19798,7 @@ fn append_contractless_repo_findings(
     ) && !report.contract.runtimes.contains_key("fsharp")
     {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: .NET"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -19793,6 +19821,7 @@ fn append_contractless_repo_findings(
         &["project.clj", "deps.edn"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Clojure"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -19802,6 +19831,7 @@ fn append_contractless_repo_findings(
         });
         if report.contract.tools.contains_key("leiningen") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected build tool: Leiningen"),
                 why: format!(
@@ -19824,6 +19854,7 @@ fn append_contractless_repo_findings(
         }
         if report.contract.tools.contains_key("clojure") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected build tool: Clojure CLI"),
                 why: format!(
@@ -19854,6 +19885,7 @@ fn append_contractless_repo_findings(
         &["stack.yaml", "cabal-file"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Haskell"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -19863,6 +19895,7 @@ fn append_contractless_repo_findings(
         });
         if report.contract.tools.contains_key("stack") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected build tool: Stack"),
                 why: format!(
@@ -19885,6 +19918,7 @@ fn append_contractless_repo_findings(
         }
         if report.contract.tools.contains_key("cabal") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected build tool: cabal"),
                 why: format!(
@@ -19911,12 +19945,14 @@ fn append_contractless_repo_findings(
         contractless_repo_source(report, &[], &["luarocks"], &["rockspec#"], &["rockspec"])
     {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Lua"),
             why: format!("found `{}`", contractless_source_file(source)),
             next: String::from("run `ota detect --dry-run` to review the inferred Lua contract"),
         });
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected dependency tool: LuaRocks"),
             why: format!(
@@ -19944,12 +19980,14 @@ fn append_contractless_repo_findings(
         &["composer.json"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: PHP"),
             why: format!("found `{}`", contractless_source_file(source)),
             next: String::from("run `ota detect --dry-run` to review the inferred PHP contract"),
         });
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected dependency tool: composer"),
             why: format!(
@@ -19988,6 +20026,7 @@ fn append_contractless_repo_findings(
         &["build.gradle.kts", "build.gradle", "pom.xml#kotlin.version"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Kotlin"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -19995,6 +20034,7 @@ fn append_contractless_repo_findings(
         });
         if report.contract.tools.contains_key("gradle") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected build tool: Gradle"),
                 why: format!(
@@ -20010,6 +20050,7 @@ fn append_contractless_repo_findings(
             });
             if root.join("gradlew").is_file() {
                 findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Repo wrapper available: gradlew"),
                     why: String::from("the repo already ships the Gradle wrapper"),
@@ -20052,6 +20093,7 @@ fn append_contractless_repo_findings(
     ) && !kotlin_repo_detected
     {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Java"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20066,6 +20108,7 @@ fn append_contractless_repo_findings(
         );
         if report.contract.tools.contains_key("maven") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected build tool: Maven"),
                 why: format!(
@@ -20080,6 +20123,7 @@ fn append_contractless_repo_findings(
             });
             if root.join("mvnw").is_file() {
                 findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Repo wrapper available: mvnw"),
                     why: String::from("the repo already ships the Maven wrapper"),
@@ -20097,6 +20141,7 @@ fn append_contractless_repo_findings(
         }
         if report.contract.tools.contains_key("gradle") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected build tool: Gradle"),
                 why: format!(
@@ -20111,6 +20156,7 @@ fn append_contractless_repo_findings(
             });
             if root.join("gradlew").is_file() {
                 findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Repo wrapper available: gradlew"),
                     why: String::from("the repo already ships the Gradle wrapper"),
@@ -20136,6 +20182,7 @@ fn append_contractless_repo_findings(
         &["Gemfile", ".ruby-version"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Ruby"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20161,6 +20208,7 @@ fn append_contractless_repo_findings(
         contractless_repo_source(report, &["elixir"], &["mix"], &["mix.exs#"], &["mix.exs"])
     {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Elixir"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20183,6 +20231,7 @@ fn append_contractless_repo_findings(
         &["build.sbt"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Scala"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20205,6 +20254,7 @@ fn append_contractless_repo_findings(
         &["Package.swift"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Swift"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20228,6 +20278,7 @@ fn append_contractless_repo_findings(
     ) {
         let flutter_repo = report.contract.tools.contains_key("flutter");
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: if flutter_repo {
                 String::from("Detected repo type: Flutter")
@@ -20243,6 +20294,7 @@ fn append_contractless_repo_findings(
         });
         if flutter_repo {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected build tool: Flutter"),
                 why: format!(
@@ -20281,6 +20333,7 @@ fn append_contractless_repo_findings(
         &["Project.toml"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Julia"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20303,6 +20356,7 @@ fn append_contractless_repo_findings(
         &["DESCRIPTION"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: R"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20325,12 +20379,14 @@ fn append_contractless_repo_findings(
         &["nimble-file"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Nim"),
             why: format!("found `{}`", contractless_source_file(source)),
             next: String::from("run `ota detect --dry-run` to review the inferred Nim contract"),
         });
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected build tool: nimble"),
             why: format!(
@@ -20358,12 +20414,14 @@ fn append_contractless_repo_findings(
         &["rebar.config"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Erlang"),
             why: format!("found `{}`", contractless_source_file(source)),
             next: String::from("run `ota detect --dry-run` to review the inferred Erlang contract"),
         });
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected build tool: rebar3"),
             why: format!(
@@ -20391,6 +20449,7 @@ fn append_contractless_repo_findings(
         &["build.zig"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Zig"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20413,12 +20472,14 @@ fn append_contractless_repo_findings(
         &["dub.json", "dub.sdl"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: D"),
             why: format!("found `{}`", contractless_source_file(source)),
             next: String::from("run `ota detect --dry-run` to review the inferred D contract"),
         });
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected build tool: dub"),
             why: format!(
@@ -20446,6 +20507,7 @@ fn append_contractless_repo_findings(
         &["fpm.toml"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Fortran"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20454,6 +20516,7 @@ fn append_contractless_repo_findings(
             ),
         });
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected build tool: fpm"),
             why: format!(
@@ -20481,6 +20544,7 @@ fn append_contractless_repo_findings(
         &["shard.yml"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Crystal"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20501,6 +20565,7 @@ fn append_contractless_repo_findings(
         contractless_repo_source(report, &[], &["elm"], &["elm.json#"], &["elm.json"])
     {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Elm"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20523,6 +20588,7 @@ fn append_contractless_repo_findings(
         &["cpanfile", "Makefile.PL"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Perl"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20530,6 +20596,7 @@ fn append_contractless_repo_findings(
         });
         if report.contract.tools.contains_key("cpanm") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Detected dependency tool: cpanm"),
                 why: format!(
@@ -20563,6 +20630,7 @@ fn append_contractless_repo_findings(
 
     if let Some(source) = contractless_repo_source(report, &[], &["haxe"], &["hxml#"], &["hxml"]) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Haxe"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20585,6 +20653,7 @@ fn append_contractless_repo_findings(
         &["gleam.toml"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Gleam"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20602,6 +20671,7 @@ fn append_contractless_repo_findings(
     if let Some(source) = contractless_repo_source(report, &[], &["v"], &["v.mod#name"], &["v.mod"])
     {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: V"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20624,6 +20694,7 @@ fn append_contractless_repo_findings(
         &["alire.toml"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Ada"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20646,6 +20717,7 @@ fn append_contractless_repo_findings(
         &["foundry.toml"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Solidity"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20654,6 +20726,7 @@ fn append_contractless_repo_findings(
             ),
         });
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected build tool: Foundry"),
             why: format!(
@@ -20681,6 +20754,7 @@ fn append_contractless_repo_findings(
         &["tclapp.tcl", "pkgIndex.tcl"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Tcl"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20703,6 +20777,7 @@ fn append_contractless_repo_findings(
         &["main.rkt", "info.rkt"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Racket"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20725,6 +20800,7 @@ fn append_contractless_repo_findings(
         &["bash-script"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Shell"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20747,6 +20823,7 @@ fn append_contractless_repo_findings(
         &["powershell-script"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: PowerShell"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20771,6 +20848,7 @@ fn append_contractless_repo_findings(
         &["deno.json", "deno.jsonc"],
     ) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Detected repo type: Deno"),
             why: format!("found `{}`", contractless_source_file(source)),
@@ -20800,6 +20878,7 @@ fn append_contractless_repo_findings(
             .map(|inference| inference.source.as_str())
             .unwrap_or("compose.yaml");
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: format!("Detected Docker Compose services: {service_names}"),
             why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
@@ -20810,6 +20889,7 @@ fn append_contractless_repo_findings(
 
         if command_available("docker") {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Host tool available: docker"),
                 why: String::from("`docker --version` succeeded"),
@@ -20817,6 +20897,7 @@ fn append_contractless_repo_findings(
             });
         } else {
             findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing container execution backend CLI: docker, podman"),
                 why: String::from(
@@ -20836,6 +20917,7 @@ fn append_contractless_repo_findings(
         && report.contract.tasks.is_empty()
     {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("No strong repo signals were detected yet"),
             why: format!(
@@ -20961,6 +21043,7 @@ fn push_contractless_host_tool_finding(
 ) {
     if let Some((command, version)) = contractless_command_version_candidates(candidates) {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: format!("Host tool available: {label}"),
             why: format!("`{command} --version` returned `{version}`"),
@@ -20968,6 +21051,7 @@ fn push_contractless_host_tool_finding(
         });
     } else {
         findings.push(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!("Missing host tool: {label}"),
             why: missing_why.to_string(),
@@ -21416,7 +21500,7 @@ pub fn check(
                                                             .collect(),
                                                         error: None,
                                                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                        warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -21474,7 +21558,7 @@ pub fn check(
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
                                                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                        warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -21708,7 +21792,7 @@ pub fn check(
                                                     .collect(),
                                                 error: None,
                                                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                warning_details: Vec::new(),
                                             }))
                                         }
                                     },
@@ -21764,7 +21848,7 @@ pub fn check(
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
                                                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                warning_details: Vec::new(),
                                             }))
                                         }
                                     },
@@ -21881,7 +21965,7 @@ pub fn check(
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -21922,7 +22006,7 @@ pub fn check(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -21967,7 +22051,7 @@ pub fn receipt(
                                 errors,
                                 error: None,
                                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                warning_details: Vec::new(),
                             }),
                             stderr: None,
                             exit_code: 1,
@@ -22003,7 +22087,7 @@ pub fn receipt(
                                 errors,
                                 error: None,
                                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                warning_details: Vec::new(),
                             }),
                             stderr: None,
                             exit_code: 1,
@@ -22225,7 +22309,7 @@ pub fn receipt(
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -22266,7 +22350,7 @@ pub fn receipt(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -22554,7 +22638,7 @@ pub fn extensions(
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
                                                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                        warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             },
@@ -22720,7 +22804,7 @@ pub fn extensions(
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
                                                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                warning_details: Vec::new(),
                                             }))
                                         }
                                     },
@@ -23416,7 +23500,7 @@ pub fn agents(
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     })),
                 },
                 debug,
@@ -23462,7 +23546,7 @@ pub fn agents(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     })),
                 },
                 debug,
@@ -24208,7 +24292,7 @@ pub fn up(
                                                             .collect(),
                                                         error: None,
                                                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                        warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             };
@@ -24226,7 +24310,7 @@ pub fn up(
                                                         errors: Vec::new(),
                                                         error: Some(error.to_string()),
                                                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                        warning_details: Vec::new(),
                                                     }),
                                                 ),
                                             };
@@ -24327,7 +24411,7 @@ pub fn up(
                                                     .collect(),
                                                 error: None,
                                                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                warning_details: Vec::new(),
                                             }))
                                         }
                                     };
@@ -24345,7 +24429,7 @@ pub fn up(
                                                 errors: Vec::new(),
                                                 error: Some(error.to_string()),
                                                 warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                                warning_details: Vec::new(),
                                             }))
                                         }
                                     };
@@ -24438,7 +24522,7 @@ pub fn up(
                         errors: errors.errors().iter().map(ToString::to_string).collect(),
                         error: None,
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     })),
                 },
                 Err(ContractProblem::Load(error)) => match format {
@@ -24478,7 +24562,7 @@ pub fn up(
                         errors: Vec::new(),
                         error: Some(error.to_string()),
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     })),
                 },
             },
@@ -25963,7 +26047,7 @@ fn invalid_workspace_contract_output(
                 warn_count: 0,
             }),
             warnings: Vec::new(),
-                    warning_details: Vec::new(),
+            warning_details: Vec::new(),
             errors: compact_why_lines,
             error: Some(String::from("Invalid workspace contract")),
         })),
@@ -27515,7 +27599,7 @@ pub fn workspace_tasks(
                                         errors: Vec::new(),
                                         error: Some(error.to_string()),
                                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                        warning_details: Vec::new(),
                                     }))
                                 }
                             };
@@ -27550,7 +27634,7 @@ pub fn workspace_tasks(
                                         .collect(),
                                     error: None,
                                     warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                    warning_details: Vec::new(),
                                 }))
                             }
                         };
@@ -27751,7 +27835,7 @@ pub fn workspace_list(
                                     errors: Vec::new(),
                                     error: Some(error),
                                     warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                    warning_details: Vec::new(),
                                 }))
                             }
                         };
@@ -27995,7 +28079,7 @@ pub fn workspace_execution_plan(
                                     errors: Vec::new(),
                                     error: Some(error),
                                     warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                    warning_details: Vec::new(),
                                 }))
                             }
                         };
@@ -28147,7 +28231,7 @@ pub fn workspace_doctor(
                                     errors: Vec::new(),
                                     error: Some(error),
                                     warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                                    warning_details: Vec::new(),
                                 }))
                             }
                         };
@@ -31038,7 +31122,7 @@ fn render_repo_receipt_diff(
                         errors: vec![error],
                         error: None,
                         warnings: Vec::new(),
-                    warning_details: Vec::new(),
+                        warning_details: Vec::new(),
                     }),
                     stderr: None,
                     exit_code: 1,
@@ -35839,6 +35923,7 @@ pub fn annotations(
                     &format!("{title} primary blocker"),
                     primary_blocker.summary,
                     primary_blocker.next,
+                    primary_blocker.code,
                     primary_blocker.provenance,
                 ));
             }
@@ -35869,6 +35954,10 @@ pub fn annotations(
                         .get("provenance")
                         .and_then(|value| value.as_str())
                         .filter(|value| !value.is_empty());
+                    let code = finding
+                        .get("code")
+                        .and_then(|value| value.as_str())
+                        .filter(|value| !value.is_empty());
                     lines.push(render_annotation_finding(
                         format,
                         severity,
@@ -35876,6 +35965,7 @@ pub fn annotations(
                         summary,
                         next,
                         provenance,
+                        code,
                     ));
                 }
             }
@@ -35894,6 +35984,7 @@ pub fn annotations(
                     &format!("{title} primary blocker [{repo}]"),
                     primary_blocker.summary,
                     primary_blocker.next,
+                    primary_blocker.code,
                     primary_blocker.provenance,
                 ));
             }
@@ -35942,6 +36033,10 @@ pub fn annotations(
                                 .get("provenance")
                                 .and_then(|value| value.as_str())
                                 .filter(|value| !value.is_empty());
+                            let code = finding
+                                .get("code")
+                                .and_then(|value| value.as_str())
+                                .filter(|value| !value.is_empty());
                             lines.push(render_annotation_finding(
                                 format,
                                 severity,
@@ -35949,6 +36044,7 @@ pub fn annotations(
                                 &format!("{path}: {summary}"),
                                 next,
                                 provenance,
+                                code,
                             ));
                         }
                     }
@@ -36408,6 +36504,7 @@ struct AnnotationPrimaryBlocker<'a> {
     severity: &'a str,
     summary: &'a str,
     next: &'a str,
+    code: Option<&'a str>,
     provenance: Option<&'a str>,
 }
 
@@ -36427,6 +36524,10 @@ fn annotation_primary_blocker(value: &JsonValue) -> Option<AnnotationPrimaryBloc
             .get("next")
             .and_then(|value| value.as_str())
             .unwrap_or(""),
+        code: blocker
+            .get("code")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.is_empty()),
         provenance: blocker
             .get("provenance")
             .and_then(|value| value.as_str())
@@ -36462,8 +36563,16 @@ fn annotation_finding_matches_primary_blocker(
         && repo == primary_blocker.repo
 }
 
-fn annotation_message(body: &str, next: &str, provenance: Option<&str>) -> String {
+fn annotation_message(
+    body: &str,
+    next: &str,
+    provenance: Option<&str>,
+    code: Option<&str>,
+) -> String {
     let mut parts = vec![body.to_string()];
+    if let Some(code) = code.filter(|value| !value.is_empty()) {
+        parts.push(format!("Code: {code}"));
+    }
     if let Some(provenance) = provenance {
         parts.push(format!("Provenance: {provenance}"));
     }
@@ -36531,6 +36640,9 @@ fn render_markdown_primary_blocker(
         annotation_markdown_severity(primary_blocker.severity),
         summary
     ));
+    if let Some(code) = primary_blocker.code {
+        lines.push(format!("  - **Code:** {}", escape_markdown_text(code)));
+    }
     if let Some(provenance) = primary_blocker.provenance {
         lines.push(format!(
             "  - **Provenance:** {}",
@@ -36551,12 +36663,16 @@ fn render_markdown_finding(
     summary: &str,
     next: &str,
     provenance: Option<&str>,
+    code: Option<&str>,
 ) {
     lines.push(format!(
         "- **{}:** {}",
         annotation_markdown_severity(severity),
         escape_markdown_text(summary)
     ));
+    if let Some(code) = code.filter(|value| !value.is_empty()) {
+        lines.push(format!("  - **Code:** {}", escape_markdown_text(code)));
+    }
     if let Some(provenance) = provenance {
         lines.push(format!(
             "  - **Provenance:** {}",
@@ -36618,6 +36734,10 @@ fn render_annotations_markdown_doctor(title: &str, report: &JsonValue) -> String
                     .unwrap_or(""),
                 finding
                     .get("provenance")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty()),
+                finding
+                    .get("code")
                     .and_then(|value| value.as_str())
                     .filter(|value| !value.is_empty()),
             );
@@ -36697,6 +36817,10 @@ fn render_annotations_markdown_workspace_doctor(title: &str, report: &JsonValue)
                             .unwrap_or(""),
                         finding
                             .get("provenance")
+                            .and_then(|value| value.as_str())
+                            .filter(|value| !value.is_empty()),
+                        finding
+                            .get("code")
                             .and_then(|value| value.as_str())
                             .filter(|value| !value.is_empty()),
                     );
@@ -36956,6 +37080,10 @@ fn render_annotations_markdown_receipt_diff(title: &str, report: &JsonValue) -> 
                     .get("provenance")
                     .and_then(|value| value.as_str())
                     .filter(|value| !value.is_empty()),
+                finding
+                    .get("code")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty()),
             );
         }
     }
@@ -36989,6 +37117,10 @@ fn render_annotations_markdown_receipt_diff(title: &str, report: &JsonValue) -> 
                     .get("provenance")
                     .and_then(|value| value.as_str())
                     .filter(|value| !value.is_empty()),
+                finding
+                    .get("code")
+                    .and_then(|value| value.as_str())
+                    .filter(|value| !value.is_empty()),
             );
         }
     }
@@ -37008,8 +37140,9 @@ fn render_annotation_finding(
     body: &str,
     next: &str,
     provenance: Option<&str>,
+    code: Option<&str>,
 ) -> String {
-    let message = annotation_message(body, next, provenance);
+    let message = annotation_message(body, next, provenance, code);
     match format {
         AnnotationFormat::Github => {
             let severity = if severity == "error" {
@@ -37042,9 +37175,10 @@ fn render_annotation_primary_blocker(
     heading: &str,
     body: &str,
     next: &str,
+    code: Option<&str>,
     provenance: Option<&str>,
 ) -> String {
-    let message = annotation_message(body, next, provenance);
+    let message = annotation_message(body, next, provenance, code);
     match format {
         AnnotationFormat::Github => format!(
             "::{} title={}::{}",
@@ -37313,6 +37447,7 @@ fn workspace_list_summary(repos: &[WorkspaceRepoListReport]) -> WorkspaceListSum
 
 fn primary_blocker_from_findings(findings: &[Finding]) -> Option<DoctorPrimaryBlocker> {
     findings.first().map(|finding| DoctorPrimaryBlocker {
+        code: Some(finding.code().to_string()),
         severity: finding.severity,
         summary: finding.summary.clone(),
         why: finding.why.clone(),
@@ -37338,6 +37473,7 @@ fn workspace_primary_blocker(
     for repo in &report.repos {
         for finding in &repo.findings {
             let blocker = WorkspacePrimaryBlocker {
+                code: Some(finding.code().to_string()),
                 repo: repo.name.clone(),
                 severity: finding.severity,
                 summary: finding.summary.clone(),
@@ -40696,6 +40832,7 @@ fn inferred_agents_missing_block_context(
     {
         if !agent.safe_tasks.is_empty() {
             signal_findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: format!("Inferred safe tasks: {}", agent.safe_tasks.join(", ")),
                 why: String::from("detector-backed starter agent defaults identified safe tasks"),
@@ -40704,6 +40841,7 @@ fn inferred_agents_missing_block_context(
         }
         if !agent.writable_paths.is_empty() {
             signal_findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: format!(
                     "Inferred starter writable paths: {}",
@@ -40717,6 +40855,7 @@ fn inferred_agents_missing_block_context(
         }
         if !agent.protected_paths.is_empty() {
             signal_findings.push(Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: format!(
                     "Inferred protected paths: {}",
@@ -42172,6 +42311,7 @@ fn bootstrap_failure_findings(
 
     if request.actions.is_empty() {
         return vec![Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Adapter bootstrap failed"),
             why,
@@ -42183,6 +42323,7 @@ fn bootstrap_failure_findings(
         .actions
         .iter()
         .map(|action| Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: if request.actions.len() > 1 && !action.source.trim().is_empty() {
                 format!(
@@ -43665,6 +43806,7 @@ workflows:
             warn_count: 0,
             info_count: 1,
             primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Container readiness does not include host-only checks"),
                 why: String::from("container mode excludes host checks"),
@@ -43686,6 +43828,7 @@ workflows:
             warn_count: 1,
             info_count: 0,
             primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Warn,
                 summary: String::from("Selected task path mutates external state: docker"),
                 why: String::from("selected path mutates docker"),
@@ -43707,6 +43850,7 @@ workflows:
             warn_count: 0,
             info_count: 1,
             primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Container readiness does not include host-only checks"),
                 why: String::from("container mode excludes host checks"),
@@ -43732,6 +43876,7 @@ workflows:
             warn_count: 1,
             info_count: 0,
             primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Warn,
                 summary: String::from("Selected task path mutates external state: docker"),
                 why: String::from("selected path mutates docker"),
@@ -43776,6 +43921,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Run task exited before readiness"),
                 why: String::from("run exited"),
@@ -43798,6 +43944,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Surface readiness timed out: site"),
                 why: String::from("timed out"),
@@ -44007,6 +44154,7 @@ workflows:
             warn_count: 0,
             info_count: 1,
             primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Container readiness does not include host-only checks"),
                 why: String::from("container mode excludes host checks"),
@@ -44034,6 +44182,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Surface readiness failed: app"),
                 why: String::from("surface app did not become ready"),
@@ -44127,6 +44276,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Surface readiness failed: app"),
                 why: String::from("surface app did not become ready"),
@@ -44193,6 +44343,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Run task exited before readiness"),
                 why: String::from("timed out while waiting for readiness"),
@@ -44232,6 +44383,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Run task exited before readiness"),
                 why: String::from("timed out while waiting for readiness"),
@@ -44272,6 +44424,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Check failed: docker-build-env-compose-compatible"),
                 why: String::from("the configured check did not succeed"),
@@ -44299,6 +44452,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Check failed: setup-complete"),
                 why: String::from("the configured check did not succeed"),
@@ -44325,6 +44479,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Run task exited before readiness"),
                 why: String::from("the process exited before readiness"),
@@ -44361,6 +44516,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Check failed: setup-complete"),
                 why: String::from("the configured check did not succeed"),
@@ -44388,6 +44544,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Surface readiness failed: app"),
                 why: String::from("surface was not ready"),
@@ -44408,6 +44565,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Check failed: setup-complete"),
                 why: String::from("check command failed"),
@@ -49742,18 +49900,21 @@ tasks:
         let _guard = env_mutex_lock();
         let findings = [
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Version mismatch for runtime: java"),
                 why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
                 next: String::from("run `sdk install java 21` and rerun `ota doctor`"),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Version mismatch for tool: node"),
                 why: String::from("node resolved to `24.14.1` but the contract requires `22`"),
                 next: String::from("run `brew install node@22` and rerun `ota doctor`"),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Warn,
                 summary: String::from("Contract drift: `tools.node` is no longer detected"),
                 why: String::from(
@@ -49764,6 +49925,7 @@ tasks:
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Warn,
                 summary: String::from("Contract drift: `tools.yq` is no longer detected"),
                 why: String::from(
@@ -49774,6 +49936,7 @@ tasks:
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed provisioning sources are declared"),
                 why: String::from(
@@ -49805,6 +49968,91 @@ tasks:
     }
 
     #[test]
+    fn annotation_message_renders_stable_code_additively() {
+        let rendered = super::annotation_message(
+            "task `dev` uses opaque shell launch",
+            "replace it with `launch.kind: command`",
+            Some("repo contract"),
+            Some("OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"),
+        );
+
+        assert_eq!(
+            rendered,
+            "task `dev` uses opaque shell launch | Code: OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START | Provenance: repo contract | Next: replace it with `launch.kind: command`"
+        );
+    }
+
+    #[test]
+    fn doctor_annotations_markdown_renders_finding_code() {
+        let report = serde_json::json!({
+            "ok": false,
+            "summary": {
+                "error_count": 0,
+                "warn_count": 1,
+                "info_count": 0
+            },
+            "findings": [
+                {
+                    "code": "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START",
+                    "severity": "warn",
+                    "summary": "task `dev` uses opaque shell `run` for long-running service path `api`",
+                    "next": "replace `tasks.dev.run` with `tasks.dev.launch` modeled as `kind: command`",
+                    "provenance": "repo contract"
+                }
+            ]
+        });
+
+        let rendered = super::render_annotations_markdown_doctor("ota doctor", &report);
+
+        assert!(
+            rendered
+                .contains("**Code:** OTA\\_CONTRACT\\_ADVISORY\\_SERVICE\\_OPAQUE\\_SHELL\\_START"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("**Provenance:** repo contract"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn doctor_annotations_primary_blocker_renders_code_without_duplicate_finding() {
+        let report = serde_json::json!({
+            "ok": false,
+            "summary": {
+                "error_count": 1,
+                "warn_count": 0,
+                "info_count": 0,
+                "primary_blocker": {
+                    "code": "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START",
+                    "severity": "error",
+                    "summary": "task `dev` uses opaque shell `run` for long-running service path `api`",
+                    "next": "replace `tasks.dev.run` with `tasks.dev.launch` modeled as `kind: command`",
+                    "provenance": "repo contract"
+                }
+            },
+            "findings": [
+                {
+                    "code": "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START",
+                    "severity": "error",
+                    "summary": "task `dev` uses opaque shell `run` for long-running service path `api`",
+                    "next": "replace `tasks.dev.run` with `tasks.dev.launch` modeled as `kind: command`",
+                    "provenance": "repo contract"
+                }
+            ]
+        });
+
+        let rendered = super::render_annotations_markdown_doctor("ota doctor", &report);
+
+        assert_eq!(rendered.matches("**Code:**").count(), 1, "{rendered}");
+        assert!(
+            rendered
+                .contains("**Code:** OTA\\_CONTRACT\\_ADVISORY\\_SERVICE\\_OPAQUE\\_SHELL\\_START"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn doctor_text_groups_shared_actions_by_remediation() {
         let report = DoctorReport {
             ok: false,
@@ -49813,6 +50061,7 @@ tasks:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Warn,
                     summary: String::from("Contract drift: `tools.maven`"),
                     why: String::from(
@@ -49823,6 +50072,7 @@ tasks:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Warn,
                     summary: String::from("Contract drift: `tools.node`"),
                     why: String::from(
@@ -49833,6 +50083,7 @@ tasks:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Policy-backed provisioning sources are declared"),
                     why: String::from(
@@ -49843,6 +50094,7 @@ tasks:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Adapter bootstrap sources are declared"),
                     why: String::from(
@@ -49853,6 +50105,7 @@ tasks:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Adapter bootstrap sources are declared"),
                     why: String::from(
@@ -49917,6 +50170,7 @@ tasks:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Adapter bootstrap sources are declared"),
                 why: String::from(
@@ -49973,6 +50227,7 @@ tasks:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Repo does not satisfy org policy pack"),
                 why: String::from(
@@ -50018,6 +50273,7 @@ tasks:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed version rules are declared"),
                 why: String::from(
@@ -50067,6 +50323,7 @@ tasks:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Policy-backed provisioning sources are declared"),
                     why: String::from(
@@ -50077,6 +50334,7 @@ tasks:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Adapter bootstrap sources are declared"),
                     why: String::from(
@@ -50131,6 +50389,7 @@ tasks:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed provisioning sources are declared"),
                 why: String::from("approved provisioning is configured"),
@@ -50197,6 +50456,7 @@ tasks:
     fn policy_review_json_group_summaries_use_policy_review_actions() {
         let findings = vec![
             Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed version rules are declared"),
                 why: String::from(
@@ -50207,6 +50467,7 @@ tasks:
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed provisioning sources are declared"),
                 why: String::from(
@@ -50217,6 +50478,7 @@ tasks:
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Adapter bootstrap sources are declared"),
                 why: String::from(
@@ -50276,6 +50538,7 @@ tasks:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Warn,
                     summary: String::from("Contract drift: `tools.maven`"),
                     why: String::from(
@@ -50286,6 +50549,7 @@ tasks:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Warn,
                     summary: String::from("Contract drift: `tools.node`"),
                     why: String::from(
@@ -50296,6 +50560,7 @@ tasks:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Policy-backed provisioning sources are declared"),
                     why: String::from(
@@ -50306,6 +50571,7 @@ tasks:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Adapter bootstrap sources are declared"),
                     why: String::from(
@@ -50316,6 +50582,7 @@ tasks:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Adapter bootstrap sources are declared"),
                     why: String::from(
@@ -50559,6 +50826,7 @@ tasks:
                 execution_target: None,
                 findings: vec![
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Error,
                         summary: String::from(
                             "Container mise cannot install requested prerequisite: node",
@@ -50571,6 +50839,7 @@ tasks:
                         ),
                     },
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Info,
                         summary: String::from(
                             "Container readiness does not include host-only checks",
@@ -50583,6 +50852,7 @@ tasks:
                         ),
                     },
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Info,
                         summary: String::from("Policy-backed version rules are declared"),
                         why: String::from(
@@ -50739,6 +51009,7 @@ tasks:
         };
 
         let findings = vec![Finding {
+            identity: None,
             severity: FindingSeverity::Info,
             summary: String::from("Container readiness does not include host-only checks"),
             why: String::from("container mode validated execution"),
@@ -50814,6 +51085,7 @@ tasks:
                 adapter_bootstrap: None,
                 execution_target: None,
                 findings: vec![Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Container execution is not configured"),
                     why: String::from(
@@ -50907,6 +51179,7 @@ tasks:
                 execution_target: None,
                 findings: vec![
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Error,
                         summary: String::from(
                             "Container mise cannot install requested prerequisite: node",
@@ -50919,6 +51192,7 @@ tasks:
                         ),
                     },
                     Finding {
+                        identity: None,
                         severity: FindingSeverity::Info,
                         summary: String::from("Policy-backed version rules are declared"),
                         why: String::from(
@@ -51291,6 +51565,7 @@ tasks:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing runtime: java"),
                 why: String::from("java is declared in the contract but is not available"),
@@ -51604,6 +51879,7 @@ workflows:
     #[test]
     fn finding_targets_provisioning_action_strips_context_suffix() {
         let finding = Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Version mismatch for runtime: java (context remote-app)"),
             why: String::from("java is declared in the contract but is not available"),
@@ -51643,6 +51919,7 @@ workflows:
     #[test]
     fn finding_targets_provisioning_action_for_unparseable_tool_version() {
         let finding = Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Unparseable version for tool: npm (context app)"),
             why: String::from(
@@ -51714,6 +51991,7 @@ tasks:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Tool probe failed: npm"),
                 why: String::from(
@@ -51795,6 +52073,7 @@ workflows:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Missing tool: pnpm"),
                     why: String::from(
@@ -51805,6 +52084,7 @@ workflows:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Missing tool: docker"),
                     why: String::from(
@@ -51871,6 +52151,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing tool: pnpm"),
                 why: String::from("pnpm is declared in the contract but is not available on PATH"),
@@ -52047,6 +52328,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Native prerequisite missing: node-native-build-tools"),
                 why: String::from("native toolchain is missing"),
@@ -52133,6 +52415,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing tool: pnpm"),
                 why: String::from("pnpm is declared in the contract but is not available on PATH"),
@@ -52219,6 +52502,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing tool: pnpm"),
                 why: String::from(
@@ -52290,6 +52574,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing tool: pnpm"),
                 why: String::from("pnpm is declared in the contract but is not available on PATH"),
@@ -52443,6 +52728,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing tool: bun"),
                 why: String::from("bun is declared in the contract but is not available on PATH"),
@@ -52562,6 +52848,7 @@ tasks:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Missing runtime: java"),
                     why: String::from(
@@ -52570,6 +52857,7 @@ tasks:
                     next: String::from("install `java` and rerun `ota doctor`"),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Missing runtime: node"),
                     why: String::from(
@@ -52666,6 +52954,7 @@ tasks:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing runtime: rust"),
                 why: String::from(
@@ -52754,6 +53043,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing tool: pnpm"),
                 why: String::from(
@@ -52841,6 +53131,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing tool: pnpm"),
                 why: String::from("pnpm is declared in the contract but is not available on PATH"),
@@ -54204,6 +54495,7 @@ workflows:
     fn doctor_json_exports_group_summaries() {
         let findings = [
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Version mismatch for runtime: java"),
                 why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
@@ -54212,6 +54504,7 @@ workflows:
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Version mismatch for tool: curl"),
                 why: String::from("curl resolved to `8.13.0` but the contract requires `8.7.1`"),
@@ -54344,6 +54637,7 @@ workflows:
     fn doctor_group_summaries_distinguish_probe_issues_from_version_mismatches() {
         let findings = [
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Tool probe failed: npm"),
                 why: String::from(
@@ -54354,6 +54648,7 @@ workflows:
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Unparseable version for runtime: node"),
                 why: String::from(
@@ -54378,6 +54673,7 @@ workflows:
     fn doctor_group_summaries_render_policy_surfaces_as_operator_guidance() {
         let findings = [
             Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Policy-backed provisioning sources are declared"),
                 why: String::from(
@@ -54388,6 +54684,7 @@ workflows:
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Adapter bootstrap sources are declared"),
                 why: String::from(
@@ -54414,18 +54711,21 @@ workflows:
     fn doctor_group_summaries_keep_distinct_service_remediations_separate() {
         let findings = [
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Service healthcheck failed: postgres"),
                 why: String::from("service `postgres` did not pass its configured healthcheck"),
                 next: String::from("run `docker compose up -d postgres` and rerun `ota doctor`"),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Service healthcheck failed: redis"),
                 why: String::from("service `redis` did not pass its configured healthcheck"),
                 next: String::from("run `docker compose up -d redis` and rerun `ota doctor`"),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Service healthcheck timed out: api"),
                 why: String::from("service `api` did not become ready within 5000ms"),
@@ -54454,6 +54754,7 @@ workflows:
     fn doctor_group_summaries_use_stable_keys_for_check_failures() {
         let findings = [
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Check failed: health-check"),
                 why: String::from("the configured `health-check` check did not succeed"),
@@ -54462,6 +54763,7 @@ workflows:
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Check timed out: lint"),
                 why: String::from("the configured `lint` check did not finish within 5000ms"),
@@ -54470,6 +54772,7 @@ workflows:
                 ),
             },
             Finding {
+                identity: None,
                 severity: FindingSeverity::Warn,
                 summary: String::from("Custom advisory"),
                 why: String::from("custom why"),
@@ -54493,6 +54796,7 @@ workflows:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Version mismatch for runtime: java"),
                     why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
@@ -54501,6 +54805,7 @@ workflows:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Version mismatch for tool: curl"),
                     why: String::from(
@@ -54511,6 +54816,7 @@ workflows:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Version mismatch for tool: node"),
                     why: String::from("node resolved to `24.14.1` but the contract requires `22`"),
@@ -54527,6 +54833,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(super::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Version mismatch for runtime: java"),
                 why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
@@ -54567,6 +54874,7 @@ workflows:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Tool probe failed: npm"),
                     why: String::from(
@@ -54577,6 +54885,7 @@ workflows:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Unparseable version for runtime: node"),
                     why: String::from(
@@ -54629,6 +54938,7 @@ workflows:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Version mismatch for tool: curl"),
                     why: String::from(
@@ -54639,6 +54949,7 @@ workflows:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Version mismatch for tool: maven"),
                     why: String::from(
@@ -54686,6 +54997,7 @@ workflows:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Version mismatch for runtime: java"),
                     why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
@@ -54694,6 +55006,7 @@ workflows:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Version mismatch for tool: curl"),
                     why: String::from(
@@ -54744,12 +55057,14 @@ workflows:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Environment value missing: DATABASE_URL"),
                     why: String::from("DATABASE_URL is required but not set"),
                     next: String::from("set DATABASE_URL and rerun `ota doctor`"),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Environment value invalid: JAVA_HOME"),
                     why: String::from("JAVA_HOME points at an incompatible JDK"),
@@ -54796,6 +55111,7 @@ workflows:
             execution_target: None,
             findings: vec![
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Version mismatch for runtime: java"),
                     why: String::from("java resolved to `25.0.2` but the contract requires `21`"),
@@ -54804,6 +55120,7 @@ workflows:
                     ),
                 },
                 Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Version mismatch for tool: curl"),
                     why: String::from(
@@ -54853,6 +55170,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Ephemeral lifecycle is execution-only"),
                 why: String::from(
@@ -54870,6 +55188,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(super::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Ephemeral lifecycle is execution-only"),
                 why: String::from(
@@ -54926,6 +55245,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Invalid org policy pack"),
                 why: String::from(
@@ -54941,6 +55261,7 @@ workflows:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(super::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Invalid org policy pack"),
                 why: String::from(
@@ -54977,6 +55298,7 @@ workflows:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Invalid org policy pack"),
                 why: String::from(
@@ -55508,7 +55830,9 @@ tasks:
             "{rendered}"
         );
         assert!(
-            rendered.contains("Next: replace `tasks.dev.run` with `tasks.dev.launch` modeled as `kind: command`"),
+            rendered.contains(
+                "Next: replace `tasks.dev.run` with `tasks.dev.launch` modeled as `kind: command`"
+            ),
             "{rendered}"
         );
     }
@@ -55873,6 +56197,7 @@ execution:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing runtime: java"),
                 why: String::from(
@@ -55890,6 +56215,7 @@ execution:
             warn_count: 0,
             info_count: 0,
             primary_blocker: Some(super::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing runtime: java"),
                 why: String::from(
@@ -55938,6 +56264,7 @@ execution:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: String::from("Missing runtime: java"),
                 why: String::from(
@@ -56049,6 +56376,7 @@ execution:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Warn,
                 summary: String::from("Required service cannot be verified: postgres"),
                 why: String::from(
@@ -56066,6 +56394,7 @@ execution:
             warn_count: 1,
             info_count: 0,
             primary_blocker: Some(super::DoctorPrimaryBlocker {
+                code: None,
                 severity: FindingSeverity::Warn,
                 summary: String::from("Required service cannot be verified: postgres"),
                 why: String::from(
@@ -63540,6 +63869,7 @@ execution:
             adapter_bootstrap: None,
             execution_target: None,
             findings: vec![Finding {
+                identity: None,
                 severity: FindingSeverity::Info,
                 summary: String::from("Container readiness does not include host-only checks"),
                 why: String::from(
@@ -64091,6 +64421,7 @@ policies:
                     "bash: line 1: curl: command not found\nbash: line 1: zip: command not found",
                 );
                 findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: String::from("Install required runtimes and tools (7)"),
                     why: String::from(
@@ -64101,6 +64432,7 @@ policies:
                     ),
                 });
                 findings.push(Finding {
+                    identity: None,
                     severity: FindingSeverity::Info,
                     summary: String::from("Container readiness does not include host-only checks"),
                     why: String::from(
@@ -74258,6 +74590,7 @@ fn proof_runtime_up_exit_primary_blocker(
     }
 
     Some(DoctorPrimaryBlocker {
+        code: None,
         severity: FindingSeverity::Error,
         summary: String::from("Run task exited before readiness"),
         why: process_failure.to_string(),
@@ -78607,6 +78940,7 @@ fn resolve_provisioning_execution_target(
             return Ok(ProvisioningExecutionTarget::Native);
         }
         return Err(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Container execution could not be resolved"),
             why: String::from(
@@ -78631,6 +78965,7 @@ fn resolve_provisioning_execution_target(
         }) => {
             if let Some(failure) = container_backend_probe_failure(&engine) {
                 return Err(Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: format!("Container execution backend unavailable: {engine}"),
                     why: format!(
@@ -78650,6 +78985,7 @@ fn resolve_provisioning_execution_target(
             })
         }
         Ok(ResolvedExecutionBackend::Native { .. }) => Err(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Container execution could not be resolved"),
             why: String::from(
@@ -78660,6 +78996,7 @@ fn resolve_provisioning_execution_target(
             ),
         }),
         Ok(ResolvedExecutionBackend::Remote { provider, .. }) => Err(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Container execution could not be resolved"),
             why: format!(
@@ -78670,6 +79007,7 @@ fn resolve_provisioning_execution_target(
             ),
         }),
         Ok(ResolvedExecutionBackend::BackendProvider { provider, .. }) => Err(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Container execution could not be resolved"),
             why: format!(
@@ -78680,6 +79018,7 @@ fn resolve_provisioning_execution_target(
             ),
         }),
         Err(RunError::MissingContainerImage { .. }) => Err(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Container execution is not configured"),
             why: String::from(
@@ -78690,6 +79029,7 @@ fn resolve_provisioning_execution_target(
             ),
         }),
         Err(RunError::MissingContainerLifecycle { .. }) => Err(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Container execution lifecycle is not configured"),
             why: String::from(
@@ -78698,6 +79038,7 @@ fn resolve_provisioning_execution_target(
             next: String::from("add `execution.lifecycle`, then rerun `ota up --mode container`"),
         }),
         Err(RunError::MissingContainerBackendCli { engines, .. }) => Err(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!("Missing container execution backend CLI: {engines}"),
             why: format!(
@@ -78708,6 +79049,7 @@ fn resolve_provisioning_execution_target(
             ),
         }),
         Err(error) => Err(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Container execution could not be resolved"),
             why: render_run_error(error),
@@ -80792,6 +81134,7 @@ fn resolve_up_workloads(
 fn activation_failure_finding(action: &RequirementActivationAction, exit_code: i32) -> Finding {
     match action.acquisition.provider {
         ToolAcquisitionProvider::Corepack => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!("Requirement activation failed: {}", action.tool_name),
             why: format!(
@@ -80805,6 +81148,7 @@ fn activation_failure_finding(action: &RequirementActivationAction, exit_code: i
             ),
         },
         ToolAcquisitionProvider::Command => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!("Requirement activation failed: {}", action.tool_name),
             why: format!(
@@ -81048,6 +81392,7 @@ fn remote_up_blocker_finding(
 
     match phase_task {
         Some(task) => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: if setup_task {
                 String::from("Remote setup contexts are not supported by `ota up` yet")
@@ -81067,6 +81412,7 @@ fn remote_up_blocker_finding(
             ),
         },
         None => Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Remote repo execution is not supported by `ota up` yet"),
             why: format!(
@@ -83430,6 +83776,7 @@ fn run_workspace_repo_up(
                 .to_string(),
                 phase: "acquisition".to_string(),
                 findings: vec![Finding {
+                    identity: None,
                     severity: if repo.required {
                         FindingSeverity::Error
                     } else {
@@ -83488,6 +83835,7 @@ fn run_workspace_repo_up(
                 .to_string(),
                 phase: "acquisition".to_string(),
                 findings: vec![Finding {
+                    identity: None,
                     severity: if repo.required {
                         FindingSeverity::Error
                     } else {
@@ -83590,6 +83938,7 @@ fn run_workspace_repo_up(
                     status: if repo.required { "FAILED" } else { "WARN" }.to_string(),
                     phase: "setup".to_string(),
                     findings: vec![Finding {
+                        identity: None,
                         severity: if repo.required {
                             FindingSeverity::Error
                         } else {
@@ -83627,6 +83976,7 @@ fn run_workspace_repo_up(
             status: if repo.required { "NOT READY" } else { "WARN" }.to_string(),
             phase: "validation".to_string(),
             findings: vec![Finding {
+                identity: None,
                 severity: if repo.required {
                     FindingSeverity::Error
                 } else {
@@ -83666,6 +84016,7 @@ fn blocked_workspace_repo_up(repo: WorkspaceRepoRef, dependency: String) -> Work
         status: String::from("BLOCKED"),
         phase: String::from("dependencies"),
         findings: vec![Finding {
+            identity: None,
             severity: if repo.required {
                 FindingSeverity::Error
             } else {
@@ -83733,6 +84084,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
             behind: None,
             dirty: false,
             findings: vec![Finding {
+                identity: None,
                 severity: if repo.required {
                     FindingSeverity::Error
                 } else {
@@ -83779,6 +84131,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
             behind: None,
             dirty: false,
             findings: vec![Finding {
+                identity: None,
                 severity: if repo.required {
                     FindingSeverity::Error
                 } else {
@@ -83824,6 +84177,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                 behind: None,
                 dirty: false,
                 findings: vec![Finding {
+                    identity: None,
                     severity: if repo.required {
                         FindingSeverity::Error
                     } else {
@@ -83872,6 +84226,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
             behind: None,
             dirty,
             findings: vec![Finding {
+                identity: None,
                 severity: if repo.required {
                     FindingSeverity::Error
                 } else {
@@ -83921,6 +84276,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
                 behind: None,
                 dirty,
                 findings: vec![Finding {
+                    identity: None,
                     severity: if repo.required {
                         FindingSeverity::Error
                     } else {
@@ -83960,6 +84316,7 @@ fn run_workspace_repo_diff(repo: WorkspaceRepoRef) -> WorkspaceRepoDiffReport {
             repo.source_ref.is_some(),
         );
         vec![Finding {
+            identity: None,
             severity: if repo.required {
                 FindingSeverity::Warn
             } else {
@@ -84275,6 +84632,7 @@ fn blocked_workspace_repo_refresh(
         status: String::from("BLOCKED"),
         phase: String::from("dependencies"),
         findings: vec![Finding {
+            identity: None,
             severity: if repo.required {
                 FindingSeverity::Error
             } else {
@@ -84314,6 +84672,7 @@ fn blocked_workspace_repo_run(
         status: if repo.required { "BLOCKED" } else { "WARN" }.to_string(),
         task: task.to_string(),
         findings: vec![Finding {
+            identity: None,
             severity: if repo.required {
                 FindingSeverity::Error
             } else {
@@ -84460,6 +84819,7 @@ fn workspace_refresh_failure_finding(
     if workspace_refresh_target_error(stderr) {
         let target = source_ref.unwrap_or("<target>");
         return Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!("Refresh target unavailable: {repo_name}"),
             why: format!(
@@ -84473,6 +84833,7 @@ fn workspace_refresh_failure_finding(
 
     if workspace_refresh_source_access_error(stderr) {
         return Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: format!("Repo refresh failed: {repo_name}"),
             why: format!(
@@ -84485,6 +84846,7 @@ fn workspace_refresh_failure_finding(
     }
 
     Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: format!("Repo refresh failed: {repo_name}"),
         why: format!("workspace repo `{repo_name}` could not complete its refresh command cleanly"),
@@ -84583,6 +84945,7 @@ fn run_workspace_repo_refresh(
             status: String::from("NOT ACQUIRED"),
             phase: String::from("refresh"),
             findings: vec![Finding {
+                identity: None,
                 severity: if repo.required {
                     FindingSeverity::Error
                 } else {
@@ -84668,6 +85031,7 @@ fn run_workspace_repo_refresh(
             },
             phase: String::from("refresh"),
             findings: vec![Finding {
+                identity: None,
                 severity: if repo.required {
                     FindingSeverity::Error
                 } else {
@@ -84741,6 +85105,7 @@ fn run_workspace_repo_refresh(
                 },
                 phase: String::from("refresh"),
                 findings: vec![Finding {
+                    identity: None,
                     severity: if repo.required {
                         FindingSeverity::Error
                     } else {
@@ -84791,6 +85156,7 @@ fn run_workspace_repo_refresh(
             },
             phase: String::from("refresh"),
             findings: vec![Finding {
+                identity: None,
                 severity: if repo.required {
                     finding.severity
                 } else if finding.severity == FindingSeverity::Error {
@@ -84883,6 +85249,7 @@ fn run_workspace_repo_task(
                 .to_string(),
                 task: task.to_string(),
                 findings: vec![Finding {
+                    identity: None,
                     severity: if repo.required {
                         FindingSeverity::Error
                     } else {
@@ -84933,6 +85300,7 @@ fn run_workspace_repo_task(
                 .to_string(),
                 task: task.to_string(),
                 findings: vec![Finding {
+                    identity: None,
                     severity: if repo.required {
                         FindingSeverity::Error
                     } else {
@@ -84981,6 +85349,7 @@ fn run_workspace_repo_task(
                         .errors()
                         .iter()
                         .map(|validation_error| Finding {
+                            identity: None,
                             severity: if repo.required {
                                 FindingSeverity::Error
                             } else {
@@ -85102,6 +85471,7 @@ fn run_workspace_repo_task(
                     status: if repo.required { "TASK FAILED" } else { "WARN" }.to_string(),
                     task: task.to_string(),
                     findings: vec![Finding {
+                        identity: None,
                         severity: if repo.required {
                             FindingSeverity::Error
                         } else {
@@ -85142,6 +85512,7 @@ fn run_workspace_repo_task(
                     status: if repo.required { "TASK FAILED" } else { "WARN" }.to_string(),
                     task: task.to_string(),
                     findings: vec![Finding {
+                        identity: None,
                         severity: if repo.required {
                             FindingSeverity::Error
                         } else {
@@ -85185,6 +85556,7 @@ fn run_workspace_repo_task(
             .to_string(),
             task: task.to_string(),
             findings: vec![Finding {
+                identity: None,
                 severity: if repo.required {
                     FindingSeverity::Error
                 } else {
@@ -85322,6 +85694,7 @@ fn check_workspace_repo(
             adapter_bootstrap: None,
             extensions: BTreeMap::new(),
             findings: vec![Finding {
+                identity: None,
                 severity: if repo.required {
                     FindingSeverity::Error
                 } else {
@@ -85375,6 +85748,7 @@ fn check_workspace_repo(
                         .errors()
                         .iter()
                         .map(|validation_error| Finding {
+                            identity: None,
                             severity: if repo.required {
                                 FindingSeverity::Error
                             } else {
@@ -85437,6 +85811,7 @@ fn check_workspace_repo(
             adapter_bootstrap: None,
             extensions: BTreeMap::new(),
             findings: vec![Finding {
+                identity: None,
                 severity: if repo.required {
                     FindingSeverity::Error
                 } else {
@@ -86109,6 +86484,7 @@ fn fallback_backend_fulfillment_missing_requirement_finding(error: &RunError) ->
 
     let Some(primary_gap) = evidence.missing.first() else {
         return Some(Finding {
+            identity: None,
             severity: FindingSeverity::Error,
             summary: String::from("Backend prerequisites are missing"),
             why: String::from(
@@ -86130,6 +86506,7 @@ fn fallback_backend_fulfillment_missing_requirement_finding(error: &RunError) ->
                 )
             };
             return Some(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: format!("Tool probe failed: {name}"),
                 why,
@@ -86142,6 +86519,7 @@ fn fallback_backend_fulfillment_missing_requirement_finding(error: &RunError) ->
         if kind == "runtime" {
             if details.contains("not available") {
                 return Some(Finding {
+                    identity: None,
                     severity: FindingSeverity::Error,
                     summary: format!("Runtime probe failed: {name}"),
                     why: format!(
@@ -86153,6 +86531,7 @@ fn fallback_backend_fulfillment_missing_requirement_finding(error: &RunError) ->
                 });
             }
             return Some(Finding {
+                identity: None,
                 severity: FindingSeverity::Error,
                 summary: format!("Version mismatch for runtime: {name}"),
                 why: format!(
@@ -86166,6 +86545,7 @@ fn fallback_backend_fulfillment_missing_requirement_finding(error: &RunError) ->
     }
 
     Some(Finding {
+        identity: None,
         severity: FindingSeverity::Error,
         summary: String::from("Backend prerequisites are missing"),
         why: format!(
