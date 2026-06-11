@@ -75,11 +75,11 @@ use crate::output::{
     DetectComparisonRemoval, DetectFailure, DetectSuccess, DiffChange, DiffFailure, DiffSuccess,
     DiffSummary, DoctorFindingGroupSummary, DoctorFixActionSummary, DoctorFixSummary,
     DoctorPrimaryBlocker, DoctorSuccess, DoctorSummary, DoctorVerdict, EnvEntry, EnvEntryKind,
-    EnvEntryStatus, EnvFailure, EnvSourceEntry, EnvSourceStatus, EnvSuccess, EnvSummary,
-    ExecutionContextSummary, ExecutionEnvSummary, ExecutionPlanFailure, ExecutionPlanOverrides,
-    ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt, ExecutionReceiptEnvSource,
-    ExecutionReceiptLogs, ExecutionReceiptStep, ExecutionReceiptSummary, ExecutionSummary,
-    ExecutionTopologyFailure, ExecutionTopologyHostProjectionSummary,
+    EnvEntryStatus, EnvFailure, EnvRenderedArtifactEntry, EnvSourceEntry, EnvSourceStatus,
+    EnvSuccess, EnvSummary, ExecutionContextSummary, ExecutionEnvSummary, ExecutionPlanFailure,
+    ExecutionPlanOverrides, ExecutionPlanResolved, ExecutionPlanSuccess, ExecutionReceipt,
+    ExecutionReceiptEnvSource, ExecutionReceiptLogs, ExecutionReceiptStep, ExecutionReceiptSummary,
+    ExecutionSummary, ExecutionTopologyFailure, ExecutionTopologyHostProjectionSummary,
     ExecutionTopologyListenerSummary, ExecutionTopologyProbeObserverSummary,
     ExecutionTopologyProbeSummary, ExecutionTopologyProbeTargetSummary,
     ExecutionTopologyReadinessSummary, ExecutionTopologyRuntimeSummary,
@@ -1306,6 +1306,58 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::ReplaceableShellCheck(value) => format!(
+            "{} check `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.check_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail(match value.replacement_kind {
+                crate::validator::ReplaceableShellCheckKind::File => {
+                    "replaceable shell file-state check"
+                }
+                crate::validator::ReplaceableShellCheckKind::Env => {
+                    "replaceable shell env-file assertion"
+                }
+            }),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
+        ContractAdvisory::ReplaceableShellEnvMutation(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("replaceable shell env-file mutation"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
+        ContractAdvisory::ReplaceableComposeEnvFileOwnership(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("hard-coded compose env-file ownership"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
+        ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(value) => format!(
+            "{} workflow `{}` profile `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.workflow_name,
+            value.profile_name,
+            paint_key("Path:"),
+            render_validate_warning_detail(&value.path),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::SensitiveAgentWritablePath(value) => format!(
             "{} path `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -1538,6 +1590,12 @@ pub fn execution_plan(
                 ) {
                     Ok(resolved_execution) => {
                         let applied_overrides = execution_plan_overrides(overrides);
+                        let workflow_env_artifacts =
+                            selected_workflow_env_profile_rendered_artifact_entries(
+                                &target.contract,
+                                &target.contract_path,
+                                workflow_name,
+                            );
 
                         match format {
                             OutputFormat::Text => {
@@ -1548,6 +1606,7 @@ pub fn execution_plan(
                                     workflow_summary.as_ref(),
                                     selected_task,
                                     declared_execution.as_ref(),
+                                    &workflow_env_artifacts,
                                     &resolved_execution,
                                     applied_overrides.as_ref(),
                                 ))
@@ -1562,6 +1621,7 @@ pub fn execution_plan(
                                     task: selected_task,
                                     contract_identity,
                                     declared_execution,
+                                    workflow_env_artifacts,
                                     resolved: resolved_execution,
                                     overrides: applied_overrides,
                                 }))
@@ -1954,8 +2014,13 @@ pub fn proof_runtime(
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
             Ok(target) => {
-                let workflow_summary = match resolve_selected_workflow_summary(
+                let adjusted_contract = contract_adjusted_for_selected_workflow_env_profile(
                     &target.contract,
+                    workflow_name,
+                );
+                let contract = adjusted_contract.as_ref().unwrap_or(&target.contract);
+                let workflow_summary = match resolve_selected_workflow_summary(
+                    contract,
                     &target.contract_path,
                     workflow_name,
                 ) {
@@ -2018,7 +2083,7 @@ pub fn proof_runtime(
                 };
                 let (proof_report, proof_phase, _proof_ok, up_process_failure) =
                     match wait_for_proof_runtime_readiness(
-                        &target.contract,
+                        contract,
                         &target.contract_path,
                         workflow_name,
                         overrides,
@@ -2034,7 +2099,7 @@ pub fn proof_runtime(
                     };
                 let proof_summary = doctor_summary(
                     &proof_report,
-                    crate::workspace::agent_verdict_from_agent(target.contract.agent.as_ref()),
+                    crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
                 );
                 let up_process_failure = up_process_failure.as_deref();
 
@@ -2068,11 +2133,11 @@ pub fn proof_runtime(
                 }
 
                 let cleanup_error = if proof_runtime_selected_workflow_uses_container_backend(
-                    &target.contract,
+                    contract,
                     effective_workflow_name,
                     overrides,
                 ) {
-                    clean_execution_report(&target.contract, &target.contract_path)
+                    clean_execution_report(contract, &target.contract_path)
                         .err()
                         .and_then(proof_runtime_cleanup_failure_message)
                 } else {
@@ -2125,9 +2190,14 @@ pub fn proof_runtime(
                 });
                 let interrupted = up_process_failure
                     .is_some_and(|failure| failure.contains("runtime proof interrupted by signal"));
+                let refined_proof_phase = proof_runtime_refined_phase(
+                    &proof_summary_for_output,
+                    proof_phase,
+                    &up_log_artifact_path,
+                );
                 let status = proof_runtime_status_word(
                     proof_summary.verdict,
-                    proof_phase,
+                    refined_proof_phase.as_str(),
                     timed_out,
                     interrupted,
                     cleanup_error.is_some(),
@@ -2139,7 +2209,7 @@ pub fn proof_runtime(
                 } else if timed_out {
                     "timeout"
                 } else {
-                    proof_phase
+                    refined_proof_phase.as_str()
                 };
                 let text_phase = if cleanup_error.is_some() {
                     "cleanup"
@@ -2148,11 +2218,12 @@ pub fn proof_runtime(
                 } else if timed_out {
                     "timeout"
                 } else {
-                    proof_runtime_phase_label(proof_phase)
+                    proof_runtime_phase_label(refined_proof_phase.as_str())
                 };
                 let ok = proof_runtime_ok(&proof_summary_for_output, proof_error.as_deref());
                 let proof_failure_class = proof_runtime_failure_class(
                     &proof_summary_for_output,
+                    refined_proof_phase.as_str(),
                     cleanup_error.as_deref(),
                     up_process_failure,
                     &up_log_artifact_path,
@@ -2162,6 +2233,12 @@ pub fn proof_runtime(
                     up_process_failure,
                     &up_log_artifact_path,
                 );
+                let workflow_env_artifacts =
+                    selected_workflow_env_profile_rendered_artifact_entries(
+                        &target.contract,
+                        &target.contract_path,
+                        effective_workflow_name,
+                    );
 
                 match format {
                     OutputFormat::Text => CommandOutput {
@@ -2176,6 +2253,7 @@ pub fn proof_runtime(
                             &topology_artifact_display,
                             &doctor_artifact_display,
                             &up_log_artifact_display,
+                            &workflow_env_artifacts,
                             proof_likely_cause.as_deref(),
                             cleanup_error.as_deref(),
                             cleanup_next.as_deref(),
@@ -2196,6 +2274,7 @@ pub fn proof_runtime(
                                 doctor: &doctor_artifact_display,
                                 up_log: &up_log_artifact_display,
                             }),
+                            workflow_env_artifacts,
                             failure_class: proof_failure_class,
                             error: proof_error.as_deref(),
                             likely_cause: proof_likely_cause,
@@ -3804,8 +3883,11 @@ fn resolve_execution_plan_container_image(
 
 struct EnvReport {
     ok: bool,
+    workflow: Option<String>,
+    profile: Option<String>,
     summary: EnvSummary,
     sources: Vec<EnvSourceEntry>,
+    rendered_artifacts: Vec<EnvRenderedArtifactEntry>,
     env: Vec<EnvEntry>,
 }
 
@@ -3813,6 +3895,7 @@ pub fn env(
     path: Option<&Path>,
     file_override: Option<&Path>,
     member: Option<&str>,
+    workflow_name: Option<&str>,
     task: Option<&str>,
     format: OutputFormat,
     debug: bool,
@@ -3844,6 +3927,9 @@ pub fn env(
     if let Some(member) = member {
         debug_lines.push(format!("DEBUG member={member}"));
     }
+    if let Some(workflow_name) = workflow_name {
+        debug_lines.push(format!("DEBUG workflow={workflow_name}"));
+    }
     if let Some(task) = task {
         debug_lines.push(format!("DEBUG task={task}"));
     }
@@ -3871,36 +3957,65 @@ pub fn env(
 
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
-            Ok(target) => match build_env_report(&target.contract, &target.contract_path, task) {
-                Ok(report) => match format {
-                    OutputFormat::Text => CommandOutput {
-                        stdout: render_env_text(&text_path_display, task, &report),
-                        stderr: None,
-                        exit_code: if report.ok { 0 } else { 1 },
+            Ok(target) => {
+                let selected_workflow_name = if task.is_some() || workflow_name.is_some() {
+                    workflow_name
+                } else {
+                    None
+                };
+                let workflow_summary = match selected_workflow_name {
+                    Some(_) => match resolve_selected_workflow_summary(
+                        &target.contract,
+                        &target.contract_path,
+                        selected_workflow_name,
+                    ) {
+                        Ok(summary) => summary,
+                        Err(error) => return CommandOutput::failure_with_code(error, 2),
                     },
-                    OutputFormat::Json => CommandOutput {
-                        stdout: to_json(&EnvSuccess {
-                            ok: report.ok,
+                    None => None,
+                };
+                let effective_workflow_name =
+                    workflow_summary.as_ref().map(|workflow| workflow.name);
+                match build_env_report(
+                    &target.contract,
+                    &target.contract_path,
+                    selected_workflow_name,
+                    task,
+                ) {
+                    Ok(report) => match format {
+                        OutputFormat::Text => CommandOutput {
+                            stdout: render_env_text(&text_path_display, task, &report),
+                            stderr: None,
+                            exit_code: if report.ok { 0 } else { 1 },
+                        },
+                        OutputFormat::Json => CommandOutput {
+                            stdout: to_json(&EnvSuccess {
+                                ok: report.ok,
+                                path: &path_display,
+                                task,
+                                workflow: report.workflow.as_deref(),
+                                profile: report.profile.as_deref(),
+                                summary: report.summary,
+                                sources: report.sources,
+                                rendered_artifacts: report.rendered_artifacts,
+                                env: report.env,
+                            }),
+                            stderr: None,
+                            exit_code: if report.ok { 0 } else { 1 },
+                        },
+                    },
+                    Err(error) => match format {
+                        OutputFormat::Text => CommandOutput::failure(error),
+                        OutputFormat::Json => CommandOutput::failure(to_json(&EnvFailure {
+                            ok: false,
                             path: &path_display,
                             task,
-                            summary: report.summary,
-                            sources: report.sources,
-                            env: report.env,
-                        }),
-                        stderr: None,
-                        exit_code: if report.ok { 0 } else { 1 },
+                            workflow: effective_workflow_name,
+                            error: &error,
+                        })),
                     },
-                },
-                Err(error) => match format {
-                    OutputFormat::Text => CommandOutput::failure(error),
-                    OutputFormat::Json => CommandOutput::failure(to_json(&EnvFailure {
-                        ok: false,
-                        path: &path_display,
-                        task,
-                        error: &error,
-                    })),
-                },
-            },
+                }
+            }
             Err(ContractProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_repo_contract_output(
                     "ENV",
@@ -3929,6 +4044,7 @@ pub fn env(
                     ok: false,
                     path: &path_display,
                     task,
+                    workflow: workflow_name,
                     error: &errors.to_string(),
                 })),
             },
@@ -3956,6 +4072,7 @@ pub fn env(
                     ok: false,
                     path: &path_display,
                     task,
+                    workflow: workflow_name,
                     error: &error.to_string(),
                 })),
             },
@@ -10571,6 +10688,7 @@ fn build_assist_service_proposal(
         },
         name: manager_name_value.clone(),
         file: compose_file_value.clone(),
+        env_file: None,
         service: compose_service_value.clone(),
     });
     if let (Some(endpoint_name), Some(address), Some(port)) = (
@@ -11772,11 +11890,13 @@ fn assist_env_validation_commands(
 fn build_env_report(
     contract: &Contract,
     contract_path: &Path,
+    workflow_name: Option<&str>,
     task_name: Option<&str>,
 ) -> Result<EnvReport, String> {
     build_env_report_with_overrides(
         contract,
         contract_path,
+        workflow_name,
         task_name,
         ExecutionOverrides::default(),
     )
@@ -11785,9 +11905,13 @@ fn build_env_report(
 fn build_env_report_with_overrides(
     contract: &Contract,
     contract_path: &Path,
+    workflow_name: Option<&str>,
     task_name: Option<&str>,
     overrides: ExecutionOverrides,
 ) -> Result<EnvReport, String> {
+    let adjusted_contract =
+        contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
+    let contract = adjusted_contract.as_ref().unwrap_or(contract);
     let (task_env, explicit_task_env) = match task_name {
         Some(task_name) => {
             let Some(task) = contract.tasks.get(task_name) else {
@@ -11819,10 +11943,21 @@ fn build_env_report_with_overrides(
 
     let policy_env = load_policy_env_overlay(contract_path).map_err(|error| error.to_string())?;
     let declared_sources = load_declared_env_sources(contract, contract_path);
-    let selected_required_env_names =
-        task_name.map(|task_name| contract.task_required_env_names(task_name));
+    let selected_required_env_names = match (task_name, workflow_name) {
+        (Some(task_name), _) => Some(contract.task_required_env_names(task_name)),
+        (None, Some(_workflow_name)) => {
+            let names = contract.selected_workflow_required_env_names(workflow_name);
+            (!names.is_empty()).then_some(names)
+        }
+        (None, None) => None,
+    };
     let mut env = Vec::new();
     let mut sources = Vec::new();
+    let rendered_artifacts = selected_workflow_env_profile_rendered_artifact_entries(
+        contract,
+        contract_path,
+        workflow_name,
+    );
     let mut contract_resolved_count = 0usize;
     let mut missing_count = 0usize;
     let mut invalid_count = 0usize;
@@ -11836,7 +11971,7 @@ fn build_env_report_with_overrides(
             }
             _ => None,
         });
-        let next = env_source_next_step(source, task_name);
+        let next = env_source_next_step(source, workflow_name, task_name);
         let issue_count = usize::from(env_source_status_counts_as_issue(status));
         source_issue_count += issue_count;
         sources.push(EnvSourceEntry {
@@ -11920,7 +12055,12 @@ fn build_env_report_with_overrides(
                         source_status,
                         source_label,
                         status: EnvEntryStatus::Invalid,
-                        next: Some(env_next_for_invalid(name, &requirement.allowed)),
+                        next: Some(env_next_for_invalid(
+                            name,
+                            workflow_name,
+                            task_name,
+                            &requirement.allowed,
+                        )),
                     });
                 } else {
                     contract_resolved_count += 1;
@@ -11958,7 +12098,7 @@ fn build_env_report_with_overrides(
                     source_status: None,
                     source_label: None,
                     status: EnvEntryStatus::Missing,
-                    next: Some(env_next_for_missing(name, task_name)),
+                    next: Some(env_next_for_missing(name, workflow_name, task_name)),
                 });
             }
             None => {
@@ -12016,6 +12156,10 @@ fn build_env_report_with_overrides(
 
     Ok(EnvReport {
         ok: missing_count == 0 && invalid_count == 0 && source_issue_count == 0,
+        workflow: workflow_name.map(ToString::to_string),
+        profile: contract
+            .selected_workflow_env_profile_name(workflow_name)
+            .map(ToString::to_string),
         summary: EnvSummary {
             contract_count: contract.env.len(),
             source_count: declared_sources.len(),
@@ -12026,6 +12170,7 @@ fn build_env_report_with_overrides(
             invalid_count,
         },
         sources,
+        rendered_artifacts,
         env,
     })
 }
@@ -12050,6 +12195,7 @@ fn env_source_status_counts_as_issue(status: EnvSourceStatus) -> bool {
 
 fn env_source_next_step(
     source: &LoadedDeclaredEnvSource,
+    workflow_name: Option<&str>,
     task_name: Option<&str>,
 ) -> Option<String> {
     match source.status {
@@ -12057,7 +12203,7 @@ fn env_source_next_step(
         DeclaredEnvSourceStatus::MissingRequired => Some(format!(
             "create `{}` or remove `must_exist: true`, then rerun {}",
             source.path,
-            env_rerun_command(task_name)
+            env_rerun_command(workflow_name, task_name)
         )),
         DeclaredEnvSourceStatus::ParseFailed
         | DeclaredEnvSourceStatus::InvalidStructure
@@ -12065,16 +12211,23 @@ fn env_source_next_step(
             "fix `{}` so ota can load declared source `{}`, then rerun {}",
             source.path,
             source.label(),
-            env_rerun_command(task_name)
+            env_rerun_command(workflow_name, task_name)
         )),
     }
 }
 
-fn env_rerun_command(task_name: Option<&str>) -> String {
-    match task_name {
-        Some(task_name) => format!("`ota env --task {task_name}`"),
-        None => String::from("`ota env`"),
+fn env_rerun_command(workflow_name: Option<&str>, task_name: Option<&str>) -> String {
+    let mut command = String::from("`ota env");
+    if let Some(workflow_name) = workflow_name {
+        command.push_str(" --workflow ");
+        command.push_str(workflow_name);
     }
+    if let Some(task_name) = task_name {
+        command.push_str(" --task ");
+        command.push_str(task_name);
+    }
+    command.push('`');
+    command
 }
 
 fn env_entry_source_metadata(
@@ -12132,21 +12285,33 @@ fn display_env_value(value: &str, secret: bool) -> String {
     }
 }
 
-fn env_next_for_missing(name: &str, task_name: Option<&str>) -> String {
+fn env_next_for_missing(
+    name: &str,
+    workflow_name: Option<&str>,
+    task_name: Option<&str>,
+) -> String {
     match task_name {
         Some(task_name) => format!(
-            "set {name} in policy env, the shell, a declared env source, or task env for `{task_name}`, then rerun `ota env --task {task_name}`"
+            "set {name} in policy env, the shell, a declared env source, or task env for `{task_name}`, then rerun {}",
+            env_rerun_command(workflow_name, Some(task_name))
         ),
         None => format!(
-            "set {name} in policy env, the shell, or a declared env source, then rerun `ota env`"
+            "set {name} in policy env, the shell, or a declared env source, then rerun {}",
+            env_rerun_command(workflow_name, None)
         ),
     }
 }
 
-fn env_next_for_invalid(name: &str, allowed: &[String]) -> String {
+fn env_next_for_invalid(
+    name: &str,
+    workflow_name: Option<&str>,
+    task_name: Option<&str>,
+    allowed: &[String],
+) -> String {
     format!(
-        "set {name} to one of: {}, then rerun `ota env`",
-        allowed.join(", ")
+        "set {name} to one of: {}, then rerun {}",
+        allowed.join(", "),
+        env_rerun_command(workflow_name, task_name)
     )
 }
 
@@ -12177,6 +12342,12 @@ fn render_env_text(path: &str, task: Option<&str>, report: &EnvReport) -> String
         format_command_header("ENV", path),
         render_readiness_status(report.ok)
     );
+    if let Some(workflow) = report.workflow.as_deref() {
+        stdout.push_str(&format!("\n\n{} {}", paint("Workflow:", "1"), workflow));
+    }
+    if let Some(profile) = report.profile.as_deref() {
+        stdout.push_str(&format!("\n{} {}", paint("Profile:", "1"), profile));
+    }
     if let Some(task) = task {
         stdout.push_str(&format!("\n\n{} {}", paint("Task:", "1"), task));
     }
@@ -12245,6 +12416,16 @@ fn render_env_text(path: &str, task: Option<&str>, report: &EnvReport) -> String
         ));
         for source in &report.sources {
             stdout.push_str(&render_env_source_text(source));
+        }
+    }
+
+    if !report.rendered_artifacts.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Rendered env artifacts")
+        ));
+        for artifact in &report.rendered_artifacts {
+            stdout.push_str(&render_env_rendered_artifact_text(artifact));
         }
     }
 
@@ -12351,6 +12532,35 @@ fn render_env_source_text(source: &EnvSourceEntry) -> String {
     }
     if let Some(next) = &source.next {
         output.push_str(&format!("\n  {} {}", paint_key("Next:"), next));
+    }
+    output
+}
+
+fn render_env_rendered_artifact_text(artifact: &EnvRenderedArtifactEntry) -> String {
+    let mut output = String::from("\n\n");
+    output.push_str(&format!("{} {}", list_bullet(), paint(&artifact.path, "1")));
+    output.push_str(&format!("\n  {} {}", paint_key("Kind:"), artifact.kind));
+    output.push_str(&format!(
+        "\n  {} {}",
+        paint_key("Exists:"),
+        if artifact.exists { "true" } else { "false" }
+    ));
+    if let Some(profile) = artifact.profile.as_deref() {
+        output.push_str(&format!("\n  {} {}", paint_key("Profile:"), profile));
+    }
+    if !artifact.includes.is_empty() {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Includes:"),
+            artifact.includes.join(", ")
+        ));
+    }
+    if !artifact.consumers.is_empty() {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Consumers:"),
+            artifact.consumers.join(", ")
+        ));
     }
     output
 }
@@ -14737,6 +14947,7 @@ fn render_run_preview_target(
     let env_report = match build_env_report_with_overrides(
         &target.contract,
         &target.contract_path,
+        None,
         Some(task_name.as_str()),
         overrides,
     ) {
@@ -18381,13 +18592,18 @@ pub fn doctor(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
+                let adjusted_contract = contract_adjusted_for_selected_workflow_env_profile(
+                    &target.contract,
+                    workflow_name,
+                );
+                let contract = adjusted_contract.as_ref().unwrap_or(&target.contract);
                 let mode = mode_override.unwrap_or_else(|| {
-                    doctor_mode_for_contract(&target.contract, overrides, workflow_name)
+                    doctor_mode_for_contract(contract, overrides, workflow_name)
                 });
                 let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
                 let mut report =
                     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
-                        &target.contract,
+                        contract,
                         &target.contract_path,
                         mode,
                         doctor_lifecycle,
@@ -18395,7 +18611,7 @@ pub fn doctor(
                         diagnosis_overrides,
                     );
                 append_contract_drift_findings(
-                    &target.contract,
+                    contract,
                     &target.contract_path,
                     &mut report.findings,
                 );
@@ -18430,7 +18646,7 @@ pub fn doctor(
                     .as_ref()
                     .and_then(AgentSummary::from_config);
                 let workflow_summary = match resolve_selected_workflow_summary(
-                    &target.contract,
+                    contract,
                     &target.contract_path,
                     workflow_name,
                 ) {
@@ -18447,12 +18663,12 @@ pub fn doctor(
                     .contract
                     .selected_workflow_required_env_names(workflow_name);
                 let execution_summary = ExecutionSummary::from_contract_with_required_env_names(
-                    &target.contract,
+                    contract,
                     &target.contract_path,
                     (!required_env_names.is_empty()).then_some(&required_env_names),
                 );
                 let selected_toolchains = selected_workflow_toolchain_summaries(
-                    &target.contract,
+                    contract,
                     diagnosis_overrides,
                     workflow_name,
                     toolchain_summary_backend_for_mode(mode),
@@ -39608,6 +39824,7 @@ fn render_execution_plan_text(
     workflow: Option<&WorkflowSummary<'_>>,
     selected_task: Option<&str>,
     declared_execution: Option<&ExecutionSummary<'_>>,
+    workflow_env_artifacts: &[EnvRenderedArtifactEntry],
     resolved: &ExecutionPlanResolved,
     overrides: Option<&ExecutionPlanOverrides>,
 ) -> String {
@@ -39744,6 +39961,16 @@ fn render_execution_plan_text(
                 summary_bullet(),
                 render_backticked_text(&line, Some(contract_path))
             ));
+        }
+    }
+
+    if !workflow_env_artifacts.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Workflow Env Artifacts")
+        ));
+        for artifact in workflow_env_artifacts {
+            stdout.push_str(&render_env_rendered_artifact_text(artifact));
         }
     }
 
@@ -42196,7 +42423,7 @@ tasks:
         )
         .unwrap();
 
-        let report = build_env_report(&contract, &contract_path, Some("build")).unwrap();
+        let report = build_env_report(&contract, &contract_path, None, Some("build")).unwrap();
 
         assert!(report.env.iter().any(|entry| {
             entry.name == "OTA_WORKSPACE"
@@ -42263,6 +42490,7 @@ tasks:
         let report = build_env_report_with_overrides(
             &contract,
             &contract_path,
+            None,
             Some("test"),
             ExecutionOverrides {
                 backend: Some(Backend::Container),
@@ -42308,6 +42536,7 @@ tasks:
         let error = build_env_report_with_overrides(
             &contract,
             &contract_path,
+            None,
             Some("docker-build"),
             ExecutionOverrides::default(),
         )
@@ -42369,7 +42598,7 @@ workflows:
         .unwrap();
 
         assert!(!proof_ok);
-        assert_eq!(phase, "service readiness");
+        assert_eq!(phase, "readiness");
         let reason = up_failure.as_deref().unwrap_or_default();
         assert!(reason.contains("exit code 1"));
         assert!(!report.ok);
@@ -42468,7 +42697,7 @@ workflows:
 
         assert!(started.elapsed() < Duration::from_secs(5));
         assert!(!proof_ok);
-        assert_eq!(phase, "service readiness");
+        assert_eq!(phase, "readiness");
         assert!(up_failure.is_none());
         assert!(!report.ok);
         assert!(
@@ -42564,7 +42793,7 @@ workflows:
         server.join().expect("probe server should finish");
 
         assert!(!proof_ok);
-        assert_eq!(phase, "service readiness");
+        assert_eq!(phase, "readiness");
         let reason = up_failure.as_deref().unwrap_or_default();
         assert!(reason.contains("exit code 1"), "{reason}");
         assert!(report.findings.is_empty(), "{report:?}");
@@ -42653,7 +42882,7 @@ workflows:
         server.join().expect("probe server should finish");
 
         assert!(proof_ok);
-        assert_eq!(phase, "post-up diagnosis");
+        assert_eq!(phase, "readiness");
         assert!(up_failure.is_none(), "{up_failure:?}");
         assert!(report.ok, "{report:?}");
     }
@@ -42749,7 +42978,7 @@ readiness:
         server.join().expect("probe server should finish");
 
         assert!(proof_ok);
-        assert_eq!(phase, "post-up diagnosis");
+        assert_eq!(phase, "readiness");
         assert!(up_failure.is_none(), "{up_failure:?}");
         assert!(report.ok, "{report:?}");
         assert_eq!(report.findings.len(), 1, "{report:?}");
@@ -42823,7 +43052,7 @@ readiness:
         let _ = child.wait();
 
         assert!(!proof_ok);
-        assert_eq!(phase, "service readiness");
+        assert_eq!(phase, "readiness");
         let reason = up_failure.as_deref().unwrap_or_default();
         assert!(reason.contains("exit code 0"), "{reason}");
         assert!(!report.ok, "{report:?}");
@@ -42942,7 +43171,7 @@ workflows:
         server.join().expect("probe server should finish");
 
         assert!(!proof_ok);
-        assert_eq!(phase, "service readiness");
+        assert_eq!(phase, "readiness");
         let reason = up_failure.as_deref().unwrap_or_default();
         assert!(reason.contains("exit code 0"), "{reason}");
         assert!(!report.ok, "{report:?}");
@@ -43055,7 +43284,7 @@ readiness:
         server.join().expect("probe server should finish");
 
         assert!(proof_ok);
-        assert_eq!(phase, "post-up diagnosis");
+        assert_eq!(phase, "readiness");
         assert!(up_failure.is_none(), "{up_failure:?}");
         assert!(report.ok, "{report:?}");
     }
@@ -43427,6 +43656,7 @@ workflows:
         };
         let class = super::proof_runtime_failure_class(
             &summary,
+            "cleanup",
             Some("cleanup failed"),
             None,
             Path::new("./.ota/proof/instant/up.log"),
@@ -43454,7 +43684,8 @@ workflows:
                 provenance_key: None,
             }),
         };
-        let class = super::proof_runtime_failure_class(&summary, None, Some("run failed"), &up_log);
+        let class =
+            super::proof_runtime_failure_class(&summary, "run", None, Some("run failed"), &up_log);
         assert_eq!(class.as_deref(), Some("install_or_toolchain_failure"));
     }
 
@@ -43477,6 +43708,7 @@ workflows:
         };
         let class = super::proof_runtime_failure_class(
             &summary,
+            "readiness",
             None,
             Some("timed out while waiting"),
             Path::new("./.ota/proof/instant/up.log"),
@@ -43496,6 +43728,7 @@ workflows:
         };
         let class = super::proof_runtime_failure_class(
             &summary,
+            "readiness",
             None,
             Some("up process exited with code 1"),
             Path::new("./.ota/proof/instant/up.log"),
@@ -43515,6 +43748,7 @@ workflows:
         };
         let class = super::proof_runtime_failure_class(
             &summary,
+            "readiness",
             None,
             Some("timed out while waiting for readiness"),
             Path::new("./.ota/proof/instant/up.log"),
@@ -43534,6 +43768,7 @@ workflows:
         };
         let class = super::proof_runtime_failure_class(
             &summary,
+            "interrupted",
             None,
             Some("runtime proof interrupted by signal"),
             Path::new("./.ota/proof/instant/up.log"),
@@ -43546,7 +43781,7 @@ workflows:
         assert_eq!(
             super::proof_runtime_status_word(
                 DoctorVerdict::NotReady,
-                "service readiness",
+                "readiness",
                 true,
                 false,
                 false,
@@ -43560,7 +43795,7 @@ workflows:
         assert_eq!(
             super::proof_runtime_status_word(
                 DoctorVerdict::NotReady,
-                "service readiness",
+                "readiness",
                 false,
                 true,
                 false,
@@ -43612,19 +43847,14 @@ workflows:
             "./ota.yaml",
             Some("default"),
             &contract_path,
-            "service readiness",
-            super::proof_runtime_status_word(
-                summary.verdict,
-                "service readiness",
-                false,
-                false,
-                false,
-            ),
+            "readiness",
+            super::proof_runtime_status_word(summary.verdict, "readiness", false, false, false),
             &summary,
             Some("up process exited with code 1"),
             "topology.json",
             "doctor.json",
             "up.log",
+            &[],
             None,
             None,
             None,
@@ -43650,19 +43880,14 @@ workflows:
             "./ota.yaml",
             Some("default"),
             Path::new("./ota.yaml"),
-            "service readiness",
-            super::proof_runtime_status_word(
-                summary.verdict,
-                "service readiness",
-                false,
-                false,
-                false,
-            ),
+            "readiness",
+            super::proof_runtime_status_word(summary.verdict, "readiness", false, false, false),
             &summary,
             Some("up process exited with code 1"),
             "topology.json",
             "doctor.json",
             "up.log",
+            &[],
             None,
             None,
             None,
@@ -43830,19 +44055,14 @@ workflows:
             "./ota.yaml",
             Some("default"),
             Path::new("./ota.yaml"),
-            "service readiness",
-            super::proof_runtime_status_word(
-                summary.verdict,
-                "service readiness",
-                false,
-                false,
-                false,
-            ),
+            "readiness",
+            super::proof_runtime_status_word(summary.verdict, "readiness", false, false, false),
             &summary,
             Some("`ota up --stream` exited while waiting for readiness (exit code 1)"),
             "topology.json",
             "doctor.json",
             "up.log",
+            &[],
             None,
             None,
             None,
@@ -43890,6 +44110,174 @@ workflows:
         .expect("likely cause should be detected");
         assert!(likely.contains("Redis"), "{likely}");
         assert!(likely.contains("task `env_files`"), "{likely}");
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_falls_back_to_detached_run_hint() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/docker-build");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "warning: command exited before readiness\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            "detached run output: warning: command exited before readiness"
+        );
+    }
+
+    #[test]
+    fn proof_runtime_refined_phase_uses_up_log_phase_for_blocked_preconditions() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/docker-build");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(
+            &up_log,
+            "🦦 UP ./ota.yaml\n\n➤ BLOCKED\nPhase: preconditions\nBackend: native\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Check failed: docker-build-env-compose-compatible"),
+                why: String::from("the configured check did not succeed"),
+                next: String::from("rerun ota doctor"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let phase =
+            super::proof_runtime_refined_phase(&summary, "service readiness", up_log.as_path());
+        assert_eq!(phase, "preconditions");
+    }
+
+    #[test]
+    fn proof_runtime_refined_phase_keeps_readiness_for_checks_without_up_log_phase() {
+        let fixture = TempDir::new().unwrap();
+        let up_log = fixture.path().join("up.log");
+        fs::write(&up_log, "some proof output without phase markers\n").unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Check failed: setup-complete"),
+                why: String::from("the configured check did not succeed"),
+                next: String::from("rerun ota doctor"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let phase = super::proof_runtime_refined_phase(&summary, "readiness", up_log.as_path());
+        assert_eq!(phase, "readiness");
+    }
+
+    #[test]
+    fn proof_runtime_refined_phase_maps_run_exit_before_readiness_to_run() {
+        let fixture = TempDir::new().unwrap();
+        let up_log = fixture.path().join("up.log");
+        fs::write(&up_log, "some proof output without phase markers\n").unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("the process exited before readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let phase = super::proof_runtime_refined_phase(&summary, "readiness", up_log.as_path());
+        assert_eq!(phase, "run");
+    }
+
+    #[test]
+    fn proof_runtime_phase_from_up_log_normalizes_post_up_diagnosis_to_readiness() {
+        let fixture = TempDir::new().unwrap();
+        let up_log = fixture.path().join("up.log");
+        fs::write(
+            &up_log,
+            "🦦 UP ./ota.yaml\n\n➤ READY\nPhase: post-up diagnosis\nBackend: native\n",
+        )
+        .unwrap();
+
+        let phase = super::proof_runtime_phase_from_up_log(up_log.as_path());
+        assert_eq!(phase.as_deref(), Some("readiness"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_distinguishes_precondition_blockers() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                severity: FindingSeverity::Error,
+                summary: String::from("Check failed: setup-complete"),
+                why: String::from("the configured check did not succeed"),
+                next: String::from("rerun ota doctor"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "preconditions",
+            None,
+            None,
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("precondition_blocked"));
     }
 
     #[test]
@@ -43963,7 +44351,7 @@ tasks:
             std::env::remove_var("APP_PORT");
         }
 
-        let report = build_env_report(&contract, &contract_path, None).unwrap();
+        let report = build_env_report(&contract, &contract_path, None, None).unwrap();
         let rendered = strip_ansi_codes(&render_env_text(".", None, &report));
 
         assert!(rendered.contains("Source: source file"), "{rendered}");
@@ -44012,6 +44400,7 @@ tasks:
             None,
             None,
             None,
+            None,
             OutputFormat::Json,
             false,
         );
@@ -44031,6 +44420,293 @@ tasks:
             Some(value) => unsafe { std::env::set_var("APP_PORT", value) },
             None => unsafe { std::env::remove_var("APP_PORT") },
         }
+    }
+
+    #[test]
+    fn env_json_with_workflow_includes_selected_profile_and_rendered_artifact() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract_contents = r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    docker-build:
+      sources:
+        - kind: dotenv
+          path: .env.profile
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
+tasks:
+  build:
+    run: echo build
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+    run:
+      task: build
+"#;
+        fs::write(&contract_path, contract_contents).unwrap();
+        fs::write(
+            fixture.path().join(".env.profile"),
+            "DATABASE_URL=postgres://profile\n",
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".env.docker-build"),
+            "DATABASE_URL=postgres://profile\nREDIS_HOST=redis\n",
+        )
+        .unwrap();
+
+        let output = env_command(
+            Some(contract_path.as_path()),
+            None,
+            None,
+            Some("docker-build"),
+            None,
+            OutputFormat::Json,
+            false,
+        );
+        let body: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["workflow"], "docker-build");
+        assert_eq!(body["profile"], "docker-build");
+        assert_eq!(body["rendered_artifacts"][0]["path"], ".env.docker-build");
+        assert_eq!(body["rendered_artifacts"][0]["kind"], "dotenv");
+        assert_eq!(body["rendered_artifacts"][0]["exists"], true);
+        assert_eq!(body["rendered_artifacts"][0]["profile"], "docker-build");
+        assert_eq!(body["rendered_artifacts"][0]["consumers"][0], "task:build");
+        assert_eq!(body["rendered_artifacts"][0]["includes"][0], "DATABASE_URL");
+    }
+
+    #[test]
+    fn execution_plan_json_includes_workflow_env_artifacts() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+      default: postgres://localhost/app
+  profiles:
+    docker-build:
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: ota
+      service: postgres
+      env_file: .env.docker-build
+tasks:
+  build:
+    run: echo build
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+    services:
+      required:
+        - postgres
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".env.docker-build"),
+            "DATABASE_URL=postgres://localhost/app\n",
+        )
+        .unwrap();
+
+        let output = super::execution_plan(
+            Some(contract_path.as_path()),
+            None,
+            None,
+            Some("docker-build"),
+            ExecutionOverrides::default(),
+            OutputFormat::Json,
+            false,
+        );
+        let body: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+
+        assert_eq!(body["ok"], true);
+        assert_eq!(
+            body["workflow_env_artifacts"][0]["path"],
+            ".env.docker-build"
+        );
+        assert_eq!(body["workflow_env_artifacts"][0]["profile"], "docker-build");
+        assert_eq!(
+            body["workflow_env_artifacts"][0]["consumers"][0],
+            "task:build"
+        );
+        assert_eq!(
+            body["workflow_env_artifacts"][0]["consumers"][1],
+            "service:postgres"
+        );
+    }
+
+    #[test]
+    fn receipt_json_includes_workflow_env_artifacts() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+      default: postgres://localhost/app
+  profiles:
+    docker-build:
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
+tasks:
+  build:
+    run: echo build
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let receipt = super::repo_execution_receipt(
+            &contract_path,
+            &contract,
+            super::native_phase_execution_context(),
+            "READY",
+            "readiness",
+            Some("docker-build"),
+            None,
+            None,
+            &[],
+            None,
+            None,
+        );
+        let body: serde_json::Value = serde_json::from_str(&super::to_json(&receipt)).unwrap();
+
+        assert_eq!(
+            body["workflow_env_artifacts"][0]["path"],
+            ".env.docker-build"
+        );
+        assert_eq!(body["workflow_env_artifacts"][0]["profile"], "docker-build");
+        assert_eq!(
+            body["workflow_env_artifacts"][0]["consumers"][0],
+            "task:build"
+        );
+    }
+
+    #[test]
+    fn proof_runtime_status_json_includes_workflow_env_artifacts() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+      default: postgres://localhost/app
+  profiles:
+    docker-build:
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
+tasks:
+  build:
+    run: echo build
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
+                ok: true,
+                path: contract_path.to_str().unwrap(),
+                mode: "runtime-proof",
+                workflow: Some("docker-build"),
+                phase: "run",
+                summary: DoctorSummary::default(),
+                artifacts: Some(crate::output::ProofRuntimeArtifacts {
+                    topology: "topology.json",
+                    doctor: "doctor.json",
+                    up_log: "up.log",
+                }),
+                workflow_env_artifacts:
+                    super::selected_workflow_env_profile_rendered_artifact_entries(
+                        &contract,
+                        &contract_path,
+                        Some("docker-build"),
+                    ),
+                failure_class: None,
+                error: None,
+                likely_cause: None,
+                next: None,
+            }))
+            .unwrap();
+
+        assert_eq!(
+            body["workflow_env_artifacts"][0]["path"],
+            ".env.docker-build"
+        );
+        assert_eq!(
+            body["workflow_env_artifacts"][0]["consumers"][0],
+            "task:build"
+        );
     }
 
     #[test]
@@ -44086,13 +44762,14 @@ tasks:
         }
 
         let contract = parse_contract_str(&contract_path, contract_contents).unwrap();
-        let report = build_env_report(&contract, &contract_path, None).unwrap();
+        let report = build_env_report(&contract, &contract_path, None, None).unwrap();
         let rendered = strip_ansi_codes(&render_env_text(".", None, &report));
         assert!(rendered.contains("Value: <redacted>"), "{rendered}");
         assert!(!rendered.contains("super-secret-token"), "{rendered}");
 
         let output = env_command(
             Some(contract_path.as_path()),
+            None,
             None,
             None,
             None,
@@ -45468,6 +46145,7 @@ env:
                         path: String::from(".env.local"),
                         must_exist: false,
                     }],
+                    profiles: BTreeMap::new(),
                 },
                 ..DetectContract::default()
             },
@@ -45811,6 +46489,7 @@ env:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -49663,6 +50342,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -49744,6 +50424,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -49936,6 +50617,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -49998,6 +50680,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -50089,6 +50772,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -50201,6 +50885,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -50276,6 +50961,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -50415,6 +51101,7 @@ tasks:
                 acquired: Vec::new(),
                 env: BTreeMap::new(),
                 env_sources: Vec::new(),
+                workflow_env_artifacts: Vec::new(),
                 native_prerequisites: Vec::new(),
                 toolchains: Vec::new(),
                 runtime: None,
@@ -50687,6 +51374,130 @@ workflows:
                 String::from("run task `setup`"),
                 String::from("re-check repo readiness"),
             ]
+        );
+    }
+
+    #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_merges_profile_into_selected_tasks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: env-profile
+env:
+  profiles:
+    docker-build:
+      sources:
+        - kind: dotenv
+          path: .env.docker-build
+      env_files:
+        - .env.docker-build
+      env:
+        REDIS_HOST: redis
+        NEXTAUTH_URL: http://web:3000
+tasks:
+  build:
+    env_files:
+      - .env.local
+    env:
+      NEXTAUTH_URL: http://localhost:3000
+    run: pnpm build
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(
+            &contract,
+            Some("docker-build"),
+        )
+        .expect("workflow env profile should adjust contract");
+        assert_eq!(
+            adjusted
+                .env
+                .sources
+                .first()
+                .map(|source| source.path.as_str()),
+            Some(".env.docker-build")
+        );
+        let task = adjusted.tasks.get("build").expect("task should exist");
+        assert_eq!(
+            task.env_files,
+            vec![
+                String::from(".env.docker-build"),
+                String::from(".env.local")
+            ]
+        );
+        assert_eq!(
+            task.env.get("REDIS_HOST").map(String::as_str),
+            Some("redis")
+        );
+        assert_eq!(
+            task.env.get("NEXTAUTH_URL").map(String::as_str),
+            Some("http://localhost:3000")
+        );
+    }
+
+    #[test]
+    fn render_selected_workflow_env_profile_artifacts_writes_dotenv_from_profile_truth() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: env-profile-render
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    docker-build:
+      sources:
+        - kind: dotenv
+          path: .env.profile
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".env.profile"),
+            "DATABASE_URL=postgres://profile\n",
+        )
+        .unwrap();
+
+        let messages = super::render_selected_workflow_env_profile_artifacts(
+            &contract,
+            contract_path.as_path(),
+            Some("docker-build"),
+            None,
+        )
+        .expect("profile artifact render should succeed");
+        assert_eq!(messages.len(), 1);
+
+        let rendered = fs::read_to_string(fixture.path().join(".env.docker-build")).unwrap();
+        assert_eq!(
+            rendered,
+            "DATABASE_URL=postgres://profile\nREDIS_HOST=redis\n"
         );
     }
 
@@ -54854,6 +55665,7 @@ execution:
             None,
             None,
             Some(&execution),
+            &[],
             &ExecutionPlanResolved {
                 backend: String::from("container"),
                 backend_source: String::from("default context"),
@@ -55366,6 +56178,7 @@ agent:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -56806,6 +57619,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -56859,6 +57673,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -56912,6 +57727,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -56982,6 +57798,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: Some(runtime),
@@ -57052,6 +57869,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -57163,6 +57981,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -57262,6 +58081,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -57369,6 +58189,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: Some(runtime),
@@ -57424,6 +58245,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -60118,6 +60940,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -60195,6 +61018,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -60257,6 +61081,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -60322,6 +61147,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -60381,6 +61207,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -60440,6 +61267,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -60505,6 +61333,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -61273,6 +62102,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: None,
@@ -61412,6 +62242,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: Some(runtime),
@@ -61511,6 +62342,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: Vec::new(),
             runtime: Some(runtime),
@@ -61715,6 +62547,7 @@ execution:
             "post-setup diagnosis",
             None,
             None,
+            None,
             &[],
             None,
             None,
@@ -61755,6 +62588,7 @@ execution:
             super::native_phase_execution_context(),
             "NOT READY",
             "services",
+            None,
             Some("postgres"),
             None,
             &[],
@@ -61824,6 +62658,7 @@ tasks:
             "PREVIEW",
             "preview",
             None,
+            None,
             Some("setup"),
             &[],
             None,
@@ -61887,6 +62722,7 @@ tasks:
             ),
             "READY",
             "setup",
+            None,
             None,
             Some("setup"),
             &[],
@@ -62109,6 +62945,7 @@ tasks:
             acquired: Vec::new(),
             env: BTreeMap::new(),
             env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
             native_prerequisites: Vec::new(),
             toolchains: vec![ToolchainSelectionSummary {
                 name: String::from("rust"),
@@ -66225,6 +67062,7 @@ fn run_selected_precondition_failure(
     let env_report = build_env_report_with_overrides(
         contract,
         contract_path,
+        None,
         Some(task_name.as_str()),
         overrides,
     )
@@ -70215,6 +71053,7 @@ fn run_execution_receipt_with_shared(
             .iter()
             .map(|(name, value)| receipt_env_source_entry(name, value, &declared_sources))
             .collect(),
+        workflow_env_artifacts: Vec::new(),
         native_prerequisites,
         toolchains,
         runtime,
@@ -72683,7 +73522,7 @@ fn wait_for_proof_runtime_readiness(
                         && exit_status.success();
                     if successful_service_run_exit {
                         if latest_report.ok {
-                            return Ok((latest_report, "post-up diagnosis", true, None));
+                            return Ok((latest_report, "readiness", true, None));
                         }
                         deferred_service_run_exit_failure = Some(
                             proof_runtime_process_exit_failure(process_label, exit_status),
@@ -72696,18 +73535,13 @@ fn wait_for_proof_runtime_readiness(
                         );
                     } else {
                         if exit_status.success() && latest_report.ok {
-                            return Ok((latest_report, "post-up diagnosis", true, None));
+                            return Ok((latest_report, "readiness", true, None));
                         }
                         let up_process_failure = Some(proof_runtime_process_exit_failure(
                             process_label,
                             exit_status,
                         ));
-                        return Ok((
-                            latest_report,
-                            "service readiness",
-                            false,
-                            up_process_failure,
-                        ));
+                        return Ok((latest_report, "readiness", false, up_process_failure));
                     }
                 }
                 Ok(None) => {}
@@ -72733,18 +73567,13 @@ fn wait_for_proof_runtime_readiness(
                 match up_process.try_wait() {
                     Ok(Some(exit_status)) => {
                         if exit_status.success() {
-                            return Ok((latest_report, "post-up diagnosis", true, None));
+                            return Ok((latest_report, "readiness", true, None));
                         }
                         let up_process_failure = Some(proof_runtime_process_exit_failure(
                             process_label,
                             exit_status,
                         ));
-                        return Ok((
-                            latest_report,
-                            "service readiness",
-                            false,
-                            up_process_failure,
-                        ));
+                        return Ok((latest_report, "readiness", false, up_process_failure));
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -72762,18 +73591,13 @@ fn wait_for_proof_runtime_readiness(
                     match up_process.try_wait() {
                         Ok(Some(exit_status)) => {
                             if exit_status.success() {
-                                return Ok((latest_report, "post-up diagnosis", true, None));
+                                return Ok((latest_report, "readiness", true, None));
                             }
                             let up_process_failure = Some(proof_runtime_process_exit_failure(
                                 process_label,
                                 exit_status,
                             ));
-                            return Ok((
-                                latest_report,
-                                "service readiness",
-                                false,
-                                up_process_failure,
-                            ));
+                            return Ok((latest_report, "readiness", false, up_process_failure));
                         }
                         Ok(None) => {
                             thread::sleep(Duration::from_millis(25));
@@ -72785,9 +73609,9 @@ fn wait_for_proof_runtime_readiness(
                         }
                     }
                 }
-                return Ok((latest_report, "post-up diagnosis", true, None));
+                return Ok((latest_report, "readiness", true, None));
             }
-            return Ok((latest_report, "service readiness", false, None));
+            return Ok((latest_report, "readiness", false, None));
         }
 
         let latest_report = if matches!(
@@ -72805,18 +73629,13 @@ fn wait_for_proof_runtime_readiness(
                 match up_process.try_wait() {
                     Ok(Some(exit_status)) => {
                         if exit_status.success() {
-                            return Ok((latest_report, "post-up diagnosis", true, None));
+                            return Ok((latest_report, "readiness", true, None));
                         }
                         let up_process_failure = Some(proof_runtime_process_exit_failure(
                             process_label,
                             exit_status,
                         ));
-                        return Ok((
-                            latest_report,
-                            "service readiness",
-                            false,
-                            up_process_failure,
-                        ));
+                        return Ok((latest_report, "readiness", false, up_process_failure));
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -72825,7 +73644,7 @@ fn wait_for_proof_runtime_readiness(
                         ));
                     }
                 }
-                return Ok((latest_report, "post-up diagnosis", true, None));
+                return Ok((latest_report, "readiness", true, None));
             }
             Some(latest_report)
         } else {
@@ -72848,7 +73667,7 @@ fn wait_for_proof_runtime_readiness(
         if interrupted.load(Ordering::Relaxed) {
             return Ok((
                 finalize_report(latest_report),
-                "service readiness",
+                "interrupted",
                 false,
                 deferred_service_run_exit_failure
                     .take()
@@ -72860,7 +73679,7 @@ fn wait_for_proof_runtime_readiness(
         if timed_out {
             return Ok((
                 finalize_report(latest_report),
-                "service readiness",
+                "readiness",
                 false,
                 deferred_service_run_exit_failure
                     .take()
@@ -72992,8 +73811,25 @@ fn proof_runtime_ok(summary: &DoctorSummary, proof_error: Option<&str>) -> bool 
     summary.error_count == 0 && proof_error.is_none()
 }
 
+fn canonical_proof_runtime_phase_key(phase: &str) -> String {
+    match phase.trim().to_ascii_lowercase().as_str() {
+        "preconditions" | "validation" | "dependencies" | "provisioning" | "activation" => {
+            String::from("preconditions")
+        }
+        "prepare" => String::from("prepare"),
+        "setup" | "repo setup" => String::from("setup"),
+        "services" | "service readiness" => String::from("services"),
+        "task" | "run" => String::from("run"),
+        "post-up diagnosis" | "readiness" | "timeout" => String::from("readiness"),
+        "cleanup" => String::from("cleanup"),
+        "interrupted" => String::from("interrupted"),
+        other => other.to_string(),
+    }
+}
+
 fn proof_runtime_failure_class(
     summary: &DoctorSummary,
+    phase: &str,
     cleanup_error: Option<&str>,
     up_process_failure: Option<&str>,
     up_log_artifact_path: &Path,
@@ -73008,6 +73844,8 @@ fn proof_runtime_failure_class(
         return Some(String::from("interrupted"));
     }
 
+    let canonical_phase = canonical_proof_runtime_phase_key(phase);
+
     let Some(primary) = proof_runtime_blocking_primary_blocker(summary) else {
         if up_process_failure
             .is_some_and(|failure| failure.contains("timed out while waiting for readiness"))
@@ -73015,7 +73853,14 @@ fn proof_runtime_failure_class(
             return Some(String::from("readiness_timeout"));
         }
         if up_process_failure.is_some() {
-            return Some(String::from("up_process_failure"));
+            return Some(match canonical_phase.as_str() {
+                "preconditions" => String::from("precondition_blocked"),
+                "prepare" => String::from("prepare_failed"),
+                "setup" => String::from("setup_failed"),
+                "services" => String::from("service_readiness_failed"),
+                "run" => String::from("run_failed"),
+                _ => String::from("up_process_failure"),
+            });
         }
         return None;
     };
@@ -73049,7 +73894,80 @@ fn proof_runtime_failure_class(
     {
         return Some(String::from("readiness_evaluation_failed"));
     }
-    Some(String::from("primary_blocker"))
+    Some(match canonical_phase.as_str() {
+        "preconditions" => String::from("precondition_blocked"),
+        "prepare" => String::from("prepare_failed"),
+        "setup" => String::from("setup_failed"),
+        "services" => String::from("service_readiness_failed"),
+        "run" => String::from("run_failed"),
+        "readiness" => String::from("readiness_blocked"),
+        _ => String::from("primary_blocker"),
+    })
+}
+
+fn proof_runtime_refined_phase(
+    summary: &DoctorSummary,
+    fallback_phase: &str,
+    up_log_artifact_path: &Path,
+) -> String {
+    if let Some(phase) = proof_runtime_phase_from_up_log(up_log_artifact_path) {
+        return phase;
+    }
+
+    let Some(primary) = proof_runtime_blocking_primary_blocker(summary) else {
+        return canonical_proof_runtime_phase_key(fallback_phase);
+    };
+
+    if primary
+        .summary
+        .starts_with("Unsupported host platform for context:")
+        || primary
+            .summary
+            .starts_with("Unsupported host architecture for context:")
+    {
+        return String::from("preconditions");
+    }
+
+    if primary.summary == "Run task exited before readiness" {
+        return String::from("run");
+    }
+
+    if primary.summary.starts_with("Surface readiness failed:")
+        || primary.summary.starts_with("Surface readiness timed out:")
+        || primary
+            .summary
+            .starts_with("Surface readiness could not be evaluated:")
+        || primary
+            .summary
+            .starts_with("Signal surface readiness failed:")
+        || primary
+            .summary
+            .starts_with("Signal surface readiness timed out:")
+        || primary
+            .summary
+            .starts_with("Signal surface readiness could not be evaluated:")
+        || primary.summary.starts_with("Probe failed:")
+        || primary.summary.starts_with("Probe timed out:")
+    {
+        return String::from("readiness");
+    }
+
+    canonical_proof_runtime_phase_key(fallback_phase)
+}
+
+fn proof_runtime_phase_from_up_log(up_log_artifact_path: &Path) -> Option<String> {
+    let log = fs::read_to_string(up_log_artifact_path).ok()?;
+    for raw_line in log.lines() {
+        let line = strip_ansi_codes(raw_line);
+        let trimmed = line.trim();
+        if let Some(phase) = trimmed.strip_prefix("Phase:") {
+            return Some(canonical_proof_runtime_phase_key(phase));
+        }
+        if let Some(phase) = trimmed.strip_prefix("Cause:") {
+            return Some(canonical_proof_runtime_phase_key(phase));
+        }
+    }
+    None
 }
 
 fn proof_runtime_likely_cause(
@@ -73084,7 +74002,7 @@ fn proof_runtime_likely_cause(
         };
         return Some(cause);
     }
-    None
+    detached_run_failure_hint_from_log(&artifact_dir.join("up-detached-run.log"))
 }
 
 fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path: &Path) -> bool {
@@ -73136,11 +74054,7 @@ fn proof_runtime_status_word(
 }
 
 fn proof_runtime_phase_label(phase: &str) -> &str {
-    match phase {
-        "services" => "service readiness",
-        "run" => "task run",
-        other => other,
-    }
+    phase
 }
 
 fn proof_runtime_command_for_repo(
@@ -73197,6 +74111,7 @@ fn render_proof_runtime_text(
     topology_artifact: &str,
     doctor_artifact: &str,
     up_log_artifact: &str,
+    workflow_env_artifacts: &[EnvRenderedArtifactEntry],
     likely_cause: Option<&str>,
     cleanup_error: Option<&str>,
     cleanup_next: Option<&str>,
@@ -73329,6 +74244,15 @@ fn render_proof_runtime_text(
         paint_key("Up log:"),
         paint_backticked_code(up_log_artifact)
     ));
+    if !workflow_env_artifacts.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Workflow Env Artifacts")
+        ));
+        for artifact in workflow_env_artifacts {
+            stdout.push_str(&render_env_rendered_artifact_text(artifact));
+        }
+    }
 
     if status == "READY" {
         stdout.push_str(&format!("\n\n{}", paint_next_key()));
@@ -73963,6 +74887,16 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
                 source.value,
                 source.source
             ));
+        }
+    }
+
+    if !receipt.workflow_env_artifacts.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Workflow Env Artifacts")
+        ));
+        for artifact in &receipt.workflow_env_artifacts {
+            stdout.push_str(&render_env_rendered_artifact_text(artifact));
         }
     }
 
@@ -76164,6 +77098,7 @@ fn repo_readiness_receipt(
         "readiness",
         None,
         None,
+        None,
         &report.findings,
         None,
         report
@@ -76194,6 +77129,7 @@ fn repo_execution_receipt(
     context: PhaseExecutionContext,
     status: &str,
     phase: &str,
+    workflow_name: Option<&str>,
     service: Option<&str>,
     task: Option<&str>,
     findings: &[Finding],
@@ -76267,6 +77203,11 @@ fn repo_execution_receipt(
             .iter()
             .map(|(name, value)| receipt_env_source_entry(name, value, &declared_sources))
             .collect(),
+        workflow_env_artifacts: selected_workflow_env_profile_rendered_artifact_entries(
+            contract,
+            path,
+            workflow_name,
+        ),
         native_prerequisites,
         toolchains,
         runtime: None,
@@ -76962,6 +77903,7 @@ fn workspace_up_receipt(
             .map(|source| (source.name.clone(), source.value.clone()))
             .collect(),
         env_sources,
+        workflow_env_artifacts: Vec::new(),
         native_prerequisites: Vec::new(),
         toolchains: Vec::new(),
         runtime: None,
@@ -77043,6 +77985,7 @@ fn workspace_status_receipt(
         acquired: Vec::new(),
         env: BTreeMap::new(),
         env_sources: Vec::new(),
+        workflow_env_artifacts: Vec::new(),
         native_prerequisites: Vec::new(),
         toolchains: Vec::new(),
         runtime: None,
@@ -77131,6 +78074,7 @@ fn workspace_run_receipt(
             .map(|source| (source.name.clone(), source.value.clone()))
             .collect(),
         env_sources,
+        workflow_env_artifacts: Vec::new(),
         native_prerequisites: Vec::new(),
         toolchains: Vec::new(),
         runtime: None,
@@ -78683,6 +79627,11 @@ fn build_up_preview(
     for action in &native_preparation_actions {
         actions.push(render_up_preview_native_preparation_action(action));
     }
+    if let Some(action) =
+        selected_workflow_env_profile_render_preview_action(contract, workflow_name)
+    {
+        actions.push(action);
+    }
     actions.extend(toolchain_actions);
     for action in &activation_actions {
         actions.push(render_up_preview_activation_action(action));
@@ -78759,6 +79708,7 @@ fn preview_receipt(
         },
         status,
         "preview",
+        workflow_name,
         None,
         preview_task,
         findings,
@@ -79334,9 +80284,223 @@ fn contract_adjusted_for_up_setup_phase(
     Some(adjusted)
 }
 
+fn contract_adjusted_for_selected_workflow_env_profile(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Option<Contract> {
+    let profile = contract
+        .selected_workflow_env_profile(workflow_name)?
+        .clone();
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    if task_names.is_empty() && profile.sources.is_empty() {
+        return None;
+    }
+
+    let mut adjusted = contract.clone();
+    let mut merged_sources = profile.sources.clone();
+    for source in &adjusted.env.sources {
+        if !merged_sources.iter().any(|existing| existing == source) {
+            merged_sources.push(source.clone());
+        }
+    }
+    adjusted.env.sources = merged_sources;
+    let rendered_dotenv_path = profile
+        .render
+        .as_ref()
+        .and_then(|render| render.dotenv.as_ref())
+        .map(|dotenv| dotenv.path.clone());
+
+    for task_name in task_names {
+        let Some(task) = adjusted.tasks.get_mut(task_name.as_str()) else {
+            continue;
+        };
+        if let Some(path) = rendered_dotenv_path.as_ref()
+            && !task.env_files.iter().any(|existing| existing == path)
+        {
+            task.env_files.insert(0, path.clone());
+        }
+        if !profile.env_files.is_empty() {
+            let mut merged_env_files = profile.env_files.clone();
+            for path in &task.env_files {
+                if !merged_env_files.iter().any(|existing| existing == path) {
+                    merged_env_files.push(path.clone());
+                }
+            }
+            task.env_files = merged_env_files;
+        }
+        if !profile.env.is_empty() {
+            let mut merged_env = profile.env.clone();
+            merged_env.extend(task.env.clone());
+            task.env = merged_env;
+        }
+    }
+
+    Some(adjusted)
+}
+
+fn selected_workflow_env_profile_render_preview_action(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Option<String> {
+    let profile_name = contract.selected_workflow_env_profile_name(workflow_name)?;
+    let dotenv = contract
+        .selected_workflow_env_profile(workflow_name)?
+        .render
+        .as_ref()?
+        .dotenv
+        .as_ref()?;
+    Some(format!(
+        "render workflow env artifact `{}` from profile `{profile_name}`",
+        dotenv.path.trim()
+    ))
+}
+
+fn render_selected_workflow_env_profile_artifacts(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<Vec<String>, String> {
+    let profile_name = match contract.selected_workflow_env_profile_name(workflow_name) {
+        Some(name) => name.to_string(),
+        None => return Ok(Vec::new()),
+    };
+    let Some(profile) = contract.selected_workflow_env_profile(workflow_name) else {
+        return Ok(Vec::new());
+    };
+    let Some(dotenv) = profile
+        .render
+        .as_ref()
+        .and_then(|render| render.dotenv.as_ref())
+    else {
+        return Ok(Vec::new());
+    };
+
+    let adjusted = contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name)
+        .unwrap_or_else(|| contract.clone());
+    let resolved = crate::runner::resolve_task_env_details_with_policy(
+        &adjusted,
+        contract_path,
+        Some(&profile.env),
+        policy_env,
+    )
+    .map_err(|error| error.to_string())?;
+
+    let output_path = contract_working_dir(contract_path).join(dotenv.path.trim());
+    if let Some(parent) = output_path.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "workflow env profile `{profile_name}` could not create parent directory for `{}`: {error}",
+                dotenv.path.trim()
+            )
+        })?;
+    }
+
+    let mut lines = Vec::new();
+    for name in &dotenv.include {
+        let value = if let Some(resolved_value) = resolved.get(name) {
+            resolved_value.value.clone()
+        } else if let Some(value) = profile.env.get(name) {
+            value.clone()
+        } else {
+            return Err(format!(
+                "workflow env profile `{profile_name}` could not resolve `{name}` for rendered dotenv `{}`",
+                dotenv.path.trim()
+            ));
+        };
+        lines.push(format!("{name}={value}"));
+    }
+
+    for (name, value) in &profile.env {
+        if !dotenv.include.iter().any(|included| included == name) {
+            lines.push(format!("{name}={value}"));
+        }
+    }
+
+    let mut next = lines.join("\n");
+    if !next.is_empty() {
+        next.push('\n');
+    }
+    fs::write(&output_path, next).map_err(|error| {
+        format!(
+            "workflow env profile `{profile_name}` could not render dotenv `{}`: {error}",
+            dotenv.path.trim()
+        )
+    })?;
+
+    Ok(vec![format!(
+        "rendered workflow env artifact `{}` from profile `{profile_name}`\n",
+        dotenv.path.trim()
+    )])
+}
+
+fn selected_workflow_env_profile_rendered_artifact_entries(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_name: Option<&str>,
+) -> Vec<EnvRenderedArtifactEntry> {
+    let Some(profile_name) = contract
+        .selected_workflow_env_profile_name(workflow_name)
+        .map(str::to_string)
+    else {
+        return Vec::new();
+    };
+    let Some(profile) = contract.selected_workflow_env_profile(workflow_name) else {
+        return Vec::new();
+    };
+    let Some(dotenv) = profile
+        .render
+        .as_ref()
+        .and_then(|render| render.dotenv.as_ref())
+    else {
+        return Vec::new();
+    };
+    let path = dotenv.path.trim().to_string();
+    let rendered_path = contract_working_dir(contract_path).join(dotenv.path.trim());
+    let adjusted = contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name)
+        .unwrap_or_else(|| contract.clone());
+    let mut consumers = Vec::new();
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        let Some(task) = adjusted.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        if task
+            .env_files
+            .iter()
+            .any(|existing| existing.trim() == path)
+        {
+            consumers.push(format!("task:{task_name}"));
+        }
+    }
+    for service_name in contract.selected_workflow_required_service_names(workflow_name) {
+        let Some(service) = contract.services.get(service_name.as_str()) else {
+            continue;
+        };
+        if service
+            .manager
+            .as_ref()
+            .and_then(|manager| manager.env_file.as_deref())
+            .is_some_and(|existing| existing.trim() == path)
+        {
+            consumers.push(format!("service:{service_name}"));
+        }
+    }
+    vec![EnvRenderedArtifactEntry {
+        path,
+        kind: String::from("dotenv"),
+        includes: dotenv.include.clone(),
+        exists: rendered_path.is_file(),
+        profile: Some(profile_name),
+        consumers,
+    }]
+}
+
 fn run_up_required_services_phase(
     contract: &Contract,
     resolved_path: &Path,
+    workflow_name: Option<&str>,
     selected_services: &BTreeSet<String>,
     phase: &'static str,
     mode: RepoExecutionMode,
@@ -79374,6 +80538,7 @@ fn run_up_required_services_phase(
                             native_phase_execution_context(),
                             "SERVICE START FAILED",
                             phase,
+                            workflow_name,
                             Some(name.as_str()),
                             None,
                             &[],
@@ -79413,6 +80578,7 @@ fn run_up_required_services_phase(
                     native_phase_execution_context(),
                     "NOT READY",
                     phase,
+                    workflow_name,
                     Some(name.as_str()),
                     None,
                     &service_report.findings,
@@ -79849,6 +81015,9 @@ fn execute_repo_up_with_behavior(
     run_behavior_preference: UpRunBehaviorPreference,
     ready_timeout: Option<Duration>,
 ) -> Result<RepoUpResult, String> {
+    let adjusted_contract =
+        contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name);
+    let contract = adjusted_contract.as_ref().unwrap_or(contract);
     let mut stdout = String::new();
     let mut stderr = String::new();
     if let Some(workflow_name) = workflow_name
@@ -79928,6 +81097,7 @@ fn execute_repo_up_with_behavior(
                 phase_context,
                 "BLOCKED",
                 "preconditions",
+                workflow_name,
                 None,
                 phase_task.as_deref(),
                 &report.findings,
@@ -80011,6 +81181,7 @@ fn execute_repo_up_with_behavior(
                 ),
                 "BLOCKED",
                 "preconditions",
+                workflow_name,
                 None,
                 None,
                 &preflight.findings,
@@ -80054,6 +81225,7 @@ fn execute_repo_up_with_behavior(
                         ),
                         "NOT READY",
                         "preconditions",
+                        workflow_name,
                         None,
                         None,
                         &preflight.findings,
@@ -80138,6 +81310,7 @@ fn execute_repo_up_with_behavior(
                         ),
                         "PROVISION FAILED",
                         "provisioning",
+                        workflow_name,
                         None,
                         None,
                         &report.findings,
@@ -80179,6 +81352,7 @@ fn execute_repo_up_with_behavior(
                         ),
                         "PROVISION FAILED",
                         "provisioning",
+                        workflow_name,
                         None,
                         None,
                         &preflight.findings,
@@ -80261,6 +81435,7 @@ fn execute_repo_up_with_behavior(
                                         ),
                                         "PROVISION FAILED",
                                         "provisioning",
+                                        workflow_name,
                                         None,
                                         None,
                                         &report.findings,
@@ -80360,6 +81535,7 @@ fn execute_repo_up_with_behavior(
                                     ),
                                     "PROVISION FAILED",
                                     "provisioning",
+                                    workflow_name,
                                     None,
                                     None,
                                     &report.findings,
@@ -80401,6 +81577,7 @@ fn execute_repo_up_with_behavior(
                                     ),
                                     "PROVISION FAILED",
                                     "provisioning",
+                                    workflow_name,
                                     None,
                                     None,
                                     &preflight.findings,
@@ -80515,6 +81692,7 @@ fn execute_repo_up_with_behavior(
                             ),
                             "ACTIVATION FAILED",
                             "activation",
+                            workflow_name,
                             None,
                             None,
                             &report.findings,
@@ -80568,6 +81746,7 @@ fn execute_repo_up_with_behavior(
                 ),
                 "NOT READY",
                 "preconditions",
+                workflow_name,
                 None,
                 None,
                 &preflight.findings,
@@ -80606,6 +81785,7 @@ fn execute_repo_up_with_behavior(
                 ),
                 "NOT READY",
                 "preconditions",
+                workflow_name,
                 None,
                 None,
                 &preflight.findings,
@@ -80663,6 +81843,7 @@ fn execute_repo_up_with_behavior(
                         ),
                         "PREPARE FAILED",
                         "prepare",
+                        workflow_name,
                         None,
                         Some(prepare_task_name),
                         &[],
@@ -80719,6 +81900,7 @@ fn execute_repo_up_with_behavior(
                             ),
                             "BLOCKED",
                             "preconditions",
+                            workflow_name,
                             None,
                             Some(prepare_task_name),
                             &preflight.findings,
@@ -80743,10 +81925,21 @@ fn execute_repo_up_with_behavior(
         }
     }
 
+    let rendered_profile_artifacts = render_selected_workflow_env_profile_artifacts(
+        contract,
+        resolved_path,
+        workflow_name,
+        policy_env,
+    )?;
+    for message in rendered_profile_artifacts {
+        stdout.push_str(&message);
+    }
+
     let pre_setup_services = up_pre_setup_service_closure(contract, workflow_name);
     if let Some(result) = run_up_required_services_phase(
         contract,
         resolved_path,
+        workflow_name,
         &pre_setup_services,
         "services",
         mode,
@@ -80792,6 +81985,7 @@ fn execute_repo_up_with_behavior(
                         ),
                         "SETUP FAILED",
                         "setup",
+                        workflow_name,
                         None,
                         Some(setup_task_name),
                         &[],
@@ -80844,6 +82038,7 @@ fn execute_repo_up_with_behavior(
                                 ),
                                 "BLOCKED",
                                 "provisioning",
+                                workflow_name,
                                 None,
                                 None,
                                 &refreshed.findings,
@@ -80889,6 +82084,7 @@ fn execute_repo_up_with_behavior(
     if let Some(result) = run_up_required_services_phase(
         contract,
         resolved_path,
+        workflow_name,
         &post_setup_services,
         "services",
         mode,
@@ -80971,6 +82167,7 @@ fn execute_repo_up_with_behavior(
                     ),
                     "RUN FAILED",
                     "run",
+                    workflow_name,
                     None,
                     Some(run_task_name),
                     &[],
@@ -81033,6 +82230,7 @@ fn execute_repo_up_with_behavior(
             native_phase_execution_context(),
             "NOT READY",
             "services",
+            workflow_name,
             None,
             None,
             &service_report.findings,
@@ -81096,6 +82294,7 @@ fn execute_repo_up_with_behavior(
         ),
         if report.ok { "READY" } else { "NOT READY" },
         "post-up diagnosis",
+        workflow_name,
         None,
         None,
         &report.findings,
@@ -84708,6 +85907,7 @@ fn up_backend_fulfillment_blocked_result(
         ),
         "BLOCKED",
         "provisioning",
+        workflow_name,
         None,
         Some(task_name),
         &report.findings,

@@ -61,12 +61,12 @@ use crate::runner::{
     LoadedDeclaredEnvSource, ResolvedExecutionBackend, ResolvedNamedReadinessProbe,
     ResolvedNamedReadinessProbeContract, RunError, capture_declared_native_activation_env,
     combine_readiness_probe_paths, effective_execution, effective_task_execution,
-    host_runtime_readiness_observed, http_readiness_endpoint_status, load_declared_env_sources,
-    parse_http_probe_url, resolve_context_execution_backend, resolve_declared_env_source_value,
-    resolve_named_readiness_probe, resolve_named_readiness_probe_contract,
-    resolve_task_target_binding_url_with_contract_path, run_backend_argv_command_captured,
-    run_backend_command_captured, task_runtime_host_readiness_probe_for_backend,
-    task_surface_host_readiness_probe_for_backend,
+    evaluate_declared_env_check, host_runtime_readiness_observed, http_readiness_endpoint_status,
+    load_declared_env_sources, parse_http_probe_url, resolve_context_execution_backend,
+    resolve_declared_env_source_value, resolve_named_readiness_probe,
+    resolve_named_readiness_probe_contract, resolve_task_target_binding_url_with_contract_path,
+    run_backend_argv_command_captured, run_backend_command_captured,
+    task_runtime_host_readiness_probe_for_backend, task_surface_host_readiness_probe_for_backend,
 };
 use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
@@ -3580,6 +3580,18 @@ fn diagnose_contract_advisories(
             ContractAdvisory::LegacyStandalonePoetry(advisory) => {
                 ContractAdvisory::LegacyStandalonePoetry(advisory)
             }
+            ContractAdvisory::ReplaceableShellCheck(advisory) => {
+                ContractAdvisory::ReplaceableShellCheck(advisory)
+            }
+            ContractAdvisory::ReplaceableShellEnvMutation(advisory) => {
+                ContractAdvisory::ReplaceableShellEnvMutation(advisory)
+            }
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => {
+                ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory)
+            }
+            ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => {
+                ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory)
+            }
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 ContractAdvisory::SensitiveAgentWritablePath(advisory)
             }
@@ -3661,6 +3673,33 @@ fn diagnose_contract_advisories(
                 ),
                 why: ContractAdvisory::LegacyStandalonePoetry(advisory.clone()).why(),
                 next: ContractAdvisory::LegacyStandalonePoetry(advisory).next(),
+            },
+            ContractAdvisory::ReplaceableShellCheck(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: ContractAdvisory::ReplaceableShellCheck(advisory.clone()).summary(),
+                why: ContractAdvisory::ReplaceableShellCheck(advisory.clone()).why(),
+                next: ContractAdvisory::ReplaceableShellCheck(advisory).next(),
+            },
+            ContractAdvisory::ReplaceableShellEnvMutation(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: ContractAdvisory::ReplaceableShellEnvMutation(advisory.clone()).summary(),
+                why: ContractAdvisory::ReplaceableShellEnvMutation(advisory.clone()).why(),
+                next: ContractAdvisory::ReplaceableShellEnvMutation(advisory).next(),
+            },
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory.clone())
+                    .summary(),
+                why: ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory.clone()).why(),
+                next: ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory).next(),
+            },
+            ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => Finding {
+                severity: FindingSeverity::Warn,
+                summary: ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory.clone())
+                    .summary(),
+                why: ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory.clone())
+                    .why(),
+                next: ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory).next(),
             },
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => Finding {
                 severity: FindingSeverity::Warn,
@@ -8897,6 +8936,22 @@ fn failed_check_next(
             check.name
         );
     }
+    if check.kind == crate::schema::CheckKind::Env {
+        let path = check
+            .env
+            .as_ref()
+            .map(|env| env.path.as_str())
+            .unwrap_or("-");
+        if let Some(setup_task) = contract.selected_setup_task_name_for(workflow_name) {
+            return format!(
+                "run `ota up` or `ota run {setup_task}` to regenerate `{path}` with contract-compatible env values, then rerun `ota doctor`"
+            );
+        }
+        return format!(
+            "regenerate `{path}` with contract-compatible env values for check `{}`, then rerun `ota doctor`",
+            check.name
+        );
+    }
 
     let Some(command) = check.run.as_deref() else {
         return format!(
@@ -9170,7 +9225,10 @@ fn selected_workflow_service_names(
 }
 
 fn is_precondition_style_check(kind: CheckKind) -> bool {
-    matches!(kind, CheckKind::Precondition | CheckKind::ChangedFiles)
+    matches!(
+        kind,
+        CheckKind::Precondition | CheckKind::Env | CheckKind::ChangedFiles
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -9211,6 +9269,9 @@ fn run_declared_check(
     }
     if check.kind == crate::schema::CheckKind::File {
         return run_file_check(check, working_dir);
+    }
+    if check.kind == crate::schema::CheckKind::Env {
+        return run_env_check(check, working_dir);
     }
     if let Some(command) = command_override.or(check.run.as_deref()) {
         return run_check(command, working_dir, check.timeout);
@@ -9346,6 +9407,14 @@ fn run_file_check(check: &crate::schema::CheckSpec, working_dir: &Path) -> Check
                 CheckStatus::Failed
             }
         }
+    }
+}
+
+fn run_env_check(check: &crate::schema::CheckSpec, working_dir: &Path) -> CheckStatus {
+    if evaluate_declared_env_check(check, working_dir) {
+        CheckStatus::Passed
+    } else {
+        CheckStatus::Failed
     }
 }
 
@@ -9821,6 +9890,8 @@ fn tcp_readiness_endpoint_status(
 fn failed_check_summary(check: &crate::schema::CheckSpec) -> String {
     if check.kind == crate::schema::CheckKind::File {
         format!("File check failed: {}", check.name)
+    } else if check.kind == crate::schema::CheckKind::Env {
+        format!("Env check failed: {}", check.name)
     } else if check.kind == crate::schema::CheckKind::ChangedFiles {
         format!("Changed-files check not satisfied: {}", check.name)
     } else if check.probe.is_some() {
@@ -9835,6 +9906,21 @@ fn failed_check_why(contract: &Contract, check: &crate::schema::CheckSpec) -> St
         let path = check.path.as_deref().unwrap_or("-");
         let expected = file_check_expectation_label(check.expect);
         format!("expected `{path}` to be {expected}, but the file check did not pass")
+    } else if check.kind == crate::schema::CheckKind::Env {
+        if let Some(env) = check.env.as_ref() {
+            let keys = env
+                .assertions
+                .iter()
+                .map(|assertion| assertion.key.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "expected dotenv file `{}` to satisfy env assertions for [{keys}], but the env check did not pass",
+                env.path
+            )
+        } else {
+            format!("the configured `{}` env check did not succeed", check.name)
+        }
     } else if check.kind == crate::schema::CheckKind::ChangedFiles {
         if let Some(changed_files) = check.changed_files.as_ref() {
             let matchers = changed_files.paths.join(", ");
@@ -9874,6 +9960,8 @@ fn failed_check_why(contract: &Contract, check: &crate::schema::CheckSpec) -> St
 fn timed_out_check_summary(check: &crate::schema::CheckSpec) -> String {
     if check.kind == crate::schema::CheckKind::File {
         format!("File check timed out: {}", check.name)
+    } else if check.kind == crate::schema::CheckKind::Env {
+        format!("Env check timed out: {}", check.name)
     } else if check.kind == crate::schema::CheckKind::ChangedFiles {
         format!("Changed-files check timed out: {}", check.name)
     } else if check.probe.is_some() {
@@ -15374,6 +15462,90 @@ workflows:
     }
 
     #[test]
+    fn workflow_env_check_blocks_surface_readiness_evaluation() {
+        let tempdir = TempDir::new().unwrap();
+        fs::write(
+            tempdir.path().join(".env.compose"),
+            "REDIS_HOST=127.0.0.1\nDATABASE_URL=postgres://user:pass@127.0.0.1:5432/langfuse\n",
+        )
+        .unwrap();
+        let contract_path = tempdir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: env-check-gate
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+surfaces:
+  web:
+    kind: http
+    port: 65530
+checks:
+  - name: compose-env-ready
+    kind: env
+    severity: error
+    env:
+      path: .env.compose
+      assertions:
+        - key: REDIS_HOST
+          host:
+            policy: not_loopback
+        - key: DATABASE_URL
+          url_host:
+            policy: not_loopback
+tasks:
+  dev:
+    run: pnpm dev
+    requirements:
+      checks:
+        - compose-env-ready
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    readiness:
+      surfaces:
+        - web
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_checks_only_for_workflow(
+            &contract,
+            contract_path.as_path(),
+            Some("app"),
+        );
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Env check failed: compose-env-ready"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.why.contains(".env.compose")),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| !finding.summary.starts_with("Surface readiness failed:")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
     fn workflow_readiness_surfaces_retry_until_ready() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener.local_addr().unwrap().port();
@@ -18806,6 +18978,7 @@ tasks:
                 kind: crate::schema::ServiceManagerKind::Compose,
                 name: Some(String::from("local")),
                 file: Some(String::from("compose.yaml")),
+                env_file: None,
                 service: Some(String::from("postgres")),
             }),
             ..ServiceSpec::default()
@@ -18828,6 +19001,7 @@ tasks:
                 kind: crate::schema::ServiceManagerKind::Host,
                 name: Some(String::from("local-postgres")),
                 file: None,
+                env_file: None,
                 service: None,
             }),
             ..ServiceSpec::default()

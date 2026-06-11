@@ -1537,6 +1537,7 @@ env:
                     path: String::from(".env.local"),
                     must_exist: false,
                 }],
+                profiles: BTreeMap::new(),
             },
             ..DetectContract::default()
         };
@@ -1573,6 +1574,7 @@ env:
                     path: String::from("appsettings.json"),
                     must_exist: false,
                 }],
+                profiles: BTreeMap::new(),
             },
             ..DetectContract::default()
         };

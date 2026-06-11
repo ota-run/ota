@@ -1939,6 +1939,83 @@ fn validate_env(env: &EnvConfig, errors: &mut Vec<ValidationError>) {
             )));
         }
     }
+
+    for (name, profile) in &env.profiles {
+        if name.trim().is_empty() {
+            errors.push(ValidationError::new(
+                "`env.profiles` must not declare an empty profile name",
+            ));
+        }
+        let mut seen_profile_sources = BTreeSet::new();
+        for (index, source) in profile.sources.iter().enumerate() {
+            if source.path.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`env.profiles.{name}.sources[{index}]` must declare a non-empty `path`"
+                )));
+            }
+            let source_key = format!("{}:{}", source.kind, source.path.trim());
+            if !source.path.trim().is_empty() && !seen_profile_sources.insert(source_key) {
+                errors.push(ValidationError::new(format!(
+                    "`env.profiles.{name}.sources[{index}]` duplicates `{}` source `{}`",
+                    source.kind, source.path
+                )));
+            }
+        }
+        for (index, path) in profile.env_files.iter().enumerate() {
+            let trimmed = path.trim();
+            if trimmed.is_empty() || !is_safe_repo_relative_file_path(trimmed) {
+                errors.push(ValidationError::new(format!(
+                    "`env.profiles.{name}.env_files[{index}]` must be a repo-relative path that does not escape the repo"
+                )));
+            }
+        }
+        for key in profile.env.keys() {
+            if key.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`env.profiles.{name}.env` must not declare an empty env key"
+                )));
+            }
+        }
+        if let Some(dotenv) = profile
+            .render
+            .as_ref()
+            .and_then(|render| render.dotenv.as_ref())
+        {
+            let path = dotenv.path.trim();
+            if path.is_empty() || !is_safe_repo_relative_file_path(path) {
+                errors.push(ValidationError::new(format!(
+                    "`env.profiles.{name}.render.dotenv.path` must be a repo-relative path that does not escape the repo"
+                )));
+            }
+            if profile
+                .env_files
+                .iter()
+                .any(|existing| existing.trim() == path)
+            {
+                errors.push(ValidationError::new(format!(
+                    "`env.profiles.{name}.render.dotenv.path` must not be duplicated in `env.profiles.{name}.env_files`; rendered dotenv artifacts are injected automatically"
+                )));
+            }
+            for include_name in &dotenv.include {
+                if !is_valid_env_key_name(include_name.trim()) {
+                    errors.push(ValidationError::new(format!(
+                        "`env.profiles.{name}.render.dotenv.include` has invalid env key `{include_name}`; use shell-safe env key tokens like `DATABASE_URL`"
+                    )));
+                    continue;
+                }
+                if !env.vars.contains_key(include_name) && !profile.env.contains_key(include_name) {
+                    errors.push(ValidationError::new(format!(
+                        "`env.profiles.{name}.render.dotenv.include` references unknown env key `{include_name}`; declare it under `env.vars` or `env.profiles.{name}.env`"
+                    )));
+                }
+            }
+            if dotenv.include.is_empty() && profile.env.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`env.profiles.{name}.render.dotenv` must declare at least one env key through `include` or `env.profiles.{name}.env`"
+                )));
+            }
+        }
+    }
 }
 
 fn validate_tasks(
@@ -3180,6 +3257,15 @@ fn validate_task_action(
                     errors,
                 );
             }
+            if matches!(
+                spec.template_mode,
+                crate::schema::TaskEnsureEnvFileTemplateMode::Replace
+            ) && spec.template.is_none()
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_env_file` must declare `action.template` when `action.template_mode: replace` is used"
+                )));
+            }
             if spec.vars.is_empty() {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` action `ensure_env_file` must declare at least one entry in `action.vars`"
@@ -3191,11 +3277,25 @@ fn validate_task_action(
                         "task `{task_name}` action `ensure_env_file` has invalid env key `{key}` in `action.vars`; use shell-safe env key tokens like `DATABASE_URL`"
                     )));
                 }
-                let has_value = value_spec.value.is_some();
-                let has_random = value_spec.random.is_some();
-                if has_value == has_random {
+                let source_count = [
+                    value_spec.value.is_some(),
+                    value_spec.random.is_some(),
+                    value_spec.from_env.is_some(),
+                ]
+                .into_iter()
+                .filter(|present| *present)
+                .count();
+                if matches!(value_spec.mode, crate::schema::TaskEnsureEnvVarMode::Remove) {
+                    if source_count != 0 {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` action `ensure_env_file` key `{key}` must not declare `value`, `random`, or `from_env` when `mode: remove` is used"
+                        )));
+                    }
+                    continue;
+                }
+                if source_count != 1 {
                     errors.push(ValidationError::new(format!(
-                        "task `{task_name}` action `ensure_env_file` key `{key}` must declare exactly one of `value` or `random`"
+                        "task `{task_name}` action `ensure_env_file` key `{key}` must declare exactly one of `value`, `random`, or `from_env`"
                     )));
                     continue;
                 }
@@ -3211,6 +3311,13 @@ fn validate_task_action(
                 {
                     errors.push(ValidationError::new(format!(
                         "task `{task_name}` action `ensure_env_file` key `{key}` random bytes must be between 1 and 1024"
+                    )));
+                }
+                if let Some(from_env) = value_spec.from_env.as_deref()
+                    && !is_valid_env_key_name(from_env)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `ensure_env_file` key `{key}` has invalid `from_env` source `{from_env}`; use shell-safe env key tokens like `DATABASE_URL`"
                     )));
                 }
             }
@@ -3661,6 +3768,15 @@ fn validate_task_ensure_bundle_step(
                     errors,
                 );
             }
+            if matches!(
+                spec.template_mode,
+                crate::schema::TaskEnsureEnvFileTemplateMode::Replace
+            ) && spec.template.is_none()
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) must declare `{prefix}.template` when `template_mode: replace` is used"
+                )));
+            }
             if spec.vars.is_empty() {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) must declare at least one entry in `{prefix}.vars`"
@@ -3672,11 +3788,25 @@ fn validate_task_ensure_bundle_step(
                         "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) has invalid env key `{key}` in `{prefix}.vars`; use shell-safe env key tokens like `DATABASE_URL`"
                     )));
                 }
-                let has_value = value_spec.value.is_some();
-                let has_random = value_spec.random.is_some();
-                if has_value == has_random {
+                let source_count = [
+                    value_spec.value.is_some(),
+                    value_spec.random.is_some(),
+                    value_spec.from_env.is_some(),
+                ]
+                .into_iter()
+                .filter(|present| *present)
+                .count();
+                if matches!(value_spec.mode, crate::schema::TaskEnsureEnvVarMode::Remove) {
+                    if source_count != 0 {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` must not declare `value`, `random`, or `from_env` when `mode: remove` is used"
+                        )));
+                    }
+                    continue;
+                }
+                if source_count != 1 {
                     errors.push(ValidationError::new(format!(
-                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` must declare exactly one of `value` or `random`"
+                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` must declare exactly one of `value`, `random`, or `from_env`"
                     )));
                     continue;
                 }
@@ -3692,6 +3822,13 @@ fn validate_task_ensure_bundle_step(
                 {
                     errors.push(ValidationError::new(format!(
                         "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` random bytes must be between 1 and 1024"
+                    )));
+                }
+                if let Some(from_env) = value_spec.from_env.as_deref()
+                    && !is_valid_env_key_name(from_env)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` has invalid `from_env` source `{from_env}`; use shell-safe env key tokens like `DATABASE_URL`"
                     )));
                 }
             }
@@ -6019,6 +6156,10 @@ pub enum ContractAdvisory {
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
     LegacyNodeRuntimeToolSplit(LegacyNodeRuntimeToolSplitAdvisory),
     LegacyStandalonePoetry(LegacyStandalonePoetryAdvisory),
+    ReplaceableShellCheck(ReplaceableShellCheckAdvisory),
+    ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
+    ReplaceableComposeEnvFileOwnership(ReplaceableComposeEnvFileOwnershipAdvisory),
+    DuplicateWorkflowRenderedEnvOwnership(DuplicateWorkflowRenderedEnvOwnershipAdvisory),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
     SensitiveWriteException(SensitiveWriteExceptionAdvisory),
     AgentBootstrapUnpinned(AgentBootstrapUnpinnedAdvisory),
@@ -6067,6 +6208,41 @@ pub struct LegacyNodeRuntimeToolSplitAdvisory {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegacyStandalonePoetryAdvisory {
     pub locations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableShellCheckAdvisory {
+    pub check_name: String,
+    pub command: String,
+    pub replacement_kind: ReplaceableShellCheckKind,
+    pub subject: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableShellEnvMutationAdvisory {
+    pub task_name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableComposeEnvFileOwnershipAdvisory {
+    pub task_name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateWorkflowRenderedEnvOwnershipAdvisory {
+    pub workflow_name: String,
+    pub profile_name: String,
+    pub task_name: String,
+    pub path: String,
+    pub location: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplaceableShellCheckKind {
+    File,
+    Env,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6145,6 +6321,28 @@ impl ContractAdvisory {
                 "Poetry is modeled as a standalone tool instead of `toolchains.python.package_managers.poetry` ({})",
                 advisory.locations.join(", ")
             ),
+            ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
+                ReplaceableShellCheckKind::File => format!(
+                    "check `{}` uses replaceable shell file glue for `{}`",
+                    advisory.check_name, advisory.subject
+                ),
+                ReplaceableShellCheckKind::Env => format!(
+                    "check `{}` uses replaceable shell env-file glue for `{}`",
+                    advisory.check_name, advisory.subject
+                ),
+            },
+            ContractAdvisory::ReplaceableShellEnvMutation(advisory) => format!(
+                "task `{}` uses replaceable shell env-file mutation",
+                advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
+                "task `{}` hard-codes compose env-file ownership in shell",
+                advisory.task_name
+            ),
+            ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
+                "workflow `{}` profile `{}` duplicates rendered env artifact ownership in task `{}`",
+                advisory.workflow_name, advisory.profile_name, advisory.task_name
+            ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
                 "`agent.writable_paths` includes sensitive {} `{}`",
                 advisory.category, advisory.path
@@ -6202,6 +6400,32 @@ impl ContractAdvisory {
             ContractAdvisory::LegacyStandalonePoetry(_) => String::from(
                 "Poetry owns Python dependency installation, lockfile semantics, virtualenv behavior, and often task execution through `poetry run`; keeping it as a standalone tool splits Python ecosystem ownership away from `toolchains.python`",
             ),
+            ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
+                ReplaceableShellCheckKind::File => format!(
+                    "check `{}` uses an obvious shell file-state command (`{}`), which is less portable and less governable than a first-class `kind: file` check",
+                    advisory.check_name, advisory.command
+                ),
+                ReplaceableShellCheckKind::Env => format!(
+                    "check `{}` uses an obvious shell env-file assertion (`{}`), which is less portable and less governable than a first-class `kind: env` check",
+                    advisory.check_name, advisory.command
+                ),
+            },
+            ContractAdvisory::ReplaceableShellEnvMutation(advisory) => format!(
+                "task `{}` rewrites one env file through shell mutation (`{}`), which is less portable and less governable than `action.kind: ensure_env_file` with deterministic `mode: replace` keys",
+                advisory.task_name, advisory.command
+            ),
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
+                "task `{}` hard-codes `docker compose --env-file` inside shell (`{}`), which hides compose env-file ownership from Ota instead of declaring it under task `env_files` or `services.<name>.manager.env_file`",
+                advisory.task_name, advisory.command
+            ),
+            ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
+                "workflow `{}` profile `{}` renders `{}`, but task `{}` also declares that same file under `{}`; Ota already projects rendered workflow env artifacts into the selected workflow task closure, so the duplicate task ownership is drift-prone",
+                advisory.workflow_name,
+                advisory.profile_name,
+                advisory.path,
+                advisory.task_name,
+                advisory.location
+            ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => advisory.reason.clone(),
             ContractAdvisory::SensitiveWriteException(advisory) => advisory.reason.clone(),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
@@ -6229,6 +6453,10 @@ impl ContractAdvisory {
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::ReplaceableShellCheck(_)
+            | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
+            | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6247,6 +6475,10 @@ impl ContractAdvisory {
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::ReplaceableShellCheck(_)
+            | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
+            | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6266,6 +6498,10 @@ impl ContractAdvisory {
             ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::ReplaceableShellCheck(_)
+            | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
+            | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6307,6 +6543,32 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::LegacyStandalonePoetry(_) => String::from(
                 "add or widen `toolchains.python`, move Poetry version governance under `toolchains.python.package_managers.poetry`, and remove the standalone Poetry declaration from the listed location(s)",
+            ),
+            ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
+                ReplaceableShellCheckKind::File => format!(
+                    "replace check `{}` with `kind: file` for `{}` instead of shell `run` glue",
+                    advisory.check_name, advisory.subject
+                ),
+                ReplaceableShellCheckKind::Env => format!(
+                    "replace check `{}` with `kind: env` for `{}` instead of shell `run` glue",
+                    advisory.check_name, advisory.subject
+                ),
+            },
+            ContractAdvisory::ReplaceableShellEnvMutation(advisory) => format!(
+                "replace shell env-file mutation in task `{}` with `action.kind: ensure_env_file` (or `ensure_bundle`) and explicit `mode: replace` keys",
+                advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
+                "move compose env-file ownership out of task `{}` shell: use `tasks.{0}.env_files` when the task owns interpolation, or `services.<name>.manager.env_file` when one managed compose service owns it",
+                advisory.task_name
+            ),
+            ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
+                "remove `{}` from task `{}`; workflow `{}` profile `{}` already renders `{}` and Ota injects that artifact into the selected workflow task closure automatically",
+                advisory.location,
+                advisory.task_name,
+                advisory.workflow_name,
+                advisory.profile_name,
+                advisory.path
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 format!("{}", sensitive_agent_writable_path_next(advisory))
@@ -6404,6 +6666,12 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories.extend(collect_legacy_node_runtime_tool_split_advisories(contract));
     advisories.extend(collect_legacy_standalone_poetry_advisories(contract));
+    advisories.extend(collect_replaceable_shell_check_advisories(contract));
+    advisories.extend(collect_replaceable_shell_env_mutation_advisories(contract));
+    advisories.extend(collect_replaceable_compose_env_file_ownership_advisories(
+        contract,
+    ));
+    advisories.extend(collect_duplicate_workflow_rendered_env_ownership_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
     advisories.extend(collect_sensitive_write_exception_advisories(contract));
     advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
@@ -6494,6 +6762,248 @@ fn collect_legacy_standalone_poetry_advisories(contract: &Contract) -> Vec<Contr
     vec![ContractAdvisory::LegacyStandalonePoetry(
         LegacyStandalonePoetryAdvisory { locations },
     )]
+}
+
+fn collect_replaceable_shell_check_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for check in &contract.checks {
+        if check.kind != CheckKind::Precondition {
+            continue;
+        }
+        let Some(command) = check
+            .run
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+
+        if let Some(path) = obvious_file_check_path(command) {
+            advisories.push(ContractAdvisory::ReplaceableShellCheck(
+                ReplaceableShellCheckAdvisory {
+                    check_name: check.name.clone(),
+                    command: command.to_string(),
+                    replacement_kind: ReplaceableShellCheckKind::File,
+                    subject: path.to_string(),
+                },
+            ));
+            continue;
+        }
+
+        if let Some(path) = obvious_env_check_path(command) {
+            advisories.push(ContractAdvisory::ReplaceableShellCheck(
+                ReplaceableShellCheckAdvisory {
+                    check_name: check.name.clone(),
+                    command: command.to_string(),
+                    replacement_kind: ReplaceableShellCheckKind::Env,
+                    subject: path.to_string(),
+                },
+            ));
+        }
+    }
+    advisories
+}
+
+fn collect_replaceable_shell_env_mutation_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.action.is_some()
+            || task.prepare.is_some()
+            || task.launch.is_some()
+            || task.aggregate.is_some()
+        {
+            continue;
+        }
+        let command = task
+            .run
+            .as_deref()
+            .or(task.script.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let Some(command) = command else {
+            continue;
+        };
+        if obvious_env_mutation_shell(command) {
+            advisories.push(ContractAdvisory::ReplaceableShellEnvMutation(
+                ReplaceableShellEnvMutationAdvisory {
+                    task_name: task_name.clone(),
+                    command: command.to_string(),
+                },
+            ));
+        }
+    }
+    advisories
+}
+
+fn collect_replaceable_compose_env_file_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.action.is_some() || task.aggregate.is_some() {
+            continue;
+        }
+        let has_any_env_files = !task.env_files.is_empty()
+            || task.execution.as_ref().is_some_and(|execution| {
+                execution
+                    .modes
+                    .iter()
+                    .any(|(_, branch)| !branch.env_files.is_empty())
+            });
+        if has_any_env_files {
+            continue;
+        }
+        let command = task
+            .run
+            .as_deref()
+            .or(task.script.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let Some(command) = command else {
+            continue;
+        };
+        if obvious_compose_env_file_shell(command) {
+            advisories.push(ContractAdvisory::ReplaceableComposeEnvFileOwnership(
+                ReplaceableComposeEnvFileOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: command.to_string(),
+                },
+            ));
+        }
+    }
+    advisories
+}
+
+fn collect_duplicate_workflow_rendered_env_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let Some(workflows) = contract.workflows.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut advisories = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (workflow_name, workflow) in &workflows.items {
+        let Some(profile_name) = workflow
+            .env
+            .as_ref()
+            .and_then(|env| env.profile.as_deref())
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        let Some(path) = contract
+            .env
+            .profiles
+            .get(profile_name)
+            .and_then(|profile| profile.render.as_ref())
+            .and_then(|render| render.dotenv.as_ref())
+            .map(|dotenv| dotenv.path.trim())
+            .filter(|path| !path.is_empty())
+        else {
+            continue;
+        };
+
+        for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name.as_str()))
+        {
+            let Some(task) = contract.tasks.get(task_name.as_str()) else {
+                continue;
+            };
+            if task
+                .env_files
+                .iter()
+                .any(|existing| existing.trim() == path)
+            {
+                let location = format!("tasks.{task_name}.env_files");
+                if seen.insert((workflow_name.clone(), task_name.clone(), location.clone())) {
+                    advisories.push(ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(
+                        DuplicateWorkflowRenderedEnvOwnershipAdvisory {
+                            workflow_name: workflow_name.clone(),
+                            profile_name: profile_name.to_string(),
+                            task_name: task_name.clone(),
+                            path: path.to_string(),
+                            location,
+                        },
+                    ));
+                }
+            }
+            if let Some(execution) = task.execution.as_ref() {
+                for (backend, branch) in execution.modes.iter() {
+                    if !branch
+                        .env_files
+                        .iter()
+                        .any(|existing| existing.trim() == path)
+                    {
+                        continue;
+                    }
+                    let location = format!(
+                        "tasks.{task_name}.execution.modes.{}.env_files",
+                        format_backend(backend)
+                    );
+                    if seen.insert((workflow_name.clone(), task_name.clone(), location.clone())) {
+                        advisories.push(ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(
+                            DuplicateWorkflowRenderedEnvOwnershipAdvisory {
+                                workflow_name: workflow_name.clone(),
+                                profile_name: profile_name.to_string(),
+                                task_name: task_name.clone(),
+                                path: path.to_string(),
+                                location,
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    advisories
+}
+
+fn obvious_env_mutation_shell(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    let touches_env = lower.contains(".env");
+    let mutates_with_sed = lower.contains("sed ") && lower.contains(" -i") && lower.contains("s/");
+    let mutates_with_perl =
+        lower.contains("perl ") && lower.contains("-pi") && lower.contains(".env");
+    touches_env && (mutates_with_sed || mutates_with_perl)
+}
+
+fn obvious_compose_env_file_shell(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    lower.contains("docker compose") && lower.contains("--env-file")
+}
+
+fn obvious_file_check_path(command: &str) -> Option<&str> {
+    let tokens = command.split_whitespace().collect::<Vec<_>>();
+    match tokens.as_slice() {
+        ["test", "-f", path]
+        | ["test", "-d", path]
+        | ["test", "-e", path]
+        | ["[", "-f", path, "]"]
+        | ["[", "-d", path, "]"]
+        | ["[", "-e", path, "]"] => Some(trim_shell_token(path)),
+        _ => None,
+    }
+    .filter(|path| !path.is_empty())
+}
+
+fn obvious_env_check_path(command: &str) -> Option<&str> {
+    let tokens = command.split_whitespace().collect::<Vec<_>>();
+    let first = tokens.first().copied()?;
+    if first != "grep" && first != "findstr" {
+        return None;
+    }
+    tokens
+        .iter()
+        .rev()
+        .copied()
+        .map(trim_shell_token)
+        .find(|token| token.starts_with(".env") || token.contains("/.env"))
+}
+
+fn trim_shell_token(value: &str) -> &str {
+    value.trim_matches(|ch| ch == '"' || ch == '\'')
 }
 
 fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
@@ -7935,10 +8445,10 @@ fn validate_task_requirement_references(
 
         if !matches!(
             check.kind,
-            CheckKind::Precondition | CheckKind::File | CheckKind::ChangedFiles
+            CheckKind::Precondition | CheckKind::File | CheckKind::Env | CheckKind::ChangedFiles
         ) {
             errors.push(ValidationError::new(format!(
-                "task `{task_name}` references unsupported check kind `{check_name}` in `requirements.checks`; only `precondition`, `file`, or `changed_files` checks are allowed"
+                "task `{task_name}` references unsupported check kind `{check_name}` in `requirements.checks`; only `precondition`, `file`, `env`, or `changed_files` checks are allowed"
             )));
         }
     }
@@ -7985,10 +8495,10 @@ fn validate_task_condition_check_reference(
 
     if !matches!(
         check.kind,
-        CheckKind::Precondition | CheckKind::File | CheckKind::ChangedFiles
+        CheckKind::Precondition | CheckKind::File | CheckKind::Env | CheckKind::ChangedFiles
     ) {
         errors.push(ValidationError::new(format!(
-            "{context_label} references unsupported check kind `{check_name}` in `when.checks`; only `precondition`, `file`, or `changed_files` checks are allowed"
+            "{context_label} references unsupported check kind `{check_name}` in `when.checks`; only `precondition`, `file`, `env`, or `changed_files` checks are allowed"
         )));
         return;
     }
@@ -8127,6 +8637,17 @@ fn validate_services(
                             "service `{name}` manager field `file` must not be empty"
                         )));
                     }
+                    if let Some(env_file) = manager.env_file.as_deref() {
+                        if env_file.trim().is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` manager field `env_file` must not be empty"
+                            )));
+                        } else if !is_safe_repo_relative_file_path(env_file.trim()) {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` manager field `env_file` must be a repo-relative path that does not escape the repo"
+                            )));
+                        }
+                    }
                 }
                 crate::schema::ServiceManagerKind::Host => {
                     if manager
@@ -8141,6 +8662,11 @@ fn validate_services(
                     if manager.file.is_some() {
                         errors.push(ValidationError::new(format!(
                             "service `{name}` host manager must not declare `manager.file`"
+                        )));
+                    }
+                    if manager.env_file.is_some() {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` host manager must not declare `manager.env_file`"
                         )));
                     }
                     if manager.service.is_some() {
@@ -8819,19 +9345,20 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
             check.probe.is_some(),
             check.path.is_some(),
             check.changed_files.is_some(),
+            check.env.is_some(),
         ]
         .into_iter()
         .filter(|present| *present)
         .count();
         if check_target_count > 1 {
             errors.push(ValidationError::new(format!(
-                "check `{}` must declare only one of `run`, `probe`, `path`, or `changed_files`",
+                "check `{}` must declare only one of `run`, `probe`, `path`, `changed_files`, or `env`",
                 check.name
             )));
         }
         if check_target_count == 0 {
             errors.push(ValidationError::new(format!(
-                "check `{}` must declare one of `run`, `probe`, `path`, or `changed_files`",
+                "check `{}` must declare one of `run`, `probe`, `path`, `changed_files`, or `env`",
                 check.name
             )));
         }
@@ -8876,9 +9403,10 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 || check.probe.is_some()
                 || check.path.is_some()
                 || check.expect.is_some()
+                || check.env.is_some()
             {
                 errors.push(ValidationError::new(format!(
-                    "changed_files check `{}` must not declare `run`, `probe`, `path`, or `expect`",
+                    "changed_files check `{}` must not declare `run`, `probe`, `path`, `expect`, or `env`",
                     check.name
                 )));
             }
@@ -8911,6 +9439,106 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         "changed_files check `{}` must declare a non-empty `changed_files.head_ref` when present",
                         check.name
                     )));
+                }
+            }
+        }
+        if check.kind == CheckKind::Env && check.env.is_none() {
+            errors.push(ValidationError::new(format!(
+                "env check `{}` must declare `env`",
+                check.name
+            )));
+        }
+        if check.kind != CheckKind::Env && check.env.is_some() {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must use `kind: env` when declaring `env`",
+                check.name
+            )));
+        }
+        if check.kind == CheckKind::Env {
+            if check.run.is_some()
+                || check.probe.is_some()
+                || check.path.is_some()
+                || check.expect.is_some()
+                || check.changed_files.is_some()
+            {
+                errors.push(ValidationError::new(format!(
+                    "env check `{}` must not declare `run`, `probe`, `path`, `expect`, or `changed_files`",
+                    check.name
+                )));
+            }
+            if let Some(env) = check.env.as_ref() {
+                validate_repo_relative_env_check_path(
+                    check.name.as_str(),
+                    env.path.as_str(),
+                    errors,
+                );
+                if env.assertions.is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "env check `{}` must declare at least one entry in `env.assertions`",
+                        check.name
+                    )));
+                }
+                for assertion in &env.assertions {
+                    if !is_valid_env_key_name(assertion.key.trim()) {
+                        errors.push(ValidationError::new(format!(
+                            "env check `{}` has invalid env key `{}` in `env.assertions`; use shell-safe env key tokens like `DATABASE_URL`",
+                            check.name, assertion.key
+                        )));
+                    }
+                    let assertion_target_count = [
+                        assertion.equals.is_some(),
+                        !assertion.not_equals.is_empty(),
+                        assertion.state.is_some(),
+                        assertion.host.is_some(),
+                        assertion.url_host.is_some(),
+                    ]
+                    .into_iter()
+                    .filter(|present| *present)
+                    .count();
+                    if assertion_target_count != 1 {
+                        errors.push(ValidationError::new(format!(
+                            "env check `{}` assertion `{}` must declare exactly one of `equals`, `not_equals`, `state`, `host`, or `url_host`",
+                            check.name, assertion.key
+                        )));
+                    }
+                    if assertion.equals.as_deref().is_some_and(str::is_empty) {
+                        errors.push(ValidationError::new(format!(
+                            "env check `{}` assertion `{}` must not declare an empty `equals` value",
+                            check.name, assertion.key
+                        )));
+                    }
+                    for disallowed in &assertion.not_equals {
+                        if disallowed.is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "env check `{}` assertion `{}` must not include empty `not_equals` values",
+                                check.name, assertion.key
+                            )));
+                        }
+                    }
+                    for (label, host_assertion) in [
+                        ("host", assertion.host.as_ref()),
+                        ("url_host", assertion.url_host.as_ref()),
+                    ] {
+                        let Some(host_assertion) = host_assertion else {
+                            continue;
+                        };
+                        let mode_count = usize::from(host_assertion.policy.is_some())
+                            + usize::from(!host_assertion.allowed.is_empty());
+                        if mode_count != 1 {
+                            errors.push(ValidationError::new(format!(
+                                "env check `{}` assertion `{}` `{}` must declare exactly one of `policy` or `allowed`",
+                                check.name, assertion.key, label
+                            )));
+                        }
+                        for allowed in &host_assertion.allowed {
+                            if allowed.trim().is_empty() {
+                                errors.push(ValidationError::new(format!(
+                                    "env check `{}` assertion `{}` `{}` must not include empty `allowed` host values",
+                                    check.name, assertion.key, label
+                                )));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -8970,6 +9598,25 @@ fn validate_repo_relative_check_path(name: &str, value: &str, errors: &mut Vec<V
     }
 }
 
+fn validate_repo_relative_env_check_path(
+    name: &str,
+    value: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "env check `{name}` must declare a non-empty `env.path`"
+        )));
+        return;
+    }
+    if !is_safe_repo_relative_file_path(trimmed) {
+        errors.push(ValidationError::new(format!(
+            "env check `{name}` path must be repo-relative and must not escape the repo"
+        )));
+    }
+}
+
 fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
     let Some(workflows) = contract.workflows.as_ref() else {
         return;
@@ -9008,6 +9655,22 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 "`workflows.{name}.intent` must not be empty"
             )));
         }
+        if let Some(profile) = workflow
+            .env
+            .as_ref()
+            .and_then(|env| env.profile.as_deref())
+            .map(str::trim)
+        {
+            if profile.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.env.profile` must not be empty"
+                )));
+            } else if !contract.env.profiles.contains_key(profile) {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.env.profile` references unknown env profile `{profile}`"
+                )));
+            }
+        }
         if let Some(prepare) = workflow.prepare.as_ref() {
             validate_task_reference(
                 &format!("workflows.{name}.prepare.task"),
@@ -9016,20 +9679,27 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 errors,
             );
             if let Some(task) = contract.tasks.get(prepare.task.as_str()) {
-                if task.action.is_none() {
+                if task.action.is_none()
+                    && task.run.is_none()
+                    && task.script.is_none()
+                    && task.prepare.is_none()
+                {
                     errors.push(ValidationError::new(format!(
-                        "`workflows.{name}.prepare.task` must reference a task with `action`, not `{}`",
+                        "`workflows.{name}.prepare.task` must reference one native finite task body (`run`, `script`, `prepare`, or `action`), not `{}`",
                         prepare.task
                     )));
                 }
                 if task_execution_backend(contract, task, Backend::Native) != Backend::Native {
                     errors.push(ValidationError::new(format!(
-                        "`workflows.{name}.prepare.task` must resolve to native execution so host file preparation stays explicit"
+                        "`workflows.{name}.prepare.task` must resolve to native execution so host preparation stays explicit"
                     )));
                 }
-                if !task.requires_services.is_empty() || task.runtime.is_some() {
+                if task.launch.is_some()
+                    || !task.requires_services.is_empty()
+                    || task.runtime.is_some()
+                {
                     errors.push(ValidationError::new(format!(
-                        "`workflows.{name}.prepare.task` must stay a host file-prep task without `requires_services` or `runtime`"
+                        "`workflows.{name}.prepare.task` must stay a finite host prepare task without `launch`, `requires_services`, or `runtime`"
                     )));
                 }
             }
@@ -10418,9 +11088,8 @@ tasks:
             .collect::<Vec<_>>();
 
         assert!(
-            messages
-                .iter()
-                .any(|message| message.contains("unknown environment requirement `UNKNOWN_ENV`")),
+            messages.iter().any(|message| message
+                .contains("references unknown environment requirement `UNKNOWN_ENV`")),
             "{messages:?}"
         );
         assert!(
@@ -10440,9 +11109,7 @@ tasks:
         );
         assert!(
             messages.iter().any(|message| {
-                message.contains(
-                    "task `dev` references unknown toolchain `missing-toolchain` in `requirements.toolchains`",
-                )
+                message.contains("task `dev` references unknown toolchain `missing-toolchain`")
             }),
             "{messages:?}"
         );
@@ -10525,6 +11192,11 @@ tasks:
 version: 1
 project:
   name: ota
+env:
+  profiles:
+    docker-build:
+      env_files:
+        - .env.docker-build
 services:
   app:
     start: echo app
@@ -10542,6 +11214,8 @@ workflows:
   default: app
   app:
     intent: local_development
+    env:
+      profile: docker-build
     setup:
       task: setup
     run:
@@ -10557,6 +11231,74 @@ workflows:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_workflow_env_profile_reference() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+workflows:
+  default: app
+  app:
+    env:
+      profile: docker-build
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("unknown workflow env profile should fail validation");
+        assert!(
+            error.to_string().contains(
+                "`workflows.app.env.profile` references unknown env profile `docker-build`"
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_workflow_env_profile_render_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  profiles:
+    docker-build:
+      env_files:
+        - .env.docker-build
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - bad-key
+            - DATABASE_URL
+workflows:
+  default: app
+  app:
+    env:
+      profile: docker-build
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("invalid workflow env profile render should fail validation")
+            .to_string();
+        assert!(error.contains(
+            "`env.profiles.docker-build.render.dotenv.path` must not be duplicated in `env.profiles.docker-build.env_files`"
+        ));
+        assert!(error.contains(
+            "`env.profiles.docker-build.render.dotenv.include` has invalid env key `bad-key`"
+        ));
+        assert!(error.contains(
+            "`env.profiles.docker-build.render.dotenv.include` references unknown env key `DATABASE_URL`"
+        ));
     }
 
     #[test]
@@ -10902,7 +11644,32 @@ workflows:
     }
 
     #[test]
-    fn rejects_workflow_prepare_task_that_is_not_action_and_native() {
+    fn workflow_prepare_accepts_native_finite_run_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: valid-prepare
+tasks:
+  normalize-env:
+    execution:
+      default_mode: native
+    run: test -f .env.local || cp .env.example .env.local
+workflows:
+  default: app
+  app:
+    prepare:
+      task: normalize-env
+"#,
+        )
+        .expect("contract should parse");
+
+        validate_contract(&contract).expect("native finite prepare task should validate");
+    }
+
+    #[test]
+    fn rejects_workflow_prepare_task_that_is_not_finite_and_native() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -10933,10 +11700,42 @@ workflows:
         let error = validate_contract(&contract).expect_err("prepare task should be validated");
 
         assert!(error.to_string().contains(
-            "`workflows.app.prepare.task` must reference a task with `action`, not `prepare`"
+            "`workflows.app.prepare.task` must resolve to native execution so host preparation stays explicit"
         ));
+    }
+
+    #[test]
+    fn rejects_workflow_prepare_task_with_launch_body() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: invalid-prepare-launch
+tasks:
+  dev:
+    execution:
+      default_mode: native
+    launch:
+      kind: command
+      exe: bundle
+      args:
+        - exec
+        - rails
+        - server
+workflows:
+  default: app
+  app:
+    prepare:
+      task: dev
+"#,
+        )
+        .expect("contract should parse");
+
+        let error =
+            validate_contract(&contract).expect_err("launch prepare task should be rejected");
         assert!(error.to_string().contains(
-            "`workflows.app.prepare.task` must resolve to native execution so host file preparation stays explicit"
+            "`workflows.app.prepare.task` must stay a finite host prepare task without `launch`, `requires_services`, or `runtime`"
         ));
     }
 
@@ -11190,7 +11989,7 @@ checks:
             validate_contract(&contract).expect_err("check with run and probe should be rejected");
         assert!(
             error.to_string().contains(
-                "check `backend-ready` must declare only one of `run`, `probe`, `path`, or `changed_files`"
+                "check `backend-ready` must declare only one of `run`, `probe`, `path`, `changed_files`, or `env`"
             )
         );
     }
@@ -11214,7 +12013,7 @@ checks:
         let error = validate_contract(&contract)
             .expect_err("check without run or probe should be rejected");
         assert!(error.to_string().contains(
-            "check `backend-ready` must declare one of `run`, `probe`, `path`, or `changed_files`"
+            "check `backend-ready` must declare one of `run`, `probe`, `path`, `changed_files`, or `env`"
         ));
     }
 
@@ -11269,7 +12068,7 @@ checks:
 
         assert!(
             rendered.iter().any(|error| error.contains(
-                "changed_files check `web-changed` must not declare `run`, `probe`, `path`, or `expect`"
+                "changed_files check `web-changed` must not declare `run`, `probe`, `path`, `expect`, or `env`"
             )),
             "{rendered:?}"
         );
@@ -11305,6 +12104,141 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("task when.checks should validate");
+    }
+
+    #[test]
+    fn validates_env_checks_and_task_conditions() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: compose-env-ready
+    kind: env
+    severity: error
+    env:
+      path: .env.compose
+      assertions:
+        - key: REDIS_HOST
+          host:
+            allowed:
+              - redis
+              - cache
+        - key: REDIS_PASSWORD
+          state: present
+tasks:
+  test:
+    run: echo test
+    when:
+      checks:
+        - compose-env-ready
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("env checks should validate");
+    }
+
+    #[test]
+    fn rejects_invalid_env_check_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: compose-env-ready
+    kind: env
+    severity: error
+    run: echo nope
+    env:
+      path: ../.env.compose
+      assertions:
+        - key: bad-key
+          host:
+            policy: not_loopback
+        - key: DATABASE_URL
+          host:
+            policy: not_loopback
+          url_host:
+            policy: not_loopback
+        - key: OPTIONAL_VALUE
+          state: present
+          equals: nope
+        - key: LOCAL_ONLY
+          not_equals:
+            - ""
+        - key: REDIS_HOST
+          host:
+            allowed:
+              - ""
+        - key: DATABASE_HOST
+          host:
+            policy: not_loopback
+            allowed:
+              - postgres
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid env check should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "env check `compose-env-ready` must not declare `run`, `probe`, `path`, `expect`, or `changed_files`"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "env check `compose-env-ready` path must be repo-relative and must not escape the repo"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "env check `compose-env-ready` has invalid env key `bad-key` in `env.assertions`"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "env check `compose-env-ready` assertion `DATABASE_URL` must declare exactly one of `equals`, `not_equals`, `state`, `host`, or `url_host`"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "env check `compose-env-ready` assertion `OPTIONAL_VALUE` must declare exactly one of `equals`, `not_equals`, `state`, `host`, or `url_host`"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "env check `compose-env-ready` assertion `LOCAL_ONLY` must not include empty `not_equals` values"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "env check `compose-env-ready` assertion `REDIS_HOST` `host` must not include empty `allowed` host values"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "env check `compose-env-ready` assertion `DATABASE_HOST` `host` must declare exactly one of `policy` or `allowed`"
+            )),
+            "{rendered:?}"
+        );
     }
 
     #[test]
@@ -11377,6 +12311,38 @@ tasks:
     }
 
     #[test]
+    fn rejects_ensure_env_file_replace_template_mode_without_template() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:env-local:
+    action:
+      kind: ensure_env_file
+      path: .env.local
+      template_mode: replace
+      vars:
+        REDIS_HOST:
+          value: redis
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("replace template mode should require a template")
+            .to_string();
+        assert!(
+            rendered.contains(
+                "task `setup:env-local` action `ensure_env_file` must declare `action.template` when `action.template_mode: replace` is used"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn validates_ensure_env_file_action_shape() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -11397,6 +12363,11 @@ tasks:
             bytes: 32
         PG_DATABASE_PASSWORD:
           value: postgres
+        DATABASE_URL:
+          from_env: DATABASE_URL
+          mode: replace
+        REDIS_PORT:
+          mode: remove
 "#,
         )
         .unwrap();
@@ -11427,6 +12398,11 @@ tasks:
         EMPTY:
           random:
             bytes: 0
+        REMOVE_BAD:
+          mode: remove
+          value: nope
+        FROM_BAD:
+          from_env: bad-key
 "#,
         )
         .unwrap();
@@ -11445,13 +12421,25 @@ tasks:
         );
         assert!(
             rendered.iter().any(|error| error.contains(
-                "task `setup:env-local` action `ensure_env_file` key `DUP` must declare exactly one of `value` or `random`"
+                "task `setup:env-local` action `ensure_env_file` key `DUP` must declare exactly one of `value`, `random`, or `from_env`"
             )),
             "{rendered:?}"
         );
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `setup:env-local` action `ensure_env_file` key `EMPTY` random bytes must be between 1 and 1024"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:env-local` action `ensure_env_file` key `REMOVE_BAD` must not declare `value`, `random`, or `from_env` when `mode: remove` is used"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:env-local` action `ensure_env_file` key `FROM_BAD` has invalid `from_env` source `bad-key`"
             )),
             "{rendered:?}"
         );
@@ -14416,6 +15404,7 @@ services:
       kind: compose
       name: local
       file: compose.yaml
+      env_file: .env.compose
       service: postgres
     healthcheck: pg_isready -U qredex -d qredex
 tasks:
@@ -14426,6 +15415,66 @@ tasks:
         .unwrap();
 
         assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_service_manager_env_file() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    manager:
+      kind: host
+      env_file: ../.env.compose
+    healthcheck: pg_isready -U qredex -d qredex
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("service `postgres` host manager must not declare `manager.env_file`")
+        }));
+    }
+
+    #[test]
+    fn rejects_service_manager_env_file_that_escapes_repo() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      env_file: ../.env.compose
+      service: postgres
+    healthcheck: pg_isready -U qredex -d qredex
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "service `postgres` manager field `env_file` must be a repo-relative path that does not escape the repo"
+            )
+        }));
     }
 
     #[test]
@@ -17042,7 +18091,6 @@ project:
   name: ota
 tasks:
   start:
-    run: echo start
     execution:
       default_mode: container
       modes:
@@ -17057,11 +18105,11 @@ execution:
         )
         .unwrap();
 
-        let errors = validate_contract(&contract).unwrap_err();
-        assert_eq!(errors.errors().len(), 1);
-        assert_eq!(
-            errors.errors()[0].to_string(),
-            "task `start` declares `execution.default_mode: container` but no branch for `execution.modes.container` exists"
+        let error = validate_contract(&contract).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("execution.default_mode: container")
         );
     }
 
@@ -24143,6 +25191,177 @@ tasks:
                 .iter()
                 .any(|advisory| matches!(advisory, ContractAdvisory::LegacyStandalonePoetry(_)))
         );
+    }
+
+    #[test]
+    fn collects_replaceable_shell_file_check_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: env-present
+    kind: precondition
+    severity: error
+    run: test -f .env.local
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableShellCheck(value)
+                if value.check_name == "env-present"
+                    && value.replacement_kind == crate::validator::ReplaceableShellCheckKind::File
+                    && value.subject == ".env.local"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_shell_env_check_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: compose-env-compatible
+    kind: precondition
+    severity: error
+    run: grep -q REDIS_HOST=redis .env.compose
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableShellCheck(value)
+                if value.check_name == "compose-env-compatible"
+                    && value.replacement_kind == crate::validator::ReplaceableShellCheckKind::Env
+                    && value.subject == ".env.compose"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_shell_env_mutation_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  normalize-env:
+    run: sed -i '' 's/REDIS_HOST=127.0.0.1/REDIS_HOST=redis/' .env.compose
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableShellEnvMutation(value)
+                if value.task_name == "normalize-env"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_compose_env_file_ownership_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    run: docker compose --env-file .env.compose -f compose.yaml up -d
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(value)
+                if value.task_name == "docker-build"
+        )));
+    }
+
+    #[test]
+    fn skips_replaceable_compose_env_file_ownership_advisory_when_branch_env_files_exist() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    execution:
+      default_mode: container
+      modes:
+        container:
+          env_files:
+            - .env.compose
+          run: docker compose --env-file .env.compose -f compose.yaml up -d
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(value)
+                if value.task_name == "docker-build"
+        )));
+    }
+
+    #[test]
+    fn collects_duplicate_workflow_rendered_env_ownership_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  profiles:
+    docker-build:
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
+tasks:
+  build:
+    env_files:
+      - .env.docker-build
+    run: echo build
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(value)
+                if value.workflow_name == "docker-build"
+                    && value.task_name == "build"
+                    && value.path == ".env.docker-build"
+        )));
     }
 
     #[test]

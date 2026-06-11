@@ -162,6 +162,9 @@ enum Commands {
         /// Inspect one merged monorepo member contract declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
+        /// Inspect env resolution for one declared workflow instead of the default workflow.
+        #[arg(long, add = ArgValueCompleter::new(complete_repo_workflow_candidates))]
+        workflow: Option<String>,
         /// Inspect one task's environment requirements in addition to contract env.
         #[arg(long, add = ArgValueCompleter::new(complete_env_task_candidates))]
         task: Option<String>,
@@ -4557,12 +4560,14 @@ fn dispatch(cli: Cli) -> CommandOutput {
         Commands::Env {
             json,
             member,
+            workflow,
             task,
             path,
         } => commands::env(
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
+            workflow.as_deref(),
             task.as_deref(),
             format_from_json(json),
             debug,
@@ -17215,6 +17220,7 @@ tasks:
                 super::Commands::Env {
                     json: true,
                     member: None,
+                    workflow: None,
                     task: None,
                     path: None,
                 },

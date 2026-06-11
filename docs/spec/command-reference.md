@@ -417,14 +417,18 @@ Inspect resolved environment requirements from a validated contract.
 ```bash
 ota env [PATH]
 ota env --json [PATH]
+ota env --workflow docker-build [PATH]
 ota env --task test [PATH]
-ota env --member api --task test [PATH]
+ota env --member api --workflow docker-build --task test [PATH]
 ```
 
 Current behavior:
 
 - validates the contract first
 - when `--member` is set, inspects the merged member contract
+- when `--workflow` is set, inspects the selected workflow instead of assuming `workflows.default`
+- when the selected workflow declares `env.profile`, env resolution prepends that workflow-owned
+  profile truth before reporting values
 - when `--task` is set, includes the effective execution env for that task alongside the contract env view
 - when `--task` is set, any `tasks.<name>.requirements.env` entries are treated as required for
   that selected task view even when the same top-level `env.vars.<name>` entry is optional in the
@@ -441,9 +445,13 @@ Current behavior:
 Text output:
 
 - header: `ENV <path>`
-- includes a readiness status line, a short overview, a `Declared env sources` section when sources exist, and separate `Contract env` / `Execution env` sections when task-specific execution env is present
+- includes a readiness status line, optional `Workflow` / `Profile` lines, a short overview, a
+  `Declared env sources` section when sources exist, a `Rendered env artifacts` section when the
+  selected workflow profile materializes files, and separate `Contract env` / `Execution env`
+  sections when task-specific execution env is present
 - each env entry may include `kind`, `required`, `value`, `source`, `source kind`, `source path`, `source status`, `status`, `allowed`, `default`, and `Next`
 - each declared source may include `kind`, `path`, `label`, `must_exist`, `status`, `detail`, and `Next`
+- each rendered env artifact may include `path`, `kind`, `exists`, and `includes`
 - missing or invalid contract env entries point to a specific fix rather than guessing
 
 Example:
@@ -470,9 +478,10 @@ Execution env
 JSON output:
 
 - success: `ok`, `path`, `summary`, `sources`, `env`
+- success with workflow scope also includes `workflow`, optional `profile`, and optional `rendered_artifacts`
 - success with task scope also includes `task`
 - `summary` includes contract, declared-source, task, resolved, missing, and invalid counts
-- failure: `ok`, `path`, `task` when relevant, and `error`
+- failure: `ok`, `path`, `task` and `workflow` when relevant, and `error`
 
 ## `ota execution plan`
 
@@ -513,7 +522,8 @@ Text output:
 
 JSON output:
 
-- success: `ok`, `path`, `contract`, `member` when relevant, additive `workflow` and `task` when workflow planning selected a canonical path, `contract_identity`, `declared_execution`, `resolved`, and `overrides`
+- success: `ok`, `path`, `contract`, `member` when relevant, additive `workflow` and `task` when workflow planning selected a canonical path, `contract_identity`, `declared_execution`, optional `workflow_env_artifacts`, `resolved`, and `overrides`
+- `workflow_env_artifacts` reports workflow-owned rendered env files such as rendered dotenv artifacts, including their `path`, `kind`, `profile`, current `exists` state, included env names, and consuming task/service lanes
 - failure: `ok`, `path`, `member` when relevant, and either `errors` or `error`
 
 ## `ota execution topology`
@@ -606,15 +616,19 @@ Text output:
   phase, and surfaces one primary `Why` / `Next` lane without duplicating the full doctor report
 - blocked proof output may also include `Likely cause` when ota can derive a higher-confidence
   runtime-drift hint from captured proof logs
-- timeout output uses `TIMEOUT` and phase `timeout` when runtime-proof wait budget is exhausted
+- timeout output uses `TIMEOUT` when runtime-proof wait budget is exhausted and keeps the proof
+  phase at `readiness`
 - interruption output uses `INTERRUPTED` and phase `interrupted` when runtime proof is terminated
   by a signal (for example CI cancellation)
 
 JSON output:
 
 - success or blocked proof output: `ok`, `path`, `mode`, optional `workflow`, `phase`, shared
-  `summary`, optional `artifacts`, optional advisory `likely_cause`, and optional cleanup
-  `error` / `next`
+  `summary`, optional `artifacts`, optional `workflow_env_artifacts`, optional advisory
+  `likely_cause`, and optional cleanup `error` / `next`
+- `workflow_env_artifacts` uses the same rendered-artifact summary as `ota execution plan`, so CI
+  and agents can see which workflow-owned env file was materialized and which task/service lanes
+  consume it during proof
 - contract load or validation failures still use the standard validation failure surface instead of
   inventing a second invalid-contract payload
 
@@ -1731,7 +1745,7 @@ JSON output:
 - `archive_path` (when `--archive` is set)
 - `promoted_baseline.path`, `promoted_baseline.archive_path`, and `promoted_baseline.promoted_at` (when `--archive --promote-baseline` is set)
 - `summary` mirroring the receipt summary with `error_count`, `warn_count`, `info_count`, and `step_count`
-- `receipt`, including additive `receipt.contract_identity` with declared project, selected metadata, execution intent, and compact contract counts
+- `receipt`, including additive `receipt.contract_identity` with declared project, selected metadata, execution intent, compact contract counts, and optional `receipt.workflow_env_artifacts` when the selected/default workflow owns rendered env artifacts
 - `findings`
 - `--history` switches `mode` to `history` and returns `summary.archive_count`, `summary.invalid_archive_count`, an `archives` array for valid archived receipts, and `invalid_archives` when malformed archive files were skipped
 - each history archive may preserve `status`, `backend`, `context`, `target`, `provider`, `lifecycle`, and `cwd` when that execution identity existed in the archived receipt

@@ -435,6 +435,8 @@ pub struct ExecutionReceipt {
     pub env: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_sources: Vec<ExecutionReceiptEnvSource>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workflow_env_artifacts: Vec<EnvRenderedArtifactEntry>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub native_prerequisites: Vec<ExecutionReceiptNativePrerequisite>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -527,6 +529,9 @@ impl Serialize for ExecutionReceipt {
         }
         if !self.env_sources.is_empty() {
             map.serialize_entry("env_sources", &self.env_sources)?;
+        }
+        if !self.workflow_env_artifacts.is_empty() {
+            map.serialize_entry("workflow_env_artifacts", &self.workflow_env_artifacts)?;
         }
         if !self.native_prerequisites.is_empty() {
             map.serialize_entry("native_prerequisites", &self.native_prerequisites)?;
@@ -634,6 +639,8 @@ pub struct ExecutionPlanSuccess<'a> {
     pub contract_identity: ContractIdentity,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub declared_execution: Option<ExecutionSummary<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub workflow_env_artifacts: Vec<EnvRenderedArtifactEntry>,
     pub resolved: ExecutionPlanResolved,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub overrides: Option<ExecutionPlanOverrides>,
@@ -2172,6 +2179,8 @@ pub struct ProofRuntimeStatus<'a> {
     pub summary: DoctorSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifacts: Option<ProofRuntimeArtifacts<'a>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub workflow_env_artifacts: Vec<EnvRenderedArtifactEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_class: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2301,8 +2310,14 @@ pub struct EnvSuccess<'a> {
     pub path: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<&'a str>,
     pub summary: EnvSummary,
     pub sources: Vec<EnvSourceEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rendered_artifacts: Vec<EnvRenderedArtifactEntry>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env: Vec<EnvEntry>,
 }
@@ -2313,6 +2328,8 @@ pub struct EnvFailure<'a> {
     pub path: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<&'a str>,
     pub error: &'a str,
 }
 
@@ -2349,6 +2366,19 @@ pub struct EnvSourceEntry {
     pub detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct EnvRenderedArtifactEntry {
+    pub path: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub includes: Vec<String>,
+    pub exists: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub consumers: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]

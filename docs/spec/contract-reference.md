@@ -1096,12 +1096,26 @@ env:
       path: config/runtime.yaml
     - kind: toml
       path: config/runtime.toml
+  profiles:
+    docker-build:
+      sources:
+        - kind: dotenv
+          path: .env.docker-build
+      env:
+        REDIS_HOST: redis
+        NEXTAUTH_URL: http://web:3000
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
 ```
 
 Fields:
 
 - `vars`: env-variable requirements keyed by env name
 - `sources`: ordered declared env sources
+- `profiles`: optional reusable env overlay profiles keyed by profile name
 
 This is not only a validation surface. Root `env` is the repo-wide execution contract ota uses to
 resolve values before `ota run` and `ota up` start a process.
@@ -1140,6 +1154,33 @@ Declared source rules:
   `/`, and `:` with `_`, collapsing repeated separators, and uppercasing the final env key
 - if two keys in the same declared source normalize to the same env key, ota fails that source
   load explicitly
+
+`env.profiles.<name>` fields:
+
+- `sources`: optional ordered declared env sources prepended for the selected profile
+- `env_files`: optional ordered repo-relative dotenv overlays injected into selected workflow tasks
+  before task-owned `env_files`
+- `env`: optional literal env overlay injected into selected workflow tasks before task-owned `env`
+- `render.dotenv.path`: optional repo-relative dotenv artifact path ota should materialize during
+  workflow execution
+- `render.dotenv.include`: optional ordered env names ota should resolve and emit into that dotenv
+  artifact
+
+Profile rules:
+
+- profiles do not replace repo-wide `env.vars`; they specialize how one selected workflow path
+  resolves and injects env truth
+- profile `sources` are prepended ahead of root `env.sources` so profile-owned source truth wins
+  before falling back to the repo baseline
+- profile `env_files` and `env` are low-precedence workflow overlays: task-owned `env_files`,
+  task `env`, and mode-branch `env` still win when they declare the same values
+- rendered dotenv artifacts are injected automatically into selected workflow tasks as the first
+  profile-owned `env_file`; do not duplicate the same path in `env_files`
+- rendered dotenv artifacts are replaced deterministically on each `ota up` run before service
+  startup or setup, so workflow-owned compose interpolation no longer requires a separate
+  `ensure_env_file` prepare task
+- use profiles when one workflow/runtime shape needs a truthful env overlay without hiding that
+  selection in shell glue or ad hoc setup notes
 
 `PATH` is a standard search-path env var, so it is the one env key that supports structured
 composition. Most env vars are simple single values instead.
@@ -1667,7 +1708,7 @@ Task-effect rules:
 - `prepare.source.kind: bundler` currently executes the narrow canonical repo-local gem hydration lane: `bundle config set path <path> && bundle install`
 - `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
-- `prepare` does not replace workflow `prepare.task`; workflow prepare is still the explicit host bootstrap lane that points at a native `action` task
+- `prepare` does not replace workflow `prepare.task`; workflow prepare is still the explicit host bootstrap lane that points at one native finite task
 - `prepare` is not orchestrator-managed in the current shipped slice
 
 `execution` fields:
@@ -1692,7 +1733,7 @@ Task-effect rules:
 `when` rules:
 
 - `when.checks` gates the selected task node only; dependency ordering and service requirements are still declared separately
-- allowed condition-check kinds are `precondition` (with `run`), `file`, and `changed_files`
+- allowed condition-check kinds are `precondition` (with `run`), `file`, `env`, and `changed_files`
 - probe-driven preconditions are not valid condition checks for `when.checks`
 - condition checks run before dependency/service startup for the selected task node; if any condition fails, ota skips the task deterministically
 
@@ -1739,10 +1780,13 @@ Task-effect rules:
 - `action.kind: ensure_env_file`
   - `action.path`: required repo-relative env-file path to create/update
   - `action.template`: optional repo-relative seed file copied when `action.path` is missing
+  - `action.template_mode`: optional `missing` or `replace` (default `missing`)
   - `action.vars`: required key map for env keys ota should enforce
   - `action.vars.<KEY>.value`: literal value for the declared key
   - `action.vars.<KEY>.random`: generated value for the declared key
-  - `action.vars.<KEY>.mode`: optional `missing` or `replace` (default `missing`)
+  - `action.vars.<KEY>.from_env`: copy the effective resolved value of another declared env name
+    into this key
+  - `action.vars.<KEY>.mode`: optional `missing`, `replace`, or `remove` (default `missing`)
   - `action.vars.<KEY>.random.bytes`: optional byte length (default `32`)
   - `action.vars.<KEY>.random.encoding`: optional `hex` or `base64` (default `hex`)
 - `action.kind: ensure_file`
@@ -1776,7 +1820,12 @@ there instead.
 Use `action.kind: ensure_env_file` when a setup path needs deterministic env bootstrap without a
 shell script. It creates `action.path` (optionally seeded from `action.template`) and appends only
 missing keys by default. Use `action.vars.<KEY>.mode: replace` when a workflow-scoped overlay must
-derive from a template but rewrite specific keys deterministically.
+rewrite specific keys deterministically. Use `action.template_mode: replace` when the destination
+should be re-derived from `action.template` on every run before applying the declared key updates;
+this is the governed replacement for shell copy-plus-`sed` env normalization. Use
+`action.vars.<KEY>.from_env` when one generated env file should project already-declared Ota env
+truth into a workflow-specific overlay, and use `action.vars.<KEY>.mode: remove` when stale keys
+must be deleted deterministically instead of relying on shell mutation.
 
 Use `action.kind: ensure_file` when setup needs one deterministic bootstrap file (for example a
 secret token file) without shell glue. It creates `action.path` once from one explicit source
@@ -1829,7 +1878,7 @@ step kind, and keeps validation/error reporting inside the contract surface.
 - an explicitly selected workflow with no `setup.task` has no setup prerequisite phase; legacy
   `tasks.setup` fallback is reserved for the unselected default compatibility path
 - `requirements.checks` must reference top-level checks declared with `kind: precondition`,
-  `kind: file`, or `kind: changed_files`
+  `kind: file`, `kind: env`, or `kind: changed_files`
 - when the selected workflow task closure declares any task-scoped requirements, unreferenced
   top-level precondition checks are treated as reusable definitions rather than global gates for
   that path; reference a check from `requirements.checks` when that task path needs it
@@ -2646,8 +2695,10 @@ Fields:
 - `<name>.intent`: optional workflow classification such as `local_development`
 - `<name>.description`: optional operator-facing summary
 - `<name>.notes`: optional multiline notes shown during `ota workflows` and `ota tasks --workflow` summaries
-- `<name>.prepare.task`: optional native `action` task ota should run first as explicit host file preparation for that workflow
-  - must reference a declared task with `action`, not `run`, `script`, `launch`, or `runtime`
+- `<name>.env.profile`: optional env profile name from `env.profiles`
+- `<name>.prepare.task`: optional native finite task ota should run first as explicit host preparation for that workflow
+  - must reference a declared task with one finite body: `run`, `script`, `prepare`, or `action`
+  - must not reference a `launch` task or a task with `runtime`
   - must resolve to native execution
   - intended for deterministic local file preparation such as `copy_if_missing`, `ensure_env_file`, or `ensure_bundle`
 - `<name>.setup.task`: optional task ota should treat as the preparation phase for that workflow
@@ -2663,6 +2714,14 @@ Fields:
 - `<name>.exposes`: optional human-readable endpoints or URLs the workflow is expected to surface
   - literal string form keeps a fixed URL
   - object form `{ surface: <name> }` resolves through the selected workflow run task
+
+Service manager fields:
+
+- `services.<name>.manager.kind`: `compose` or `host`
+- `services.<name>.manager.name`: optional manager/project name; required today for `kind: compose`
+- `services.<name>.manager.file`: optional compose file path for `kind: compose`
+- `services.<name>.manager.env_file`: optional repo-relative compose env-file path for `kind: compose`
+- `services.<name>.manager.service`: optional compose service name override; required today for `kind: compose`
 
 Prepare vs setup vs run:
 
@@ -2686,10 +2745,18 @@ Do not blur these boundaries:
 Current behavior:
 
 - workflows do not replace `tasks`, `services`, or `checks`; they compose those primitives into one canonical operational path
-- use `prepare.task` when the workflow needs one explicit host-side bootstrap action before setup, especially when setup itself should stay container-backed
-- do not use `prepare.task` for ordinary shell setup, service startup, or runtime launch; that still belongs in `setup.task`, `services`, or `run.task`
+- use `prepare.task` when the workflow needs one explicit host-side finite normalization/bootstrap step before setup, especially when setup itself should stay container-backed
+- use `env.profile` when one workflow owns a truthful runtime env overlay or declared-source specialization
+  and that selection should stay declarative instead of being repeated across tasks or hidden in shell
+- use `env.profile.render.dotenv` when that workflow also needs one concrete dotenv artifact on disk
+  for compose interpolation or another repo-owned runtime input, and Ota should materialize it
+  automatically instead of routing through a synthetic prepare action
+- do not use `prepare.task` for service startup or runtime launch; that still belongs in `setup.task`, `services`, or `run.task`
+- use `services.<name>.manager.env_file` when one compose-managed service depends on a workflow/runtime-specific interpolation file and Ota should own that `docker compose --env-file ...` input instead of repeating it inside shell commands
 - `doctor` diagnoses the default workflow by default when it declares workflow readiness probes,
   workflow readiness checks, or workflow services
+- selected-workflow `doctor`, `up`, and `proof runtime` paths apply `workflows.<name>.env.profile`
+  before evaluating task env overlays and declared env sources
 - `check` follows the same selected workflow readiness boundary when a workflow declares explicit
   readiness probes or checks, and otherwise falls back to the repo-wide `checks` surface
 - `doctor` and `check` may also validate `workflows.<name>.readiness.surfaces` through the selected
@@ -2763,6 +2830,24 @@ checks:
     severity: error
     path: node_modules
     expect: directory
+  - name: compose-env-compatible
+    kind: env
+    severity: error
+    env:
+      path: .env.compose
+      assertions:
+        - key: REDIS_HOST
+          host:
+            allowed:
+              - redis
+              - cache
+        - key: DATABASE_URL
+          url_host:
+            policy: not_loopback
+        - key: APP_ENV
+          not_equals:
+            - development
+            - local
   - name: app-source-changed
     kind: changed_files
     severity: info
@@ -2775,12 +2860,22 @@ checks:
 Fields:
 
 - `name`: required, non-empty string
-- `kind`: `precondition`, `health`, `file`, or `changed_files`
+- `kind`: `precondition`, `health`, `file`, `env`, or `changed_files`
 - `severity`: `error`, `warn`, or `info`
 - `run`: optional shell command when the check is command-backed
 - `probe`: optional probe reference when the check is probe-backed
 - `path`: optional repo-relative path when the check is file-backed
 - `expect`: required for `kind: file`; one of `exists`, `file`, `directory`, or `missing`
+- `env`: required for `kind: env`
+  - `env.path`: required repo-relative dotenv file path
+  - `env.assertions`: required non-empty assertions
+    - `key`: required env key
+    - exactly one of `equals`, `not_equals`, `state`, `host`, or `url_host`
+    - `not_equals`: optional non-empty list of disallowed exact values
+    - `state`: optional `present` or `missing`
+    - `host` / `url_host`: declare exactly one of:
+      - `policy`: currently `not_loopback`
+      - `allowed`: non-empty list of allowed hostnames
 - `changed_files`: required for `kind: changed_files`
   - `changed_files.paths`: required non-empty repo-relative path matchers
   - `changed_files.base_ref`: optional git base ref for diff range
@@ -2797,6 +2892,9 @@ Choose check kind by intent:
   `readiness.probes.<name>` contract
 - use `kind: file` for deterministic repo filesystem expectations without shell drift
   (`node_modules` exists, lockfile is present, bootstrap file is intentionally missing)
+- use `kind: env` for deterministic dotenv assertions without shell grep drift
+  (compose-compatible host rewrites, non-loopback service hosts, exact required values, key
+  presence/absence)
 - use `kind: changed_files` when the gate should depend on whether a path set changed in git
   rather than host/runtime state
 
@@ -2806,6 +2904,22 @@ Choose check kind by intent:
 - `expect: file` when only regular file presence should satisfy the check
 - `expect: directory` when only directory presence should satisfy the check
 - `expect: missing` when absence is required (for example enforce no generated artifact in tree)
+
+`kind: env` decision:
+
+- use `state: present` when only key presence matters
+- use `state: missing` when one key must stay absent from a workflow-scoped overlay
+- use `not_equals` when one key must avoid a small set of known-bad exact values such as
+  `localhost`, `development`, or `local`
+- use `host.policy: not_loopback` when one env key should point at a service/container hostname
+  rather than `localhost`, `127.0.0.1`, or `::1`
+- use `url_host.policy: not_loopback` when the env value is a URL and only the URL host should
+  be checked
+- use `host.allowed` when one env key must resolve to one of a small set of truthful service host
+  names such as `redis` or `cache`
+- use `url_host.allowed` when the env value is a URL/DSN and only specific hostnames such as
+  `postgres` or `db` are valid
+- use `equals` when one exact deterministic value must be present
 
 `kind: changed_files` decision:
 
@@ -2831,10 +2945,19 @@ Current behavior:
 
 - `up` uses preconditions before setup
 - `doctor` runs configured checks and reports findings by severity
-- checks must declare exactly one of `run`, `probe`, `path`, or `changed_files`
+- checks must declare exactly one of `run`, `probe`, `path`, `env`, or `changed_files`
 - `checks[].probe` must reference a named `readiness.probes.<name>` declaration
 - file checks use the repo filesystem directly and do not invoke a shell; prefer them over
   `run: test -d ...` or other OS-specific shell checks for file and directory state
+- env checks parse dotenv files directly and should be preferred over shell `grep`, `findstr`, or
+  ad hoc scripting when the contract needs deterministic env-file assertions
+- validate/doctor emit governance warnings for obvious shell file-state and env-file checks that
+  should be rewritten as first-class `kind: file` or `kind: env` checks
+- validate/doctor also warn when task bodies rewrite `.env*` files through obvious shell mutation
+  (`sed -i`, `perl -pi`) that should instead use `action.kind: ensure_env_file` with explicit
+  replacement keys
+- validate/doctor warn when task bodies hard-code `docker compose --env-file ...`; move that
+  ownership to task `env_files` or `services.<name>.manager.env_file` so Ota can reason about it
 - changed-files checks evaluate tracked diffs via git (`base_ref..head_ref` when both refs are
   declared, otherwise against `HEAD`) and may include untracked matches when
   `include_untracked: true`
