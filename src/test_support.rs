@@ -20,6 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::cell::Cell;
 use std::fs::{self, File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -28,12 +29,25 @@ use std::time::{Duration, Instant};
 
 use fs2::FileExt;
 
+#[derive(Clone, Copy)]
+enum TestMutexKind {
+    Env,
+    Cwd,
+}
+
 pub static ENV_MUTEX: Mutex<()> = Mutex::new(());
 pub static CWD_MUTEX: Mutex<()> = Mutex::new(());
 
+thread_local! {
+    static ENV_LOCK_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static CWD_LOCK_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
 pub struct TestMutexGuard {
-    _mutex: std::sync::MutexGuard<'static, ()>,
-    _file_lock: File,
+    _mutex: Option<std::sync::MutexGuard<'static, ()>>,
+    _file_lock: Option<File>,
+    _kind: TestMutexKind,
+    _is_reentrant: bool,
 }
 
 fn test_lock_path(name: &str) -> PathBuf {
@@ -75,24 +89,85 @@ fn acquire_cross_process_lock(name: &str) -> File {
     }
 }
 
+fn begin_env_lock() -> TestMutexGuard {
+    if ENV_LOCK_DEPTH.with(|depth| {
+        if depth.get() > 0 {
+            depth.set(depth.get() + 1);
+            true
+        } else {
+            false
+        }
+    }) {
+        return TestMutexGuard {
+            _mutex: None,
+            _file_lock: None,
+            _kind: TestMutexKind::Env,
+            _is_reentrant: true,
+        };
+    }
+
+    let locked = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let file_lock = acquire_cross_process_lock("env");
+    ENV_LOCK_DEPTH.with(|depth| depth.set(1));
+
+    TestMutexGuard {
+        _mutex: Some(locked),
+        _file_lock: Some(file_lock),
+        _kind: TestMutexKind::Env,
+        _is_reentrant: false,
+    }
+}
+
+fn begin_cwd_lock() -> TestMutexGuard {
+    if CWD_LOCK_DEPTH.with(|depth| {
+        if depth.get() > 0 {
+            depth.set(depth.get() + 1);
+            true
+        } else {
+            false
+        }
+    }) {
+        return TestMutexGuard {
+            _mutex: None,
+            _file_lock: None,
+            _kind: TestMutexKind::Cwd,
+            _is_reentrant: true,
+        };
+    }
+
+    let locked = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let file_lock = acquire_cross_process_lock("cwd");
+    CWD_LOCK_DEPTH.with(|depth| depth.set(1));
+
+    TestMutexGuard {
+        _mutex: Some(locked),
+        _file_lock: Some(file_lock),
+        _kind: TestMutexKind::Cwd,
+        _is_reentrant: false,
+    }
+}
+
+fn drop_lock(kind: TestMutexKind) {
+    match kind {
+        TestMutexKind::Env => ENV_LOCK_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1))),
+        TestMutexKind::Cwd => CWD_LOCK_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1))),
+    }
+}
+
 /// Acquire the ENV_MUTEX and a matching cross-process test lock, recovering from poison if a
 /// previous test panicked.
 pub fn env_mutex_lock() -> TestMutexGuard {
-    let mutex = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let file_lock = acquire_cross_process_lock("env");
-    TestMutexGuard {
-        _mutex: mutex,
-        _file_lock: file_lock,
-    }
+    begin_env_lock()
 }
 
 /// Acquire the CWD_MUTEX and a matching cross-process test lock, recovering from poison if a
 /// previous test panicked.
 pub fn cwd_mutex_lock() -> TestMutexGuard {
-    let mutex = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-    let file_lock = acquire_cross_process_lock("cwd");
-    TestMutexGuard {
-        _mutex: mutex,
-        _file_lock: file_lock,
+    begin_cwd_lock()
+}
+
+impl Drop for TestMutexGuard {
+    fn drop(&mut self) {
+        drop_lock(self._kind);
     }
 }
