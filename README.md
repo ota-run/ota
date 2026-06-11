@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/ota-icon.svg" alt="ota logo" width="110" height="110" />
+  <img src="https://res.cloudinary.com/ota-run/image/upload/q_auto/dpr_auto/63eb48c4-6148-40a0-8164-34505504414e.png" alt="ota logo" width="110" height="110" />
   <h1>ota</h1>
   <p><strong>Built for humans, CI, and AI agents, containers, and multi-repo workspaces.</strong></p>
   <p><strong>DOCTOR FIRST. CONTRACT SECOND.</strong></p>
