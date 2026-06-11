@@ -39418,7 +39418,7 @@ tasks:
         assert_eq!(
             second.execution_note.as_deref(),
             Some(
-                "persistent container reused; service failed to start; service workload in persistent container exited"
+                "persistent container reused; service stopped after readiness; service workload in persistent container exited"
             )
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
@@ -40631,7 +40631,7 @@ tasks:
                 .execution_note
                 .as_deref()
                 .is_some_and(|note| note.contains("persistent container created")
-                    && note.contains("service failed to start"))
+                    && note.contains("service stopped after readiness"))
         );
 
         let state_dir = bin_dir.join("docker-state");
@@ -40760,14 +40760,14 @@ tasks:
                 .execution_note
                 .as_deref()
                 .is_some_and(|note| note.contains("persistent container created")
-                    && note.contains("service failed to start"))
+                    && note.contains("service stopped after readiness"))
         );
         assert!(
             second
                 .execution_note
                 .as_deref()
                 .is_some_and(|note| note.contains("persistent container reused")
-                    && note.contains("service failed to start"))
+                    && note.contains("service stopped after readiness"))
         );
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),

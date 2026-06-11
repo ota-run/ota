@@ -187,6 +187,8 @@ Hosted validation guidance:
 
 - use `ota validate --json` and `ota doctor --json` for repo gating
 - use `ota workspace validate --json`, `ota workspace doctor --json`, and `ota workspace explain --json` for workspace gating and remediation planning
+- `ota validate --json` keeps legacy `warnings[]` strings and also exposes additive
+  `warning_details[]` entries with stable advisory codes for governance-aware tooling
 - use `ota workspace tasks --json` and `ota workspace list --json` for workspace inventory, task availability, and preflight readiness summaries
 - do not mutate contracts during hosted validation
 

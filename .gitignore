@@ -31,3 +31,4 @@ target
 .ota/receipts/
 
 .ota/proof/*
+/typescript

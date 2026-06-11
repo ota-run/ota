@@ -6156,6 +6156,7 @@ pub enum ContractAdvisory {
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
     LegacyNodeRuntimeToolSplit(LegacyNodeRuntimeToolSplitAdvisory),
     LegacyStandalonePoetry(LegacyStandalonePoetryAdvisory),
+    ServiceUsesOpaqueShellStart(ServiceUsesOpaqueShellStartAdvisory),
     ReplaceableShellCheck(ReplaceableShellCheckAdvisory),
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
     ReplaceableComposeEnvFileOwnership(ReplaceableComposeEnvFileOwnershipAdvisory),
@@ -6208,6 +6209,15 @@ pub struct LegacyNodeRuntimeToolSplitAdvisory {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegacyStandalonePoetryAdvisory {
     pub locations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceUsesOpaqueShellStartAdvisory {
+    pub task_name: String,
+    pub body_kind: String,
+    pub body_location: String,
+    pub runtime_location: String,
+    pub launch_location: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6284,6 +6294,77 @@ pub struct TaskExecutionBoundary {
 }
 
 impl ContractAdvisory {
+    pub const fn code(&self) -> &'static str {
+        match self {
+            ContractAdvisory::DependsOnBoundary(_) => {
+                "OTA_CONTRACT_ADVISORY_DEPENDS_ON_BOUNDARY"
+            }
+            ContractAdvisory::LikelyUnusedAttachment(_) => {
+                "OTA_CONTRACT_ADVISORY_LIKELY_UNUSED_ATTACHMENT"
+            }
+            ContractAdvisory::IsolatedYarnReleaseShadow(_) => {
+                "OTA_CONTRACT_ADVISORY_ISOLATED_YARN_RELEASE_SHADOW"
+            }
+            ContractAdvisory::MutatesManagedIsolatedPath(_) => {
+                "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH"
+            }
+            ContractAdvisory::LegacyNodeRuntimeToolSplit(_) => {
+                "OTA_CONTRACT_ADVISORY_LEGACY_NODE_RUNTIME_TOOL_SPLIT"
+            }
+            ContractAdvisory::LegacyStandalonePoetry(_) => {
+                "OTA_CONTRACT_ADVISORY_LEGACY_STANDALONE_POETRY"
+            }
+            ContractAdvisory::ServiceUsesOpaqueShellStart(_) => {
+                "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
+            }
+            ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
+                ReplaceableShellCheckKind::File => {
+                    "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_FILE_CHECK"
+                }
+                ReplaceableShellCheckKind::Env => {
+                    "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_CHECK"
+                }
+            },
+            ContractAdvisory::ReplaceableShellEnvMutation(_) => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_MUTATION"
+            }
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP"
+            }
+            ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP"
+            }
+            ContractAdvisory::SensitiveAgentWritablePath(_) => {
+                "OTA_CONTRACT_ADVISORY_SENSITIVE_AGENT_WRITABLE_PATH"
+            }
+            ContractAdvisory::SensitiveWriteException(_) => {
+                "OTA_CONTRACT_ADVISORY_SENSITIVE_WRITE_EXCEPTION"
+            }
+            ContractAdvisory::AgentBootstrapUnpinned(_) => {
+                "OTA_CONTRACT_ADVISORY_AGENT_BOOTSTRAP_UNPINNED"
+            }
+            ContractAdvisory::AgentSafeTaskNetwork(advisory) => match advisory.network_kind {
+                TaskNetworkEffectKind::DependencyHydration => {
+                    "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_DEPENDENCY_HYDRATION"
+                }
+                TaskNetworkEffectKind::Broad => {
+                    "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK"
+                }
+            },
+            ContractAdvisory::AgentSafeTaskExternalState(_) => {
+                "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_EXTERNAL_STATE"
+            }
+        }
+    }
+
+    pub(crate) const fn category(&self) -> &'static str {
+        "contract"
+    }
+
+    pub(crate) const fn owner(&self) -> &'static str {
+        "repo_contract"
+    }
+
     pub fn summary(&self) -> String {
         match self {
             ContractAdvisory::DependsOnBoundary(advisory) => format!(
@@ -6320,6 +6401,10 @@ impl ContractAdvisory {
             ContractAdvisory::LegacyStandalonePoetry(advisory) => format!(
                 "Poetry is modeled as a standalone tool instead of `toolchains.python.package_managers.poetry` ({})",
                 advisory.locations.join(", ")
+            ),
+            ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
+                "task `{}` uses opaque shell `{}` for long-running service path `{}`",
+                advisory.task_name, advisory.body_kind, advisory.body_location
             ),
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => format!(
@@ -6400,6 +6485,13 @@ impl ContractAdvisory {
             ContractAdvisory::LegacyStandalonePoetry(_) => String::from(
                 "Poetry owns Python dependency installation, lockfile semantics, virtualenv behavior, and often task execution through `poetry run`; keeping it as a standalone tool splits Python ecosystem ownership away from `toolchains.python`",
             ),
+            ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
+                "task `{}` declares `runtime.kind: service` at `{}`, but starts that long-running workload through opaque shell `{}` at `{}`; this hides launch semantics from Ota and weakens governance around startup, interruption, and service ownership compared with `launch.kind: command`",
+                advisory.task_name,
+                advisory.runtime_location,
+                advisory.body_kind,
+                advisory.body_location
+            ),
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => format!(
                     "check `{}` uses an obvious shell file-state command (`{}`), which is less portable and less governable than a first-class `kind: file` check",
@@ -6453,6 +6545,7 @@ impl ContractAdvisory {
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
@@ -6475,6 +6568,7 @@ impl ContractAdvisory {
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
@@ -6498,6 +6592,7 @@ impl ContractAdvisory {
             ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
@@ -6543,6 +6638,10 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::LegacyStandalonePoetry(_) => String::from(
                 "add or widen `toolchains.python`, move Poetry version governance under `toolchains.python.package_managers.poetry`, and remove the standalone Poetry declaration from the listed location(s)",
+            ),
+            ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
+                "replace `{}` with `{}` modeled as `kind: command`; keep service exposure and readiness under `{}` and reserve `run`/`script` for shell-oriented finite tasks",
+                advisory.body_location, advisory.launch_location, advisory.runtime_location
             ),
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => format!(
@@ -6666,6 +6765,7 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories.extend(collect_legacy_node_runtime_tool_split_advisories(contract));
     advisories.extend(collect_legacy_standalone_poetry_advisories(contract));
+    advisories.extend(collect_service_uses_opaque_shell_start_advisories(contract));
     advisories.extend(collect_replaceable_shell_check_advisories(contract));
     advisories.extend(collect_replaceable_shell_env_mutation_advisories(contract));
     advisories.extend(collect_replaceable_compose_env_file_ownership_advisories(
@@ -6764,6 +6864,128 @@ fn collect_legacy_standalone_poetry_advisories(contract: &Contract) -> Vec<Contr
     )]
 }
 
+fn collect_service_uses_opaque_shell_start_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+
+    for (task_name, task) in &contract.tasks {
+        if task.launch.is_none()
+            && task
+                .runtime
+                .as_ref()
+                .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+        {
+            let top_level_shell = opaque_shell_task_body(task.run.as_deref(), task.script.as_deref());
+            if let Some((body_kind, body_location)) = top_level_shell {
+                advisories.push(ContractAdvisory::ServiceUsesOpaqueShellStart(
+                    ServiceUsesOpaqueShellStartAdvisory {
+                        task_name: task_name.clone(),
+                        body_kind: body_kind.to_string(),
+                        body_location: format!("tasks.{task_name}.{body_location}"),
+                        runtime_location: format!("tasks.{task_name}.runtime"),
+                        launch_location: format!("tasks.{task_name}.launch"),
+                    },
+                ));
+            }
+        }
+
+        let Some(execution) = task.execution.as_ref() else {
+            continue;
+        };
+
+        for (backend, branch) in execution.modes.iter() {
+            if branch.launch.is_some() {
+                continue;
+            }
+
+            if !(branch.run.is_some()
+                || branch.script.is_some()
+                || branch.runtime.is_some()
+                || task.run.is_some()
+                || task.script.is_some())
+            {
+                continue;
+            }
+
+            let Some((body_kind, body_location)) = opaque_shell_branch_body(task, branch) else {
+                continue;
+            };
+
+            let Some(runtime) = branch.runtime.as_ref().or(task.runtime.as_ref()) else {
+                continue;
+            };
+            if runtime.kind != TaskRuntimeKind::Service {
+                continue;
+            }
+
+            let backend_name = match backend {
+                Backend::Native => "native",
+                Backend::Container => "container",
+                Backend::Remote => "remote",
+            };
+            advisories.push(ContractAdvisory::ServiceUsesOpaqueShellStart(
+                ServiceUsesOpaqueShellStartAdvisory {
+                    task_name: task_name.clone(),
+                    body_kind: body_kind.to_string(),
+                    body_location: match body_location {
+                        OpaqueShellBodyLocation::Task(field) => {
+                            format!("tasks.{task_name}.{field}")
+                        }
+                        OpaqueShellBodyLocation::Mode(field) => {
+                            format!("tasks.{task_name}.execution.modes.{backend_name}.{field}")
+                        }
+                    },
+                    runtime_location: if branch.runtime.is_some() {
+                        format!("tasks.{task_name}.execution.modes.{backend_name}.runtime")
+                    } else {
+                        format!("tasks.{task_name}.runtime")
+                    },
+                    launch_location: format!(
+                        "tasks.{task_name}.execution.modes.{backend_name}.launch"
+                    ),
+                },
+            ));
+        }
+    }
+
+    advisories
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OpaqueShellBodyLocation {
+    Task(&'static str),
+    Mode(&'static str),
+}
+
+fn opaque_shell_task_body<'a>(
+    run: Option<&'a str>,
+    script: Option<&'a str>,
+) -> Option<(&'static str, &'static str)> {
+    if has_non_empty_command(run) {
+        Some(("run", "run"))
+    } else if has_non_empty_command(script) {
+        Some(("script", "script"))
+    } else {
+        None
+    }
+}
+
+fn opaque_shell_branch_body(
+    task: &TaskSpec,
+    branch: &crate::schema::TaskModeBranchSpec,
+) -> Option<(&'static str, OpaqueShellBodyLocation)> {
+    if has_non_empty_command(branch.run.as_deref()) {
+        Some(("run", OpaqueShellBodyLocation::Mode("run")))
+    } else if has_non_empty_command(branch.script.as_deref()) {
+        Some(("script", OpaqueShellBodyLocation::Mode("script")))
+    } else if has_non_empty_command(task.run.as_deref()) {
+        Some(("run", OpaqueShellBodyLocation::Task("run")))
+    } else if has_non_empty_command(task.script.as_deref()) {
+        Some(("script", OpaqueShellBodyLocation::Task("script")))
+    } else {
+        None
+    }
+}
+
 fn collect_replaceable_shell_check_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
     let mut advisories = Vec::new();
     for check in &contract.checks {
@@ -6803,6 +7025,10 @@ fn collect_replaceable_shell_check_advisories(contract: &Contract) -> Vec<Contra
         }
     }
     advisories
+}
+
+fn has_non_empty_command(command: Option<&str>) -> bool {
+    command.is_some_and(|value| !value.trim().is_empty())
 }
 
 fn collect_replaceable_shell_env_mutation_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
@@ -25244,6 +25470,127 @@ checks:
                 if value.check_name == "compose-env-compatible"
                     && value.replacement_kind == crate::validator::ReplaceableShellCheckKind::Env
                     && value.subject == ".env.compose"
+        )));
+    }
+
+    #[test]
+    fn collects_service_uses_opaque_shell_start_advisory_for_top_level_run_service_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: bundle exec rails server -b 0.0.0.0 -p 3000
+    runtime:
+      kind: service
+      listeners:
+        api:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ServiceUsesOpaqueShellStart(value)
+                if value.task_name == "dev"
+                    && value.body_kind == "run"
+                    && value.body_location == "tasks.dev.run"
+                    && value.runtime_location == "tasks.dev.runtime"
+                    && value.launch_location == "tasks.dev.launch"
+        )));
+    }
+
+    #[test]
+    fn collects_service_uses_opaque_shell_start_advisory_for_top_level_script_service_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    script: |
+      bundle exec rails server -b 0.0.0.0 -p 3000
+    runtime:
+      kind: service
+      listeners:
+        api:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ServiceUsesOpaqueShellStart(value)
+                if value.task_name == "dev"
+                    && value.body_kind == "script"
+                    && value.body_location == "tasks.dev.script"
+                    && value.runtime_location == "tasks.dev.runtime"
+                    && value.launch_location == "tasks.dev.launch"
+        )));
+    }
+
+    #[test]
+    fn collects_service_uses_opaque_shell_start_advisory_for_mode_specific_service_path() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: pnpm
+      args:
+        - dev
+    execution:
+      default_mode: native
+      modes:
+        native:
+          run: bundle exec rails server -b 0.0.0.0 -p 3000
+          runtime:
+            kind: service
+            listeners:
+              api:
+                protocol: http
+                bind:
+                  address: 0.0.0.0
+                  port:
+                    mode: fixed
+                    value: 3000
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ServiceUsesOpaqueShellStart(value)
+                if value.task_name == "dev"
+                    && value.body_kind == "run"
+                    && value.body_location == "tasks.dev.execution.modes.native.run"
+                    && value.runtime_location == "tasks.dev.execution.modes.native.runtime"
+                    && value.launch_location == "tasks.dev.execution.modes.native.launch"
         )));
     }
 
