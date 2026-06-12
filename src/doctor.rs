@@ -15604,7 +15604,16 @@ checks:
     fn probe_backed_check_failure_is_reported_as_probe() {
         let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
         let port = listener.local_addr().unwrap().port();
-        drop(listener);
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("probe response should write");
+        });
 
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -15631,6 +15640,7 @@ checks:
         .unwrap();
 
         let report = diagnose_checks_only(&contract, synthetic_contract_path());
+        server.join().expect("probe server should finish");
         assert!(!report.ok);
         assert_eq!(report.findings.len(), 1);
         assert_eq!(
@@ -15850,9 +15860,23 @@ workflows:
 
     #[test]
     fn workflow_signal_probes_are_non_gating() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("probe response should write");
+        });
+
         let contract = parse_contract_str(
             synthetic_contract_path(),
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: ota
@@ -15860,7 +15884,7 @@ readiness:
   probes:
     backend-ready:
       kind: http
-      url: http://127.0.0.1:9/healthz/readiness
+      url: http://127.0.0.1:{port}/healthz/readiness
       timeout: 100
 workflows:
   default: backend
@@ -15870,6 +15894,8 @@ workflows:
         probes:
           - backend-ready
 "#,
+            )
+            .as_str(),
         )
         .unwrap();
 
@@ -15878,6 +15904,7 @@ workflows:
             synthetic_contract_path(),
             Some("backend"),
         );
+        server.join().expect("probe server should finish");
 
         assert!(report.ok, "{report:?}");
         let finding = report
@@ -19958,9 +19985,23 @@ unexpected: true
             .expect("policy finding should be present");
         findings.push(finding_contract_projection("policy", policy_finding));
 
+        let workflow_listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let workflow_port = workflow_listener.local_addr().unwrap().port();
+        let workflow_server = thread::spawn(move || {
+            let (mut stream, _) = workflow_listener.accept().expect("probe should connect");
+            let mut buffer = [0u8; 256];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .expect("probe response should write");
+        });
+
         let workflow_contract = parse_contract_str(
             synthetic_contract_path(),
-            r#"
+            format!(
+                r#"
 version: 1
 project:
   name: ota
@@ -19968,7 +20009,7 @@ readiness:
   probes:
     backend-ready:
       kind: http
-      url: http://127.0.0.1:9/healthz/readiness
+      url: http://127.0.0.1:{workflow_port}/healthz/readiness
       timeout: 100
 workflows:
   default: backend
@@ -19978,6 +20019,8 @@ workflows:
         probes:
           - backend-ready
 "#,
+            )
+            .as_str(),
         )
         .unwrap();
         let workflow_report = super::diagnose_checks_only_for_workflow(
@@ -19985,6 +20028,7 @@ workflows:
             synthetic_contract_path(),
             Some("backend"),
         );
+        workflow_server.join().expect("probe server should finish");
         let workflow_finding = workflow_report
             .findings
             .iter()
@@ -20926,9 +20970,15 @@ tasks:
         ]
     }
 
+    fn normalize_line_endings(source: String) -> String {
+        source.replace("\r\n", "\n")
+    }
+
     fn doctor_production_source() -> String {
         let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/doctor.rs");
-        let source = fs::read_to_string(&source_path).expect("doctor source should load");
+        let source = normalize_line_endings(
+            fs::read_to_string(&source_path).expect("doctor source should load"),
+        );
         let (production_source, _) = source
             .split_once("#[cfg(test)]\nmod tests {")
             .expect("doctor tests module marker should exist");
@@ -20937,7 +20987,9 @@ tasks:
 
     fn commands_production_source() -> String {
         let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/commands.rs");
-        let source = fs::read_to_string(&source_path).expect("commands source should load");
+        let source = normalize_line_endings(
+            fs::read_to_string(&source_path).expect("commands source should load"),
+        );
         let (production_source, _) = source
             .split_once("#[cfg(test)]\nmod tests {")
             .expect("commands tests module marker should exist");
@@ -21219,7 +21271,9 @@ field is not emitted for that finding family.
         let doc_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/doctor-finding-reference.md");
         let expected = render_doctor_finding_reference_markdown();
-        let actual = fs::read_to_string(&doc_path).expect("doctor finding reference should load");
+        let actual = normalize_line_endings(
+            fs::read_to_string(&doc_path).expect("doctor finding reference should load"),
+        );
 
         assert_eq!(
             actual,
