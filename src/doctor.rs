@@ -11679,12 +11679,12 @@ mod tests {
     use std::collections::BTreeSet;
     use std::env;
     use std::fs;
-    use std::io::{Read, Write};
+    use std::io::{ErrorKind, Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::path::{Path, PathBuf};
     use std::sync::OnceLock;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use crate::parser::parse_contract_str;
     use crate::policy_pack::ProvisioningTargetKind;
@@ -11739,12 +11739,33 @@ mod tests {
     }
 
     fn drain_probe_request_if_available(stream: &mut TcpStream) {
-        // Let the client flush the request before responding, but bound the wait so
-        // success-path probe tests stay deterministic across CI runners.
+        // Let the client start the request before responding so the fake server does
+        // not race the probe, but bound the wait to keep the tests deterministic.
         let _ = stream.set_nodelay(true);
-        let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+        let deadline = Instant::now() + Duration::from_millis(500);
         let mut buffer = [0u8; 256];
-        let _ = stream.read(&mut buffer);
+        loop {
+            match stream.peek(&mut buffer) {
+                Ok(0) => {}
+                Ok(_) => {
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(25)));
+                    let _ = stream.read(&mut buffer);
+                    break;
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        ErrorKind::WouldBlock | ErrorKind::TimedOut
+                    ) => {}
+                Err(_) => break,
+            }
+
+            if Instant::now() >= deadline {
+                break;
+            }
+
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     #[cfg(windows)]
