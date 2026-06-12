@@ -54,9 +54,27 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Hydrate cargo dependencies
+        shell: bash
+        run: |
+          attempts=3
+          for attempt in $(seq 1 "$attempts"); do
+            if cargo fetch --locked; then
+              exit 0
+            else
+              code=$?
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              echo "cargo fetch failed with exit $code; retrying in 15 seconds..."
+              sleep 15
+              continue
+            fi
+            exit "$code"
+          done
+
       - name: Build release binary
         shell: bash
-        run: cargo build --release --quiet
+        run: cargo build --locked --offline --release --quiet
 
       - name: Run Git Bash container path proof
         shell: bash
