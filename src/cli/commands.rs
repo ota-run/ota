@@ -50065,7 +50065,8 @@ tasks:
     fn commands_production_source() -> String {
         let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/commands.rs");
         let source = fs::read_to_string(&source_path).expect("commands source should load");
-        let (production_source, _) = source
+        let normalized = source.replace("\r\n", "\n");
+        let (production_source, _) = normalized
             .split_once("#[cfg(test)]\nmod tests {")
             .expect("commands tests module marker should exist");
         production_source.to_string()
@@ -65605,6 +65606,7 @@ workflows:
             fs::read_to_string(repo.path().join("run.log"))
                 .unwrap()
                 .lines()
+                .map(str::trim_end)
                 .collect::<Vec<_>>(),
             vec!["install"]
         );
