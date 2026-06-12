@@ -15583,7 +15583,7 @@ readiness:
       url: http://127.0.0.1:{port}/healthz/readiness
       # Windows CI can take longer to establish local-loopback probe
       # handshakes under Git Bash/runner scheduling; keep above jitter.
-      timeout: 5000
+      timeout: 30000
 checks:
   - name: backend-ready
     kind: health
@@ -15631,7 +15631,7 @@ readiness:
       url: http://127.0.0.1:{port}/healthz/readiness
       # Windows CI can take longer to establish local-loopback probe
       # handshakes under Git Bash/runner scheduling; keep above jitter.
-      timeout: 5000
+      timeout: 30000
 checks:
   - name: backend-ready
     kind: health
@@ -15891,7 +15891,7 @@ readiness:
       url: http://127.0.0.1:{port}/healthz/readiness
       # Windows CI can take longer to establish local-loopback probe
       # handshakes under Git Bash/runner scheduling; keep above jitter.
-      timeout: 5000
+      timeout: 30000
 workflows:
   default: backend
   backend:
