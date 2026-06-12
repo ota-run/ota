@@ -199,18 +199,25 @@ tasks:
   compat:
     description: Run the compatibility test gate
     notes: |
-      Use this to validate schema stability and fixture coverage before release work.
+      Use this to validate generated schema sync, schema stability, and fixture coverage before release work.
     category: test
     script: |
       set -e
+      cargo run --bin sync_published_contract_schemas
+      git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json
       CARGO_INCREMENTAL=0 cargo test contract_is_stable
       CARGO_INCREMENTAL=0 cargo test --test json_schema_contracts
       CARGO_INCREMENTAL=0 cargo test --test json_output_conformance
+      CARGO_INCREMENTAL=0 cargo test --test examples_validate -- --test-threads=1
       CARGO_INCREMENTAL=0 cargo test --test detect_fixtures
     variants:
       - when:
           os: windows
         script: |
+          cargo run --bin sync_published_contract_schemas
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:CARGO_INCREMENTAL = "0"
           cargo test contract_is_stable
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -218,9 +225,20 @@ tasks:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --test json_output_conformance
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --test examples_validate -- --test-threads=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --test detect_fixtures
     depends_on:
       - setup
+    safe_for_agent: true
+  schemas:sync:
+    description: Regenerate the published repo and workspace contract schema artifacts
+    notes: |
+      Use this after changing the Rust-owned published contract schema generator.
+      It rewrites `docs/spec/json-schemas/contract.json` and
+      `docs/spec/json-schemas/workspace-contract.json` from the canonical Rust source.
+    category: dev
+    run: cargo run --bin sync_published_contract_schemas
     safe_for_agent: true
   release-gate:
     description: Run the GitHub Actions verification suite

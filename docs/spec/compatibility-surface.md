@@ -62,11 +62,33 @@ For each command above, V4 must preserve:
 - human output status semantics (`READY`, `NOT READY`, `VALID`) and failure clarity
 - for `ota --version --json`, build identity fields and the contract capability catalog semantics
 
+Published contract schemas:
+
+- `docs/spec/json-schemas/contract.json` /
+  `https://dist.ota.run/spec/json-schemas/latest/contract.json`
+- `docs/spec/json-schemas/workspace-contract.json` /
+  `https://dist.ota.run/spec/json-schemas/latest/workspace-contract.json`
+
+These are compatibility-locked machine-readable public APIs for `ota.yaml` and
+`ota.workspace.yaml` authoring. Changes to their semantics or required fields must be treated like
+other contract-surface changes: additive when possible, explicitly documented when not.
+The checked-in JSON files are generated artifacts owned by the Rust publisher in
+`src/published_contract_schemas.rs`; regenerate them with
+`cargo run --bin sync_published_contract_schemas` instead of hand-editing the published files.
+The release gate and local compatibility task both rerun that generator and fail if
+`git diff --exit-code` sees schema drift afterward.
+Shipped repo/workspace examples and canonical docs examples are also checked as raw YAML values.
+Ota now also validates those repo/workspace examples after loading them through the Rust contract
+types and projecting them back to authoring JSON values, so the published schemas stay aligned
+with both authored contract truth and the actual Rust-owned authoring-model boundary.
+
 ## Existing authoritative docs
 
 - `docs/spec/exit-codes.md`
 - `docs/spec/json-output-reference.md`
 - `docs/spec/command-reference.md`
+- `docs/spec/contract-reference.md`
+- `docs/spec/workspace-reference.md`
 
 ## Baseline tests that must remain green
 
@@ -107,8 +129,11 @@ Equivalent expanded command set:
 
 ```bash
 cargo test contract_is_stable
+cargo run --bin sync_published_contract_schemas
+git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json
 cargo test --test json_schema_contracts
 cargo test --test json_output_conformance
+cargo test --test examples_validate
 cargo test --test detect_fixtures
 ```
 

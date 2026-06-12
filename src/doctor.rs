@@ -20411,7 +20411,7 @@ tasks:
             DoctorFindingReferenceEntry {
                 code: "OTA_CONTEXT_HOST_PLATFORM_UNSUPPORTED",
                 category: "execution",
-                owner_surface: "repo_contract",
+                owner_surface: "host",
                 provenance_key_surface: "repo_contract",
             },
             DoctorFindingReferenceEntry {

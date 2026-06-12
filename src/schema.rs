@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::de::{Deserializer, Error as DeError, MapAccess, SeqAccess, Visitor};
-use serde::ser::{SerializeMap, SerializeSeq, Serializer};
+use serde::ser::{SerializeMap, SerializeSeq, SerializeStruct, Serializer};
 use serde::{Deserialize, Serialize};
 
 const MEMORY_KIB: u64 = 1024;
@@ -113,7 +113,33 @@ pub fn format_memory_size_bytes(bytes: u64) -> String {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+pub fn serialize_authoring_json_value<T>(value: &T) -> Result<serde_json::Value, serde_json::Error>
+where
+    T: Serialize,
+{
+    let mut value = serde_json::to_value(value)?;
+    prune_non_authored_null_object_fields(&mut value);
+    Ok(value)
+}
+
+fn prune_non_authored_null_object_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for value in map.values_mut() {
+                prune_non_authored_null_object_fields(value);
+            }
+            map.retain(|_, value| !value.is_null());
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                prune_non_authored_null_object_fields(value);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Contract {
     pub version: u32,
@@ -437,7 +463,7 @@ impl Contract {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
     pub name: String,
@@ -447,14 +473,14 @@ pub struct Project {
     pub project_type: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 pub struct WorkflowCatalog {
     pub default: String,
     #[serde(flatten)]
     pub items: BTreeMap<String, WorkflowSpec>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowSpec {
     #[serde(default)]
@@ -479,7 +505,7 @@ pub struct WorkflowSpec {
     pub exposes: Vec<WorkflowExposeSpec>,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowTaskRefSpec {
     pub task: String,
@@ -492,14 +518,14 @@ pub struct WorkflowEnvSpec {
     pub profile: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowServicesSpec {
     #[serde(default)]
     pub required: Vec<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowReadinessSpec {
     #[serde(default)]
@@ -512,7 +538,7 @@ pub struct WorkflowReadinessSpec {
     pub signal: WorkflowReadinessSignalSpec,
 }
 
-#[derive(Debug, Default, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowReadinessSignalSpec {
     #[serde(default)]
@@ -546,7 +572,7 @@ impl WorkflowExposeSpec {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RepoWorkspaceSpec {
     #[serde(rename = "type")]
@@ -554,7 +580,7 @@ pub struct RepoWorkspaceSpec {
     pub members: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RepoWorkspaceType {
     Monorepo,
@@ -572,7 +598,56 @@ pub struct Execution {
     context_resolution_errors: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+impl Serialize for Execution {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut field_count = 1;
+        if self.preferred.is_some() {
+            field_count += 1;
+        }
+        if !self.supported.is_empty() {
+            field_count += 1;
+        }
+        if self.lifecycle.is_some() {
+            field_count += 1;
+        }
+        if self.backends.is_some() {
+            field_count += 1;
+        }
+        if self.default_context.is_some() {
+            field_count += 1;
+        }
+        if !self.shared_backends.is_empty() {
+            field_count += 1;
+        }
+
+        let mut state = serializer.serialize_struct("Execution", field_count)?;
+        if let Some(preferred) = &self.preferred {
+            state.serialize_field("preferred", preferred)?;
+        }
+        if !self.supported.is_empty() {
+            state.serialize_field("supported", &self.supported)?;
+        }
+        if let Some(lifecycle) = &self.lifecycle {
+            state.serialize_field("lifecycle", lifecycle)?;
+        }
+        if let Some(backends) = &self.backends {
+            state.serialize_field("backends", backends)?;
+        }
+        if let Some(default_context) = &self.default_context {
+            state.serialize_field("default_context", default_context)?;
+        }
+        state.serialize_field("contexts", &self.contexts)?;
+        if !self.shared_backends.is_empty() {
+            state.serialize_field("shared_backends", &self.shared_backends)?;
+        }
+        state.end()
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionBackends {
     #[serde(default)]
@@ -1106,7 +1181,7 @@ impl RequirementSurface {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequirementsSpec {
     #[serde(default)]
@@ -1150,7 +1225,7 @@ impl TaskRequirementsSpec {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequirementAnyOfSpec {
     #[serde(default)]
@@ -1182,7 +1257,7 @@ impl TaskRequirementAnyOfSpec {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskRequirementAnyOfWhen {
     #[serde(default)]
@@ -1432,7 +1507,7 @@ fn current_schema_os() -> &'static str {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionContext {
     pub backend: Backend,
@@ -1456,7 +1531,7 @@ pub struct ExecutionContext {
     pub attachments: ExecutionContextAttachments,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionSharedBackend {
     pub scope: ExecutionSharedBackendScope,
@@ -1477,14 +1552,14 @@ pub enum ExecutionSharedBackendScope {
     Remote,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionSharedBackendFulfillment {
     None,
     Run,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionSharedBackendEnvironment {
     #[serde(default)]
@@ -1497,7 +1572,7 @@ pub struct ExecutionSharedBackendEnvironment {
     pub source: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionContextRequirements {
     #[serde(default)]
@@ -1508,7 +1583,7 @@ pub struct ExecutionContextRequirements {
     pub toolchains: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ToolchainSpec {
     #[serde(default)]
@@ -1610,7 +1685,7 @@ impl ToolchainSpec {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ToolchainPlatformSpec {
     #[serde(default)]
@@ -1786,7 +1861,7 @@ pub struct TaskExecutionOrchestratorSpec {
     pub mode: TaskExecutionOrchestratorMode,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionContextAttachments {
     #[serde(default)]
@@ -1840,7 +1915,7 @@ impl std::fmt::Display for ExtensionKind {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ContainerBackend {
     pub image: String,
@@ -1850,14 +1925,14 @@ pub struct ContainerBackend {
     pub resources: Option<ContainerResourceSpec>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ContainerResourceSpec {
     #[serde(default)]
     pub memory: Option<ContainerMemoryResourceSpec>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ContainerMemoryResourceSpec {
     #[serde(default)]
@@ -1866,7 +1941,7 @@ pub struct ContainerMemoryResourceSpec {
     pub default: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RemoteBackend {
     pub provider: String,
@@ -1887,7 +1962,7 @@ pub struct RemoteSshOptions {
     pub identity_file: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
     Native,
@@ -1895,14 +1970,14 @@ pub enum Backend {
     Remote,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Lifecycle {
     Persistent,
     Ephemeral,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum RuntimeRequirement {
     Simple(String),
@@ -1997,7 +2072,7 @@ impl RuntimeRequirement {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeDetail {
     pub version: String,
@@ -2013,7 +2088,7 @@ pub struct RuntimeDetail {
     pub platforms: BTreeMap<String, RuntimePlatformDetail>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimePlatformDetail {
     #[serde(default)]
@@ -2024,7 +2099,7 @@ pub struct RuntimePlatformDetail {
     pub distribution: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum ToolRequirement {
     Simple(String),
@@ -2102,7 +2177,7 @@ impl ToolRequirement {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ToolDetail {
     pub version: String,
@@ -2116,7 +2191,7 @@ pub struct ToolDetail {
     pub acquisition: Option<ToolAcquisitionSpec>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ToolPlatformDetail {
     #[serde(default)]
@@ -2144,7 +2219,7 @@ pub enum ToolAcquisitionProvider {
     Command,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct NativePrerequisiteSpec {
     #[serde(default)]
@@ -2173,7 +2248,7 @@ impl NativePrerequisiteSpec {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct NativePrerequisitePlatformSpec {
     #[serde(default)]
@@ -2206,7 +2281,7 @@ pub struct NativePrerequisitePlatformSpec {
     pub note: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct NativePrerequisitePlatformRequires {
     #[serde(default)]
@@ -2244,7 +2319,7 @@ impl NativePrerequisitePlatformSpec {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct NativePrerequisiteVisualStudioSpec {
     #[serde(default)]
@@ -2404,13 +2479,13 @@ pub struct EnvRequirement {
     pub append: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskEnvBindingSpec {
     pub from_service: TaskServiceEnvBindingSpec,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskServiceEnvBindingSpec {
     pub service: String,
@@ -2432,7 +2507,7 @@ pub struct TaskServiceEnvBindingSpec {
     pub database: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskServiceEnvBindingFormat {
     Url,
@@ -2441,7 +2516,7 @@ pub enum TaskServiceEnvBindingFormat {
     HostPort,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ContractReadinessConfig {
     #[serde(default)]
@@ -2817,7 +2892,7 @@ pub struct SurfaceReadinessSpec {
     pub start_period: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ReadinessProbeSpec {
     pub kind: ReadinessProbeKind,
@@ -2841,14 +2916,14 @@ pub struct ReadinessProbeSpec {
     pub timeout: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ReadinessProbeKind {
     Http,
     Tcp,
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ReadinessProbeTargetSpec {
     pub kind: ReadinessProbeTargetKind,
@@ -2867,7 +2942,7 @@ const fn default_readiness_probe_target_address_view() -> TaskTargetAddressView 
     TaskTargetAddressView::Host
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ReadinessProbeTargetKind {
     Task,
@@ -3329,7 +3404,7 @@ impl TaskNetworkEffectKind {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskSpec {
     #[serde(default)]
@@ -4036,7 +4111,7 @@ impl TaskExecutionWhenSpec {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskModeExecutionSpec {
     #[serde(default)]
@@ -4047,7 +4122,7 @@ pub struct TaskModeExecutionSpec {
     pub modes: TaskModeBranchesSpec,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskModeBranchesSpec {
     #[serde(default)]
@@ -4082,7 +4157,7 @@ impl TaskModeBranchesSpec {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskModeBranchSpec {
     #[serde(default)]
@@ -5170,7 +5245,7 @@ pub(crate) fn task_target_env_name(name: &str) -> String {
     env
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskVariantSpec {
     pub when: TaskWhen,
@@ -5210,7 +5285,7 @@ impl TaskVariantSpec {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct TaskWhen {
     #[serde(default)]
@@ -5287,7 +5362,7 @@ pub struct TaskVariantView<'a> {
     pub script: Option<&'a str>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct CheckSpec {
     pub name: String,
@@ -5309,7 +5384,7 @@ pub struct CheckSpec {
     pub env: Option<EnvCheckSpec>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum CheckKind {
     Precondition,
@@ -5388,7 +5463,7 @@ pub enum FileCheckExpectation {
     Missing,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CheckSeverity {
     Error,

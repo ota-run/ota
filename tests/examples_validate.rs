@@ -24,9 +24,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use jsonschema::{Draft, JSONSchema};
-use ota::doctor::{diagnose_policy_review, FindingSeverity};
+use ota::doctor::{FindingSeverity, diagnose_policy_review};
 use ota::parser::{load_contract, parse_contract_str};
-use ota::policy_pack::{load_org_policy_pack_auto, OrgPolicyPack};
+use ota::policy_pack::{OrgPolicyPack, load_org_policy_pack_auto};
+use ota::schema::serialize_authoring_json_value;
 use ota::validator::validate_contract;
 use ota::workspace::{
     load_workspace_contract, parse_workspace_contract_str, validate_workspace_contract,
@@ -79,13 +80,20 @@ fn load_json(path: &Path) -> Value {
 }
 
 fn published_contract_schema() -> JSONSchema {
-    let schema_path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas/contract.json");
+    published_schema("docs/spec/json-schemas/contract.json")
+}
+
+fn published_workspace_contract_schema() -> JSONSchema {
+    published_schema("docs/spec/json-schemas/workspace-contract.json")
+}
+
+fn published_schema(path: &str) -> JSONSchema {
+    let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
     let schema = load_json(&schema_path);
     JSONSchema::options()
         .with_draft(Draft::Draft202012)
         .compile(&schema)
-        .expect("published contract schema should compile")
+        .unwrap_or_else(|error| panic!("published schema `{path}` should compile: {error}"))
 }
 
 fn assert_matches_published_contract_schema(source: &Path, contents: &str, compiled: &JSONSchema) {
@@ -100,6 +108,39 @@ fn assert_matches_published_contract_schema(source: &Path, contents: &str, compi
         let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
         panic!(
             "contract example `{}` did not match published contract schema:\n{}",
+            source.display(),
+            messages.join("\n")
+        );
+    }
+}
+
+fn assert_matches_published_workspace_contract_schema(
+    source: &Path,
+    contents: &str,
+    compiled: &JSONSchema,
+) {
+    let instance: Value = serde_yaml::from_str(contents).unwrap_or_else(|error| {
+        panic!(
+            "workspace contract example `{}` should parse as YAML for published schema validation: {error}",
+            source.display()
+        )
+    });
+
+    if let Err(errors) = compiled.validate(&instance) {
+        let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+        panic!(
+            "workspace contract example `{}` did not match published workspace contract schema:\n{}",
+            source.display(),
+            messages.join("\n")
+        );
+    }
+}
+
+fn assert_serialized_value_matches_schema(source: &Path, value: &Value, compiled: &JSONSchema) {
+    if let Err(errors) = compiled.validate(value) {
+        let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+        panic!(
+            "serialized contract value `{}` did not match published schema:\n{}",
             source.display(),
             messages.join("\n")
         );
@@ -213,6 +254,27 @@ fn shipped_examples_match_published_contract_schema() {
 }
 
 #[test]
+fn shipped_examples_serialize_to_values_that_match_published_contract_schema() {
+    let compiled = published_contract_schema();
+
+    for path in example_paths() {
+        let contract = load_contract(&path).unwrap_or_else(|error| {
+            panic!(
+                "example `{}` should load for serialized schema validation: {error}",
+                path.display()
+            );
+        });
+        let serialized = serialize_authoring_json_value(&contract).unwrap_or_else(|error| {
+            panic!(
+                "example `{}` should serialize to JSON value for schema validation: {error}",
+                path.display()
+            );
+        });
+        assert_serialized_value_matches_schema(&path, &serialized, &compiled);
+    }
+}
+
+#[test]
 fn shipped_workspace_examples_load_and_validate() {
     for path in workspace_example_paths() {
         let contract = load_workspace_contract(&path).unwrap_or_else(|error| {
@@ -228,6 +290,42 @@ fn shipped_workspace_examples_load_and_validate() {
                 path.display()
             );
         });
+    }
+}
+
+#[test]
+fn shipped_workspace_examples_match_published_workspace_contract_schema() {
+    let compiled = published_workspace_contract_schema();
+
+    for path in workspace_example_paths() {
+        let contents = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "workspace example `{}` should load for schema validation: {error}",
+                path.display()
+            );
+        });
+        assert_matches_published_workspace_contract_schema(&path, &contents, &compiled);
+    }
+}
+
+#[test]
+fn shipped_workspace_examples_serialize_to_values_that_match_published_workspace_contract_schema() {
+    let compiled = published_workspace_contract_schema();
+
+    for path in workspace_example_paths() {
+        let contract = load_workspace_contract(&path).unwrap_or_else(|error| {
+            panic!(
+                "workspace example `{}` should load for serialized schema validation: {error}",
+                path.display()
+            );
+        });
+        let serialized = serialize_authoring_json_value(&contract).unwrap_or_else(|error| {
+            panic!(
+                "workspace example `{}` should serialize to JSON value for schema validation: {error}",
+                path.display()
+            );
+        });
+        assert_serialized_value_matches_schema(&path, &serialized, &compiled);
     }
 }
 
@@ -417,6 +515,134 @@ fn canonical_docs_repo_contract_examples_match_published_contract_schema() {
         assert!(
             validated > 0,
             "docs file `{}` should contain at least one full repo contract example",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn canonical_docs_repo_contract_examples_serialize_to_values_that_match_published_contract_schema()
+{
+    let compiled = published_contract_schema();
+
+    for (path, kind) in canonical_docs_contract_examples() {
+        if !matches!(kind, DocContractKind::Repo) {
+            continue;
+        }
+
+        let markdown = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "docs example file `{}` should load for serialized schema validation: {error}",
+                path.display()
+            )
+        });
+        let mut validated = 0;
+
+        for block in yaml_fenced_blocks(&markdown) {
+            if !is_full_repo_contract_example(&block) {
+                continue;
+            }
+
+            let contract = parse_contract_str(&path, &block).unwrap_or_else(|error| {
+                panic!(
+                    "repo contract example in `{}` should parse for serialized schema validation: {error}",
+                    path.display()
+                );
+            });
+            let serialized = serialize_authoring_json_value(&contract).unwrap_or_else(|error| {
+                panic!(
+                    "repo contract example in `{}` should serialize for schema validation: {error}",
+                    path.display()
+                );
+            });
+            assert_serialized_value_matches_schema(&path, &serialized, &compiled);
+            validated += 1;
+        }
+
+        assert!(
+            validated > 0,
+            "docs file `{}` should contain at least one full repo contract example",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn canonical_docs_workspace_contract_examples_match_published_workspace_contract_schema() {
+    let compiled = published_workspace_contract_schema();
+
+    for (path, kind) in canonical_docs_contract_examples() {
+        if !matches!(kind, DocContractKind::Workspace) {
+            continue;
+        }
+
+        let markdown = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "docs example file `{}` should load for schema validation: {error}",
+                path.display()
+            )
+        });
+        let mut validated = 0;
+
+        for block in yaml_fenced_blocks(&markdown) {
+            if !is_full_workspace_contract_example(&block) {
+                continue;
+            }
+
+            assert_matches_published_workspace_contract_schema(&path, &block, &compiled);
+            validated += 1;
+        }
+
+        assert!(
+            validated > 0,
+            "docs file `{}` should contain at least one full workspace contract example",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn canonical_docs_workspace_contract_examples_serialize_to_values_that_match_published_workspace_contract_schema()
+ {
+    let compiled = published_workspace_contract_schema();
+
+    for (path, kind) in canonical_docs_contract_examples() {
+        if !matches!(kind, DocContractKind::Workspace) {
+            continue;
+        }
+
+        let markdown = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "docs example file `{}` should load for serialized schema validation: {error}",
+                path.display()
+            )
+        });
+        let mut validated = 0;
+
+        for block in yaml_fenced_blocks(&markdown) {
+            if !is_full_workspace_contract_example(&block) {
+                continue;
+            }
+
+            let contract = parse_workspace_contract_str(&path, &block).unwrap_or_else(|error| {
+                panic!(
+                    "workspace contract example in `{}` should parse for serialized schema validation: {error}",
+                    path.display()
+                );
+            });
+            let serialized = serialize_authoring_json_value(&contract).unwrap_or_else(|error| {
+                panic!(
+                    "workspace contract example in `{}` should serialize for schema validation: {error}",
+                    path.display()
+                );
+            });
+            assert_serialized_value_matches_schema(&path, &serialized, &compiled);
+            validated += 1;
+        }
+
+        assert!(
+            validated > 0,
+            "docs file `{}` should contain at least one full workspace contract example",
             path.display()
         );
     }

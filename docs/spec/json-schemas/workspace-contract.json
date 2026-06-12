@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist.ota.run/spec/json-schemas/latest/workspace-contract.json",
+  "title": "ota workspace contract",
+  "$defs": {
+    "yamlValue": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "integer" },
+        { "type": "boolean" },
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/yamlValue" }
+        },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/yamlValue" }
+        }
+      ]
+    },
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "workspaceInfo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "git_base": { "type": "string" },
+        "policy": { "type": "string" }
+      }
+    },
+    "workspaceRepoSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["git"],
+          "properties": {
+            "git": { "type": "string" },
+            "ref": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repo"],
+          "properties": {
+            "repo": { "type": "string" },
+            "ref": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "workspaceRepoSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "contract": { "type": "string" },
+        "workflow": { "type": "string" },
+        "required": { "type": "boolean" },
+        "depends_on": { "$ref": "#/$defs/stringArray" },
+        "source": { "$ref": "#/$defs/workspaceRepoSource" }
+      }
+    },
+    "workspaceRepos": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": { "$ref": "#/$defs/workspaceRepoSpec" }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "workspace", "repos"],
+  "properties": {
+    "version": { "const": 1 },
+    "workspace": { "$ref": "#/$defs/workspaceInfo" },
+    "repos": { "$ref": "#/$defs/workspaceRepos" },
+    "policies": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/yamlValue" }
+    }
+  }
+}

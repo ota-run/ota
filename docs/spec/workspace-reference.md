@@ -25,6 +25,10 @@
 # ota Workspace Reference
 
 This document describes the current `ota.workspace.yaml` contract accepted by the shipped workspace validator.
+For machine-readable workspace contract publication, use
+[`json-schemas/workspace-contract.json`](json-schemas/workspace-contract.json) locally or
+`https://dist.ota.run/spec/json-schemas/latest/workspace-contract.json` in CI, editors, and
+other tooling.
 
 ## Purpose
 
@@ -51,6 +55,7 @@ repos:
 - `version`: required, currently only `1`
 - `workspace`: required workspace metadata
 - `repos`: required map of repo entries
+- `policies`: optional workspace-local policy overlays and additive governance data
 
 ## `workspace`
 
@@ -91,6 +96,7 @@ Fields:
 
 - `path`: required path to a repo directory, relative to `ota.workspace.yaml`
 - `contract`: optional explicit repo contract path, relative to `ota.workspace.yaml`
+- `workflow`: optional repo workflow selection used by workspace execution paths
 - `required`: optional boolean
 - `depends_on`: optional list of workspace repo names
 - `source`: optional acquisition source for repos that are not present yet
