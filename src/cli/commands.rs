@@ -42339,10 +42339,12 @@ fn prepend_up_provisioning_failure_finding(
     prepend_finding_if_missing(findings, up_provisioning_failure_finding(diagnosis, target));
 }
 
+#[cfg(test)]
 pub(crate) struct PlainModeGuard {
     previous: bool,
 }
 
+#[cfg(test)]
 impl PlainModeGuard {
     pub fn enter() -> Self {
         let previous = plain_mode();
@@ -42351,6 +42353,7 @@ impl PlainModeGuard {
     }
 }
 
+#[cfg(test)]
 impl Drop for PlainModeGuard {
     fn drop(&mut self) {
         set_plain_mode(self.previous);
