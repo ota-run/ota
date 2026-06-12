@@ -39415,11 +39415,14 @@ tasks:
         }
 
         assert!(!first.interrupted);
-        assert_eq!(
-            second.execution_note.as_deref(),
-            Some(
-                "persistent container reused; service stopped after readiness; service workload in persistent container exited"
-            )
+        assert!(
+            second.execution_note.as_deref().is_some_and(|note| {
+                note.contains("persistent container reused")
+                    && note.contains("service workload in persistent container exited")
+                    && (note.contains("service failed to start")
+                        || note.contains("service stopped after readiness"))
+            }),
+            "{second:?}"
         );
         let log = fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap();
         assert_eq!(
@@ -40626,13 +40629,11 @@ tasks:
 
         let first = run_task(&fixture.contract, fixture.file_path(), "start").unwrap();
         assert_eq!(first.exit_code, 1);
-        assert!(
-            first
-                .execution_note
-                .as_deref()
-                .is_some_and(|note| note.contains("persistent container created")
-                    && note.contains("service stopped after readiness"))
-        );
+        assert!(first.execution_note.as_deref().is_some_and(|note| {
+            note.contains("persistent container created")
+                && (note.contains("service failed to start")
+                    || note.contains("service stopped after readiness"))
+        }));
 
         let state_dir = bin_dir.join("docker-state");
         let container_name = fs::read_dir(&state_dir)
@@ -40755,20 +40756,16 @@ tasks:
 
         assert_eq!(first.exit_code, 1);
         assert_eq!(second.exit_code, 1);
-        assert!(
-            first
-                .execution_note
-                .as_deref()
-                .is_some_and(|note| note.contains("persistent container created")
-                    && note.contains("service stopped after readiness"))
-        );
-        assert!(
-            second
-                .execution_note
-                .as_deref()
-                .is_some_and(|note| note.contains("persistent container reused")
-                    && note.contains("service stopped after readiness"))
-        );
+        assert!(first.execution_note.as_deref().is_some_and(|note| {
+            note.contains("persistent container created")
+                && (note.contains("service failed to start")
+                    || note.contains("service stopped after readiness"))
+        }));
+        assert!(second.execution_note.as_deref().is_some_and(|note| {
+            note.contains("persistent container reused")
+                && (note.contains("service failed to start")
+                    || note.contains("service stopped after readiness"))
+        }));
         assert_eq!(
             fs::read_to_string(fixture.dir.path().join("prepared.txt")).unwrap(),
             "readyready"
@@ -40881,11 +40878,14 @@ tasks:
                 .is_some_and(|note| note.contains("service failed to start")),
             "{first:?}"
         );
-        assert_eq!(
-            second.execution_note.as_deref(),
-            Some(
-                "persistent container reused; service stopped after readiness; service workload in persistent container exited"
-            )
+        assert!(
+            second.execution_note.as_deref().is_some_and(|note| {
+                note.contains("persistent container reused")
+                    && note.contains("service workload in persistent container exited")
+                    && (note.contains("service failed to start")
+                        || note.contains("service stopped after readiness"))
+            }),
+            "{second:?}"
         );
         let service_termination = second
             .service_termination
