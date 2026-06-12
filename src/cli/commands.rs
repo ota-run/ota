@@ -60606,6 +60606,7 @@ tasks:
                 memory: Some(parse_memory_size_bytes("4GiB").unwrap()),
                 skip_deps: true,
             },
+            &[],
             &RunError::RepoExecutionLockBusy {
                 task: String::from("build"),
                 path: String::from("./.ota/state/run-execution.lock"),
@@ -60645,6 +60646,7 @@ tasks:
                 backend: Some(Backend::Native),
                 ..ExecutionOverrides::default()
             },
+            &[],
             &RunError::RepoExecutionLockBusy {
                 task: String::from("deploy:cloudflare"),
                 path: String::from("./.ota/state/run-execution.lock"),
@@ -60684,6 +60686,7 @@ tasks:
                 backend: Some(Backend::Native),
                 ..ExecutionOverrides::default()
             },
+            &[],
             &RunError::RepoExecutionLockBusy {
                 task: String::from("build"),
                 path: String::from("./.ota/state/run-execution.lock"),
@@ -60718,6 +60721,43 @@ tasks:
         );
         assert!(
             rendered.contains("then rerun `ota run build --mode native`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_structured_error_text_preserves_task_inputs_for_lock_rerun() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  version:bump:
+    run: ./scripts/bump-version.sh
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "version:bump",
+            None,
+            ExecutionOverrides::default(),
+            &[String::from("--version"), String::from("patch")],
+            &RunError::RepoExecutionLockBusy {
+                task: String::from("version:bump"),
+                path: String::from("./.ota/state/run-execution.lock"),
+                owner: None,
+            },
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+            None,
+        ));
+
+        assert!(
+            rendered.contains("then rerun `ota run version:bump --version patch`"),
             "{rendered}"
         );
     }
@@ -60927,6 +60967,7 @@ tasks:
             "dev",
             None,
             ExecutionOverrides::default(),
+            &[],
             &RunError::PersistentContainerListenerBindConflict {
                 task: String::from("dev"),
                 listener: String::from("http"),
@@ -60989,6 +61030,7 @@ tasks:
             "setup",
             None,
             ExecutionOverrides::default(),
+            &[],
             &RunError::ToolchainFulfillmentFailed {
                 task: String::from("setup"),
                 toolchain: String::from("rust"),
@@ -68165,6 +68207,7 @@ fn run_single_contract_target_streaming(
                     task_name.as_str(),
                     member,
                     overrides,
+                    task_inputs,
                     &error,
                     &summary,
                     receipt_text.as_deref(),
@@ -68288,7 +68331,12 @@ fn run_single_contract_target_captured(
                 outcome.runtime.clone(),
                 Some(format!(
                     "inspect the task output excerpt and rerun `{}`",
-                    repo_run_stream_command_with_overrides(&failed_task_name, member, overrides,)
+                    repo_run_stream_command_with_overrides(
+                        &failed_task_name,
+                        member,
+                        overrides,
+                        &[],
+                    )
                 )),
             );
             receipt.service_termination = outcome.service_termination.clone();
@@ -68412,6 +68460,7 @@ fn run_single_contract_target_captured(
                     task_name.as_str(),
                     member,
                     overrides,
+                    task_inputs,
                     &error,
                     &summary,
                     receipt_text.as_deref(),
@@ -68818,7 +68867,7 @@ fn render_task_interrupted_text(
     );
     let next_steps = [format!(
         "rerun `{}` when ready",
-        repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
+        repo_run_stream_command_with_overrides(requested_task_name, member, overrides, &[])
     )];
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()
@@ -69006,7 +69055,7 @@ fn render_managed_isolated_path_failure_text(
             ),
             format!(
                 "rerun `{}` after the task stops mutating the managed isolated path",
-                repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
+                repo_run_stream_command_with_overrides(requested_task_name, member, overrides, &[])
             ),
         ],
     );
@@ -69072,17 +69121,17 @@ fn render_service_interrupted_text(
         match runtime.and_then(primary_runtime_endpoint) {
             Some(endpoint) => format!(
                 "rerun `{}` and wait for Ota to confirm the projected host endpoint at `{endpoint}`",
-                repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
+                repo_run_stream_command_with_overrides(requested_task_name, member, overrides, &[])
             ),
             None => format!(
                 "rerun `{}` and wait for Ota to confirm readiness",
-                repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
+                repo_run_stream_command_with_overrides(requested_task_name, member, overrides, &[])
             ),
         }
     } else {
         format!(
             "rerun `{}` for live service output",
-            repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
+            repo_run_stream_command_with_overrides(requested_task_name, member, overrides, &[])
         )
     }];
     if !service_termination.after_readiness
@@ -69221,7 +69270,7 @@ fn render_service_stopped_failure_text(
 
     let mut next_steps = vec![format!(
         "rerun `{}` for live task output",
-        repo_run_stream_command_with_overrides(requested_task_name, member, overrides)
+        repo_run_stream_command_with_overrides(requested_task_name, member, overrides, &[])
     )];
     if matches!(
         service_termination.cause,
@@ -69714,7 +69763,8 @@ fn render_host_publication_failure_text(
         None,
     );
     let mut next_steps = next_steps.to_vec();
-    let rerun_command = repo_run_command_with_overrides(requested_task_name, member, overrides);
+    let rerun_command =
+        repo_run_command_with_overrides(requested_task_name, member, overrides, &[]);
     match host_port_mode {
         Some(TaskRuntimeHostPortMode::Auto) => {
             next_steps.push(format!(
@@ -69723,7 +69773,7 @@ fn render_host_publication_failure_text(
         }
         _ => {
             let mut override_command =
-                repo_run_command_with_overrides(requested_task_name, member, overrides);
+                repo_run_command_with_overrides(requested_task_name, member, overrides, &[]);
             override_command.push_str(" --host-port <free port>");
             next_steps.push(format!("rerun `{override_command}`"));
             next_steps.push(format!("or set `{field}.mode` to `auto`"));
@@ -69896,9 +69946,11 @@ fn repo_run_command_with_overrides(
     task_name: &str,
     member: Option<&str>,
     overrides: ExecutionOverrides,
+    task_inputs: &[String],
 ) -> String {
     let mut command = repo_run_command(task_name, member);
     append_run_execution_override_flags(&mut command, overrides);
+    append_repo_run_task_inputs(&mut command, task_inputs);
     command
 }
 
@@ -69906,10 +69958,30 @@ fn repo_run_stream_command_with_overrides(
     task_name: &str,
     member: Option<&str>,
     overrides: ExecutionOverrides,
+    task_inputs: &[String],
 ) -> String {
-    let mut command = repo_run_command_with_overrides(task_name, member, overrides);
+    let mut command = repo_run_command_with_overrides(task_name, member, overrides, task_inputs);
     command.push_str(" --stream");
     command
+}
+
+fn append_repo_run_task_inputs(command: &mut String, task_inputs: &[String]) {
+    for input in task_inputs {
+        command.push(' ');
+        command.push_str(&render_repo_run_task_input(input));
+    }
+}
+
+fn render_repo_run_task_input(value: &str) -> String {
+    if value.is_empty()
+        || value
+            .chars()
+            .any(|ch| ch.is_whitespace() || matches!(ch, '\'' | '"' | '`' | '$' | '\\'))
+    {
+        shell_single_quote(value)
+    } else {
+        value.to_string()
+    }
 }
 
 fn repo_run_command_for_execution(
@@ -69922,7 +69994,7 @@ fn repo_run_command_for_execution(
     if backend != Backend::Native || overrides.backend.is_some() {
         rerun_overrides.backend = Some(backend);
     }
-    repo_run_command_with_overrides(task_name, member, rerun_overrides)
+    repo_run_command_with_overrides(task_name, member, rerun_overrides, &[])
 }
 
 fn repo_run_stream_command_for_execution(
@@ -69935,7 +70007,7 @@ fn repo_run_stream_command_for_execution(
     if backend != Backend::Native || overrides.backend.is_some() {
         rerun_overrides.backend = Some(backend);
     }
-    repo_run_stream_command_with_overrides(task_name, member, rerun_overrides)
+    repo_run_stream_command_with_overrides(task_name, member, rerun_overrides, &[])
 }
 
 fn repo_run_command_for_backend(task_name: &str, member: Option<&str>, backend: Backend) -> String {
@@ -70441,7 +70513,7 @@ fn runtime_listener_resolution_receipt_note(
         task,
         listener,
         kind,
-        &repo_run_stream_command_with_overrides(task, member, overrides),
+        &repo_run_stream_command_with_overrides(task, member, overrides, &[]),
     )
     .next_steps
     .join("; ")
@@ -70453,13 +70525,15 @@ fn render_run_structured_error_text(
     task_name: &str,
     member: Option<&str>,
     overrides: ExecutionOverrides,
+    task_inputs: &[String],
     error: &RunError,
     summary_block: &str,
     receipt_text: Option<&str>,
 ) -> String {
     let text_path_display = display_contract_target(&compact_contract_path(contract_path), member);
-    let rerun_command = repo_run_command_with_overrides(task_name, member, overrides);
-    let rerun_stream_command = repo_run_stream_command_with_overrides(task_name, member, overrides);
+    let rerun_command = repo_run_command_with_overrides(task_name, member, overrides, task_inputs);
+    let rerun_stream_command =
+        repo_run_stream_command_with_overrides(task_name, member, overrides, task_inputs);
     let mut detail_lines = Vec::new();
     let (summary, mut why_lines, mut next_steps) = match error {
         RunError::RuntimeListenerResolutionFailed {
@@ -70471,7 +70545,7 @@ fn render_run_structured_error_text(
                 task,
                 listener,
                 kind,
-                &repo_run_stream_command_with_overrides(task, member, overrides),
+                &repo_run_stream_command_with_overrides(task, member, overrides, &[]),
             );
             (
                 runtime_listener_resolution.summary,
@@ -70668,6 +70742,7 @@ fn render_run_structured_error_text(
                             skip_deps: false,
                             ..overrides
                         },
+                        &[],
                     )
                 ),
                 task_use_details_step(Some(contract_path), member),
@@ -70737,7 +70812,8 @@ fn render_run_structured_error_text(
                 .and_then(|runtime| runtime.listeners.get(listener.as_str()))
                 .and_then(|listener_spec| listener_spec.project.host.as_ref())
                 .is_some_and(|host| host.port.mode == TaskRuntimeHostPortMode::Auto);
-            let run_command = repo_run_command_with_overrides(task.as_str(), member, overrides);
+            let run_command =
+                repo_run_command_with_overrides(task.as_str(), member, overrides, &[]);
             let mut next_steps = vec![format!(
                 "stop the process or container currently using `{address}:{port}`"
             )];
@@ -70786,7 +70862,7 @@ fn render_run_structured_error_text(
                 format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
                 format!(
                     "rerun `{}`",
-                    repo_run_stream_command_with_overrides(task.as_str(), member, overrides)
+                    repo_run_stream_command_with_overrides(task.as_str(), member, overrides, &[])
                 ),
                 task_use_details_step(Some(contract_path), member),
             ],
@@ -70813,7 +70889,7 @@ fn render_run_structured_error_text(
                 format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
                 format!(
                     "rerun `{}`",
-                    repo_run_stream_command_with_overrides(task, member, overrides)
+                    repo_run_stream_command_with_overrides(task, member, overrides, &[])
                 ),
             ],
         ),
@@ -71145,7 +71221,7 @@ fn render_run_structured_error_text(
                 task,
                 listener,
                 kind,
-                &repo_run_stream_command_with_overrides(task, member, overrides),
+                &repo_run_stream_command_with_overrides(task, member, overrides, &[]),
             );
             let mut output = structured_field_error_text(
                 "RUN",
@@ -77176,6 +77252,7 @@ fn skip_deps_next(
             skip_deps: false,
             ..overrides
         },
+        &[],
     );
     let override_note = format!(
         "rerun `{rerun_command}` without `--skip-deps` to validate the full declared task flow"
