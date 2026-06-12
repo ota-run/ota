@@ -10360,6 +10360,7 @@ fn tcp_readiness_endpoint_status(
     if addrs.is_empty() {
         return HttpReadinessStatus::Failed;
     }
+    let mut saw_non_timeout_error = false;
     let mut timed_out = false;
     for socket in addrs {
         match TcpStream::connect_timeout(&socket, connect_timeout) {
@@ -10368,11 +10369,13 @@ fn tcp_readiness_endpoint_status(
                 return HttpReadinessStatus::Passed;
             }
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => timed_out = true,
-            Err(_) => {}
+            Err(_) => saw_non_timeout_error = true,
         }
     }
-    if timed_out {
+    if timed_out && !saw_non_timeout_error {
         HttpReadinessStatus::TimedOut
+    } else if saw_non_timeout_error {
+        HttpReadinessStatus::Failed
     } else {
         HttpReadinessStatus::Failed
     }

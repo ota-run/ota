@@ -12332,6 +12332,8 @@ fn target_probe_endpoint_result_with_timeout(
     timeout: Option<Duration>,
 ) -> Result<(), String> {
     let connect_timeout = timeout.unwrap_or(Duration::from_millis(200));
+    let mut saw_non_timeout_error = false;
+    let mut last_non_timeout_error = None;
     let mut last_error = None;
     for (index, socket) in probe_socket_candidates(address, port)
         .into_iter()
@@ -12341,11 +12343,21 @@ fn target_probe_endpoint_result_with_timeout(
         match TcpStream::connect_timeout(&socket, effective_timeout) {
             Ok(_) => return Ok(()),
             Err(error) => {
-                last_error = Some(format!("{} ({socket})", normalize_probe_io_error(&error)));
+                let detail = normalize_probe_io_error(&error);
+                if !detail.contains("timed out") {
+                    saw_non_timeout_error = true;
+                    last_non_timeout_error = Some(format!("{detail} ({socket})"));
+                }
+                last_error = Some(format!("{detail} ({socket})"));
             }
         }
     }
-    Err(last_error.unwrap_or_else(|| String::from("connection failed")))
+    if saw_non_timeout_error {
+        return Err(last_non_timeout_error
+            .or_else(|| last_error)
+            .unwrap_or_else(|| String::from("connection failed")));
+    }
+    Err(last_error.unwrap_or_else(|| String::from("timed out")))
 }
 
 pub(crate) fn probe_socket_candidates(address: &str, port: u16) -> Vec<std::net::SocketAddr> {
@@ -18520,15 +18532,28 @@ fn http_readiness_endpoint_result(
         return Err(String::from("no socket candidates resolved"));
     }
     let mut last_error = None;
+    let mut saw_non_timeout_error = false;
+    let mut last_non_timeout_error = None;
     for (index, socket) in addrs.into_iter().enumerate() {
         let effective_timeout = probe_connect_timeout_for_candidate(connect_timeout, index);
         match http_readiness_socket_result(address, socket, request, effective_timeout, io_timeout)
         {
             Ok(()) => return Ok(()),
-            Err(error) => last_error = Some(error),
+            Err(error) => {
+                if !error.contains("timed out") {
+                    saw_non_timeout_error = true;
+                    last_non_timeout_error = Some(error.clone());
+                }
+                last_error = Some(error);
+            }
         }
     }
-    Err(last_error.unwrap_or_else(|| String::from("HTTP readiness probe failed")))
+    if saw_non_timeout_error {
+        return Err(last_non_timeout_error
+            .or_else(|| last_error)
+            .unwrap_or_else(|| String::from("HTTP readiness probe failed")));
+    }
+    Err(last_error.unwrap_or_else(|| String::from("timed out")))
 }
 
 fn http_readiness_socket_result(
