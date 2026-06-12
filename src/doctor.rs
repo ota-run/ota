@@ -11680,7 +11680,7 @@ mod tests {
     use std::env;
     use std::fs;
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::path::{Path, PathBuf};
     use std::sync::OnceLock;
     use std::thread;
@@ -11736,6 +11736,12 @@ mod tests {
             "provenance_key": json.get("provenance_key").and_then(|value| value.as_str()),
             "policy_reason": json.get("policy_reason").and_then(|value| value.as_str()),
         })
+    }
+
+    fn drain_probe_request_if_available(stream: &mut TcpStream) {
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+        let mut buffer = [0u8; 256];
+        let _ = stream.read(&mut buffer);
     }
 
     #[cfg(windows)]
@@ -15562,8 +15568,7 @@ tasks:
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .expect("probe response should write");
@@ -15608,8 +15613,7 @@ checks:
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(
                     b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -15868,8 +15872,7 @@ workflows:
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(
                     b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
@@ -15930,8 +15933,7 @@ workflows:
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .expect("probe response should write");
@@ -15979,8 +15981,7 @@ workflows:
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .expect("probe response should write");
@@ -16198,8 +16199,7 @@ workflows:
             thread::sleep(Duration::from_millis(250));
             let listener = TcpListener::bind(("127.0.0.1", port)).expect("listener should bind");
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .expect("probe response should write");
@@ -16261,8 +16261,7 @@ workflows:
             thread::sleep(Duration::from_millis(1500));
             let listener = TcpListener::bind(("127.0.0.1", port)).expect("listener should bind");
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .expect("probe response should write");
@@ -16323,8 +16322,7 @@ workflows:
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .expect("probe response should write");
@@ -16837,8 +16835,7 @@ workflows:
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .expect("probe response should write");
@@ -16906,8 +16903,7 @@ tasks:
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .expect("probe response should write");
@@ -17120,8 +17116,7 @@ tasks:
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .expect("probe response should write");
@@ -17194,8 +17189,7 @@ tasks:
         let backend_port = backend_listener.local_addr().unwrap().port();
         let backend_server = thread::spawn(move || {
             let (mut stream, _) = backend_listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 .expect("probe response should write");
@@ -18173,8 +18167,7 @@ tasks:
             .port();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(
                     b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: close\r\n\r\n{\"status\":\"UP\"}",
@@ -18238,8 +18231,7 @@ services:
         let server = thread::spawn(move || {
             for attempt in 0..2 {
                 let (mut stream, _) = listener.accept().expect("probe should connect");
-                let mut buffer = [0u8; 256];
-                let _ = stream.read(&mut buffer);
+                drain_probe_request_if_available(&mut stream);
                 if attempt == 0 {
                     stream
                         .write_all(
@@ -19995,8 +19987,7 @@ unexpected: true
         let workflow_port = workflow_listener.local_addr().unwrap().port();
         let workflow_server = thread::spawn(move || {
             let (mut stream, _) = workflow_listener.accept().expect("probe should connect");
-            let mut buffer = [0u8; 256];
-            let _ = stream.read(&mut buffer);
+            drain_probe_request_if_available(&mut stream);
             stream
                 .write_all(
                     b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
