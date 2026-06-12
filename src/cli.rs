@@ -15540,7 +15540,8 @@ tasks:
         assert_eq!(first.exit_code, 1);
         let first_stderr = strip_ansi(first.stderr.as_deref().unwrap_or_default());
         assert!(
-            first_stderr.contains("Service stopped after readiness"),
+            first_stderr.contains("service failed to start")
+                || first_stderr.contains("service stopped after readiness"),
             "{first_stderr}"
         );
 

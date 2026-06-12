@@ -42374,8 +42374,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        DetectComparisonMode, OutputFormat, RepoExecutionMode, RepoUpPreview, RepoUpResult,
-        adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
+        DetectComparisonMode, OutputFormat, PlainModeGuard, RepoExecutionMode, RepoUpPreview,
+        RepoUpResult, adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
         build_env_report, build_env_report_with_overrides, build_up_preview,
         collect_validate_warnings, compact_contract_file_path_relative_to,
         compact_path_relative_to, compact_policy_path_relative_to_contract,
