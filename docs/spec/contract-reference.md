@@ -27,6 +27,9 @@
 This document describes the canonical `ota.yaml` authoring surface accepted by the shipped parser and validator.
 
 Use this page as the canonical field and validation reference for the shipped contract surface.
+For machine-readable contract publication, use
+[`json-schemas/contract.json`](json-schemas/contract.json) locally or
+`https://dist.ota.run/spec/json-schemas/latest/contract.json` in CI, editors, and other tooling.
 When you need operator guidance for targets, shared backends, activation, and backend fulfillment,
 follow it with [local-service-topology.md](local-service-topology.md).
 Backward-compatibility parsing may continue to accept older shapes, but new and updated contracts
