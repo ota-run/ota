@@ -231,6 +231,14 @@ tasks:
     depends_on:
       - setup
     safe_for_agent: true
+  skills:sync:check:
+    description: Enforce skills-sync governance for contract-surface changes
+    notes: |
+      Use this when contract-shape or governance-surface files change and you need to prove the
+      first-party ota-run/skills package was either synced or explicitly waived.
+    category: test
+    run: ./scripts/check-skills-sync.sh
+    safe_for_agent: true
   schemas:sync:
     description: Regenerate the published repo and workspace contract schema artifacts
     notes: |
@@ -261,6 +269,7 @@ tasks:
     depends_on:
       - ci
       - compat
+      - skills:sync:check
       - dependency-update
     safe_for_agent: true
   ux-review:

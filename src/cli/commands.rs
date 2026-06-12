@@ -42339,6 +42339,24 @@ fn prepend_up_provisioning_failure_finding(
     prepend_finding_if_missing(findings, up_provisioning_failure_finding(diagnosis, target));
 }
 
+pub(crate) struct PlainModeGuard {
+    previous: bool,
+}
+
+impl PlainModeGuard {
+    pub fn enter() -> Self {
+        let previous = plain_mode();
+        set_plain_mode(true);
+        Self { previous }
+    }
+}
+
+impl Drop for PlainModeGuard {
+    fn drop(&mut self) {
+        set_plain_mode(self.previous);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -54791,6 +54809,7 @@ workflows:
 
     #[test]
     fn doctor_group_summaries_keep_distinct_service_remediations_separate() {
+        let _guard = PlainModeGuard::enter();
         let findings = [
             Finding {
                 identity: None,

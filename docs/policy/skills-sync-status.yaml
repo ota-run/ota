@@ -1,0 +1,13 @@
+# Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+
+version: 1
+repository: ota-run/skills
+mode: synced
+reviewed_ota_commit: "452f93008ea88fb476344ff0b2a01045598b14e4"
+skills_commit: "e4b310d9d13c7396eeec2cf5cafd739539373e37"
+waiver_reason: ""
+notes: >
+  Baseline sync after widening the ota-run/skills package to cover modern and holistic contract
+  surfaces, including aggregate tasks, service launch, dependency hydration, workflow/service/env
+  modeling, and agent/governance review.
