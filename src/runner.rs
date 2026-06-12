@@ -49317,17 +49317,20 @@ tasks:
 
         let error = run_task(&fixture.contract, fixture.file_path(), "docker-build")
             .expect_err("invalid env file should fail the task");
-        let rendered = error.to_string();
-        assert!(
-            rendered.contains(
-                "env file `.env.compose` declared in `env_files` is not valid dotenv content"
+        match error {
+            RunError::FileActionFailed { task, message } => {
+                assert_eq!(task, "docker-build");
+                assert!(
+                    message.contains(
+                        "env file `.env.compose` declared in `env_files` is not valid dotenv content"
+                    ),
+                    "{message}"
+                );
+            }
+            _ => panic!(
+                "invalid env file should surface file action failure before missing env resolution"
             ),
-            "{rendered}"
-        );
-        assert!(
-            !rendered.contains("missing required env"),
-            "task should fail on invalid env file before missing env resolution: {rendered}"
-        );
+        }
     }
 
     #[test]
