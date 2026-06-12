@@ -196,6 +196,11 @@ service boundary declared in `ota.yaml`.
 version: 1
 project:
   name: app
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
 
 services:
   postgres:

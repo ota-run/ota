@@ -63,6 +63,9 @@ When one workflow path needs its own dotenv overlay, declare it on the task with
 `tasks.<name>.env_files` instead of hard-coding `--env-file` or inline exports into the shell body.
 When the repo also needs deterministic local env bootstrap, use a native `action` task such as
 `copy_if_missing` or `ensure_env_file` and point workflow `prepare.task` at that finite host step.
+When the workflow itself owns one rendered runtime artifact, prefer
+`env.profiles.<name>.render.dotenv`; add `render.dotenv.template` when Ota should start from a
+repo example file and then overlay the workflow-specific values deterministically.
 
 If you are not sure which task to run next, use:
 

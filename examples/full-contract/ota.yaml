@@ -364,7 +364,6 @@ tasks:
       - setup
     safe_for_agent: true
   verify:
-    context: host
     description: Run the canonical verification entrypoint
     category: test
     aggregate:

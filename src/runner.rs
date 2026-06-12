@@ -8382,7 +8382,7 @@ fn parse_env_keys(content: &str) -> BTreeSet<String> {
     keys
 }
 
-fn apply_ensure_env_updates(
+pub(crate) fn apply_ensure_env_updates(
     content: &str,
     updates: &[(String, Option<String>, crate::schema::TaskEnsureEnvVarMode)],
 ) -> (String, usize, usize, usize) {

@@ -49,6 +49,12 @@
   blocker `code` fields in line with the shipped JSON output, and workspace repo acquisition /
   repo-contract findings now also emit explicit stable workspace finding codes instead of falling
   back to anonymous summary-only blockers
+- hardened remaining shipped command finding identity: contractless/onboarding doctor signals,
+  inferred starter-agent signals, policy effect-governance decisions, and adapter-bootstrap
+  failures now emit explicit stable `code` / `category` / `owner` identity instead of anonymous
+  summary-only findings; the shipped finding reference catalog now also covers command-sourced
+  production findings, and `src/cli/commands.rs` is guarded so new shipped command findings
+  cannot reintroduce `identity: None`
 - widened `ota env` with `--workflow` selection so the env read path can inspect the selected
   workflow’s env profile truth directly; text and JSON output now report the selected workflow,
   selected profile, and any workflow-owned rendered env artifacts such as rendered dotenv files
@@ -74,6 +80,9 @@
   can now render workflow-owned dotenv files from selected profile truth before service startup
   and setup, removing the remaining need for a separate `ensure_env_file` prepare task when the
   workflow only needed a compose/runtime interpolation artifact
+- widened `env.profiles.<name>.render.dotenv` with optional `template` support, so workflow-owned
+  dotenv artifacts can now be re-rendered from repo example truth plus selected profile overlays
+  without hiding that materialization inside a separate setup task or stale shell rewrite glue
 - widened first-class check governance with `checks[].kind: env`, a deterministic dotenv-backed
   assertion surface for repo-relative env files; contracts can now replace shell `grep` / `findstr`
   glue with governed `env.path` assertions over exact values, host values, or URL hosts using the

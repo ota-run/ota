@@ -194,7 +194,9 @@ ota tasks --use
 
 Keep workflow-local env inputs declarative. Use `tasks.<name>.env_files` for ordered dotenv
 overlays owned by one task path, and use native `action` tasks such as `copy_if_missing` or
-`ensure_env_file` when the workflow needs deterministic local env-file bootstrap before setup.
+`ensure_env_file` when the workflow needs deterministic local env-file bootstrap before setup. When
+the selected workflow itself owns the rendered artifact, prefer `env.profiles.<name>.render.dotenv`
+and add `render.dotenv.template` if the file should keep baseline example entries.
 
 If you want repo-local agent guidance from the same contract after the core loop is working, use:
 
