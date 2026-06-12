@@ -11739,9 +11739,7 @@ mod tests {
     }
 
     fn drain_probe_request_if_available(stream: &mut TcpStream) {
-        let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
-        let mut buffer = [0u8; 256];
-        let _ = stream.read(&mut buffer);
+        let _ = stream.set_nodelay(true);
     }
 
     #[cfg(windows)]
