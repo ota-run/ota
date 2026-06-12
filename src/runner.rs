@@ -6394,6 +6394,8 @@ fn execute_task_with_hooks(
         return Ok(exit_code);
     }
 
+    ensure_task_env_files_ready(task_name, task, backend_kind, working_dir)?;
+
     let prep_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
 
     maybe_prepare_task_orchestrator_on_run_path(
@@ -6494,8 +6496,6 @@ fn execute_task_with_hooks(
             }
         }
     }
-
-    ensure_task_env_files_ready(task_name, task, backend_kind, working_dir)?;
 
     maybe_fulfill_toolchains_on_run_path(
         contract,
