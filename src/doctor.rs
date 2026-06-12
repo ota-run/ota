@@ -11753,10 +11753,7 @@ mod tests {
                     break;
                 }
                 Err(error)
-                    if matches!(
-                        error.kind(),
-                        ErrorKind::WouldBlock | ErrorKind::TimedOut
-                    ) => {}
+                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
                 Err(_) => break,
             }
 
