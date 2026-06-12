@@ -261,6 +261,7 @@ tasks:
     depends_on:
       - ci
       - compat
+      - dependency-update
     safe_for_agent: true
   ux-review:
     description: Run the premium CLI UX review suite
@@ -303,6 +304,23 @@ tasks:
         required: true
     depends_on:
       - ci
+  dependency-update:
+    description: Validate dependency updates with schema/contract tests and lockfile bump tests
+    notes: |
+      Use this to validate that dependency updates are safe and deterministic.
+      Runs schema/contract validation and a focused test subset for lockfile bumps
+      to ensure CI-owned proof independent of local wrapper quirks.
+    category: test
+    script: |
+      set -e
+      # Run schema/contract validation
+      cargo run --quiet -- validate ./ota.yaml --plain
+      # Run lockfile-specific tests
+      cargo test --test real_repo_fixtures -- --test-threads=1 --skip workspace_refresh_pulls_updated_git_sources_on_real_command_path
+    depends_on:
+      - setup
+      - ci
+    safe_for_agent: true
   install:
     description: Reinstall ota from the local workspace
     notes: |
