@@ -13,7 +13,7 @@ serde_yaml = "0.9.34"
 semver = "1.0.27"
 thiserror = "2.0.12"
 toml = "1.1.2"
-time = { version = "0.3.44", features = ["formatting", "macros"] }
+time = { version = "0.3.48", features = ["formatting", "macros"] }
 dotenvy = "0.15.7"
 ctrlc = "3.5.0"
 signal-hook = "0.3.18"
