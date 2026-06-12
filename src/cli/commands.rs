@@ -14920,11 +14920,13 @@ fn append_safe_task_effect_policy_findings(
                 "update org policy to allow this effect for the selected task path, or tighten task scope before rerunning `ota run`",
             ),
         };
-        report.findings.push(Finding {
-            identity: None,
+        report.findings.push(Finding::identified(
+            policy_effect_finding_code(decision.decision),
+            "policy",
+            "org_policy",
             severity,
             summary,
-            why: format!(
+            format!(
                 "{} (source: `{}`, policy: `{}`{})",
                 decision.reason,
                 decision.source,
@@ -14936,12 +14938,20 @@ fn append_safe_task_effect_policy_findings(
                 }
             ),
             next,
-        });
+        ));
     }
     report.ok = !report
         .findings
         .iter()
         .any(|finding| finding.severity == FindingSeverity::Error);
+}
+
+fn policy_effect_finding_code(decision: PolicyEffectDecision) -> &'static str {
+    match decision {
+        PolicyEffectDecision::Allow => "OTA_POLICY_EFFECT_ALLOWED",
+        PolicyEffectDecision::Warn => "OTA_POLICY_EFFECT_WARNED",
+        PolicyEffectDecision::Deny => "OTA_POLICY_EFFECT_DENIED",
+    }
 }
 
 fn render_run_preview_target(
@@ -18933,23 +18943,21 @@ pub fn doctor(
                             }
                             output
                         }
-                        OutputFormat::Json => {
-                            CommandOutput {
-                                stdout: to_json_value(json!({
-                                    "ok": overall_ok,
-                                    "path": path_display,
-                                    "summary": check_summary,
-                                    "workflow": workflow_summary,
-                                    "agent": agent_summary,
-                                    "fix": fix_summary,
-                                    "toolchains": selected_toolchains,
-                                    "findings": rewritten_findings,
-                                    "members": member_results,
-                                })),
-                                stderr: None,
-                                exit_code: if overall_ok && !fix_failed { 0 } else { 1 },
-                            }
-                        }
+                        OutputFormat::Json => CommandOutput {
+                            stdout: to_json_value(json!({
+                                "ok": overall_ok,
+                                "path": path_display,
+                                "summary": check_summary,
+                                "workflow": workflow_summary,
+                                "agent": agent_summary,
+                                "fix": fix_summary,
+                                "toolchains": selected_toolchains,
+                                "findings": rewritten_findings,
+                                "members": member_results,
+                            })),
+                            stderr: None,
+                            exit_code: if overall_ok && !fix_failed { 0 } else { 1 },
+                        },
                     }
                 } else {
                     match format {
@@ -19239,27 +19247,25 @@ pub fn doctor(
 }
 
 fn diagnose_contractless_repo(root: &Path) -> DoctorReport {
-    let mut findings = vec![Finding {
-        identity: None,
-        severity: FindingSeverity::Error,
-        summary: String::from("Contract missing"),
-        why: format!(
+    let mut findings = vec![contractless_signal_finding(
+        FindingSeverity::Error,
+        String::from("Contract missing"),
+        format!(
             "no `ota.yaml` was found from `{}` upward, so Ota cannot validate repo readiness yet",
             compact_repo_path(root)
         ),
-        next: contractless_repo_onboarding_next_text(root, true),
-    }];
+        contractless_repo_onboarding_next_text(root, true),
+    )];
 
     let detect_report = match detect_repo(root) {
         Ok(report) => Some(report),
         Err(error) => {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Warn,
-                summary: String::from("Could not inspect repo signals"),
-                why: format!("automatic repo detection failed: {error}"),
-                next: String::from("fix the unreadable repo files and rerun `ota doctor`"),
-            });
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Warn,
+                String::from("Could not inspect repo signals"),
+                format!("automatic repo detection failed: {error}"),
+                String::from("fix the unreadable repo files and rerun `ota doctor`"),
+            ));
             None
         }
     };
@@ -19459,15 +19465,12 @@ fn append_contractless_repo_findings(
             .map(|inference| inference.source.as_str())
         && source != "directory-name"
     {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: format!("Detected project name: {}", project.name),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from(
-                "run `ota detect --contract` to inspect the exact starter contract text",
-            ),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            format!("Detected project name: {}", project.name),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --contract` to inspect the exact starter contract text"),
+        ));
     }
 
     if contractless_repo_looks_like_node(report) {
@@ -19485,13 +19488,12 @@ fn append_contractless_repo_findings(
             })
             .map(|inference| inference.source.as_str())
             .unwrap_or("package.json");
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Node"),
-            why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Node contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Node"),
+            format!("found `{}`", source.split('#').next().unwrap_or(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Node contract"),
+        ));
     }
 
     if let Some(package_manager) = contractless_repo_package_manager(report) {
@@ -19501,48 +19503,44 @@ fn append_contractless_repo_findings(
             .find(|inference| inference.field == format!("tools.{package_manager}"))
             .map(|inference| inference.source.as_str())
             .unwrap_or("package.json");
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: format!("Detected package manager: {package_manager}"),
-            why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            format!("Detected package manager: {package_manager}"),
+            format!("found `{}`", source.split('#').next().unwrap_or(source)),
+            String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        ));
 
         match command_version(package_manager) {
-            Some(version) => findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: format!("Host tool available: {package_manager}"),
-                why: format!("`{package_manager} --version` returned `{version}`"),
-                next: String::from("no action required"),
-            }),
-            None => findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Error,
-                summary: format!("Missing host tool: {package_manager}"),
-                why: format!(
+            Some(version) => findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                format!("Host tool available: {package_manager}"),
+                format!("`{package_manager} --version` returned `{version}`"),
+                String::from("no action required"),
+            )),
+            None => findings.push(contractless_signal_finding(
+                FindingSeverity::Error,
+                format!("Missing host tool: {package_manager}"),
+                format!(
                     "the repo looks like Node/{package_manager}, but `{package_manager}` is not available on PATH"
                 ),
-                next: format!(
+                format!(
                     "install `{package_manager}` so it is available before using this repo"
                 ),
-            }),
+            )),
         }
     }
 
     let likely_tasks = contractless_repo_likely_tasks(report);
     if !likely_tasks.is_empty() {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: format!(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            format!(
                 "Detected likely runnable tasks: {}",
                 likely_tasks.join(", ")
             ),
-            why: String::from("found runnable task signals from repo automation files"),
-            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
-        });
+            String::from("found runnable task signals from repo automation files"),
+            String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        ));
     }
 
     if let Some(source) = contractless_repo_source(
@@ -19552,13 +19550,12 @@ fn append_contractless_repo_findings(
         &["pyproject.toml#", "Pipfile#", "setup.cfg#"],
         &["requirements.txt", "uv.lock", ".python-version"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Python"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Python contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Python"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Python contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "python",
@@ -19567,20 +19564,17 @@ fn append_contractless_repo_findings(
             "install Python so it is available before using this repo",
         );
         if let Some(tool) = contractless_repo_first_tool(report, &["uv", "pipenv", "pip"]) {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: format!("Detected dependency tool: {tool}"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                format!("Detected dependency tool: {tool}"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, tool).unwrap_or("pyproject.toml")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             let commands = match tool {
                 "pip" => vec!["pip", "pip3"],
                 _ => vec![tool],
@@ -19603,13 +19597,12 @@ fn append_contractless_repo_findings(
 
     if let Some(source) = contractless_repo_source(report, &["go"], &[], &["go.mod#"], &["go.mod"])
     {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Go"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Go contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Go"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Go contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "go",
@@ -19637,25 +19630,23 @@ fn append_contractless_repo_findings(
             (false, true) => "C++",
             _ => "C",
         };
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: format!("Detected repo type: {repo_type}"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: format!("run `ota detect --dry-run` to review the inferred {repo_type} contract"),
-        });
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected build tool: CMake"),
-            why: format!(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            format!("Detected repo type: {repo_type}"),
+            format!("found `{}`", contractless_source_file(source)),
+            format!("run `ota detect --dry-run` to review the inferred {repo_type} contract"),
+        ));
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected build tool: CMake"),
+            format!(
                 "found `{}`",
                 contractless_source_file(
                     contractless_repo_tool_source(report, "cmake").unwrap_or("CMakeLists.txt")
                 )
             ),
-            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
-        });
+            String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "cmake",
@@ -19675,42 +19666,38 @@ fn append_contractless_repo_findings(
             })
             .map(|inference| inference.source.as_str())
             .unwrap_or("Cargo.toml");
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected Rust repo"),
-            why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Rust contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected Rust repo"),
+            format!("found `{}`", source.split('#').next().unwrap_or(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Rust contract"),
+        ));
 
         match command_version("cargo") {
-            Some(version) => findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Host tool available: cargo"),
-                why: format!("`cargo --version` returned `{version}`"),
-                next: String::from("no action required"),
-            }),
-            None => findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Error,
-                summary: String::from("Missing host tool: cargo"),
-                why: String::from("the repo looks like Rust, but `cargo` is not available on PATH"),
-                next: String::from("install Rust so `cargo` is available before using this repo"),
-            }),
+            Some(version) => findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Host tool available: cargo"),
+                format!("`cargo --version` returned `{version}`"),
+                String::from("no action required"),
+            )),
+            None => findings.push(contractless_signal_finding(
+                FindingSeverity::Error,
+                String::from("Missing host tool: cargo"),
+                String::from("the repo looks like Rust, but `cargo` is not available on PATH"),
+                String::from("install Rust so `cargo` is available before using this repo"),
+            )),
         }
     }
 
     if let Some(source) =
         contractless_repo_source(report, &["fsharp"], &["dotnet"], &[], &["fsharp-project"])
     {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: F#"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred F# contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: F#"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred F# contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "dotnet",
@@ -19727,13 +19714,12 @@ fn append_contractless_repo_findings(
         &["dune-project#", ".ocaml-version#"],
         &["dune-project", ".ocaml-version", "opam-file"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: OCaml"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred OCaml contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: OCaml"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred OCaml contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "ocaml",
@@ -19742,20 +19728,17 @@ fn append_contractless_repo_findings(
             "install OCaml so it is available before using this repo",
         );
         if report.contract.tools.contains_key("dune") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected build tool: dune"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected build tool: dune"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "dune").unwrap_or("dune-project")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             push_contractless_host_tool_finding(
                 findings,
                 "dune",
@@ -19765,20 +19748,17 @@ fn append_contractless_repo_findings(
             );
         }
         if report.contract.tools.contains_key("opam") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected dependency tool: opam"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected dependency tool: opam"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "opam").unwrap_or("opam-file")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             push_contractless_host_tool_finding(
                 findings,
                 "opam",
@@ -19797,13 +19777,12 @@ fn append_contractless_repo_findings(
         &["global.json", ".csproj", ".sln"],
     ) && !report.contract.runtimes.contains_key("fsharp")
     {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: .NET"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred .NET contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: .NET"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred .NET contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "dotnet",
@@ -19820,30 +19799,24 @@ fn append_contractless_repo_findings(
         &["project.clj#", "deps.edn#"],
         &["project.clj", "deps.edn"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Clojure"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from(
-                "run `ota detect --dry-run` to review the inferred Clojure contract",
-            ),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Clojure"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Clojure contract"),
+        ));
         if report.contract.tools.contains_key("leiningen") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected build tool: Leiningen"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected build tool: Leiningen"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "leiningen").unwrap_or("project.clj")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             push_contractless_host_tool_finding(
                 findings,
                 "lein",
@@ -19853,20 +19826,17 @@ fn append_contractless_repo_findings(
             );
         }
         if report.contract.tools.contains_key("clojure") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected build tool: Clojure CLI"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected build tool: Clojure CLI"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "clojure").unwrap_or("deps.edn")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             push_contractless_host_tool_finding(
                 findings,
                 "clojure",
@@ -19884,30 +19854,24 @@ fn append_contractless_repo_findings(
         &["stack.yaml#", "cabal-file#"],
         &["stack.yaml", "cabal-file"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Haskell"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from(
-                "run `ota detect --dry-run` to review the inferred Haskell contract",
-            ),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Haskell"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Haskell contract"),
+        ));
         if report.contract.tools.contains_key("stack") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected build tool: Stack"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected build tool: Stack"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "stack").unwrap_or("stack.yaml")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             push_contractless_host_tool_finding(
                 findings,
                 "stack",
@@ -19917,20 +19881,17 @@ fn append_contractless_repo_findings(
             );
         }
         if report.contract.tools.contains_key("cabal") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected build tool: cabal"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected build tool: cabal"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "cabal").unwrap_or("cabal-file")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             push_contractless_host_tool_finding(
                 findings,
                 "cabal",
@@ -19944,25 +19905,23 @@ fn append_contractless_repo_findings(
     if let Some(source) =
         contractless_repo_source(report, &[], &["luarocks"], &["rockspec#"], &["rockspec"])
     {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Lua"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Lua contract"),
-        });
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected dependency tool: LuaRocks"),
-            why: format!(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Lua"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Lua contract"),
+        ));
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected dependency tool: LuaRocks"),
+            format!(
                 "found `{}`",
                 contractless_source_file(
                     contractless_repo_tool_source(report, "luarocks").unwrap_or("rockspec")
                 )
             ),
-            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
-        });
+            String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "luarocks",
@@ -19979,25 +19938,23 @@ fn append_contractless_repo_findings(
         &["composer.json#"],
         &["composer.json"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: PHP"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred PHP contract"),
-        });
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected dependency tool: composer"),
-            why: format!(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: PHP"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred PHP contract"),
+        ));
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected dependency tool: composer"),
+            format!(
                 "found `{}`",
                 contractless_source_file(
                     contractless_repo_tool_source(report, "composer").unwrap_or("composer.json")
                 )
             ),
-            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
-        });
+            String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "php",
@@ -20025,37 +19982,32 @@ fn append_contractless_repo_findings(
         ],
         &["build.gradle.kts", "build.gradle", "pom.xml#kotlin.version"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Kotlin"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Kotlin contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Kotlin"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Kotlin contract"),
+        ));
         if report.contract.tools.contains_key("gradle") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected build tool: Gradle"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected build tool: Gradle"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "gradle")
                             .unwrap_or("build.gradle.kts")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             if root.join("gradlew").is_file() {
-                findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Info,
-                    summary: String::from("Repo wrapper available: gradlew"),
-                    why: String::from("the repo already ships the Gradle wrapper"),
-                    next: String::from("no action required"),
-                });
+                findings.push(contractless_signal_finding(
+                    FindingSeverity::Info,
+                    String::from("Repo wrapper available: gradlew"),
+                    String::from("the repo already ships the Gradle wrapper"),
+                    String::from("no action required"),
+                ));
             } else {
                 push_contractless_host_tool_finding(
                     findings,
@@ -20092,13 +20044,12 @@ fn append_contractless_repo_findings(
         ],
     ) && !kotlin_repo_detected
     {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Java"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Java contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Java"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Java contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "java",
@@ -20107,28 +20058,24 @@ fn append_contractless_repo_findings(
             "install Java so it is available before using this repo",
         );
         if report.contract.tools.contains_key("maven") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected build tool: Maven"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected build tool: Maven"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "maven").unwrap_or("pom.xml")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             if root.join("mvnw").is_file() {
-                findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Info,
-                    summary: String::from("Repo wrapper available: mvnw"),
-                    why: String::from("the repo already ships the Maven wrapper"),
-                    next: String::from("no action required"),
-                });
+                findings.push(contractless_signal_finding(
+                    FindingSeverity::Info,
+                    String::from("Repo wrapper available: mvnw"),
+                    String::from("the repo already ships the Maven wrapper"),
+                    String::from("no action required"),
+                ));
             } else {
                 push_contractless_host_tool_finding(
                     findings,
@@ -20140,28 +20087,24 @@ fn append_contractless_repo_findings(
             }
         }
         if report.contract.tools.contains_key("gradle") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected build tool: Gradle"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected build tool: Gradle"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "gradle").unwrap_or("build.gradle")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             if root.join("gradlew").is_file() {
-                findings.push(Finding {
-                    identity: None,
-                    severity: FindingSeverity::Info,
-                    summary: String::from("Repo wrapper available: gradlew"),
-                    why: String::from("the repo already ships the Gradle wrapper"),
-                    next: String::from("no action required"),
-                });
+                findings.push(contractless_signal_finding(
+                    FindingSeverity::Info,
+                    String::from("Repo wrapper available: gradlew"),
+                    String::from("the repo already ships the Gradle wrapper"),
+                    String::from("no action required"),
+                ));
             } else {
                 push_contractless_host_tool_finding(
                     findings,
@@ -20181,13 +20124,12 @@ fn append_contractless_repo_findings(
         &["Gemfile#"],
         &["Gemfile", ".ruby-version"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Ruby"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Ruby contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Ruby"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Ruby contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "ruby",
@@ -20207,13 +20149,12 @@ fn append_contractless_repo_findings(
     if let Some(source) =
         contractless_repo_source(report, &["elixir"], &["mix"], &["mix.exs#"], &["mix.exs"])
     {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Elixir"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Elixir contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Elixir"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Elixir contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "mix",
@@ -20230,13 +20171,12 @@ fn append_contractless_repo_findings(
         &["build.sbt#"],
         &["build.sbt"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Scala"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Scala contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Scala"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Scala contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "sbt",
@@ -20253,13 +20193,12 @@ fn append_contractless_repo_findings(
         &["Package.swift#"],
         &["Package.swift"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Swift"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Swift contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Swift"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Swift contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "swift",
@@ -20277,36 +20216,32 @@ fn append_contractless_repo_findings(
         &["pubspec.yaml"],
     ) {
         let flutter_repo = report.contract.tools.contains_key("flutter");
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: if flutter_repo {
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            if flutter_repo {
                 String::from("Detected repo type: Flutter")
             } else {
                 String::from("Detected repo type: Dart")
             },
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: if flutter_repo {
+            format!("found `{}`", contractless_source_file(source)),
+            if flutter_repo {
                 String::from("run `ota detect --dry-run` to review the inferred Flutter contract")
             } else {
                 String::from("run `ota detect --dry-run` to review the inferred Dart contract")
             },
-        });
+        ));
         if flutter_repo {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected build tool: Flutter"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected build tool: Flutter"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "flutter").unwrap_or("pubspec.yaml")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             push_contractless_host_tool_finding(
                 findings,
                 "flutter",
@@ -20332,13 +20267,12 @@ fn append_contractless_repo_findings(
         &["Project.toml#compat.julia"],
         &["Project.toml"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Julia"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Julia contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Julia"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Julia contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "julia",
@@ -20355,13 +20289,12 @@ fn append_contractless_repo_findings(
         &["DESCRIPTION#Depends.R"],
         &["DESCRIPTION"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: R"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred R contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: R"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred R contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "R",
@@ -20378,25 +20311,23 @@ fn append_contractless_repo_findings(
         &["nimble-file#requires.nim"],
         &["nimble-file"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Nim"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Nim contract"),
-        });
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected build tool: nimble"),
-            why: format!(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Nim"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Nim contract"),
+        ));
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected build tool: nimble"),
+            format!(
                 "found `{}`",
                 contractless_source_file(
                     contractless_repo_tool_source(report, "nimble").unwrap_or("nimble-file")
                 )
             ),
-            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
-        });
+            String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "nimble",
@@ -20413,25 +20344,23 @@ fn append_contractless_repo_findings(
         &["rebar.config#app"],
         &["rebar.config"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Erlang"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Erlang contract"),
-        });
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected build tool: rebar3"),
-            why: format!(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Erlang"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Erlang contract"),
+        ));
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected build tool: rebar3"),
+            format!(
                 "found `{}`",
                 contractless_source_file(
                     contractless_repo_tool_source(report, "rebar3").unwrap_or("rebar.config")
                 )
             ),
-            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
-        });
+            String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "rebar3",
@@ -20448,13 +20377,12 @@ fn append_contractless_repo_findings(
         &["build.zig#std.Build"],
         &["build.zig"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Zig"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Zig contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Zig"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Zig contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "zig",
@@ -20471,25 +20399,23 @@ fn append_contractless_repo_findings(
         &["dub.json#", "dub.sdl#"],
         &["dub.json", "dub.sdl"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: D"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred D contract"),
-        });
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected build tool: dub"),
-            why: format!(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: D"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred D contract"),
+        ));
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected build tool: dub"),
+            format!(
                 "found `{}`",
                 contractless_source_file(
                     contractless_repo_tool_source(report, "dub").unwrap_or("dub.json")
                 )
             ),
-            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
-        });
+            String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "dub",
@@ -20506,27 +20432,23 @@ fn append_contractless_repo_findings(
         &["fpm.toml#project.name"],
         &["fpm.toml"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Fortran"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from(
-                "run `ota detect --dry-run` to review the inferred Fortran contract",
-            ),
-        });
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected build tool: fpm"),
-            why: format!(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Fortran"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Fortran contract"),
+        ));
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected build tool: fpm"),
+            format!(
                 "found `{}`",
                 contractless_source_file(
                     contractless_repo_tool_source(report, "fpm").unwrap_or("fpm.toml")
                 )
             ),
-            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
-        });
+            String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "fpm",
@@ -20543,15 +20465,12 @@ fn append_contractless_repo_findings(
         &["shard.yml#crystal"],
         &["shard.yml"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Crystal"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from(
-                "run `ota detect --dry-run` to review the inferred Crystal contract",
-            ),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Crystal"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Crystal contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "crystal",
@@ -20564,13 +20483,12 @@ fn append_contractless_repo_findings(
     if let Some(source) =
         contractless_repo_source(report, &[], &["elm"], &["elm.json#"], &["elm.json"])
     {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Elm"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Elm contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Elm"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Elm contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "elm",
@@ -20587,28 +20505,24 @@ fn append_contractless_repo_findings(
         &["cpanfile#", "Makefile.PL#"],
         &["cpanfile", "Makefile.PL"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Perl"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Perl contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Perl"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Perl contract"),
+        ));
         if report.contract.tools.contains_key("cpanm") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Detected dependency tool: cpanm"),
-                why: format!(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Detected dependency tool: cpanm"),
+                format!(
                     "found `{}`",
                     contractless_source_file(
                         contractless_repo_tool_source(report, "cpanm").unwrap_or("cpanfile")
                     )
                 ),
-                next: String::from(
-                    "run `ota detect --dry-run` to review the inferred task contract",
-                ),
-            });
+                String::from("run `ota detect --dry-run` to review the inferred task contract"),
+            ));
             push_contractless_host_tool_finding(
                 findings,
                 "cpanm",
@@ -20629,13 +20543,12 @@ fn append_contractless_repo_findings(
     }
 
     if let Some(source) = contractless_repo_source(report, &[], &["haxe"], &["hxml#"], &["hxml"]) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Haxe"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Haxe contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Haxe"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Haxe contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "haxe",
@@ -20652,13 +20565,12 @@ fn append_contractless_repo_findings(
         &["gleam.toml#name"],
         &["gleam.toml"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Gleam"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Gleam contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Gleam"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Gleam contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "gleam",
@@ -20670,13 +20582,12 @@ fn append_contractless_repo_findings(
 
     if let Some(source) = contractless_repo_source(report, &[], &["v"], &["v.mod#name"], &["v.mod"])
     {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: V"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred V contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: V"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred V contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "v",
@@ -20693,13 +20604,12 @@ fn append_contractless_repo_findings(
         &["alire.toml#project.name"],
         &["alire.toml"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Ada"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Ada contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Ada"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Ada contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "alr",
@@ -20716,27 +20626,23 @@ fn append_contractless_repo_findings(
         &["foundry.toml#profile.default.solc_version"],
         &["foundry.toml"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Solidity"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from(
-                "run `ota detect --dry-run` to review the inferred Solidity contract",
-            ),
-        });
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected build tool: Foundry"),
-            why: format!(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Solidity"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Solidity contract"),
+        ));
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected build tool: Foundry"),
+            format!(
                 "found `{}`",
                 contractless_source_file(
                     contractless_repo_tool_source(report, "forge").unwrap_or("foundry.toml")
                 )
             ),
-            next: String::from("run `ota detect --dry-run` to review the inferred task contract"),
-        });
+            String::from("run `ota detect --dry-run` to review the inferred task contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "forge",
@@ -20753,13 +20659,12 @@ fn append_contractless_repo_findings(
         &["tclapp.tcl#", "pkgIndex.tcl#"],
         &["tclapp.tcl", "pkgIndex.tcl"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Tcl"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Tcl contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Tcl"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Tcl contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "tclsh",
@@ -20776,13 +20681,12 @@ fn append_contractless_repo_findings(
         &["main.rkt#", "info.rkt#"],
         &["main.rkt", "info.rkt"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Racket"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Racket contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Racket"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Racket contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "racket",
@@ -20799,13 +20703,12 @@ fn append_contractless_repo_findings(
         &["bash-script#"],
         &["bash-script"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Shell"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred shell contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Shell"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred shell contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "bash",
@@ -20822,15 +20725,12 @@ fn append_contractless_repo_findings(
         &["powershell-script#"],
         &["powershell-script"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: PowerShell"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from(
-                "run `ota detect --dry-run` to review the inferred PowerShell contract",
-            ),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: PowerShell"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred PowerShell contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "pwsh",
@@ -20847,13 +20747,12 @@ fn append_contractless_repo_findings(
         &["deno.json#standard-tasks", "deno.jsonc#standard-tasks"],
         &["deno.json", "deno.jsonc"],
     ) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("Detected repo type: Deno"),
-            why: format!("found `{}`", contractless_source_file(source)),
-            next: String::from("run `ota detect --dry-run` to review the inferred Deno contract"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("Detected repo type: Deno"),
+            format!("found `{}`", contractless_source_file(source)),
+            String::from("run `ota detect --dry-run` to review the inferred Deno contract"),
+        ));
         push_contractless_host_tool_finding(
             findings,
             "deno",
@@ -20877,36 +20776,33 @@ fn append_contractless_repo_findings(
             .find(|inference| inference.field.starts_with("services."))
             .map(|inference| inference.source.as_str())
             .unwrap_or("compose.yaml");
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: format!("Detected Docker Compose services: {service_names}"),
-            why: format!("found `{}`", source.split('#').next().unwrap_or(source)),
-            next: String::from(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+format!("Detected Docker Compose services: {service_names}"),
+format!("found `{}`", source.split('#').next().unwrap_or(source)),
+String::from(
                 "run `ota detect --dry-run` to preview the service contract before writing `ota.yaml`",
-            ),
-        });
+            )
+        ));
 
         if command_available("docker") {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: String::from("Host tool available: docker"),
-                why: String::from("`docker --version` succeeded"),
-                next: String::from("no action required"),
-            });
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                String::from("Host tool available: docker"),
+                String::from("`docker --version` succeeded"),
+                String::from("no action required"),
+            ));
         } else {
-            findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Error,
-                summary: String::from("Missing container execution backend CLI: docker, podman"),
-                why: String::from(
+            findings.push(contractless_signal_finding(
+                FindingSeverity::Error,
+String::from("Missing container execution backend CLI: docker, podman"),
+String::from(
                     "Docker Compose signals were detected, so container execution will need a supported container engine once you adopt a contract",
                 ),
-                next: String::from(
+String::from(
                     "install a supported container engine, or keep the eventual contract on `native` if you do not want container execution",
-                ),
-            });
+                )
+            ));
         }
     }
 
@@ -20916,16 +20812,15 @@ fn append_contractless_repo_findings(
         && report.contract.services.is_empty()
         && report.contract.tasks.is_empty()
     {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: String::from("No strong repo signals were detected yet"),
-            why: format!(
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            String::from("No strong repo signals were detected yet"),
+            format!(
                 "`{}` did not expose obvious repo markers yet",
                 compact_repo_path(root)
             ),
-            next: String::from("run `ota init --dry-run` or `ota detect --dry-run`"),
-        });
+            String::from("run `ota init --dry-run` or `ota detect --dry-run`"),
+        ));
     }
 }
 
@@ -21042,22 +20937,56 @@ fn push_contractless_host_tool_finding(
     missing_next: &str,
 ) {
     if let Some((command, version)) = contractless_command_version_candidates(candidates) {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Info,
-            summary: format!("Host tool available: {label}"),
-            why: format!("`{command} --version` returned `{version}`"),
-            next: String::from("no action required"),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Info,
+            format!("Host tool available: {label}"),
+            format!("`{command} --version` returned `{version}`"),
+            String::from("no action required"),
+        ));
     } else {
-        findings.push(Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: format!("Missing host tool: {label}"),
-            why: missing_why.to_string(),
-            next: missing_next.to_string(),
-        });
+        findings.push(contractless_signal_finding(
+            FindingSeverity::Error,
+            format!("Missing host tool: {label}"),
+            missing_why.to_string(),
+            missing_next.to_string(),
+        ));
     }
+}
+
+fn contractless_signal_finding(
+    severity: FindingSeverity,
+    summary: impl Into<String>,
+    why: impl Into<String>,
+    next: impl Into<String>,
+) -> Finding {
+    let summary = summary.into();
+    let (code, category, owner) = if summary == "Contract missing" {
+        (
+            "OTA_CONTRACTLESS_REPO_CONTRACT_MISSING",
+            "contract",
+            "repo_contract",
+        )
+    } else if summary == "Could not inspect repo signals" {
+        (
+            "OTA_CONTRACTLESS_SIGNAL_INSPECTION_FAILED",
+            "contract",
+            "repo_signals",
+        )
+    } else if summary.starts_with("Host tool available: ") {
+        (
+            "OTA_CONTRACTLESS_HOST_TOOL_AVAILABLE",
+            "environment",
+            "host",
+        )
+    } else if summary.starts_with("Missing host tool: ") {
+        ("OTA_CONTRACTLESS_HOST_TOOL_MISSING", "environment", "host")
+    } else if summary.starts_with("Missing container execution backend CLI: ") {
+        ("OTA_CONTAINER_BACKEND_CLI_MISSING", "execution", "host")
+    } else {
+        ("OTA_CONTRACTLESS_SIGNAL", "contract", "repo_signals")
+    };
+
+    Finding::identified(code, category, owner, severity, summary, why, next)
 }
 
 fn contractless_repo_command(command: &str, repo_root: &Path) -> String {
@@ -37291,10 +37220,7 @@ fn add_doctor_summary_from_findings(
             FindingSeverity::Info => summary.info_count += 1,
         }
     }
-    summary.verdict = worse_verdict(
-        summary.verdict,
-        repo_verdict_from_findings(findings),
-    );
+    summary.verdict = worse_verdict(summary.verdict, repo_verdict_from_findings(findings));
     summary.agent_verdict = worse_verdict(summary.agent_verdict, agent_verdict);
     if let Some(candidate) = primary_blocker_from_findings(findings) {
         summary.primary_blocker = match summary.primary_blocker.take() {
@@ -37462,7 +37388,10 @@ fn workspace_list_summary(repos: &[WorkspaceRepoListReport]) -> WorkspaceListSum
 
 fn primary_blocker_from_findings(findings: &[Finding]) -> Option<DoctorPrimaryBlocker> {
     findings.first().map(|finding| DoctorPrimaryBlocker {
-        code: finding.identity.as_ref().map(|identity| identity.code.clone()),
+        code: finding
+            .identity
+            .as_ref()
+            .map(|identity| identity.code.clone()),
         severity: finding.severity,
         summary: finding.summary.clone(),
         why: finding.why.clone(),
@@ -37488,7 +37417,10 @@ fn workspace_primary_blocker(
     for repo in &report.repos {
         for finding in &repo.findings {
             let blocker = WorkspacePrimaryBlocker {
-                code: finding.identity.as_ref().map(|identity| identity.code.clone()),
+                code: finding
+                    .identity
+                    .as_ref()
+                    .map(|identity| identity.code.clone()),
                 repo: repo.name.clone(),
                 severity: finding.severity,
                 summary: finding.summary.clone(),
@@ -40846,41 +40778,38 @@ fn inferred_agents_missing_block_context(
         .and_then(AgentSummary::from_config)
     {
         if !agent.safe_tasks.is_empty() {
-            signal_findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: format!("Inferred safe tasks: {}", agent.safe_tasks.join(", ")),
-                why: String::from("detector-backed starter agent defaults identified safe tasks"),
-                next: String::from("review the inferred agent boundary before writing it"),
-            });
+            signal_findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                format!("Inferred safe tasks: {}", agent.safe_tasks.join(", ")),
+                String::from("detector-backed starter agent defaults identified safe tasks"),
+                String::from("review the inferred agent boundary before writing it"),
+            ));
         }
         if !agent.writable_paths.is_empty() {
-            signal_findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: format!(
+            signal_findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                format!(
                     "Inferred starter writable paths: {}",
                     agent.writable_paths.join(", ")
                 ),
-                why: String::from(
+                String::from(
                     "detector-backed starter agent defaults identified writable source roots",
                 ),
-                next: String::from("review the inferred agent boundary before writing it"),
-            });
+                String::from("review the inferred agent boundary before writing it"),
+            ));
         }
         if !agent.protected_paths.is_empty() {
-            signal_findings.push(Finding {
-                identity: None,
-                severity: FindingSeverity::Info,
-                summary: format!(
+            signal_findings.push(contractless_signal_finding(
+                FindingSeverity::Info,
+                format!(
                     "Inferred protected paths: {}",
                     agent.protected_paths.join(", ")
                 ),
-                why: String::from(
+                String::from(
                     "detector-backed starter agent defaults identified protected control files",
                 ),
-                next: String::from("review the inferred agent boundary before writing it"),
-            });
+                String::from("review the inferred agent boundary before writing it"),
+            ));
         }
     }
 
@@ -42325,33 +42254,44 @@ fn bootstrap_failure_findings(
     };
 
     if request.actions.is_empty() {
-        return vec![Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: String::from("Adapter bootstrap failed"),
+        return vec![adapter_bootstrap_failure_finding(
+            String::from("Adapter bootstrap failed"),
             why,
             next,
-        }];
+        )];
     }
 
     request
         .actions
         .iter()
-        .map(|action| Finding {
-            identity: None,
-            severity: FindingSeverity::Error,
-            summary: if request.actions.len() > 1 && !action.source.trim().is_empty() {
+        .map(|action| {
+            let summary = if request.actions.len() > 1 && !action.source.trim().is_empty() {
                 format!(
                     "Adapter bootstrap failed: {} via {}",
                     action.name, action.source
                 )
             } else {
                 format!("Adapter bootstrap failed: {}", action.name)
-            },
-            why: why.clone(),
-            next: next.clone(),
+            };
+            adapter_bootstrap_failure_finding(summary, why.clone(), next.clone())
         })
         .collect()
+}
+
+fn adapter_bootstrap_failure_finding(
+    summary: impl Into<String>,
+    why: impl Into<String>,
+    next: impl Into<String>,
+) -> Finding {
+    Finding::identified(
+        "OTA_ADAPTER_BOOTSTRAP_FAILED",
+        "provisioning",
+        "repo_contract",
+        FindingSeverity::Error,
+        summary,
+        why,
+        next,
+    )
 }
 
 fn prepend_finding_if_missing(findings: &mut Vec<Finding>, finding: Finding) {
@@ -50105,6 +50045,28 @@ tasks:
         assert_eq!(workspace_blocker.code, None);
     }
 
+    fn commands_production_source() -> String {
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/commands.rs");
+        let source = fs::read_to_string(&source_path).expect("commands source should load");
+        let (production_source, _) = source
+            .split_once("#[cfg(test)]\nmod tests {")
+            .expect("commands tests module marker should exist");
+        production_source.to_string()
+    }
+
+    #[test]
+    fn shipped_commands_findings_require_explicit_identity_metadata() {
+        let production_source = commands_production_source();
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/commands.rs");
+
+        assert!(
+            !production_source.contains("identity: None,")
+                && !production_source.contains("identity: Default::default()"),
+            "shipped command findings must carry explicit identity metadata: {}",
+            source_path.display()
+        );
+    }
+
     #[test]
     fn doctor_text_groups_shared_actions_by_remediation() {
         let report = DoctorReport {
@@ -51927,6 +51889,74 @@ workflows:
             rendered,
             "DATABASE_URL=postgres://profile\nREDIS_HOST=redis\n"
         );
+    }
+
+    #[test]
+    fn render_selected_workflow_env_profile_artifacts_renders_from_template_truth() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: env-profile-render
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    docker-build:
+      sources:
+        - kind: dotenv
+          path: .env.profile
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.docker-build
+          template: .env.example
+          include:
+            - DATABASE_URL
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".env.profile"),
+            "DATABASE_URL=postgres://profile\n",
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".env.example"),
+            "REDIS_HOST=127.0.0.1\nDATABASE_URL=postgres://localhost\nCLICKHOUSE_URL=http://clickhouse:8123\n",
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".env.docker-build"),
+            "REDIS_HOST=old\nDATABASE_URL=postgres://stale\nSTALE_ONLY=1\n",
+        )
+        .unwrap();
+
+        let messages = super::render_selected_workflow_env_profile_artifacts(
+            &contract,
+            contract_path.as_path(),
+            Some("docker-build"),
+            None,
+        )
+        .expect("profile artifact render should succeed");
+        assert_eq!(messages.len(), 1);
+
+        let rendered = fs::read_to_string(fixture.path().join(".env.docker-build")).unwrap();
+        assert_eq!(
+            rendered,
+            "REDIS_HOST=redis\nDATABASE_URL=postgres://profile\nCLICKHOUSE_URL=http://clickhouse:8123\n"
+        );
+        assert!(!rendered.contains("STALE_ONLY=1\n"), "{rendered}");
     }
 
     #[test]
@@ -80960,7 +80990,27 @@ fn render_selected_workflow_env_profile_artifacts(
         })?;
     }
 
-    let mut lines = Vec::new();
+    let template_content = if let Some(template) = dotenv.template.as_deref() {
+        let template_path = contract_working_dir(contract_path).join(template.trim());
+        if !template_path.is_file() {
+            return Err(format!(
+                "workflow env profile `{profile_name}` could not render dotenv `{}` because template `{}` is not a file",
+                dotenv.path.trim(),
+                template.trim()
+            ));
+        }
+        fs::read_to_string(&template_path).map_err(|error| {
+            format!(
+                "workflow env profile `{profile_name}` could not read template `{}` for rendered dotenv `{}`: {error}",
+                template.trim(),
+                dotenv.path.trim()
+            )
+        })?
+    } else {
+        String::new()
+    };
+
+    let mut updates = Vec::new();
     for name in &dotenv.include {
         let value = if let Some(resolved_value) = resolved.get(name) {
             resolved_value.value.clone()
@@ -80972,19 +81022,25 @@ fn render_selected_workflow_env_profile_artifacts(
                 dotenv.path.trim()
             ));
         };
-        lines.push(format!("{name}={value}"));
+        updates.push((
+            name.clone(),
+            Some(value),
+            crate::schema::TaskEnsureEnvVarMode::Replace,
+        ));
     }
 
     for (name, value) in &profile.env {
         if !dotenv.include.iter().any(|included| included == name) {
-            lines.push(format!("{name}={value}"));
+            updates.push((
+                name.clone(),
+                Some(value.clone()),
+                crate::schema::TaskEnsureEnvVarMode::Replace,
+            ));
         }
     }
 
-    let mut next = lines.join("\n");
-    if !next.is_empty() {
-        next.push('\n');
-    }
+    let (next, _, _, _) =
+        crate::runner::apply_ensure_env_updates(template_content.as_str(), &updates);
     fs::write(&output_path, next).map_err(|error| {
         format!(
             "workflow env profile `{profile_name}` could not render dotenv `{}`: {error}",

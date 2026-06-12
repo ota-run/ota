@@ -1,0 +1,129 @@
+#
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#   You may not use this file except in compliance with that License.
+#   Unless required by applicable law or agreed to in writing, software distributed under the
+#   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#   either express or implied. See the License for the specific language governing permissions
+#   and limitations under the License.
+#
+#   If you need additional information or have any questions, please email: os@ota.run
+
+version: 1
+project:
+  name: workflow-rendered-env
+  description: Workflow-owned compose env-file example rendered from repo template truth plus selected env overlays
+  type: application
+runtimes:
+  node: "22"
+tools:
+  pnpm:
+    version: "10"
+    acquisition:
+      provider: corepack
+      package: pnpm
+      version: "10.0.0"
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    compose:
+      sources:
+        - kind: dotenv
+          path: .env.local
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.compose
+          template: .env.example
+          include:
+            - DATABASE_URL
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: api
+      env_file: .env.compose
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: postgres
+      env_file: .env.compose
+tasks:
+  setup:
+    context: host
+    description: Install dependencies before running the dev server
+    run: pnpm install
+    requirements:
+      runtimes:
+        node: "22"
+      tools:
+        pnpm: "10"
+  dev:
+    context: host
+    description: Start the app using the workflow-owned compose env truth
+    launch:
+      kind: command
+      exe: pnpm
+      args:
+        - dev
+    depends_on:
+      - setup
+    requires_services:
+      - api
+      - postgres
+    requirements:
+      env:
+        - DATABASE_URL
+workflows:
+  default: compose-dev
+  compose-dev:
+    intent: local_development
+    description: Render `.env.compose` from `.env.example` plus selected workflow env truth, then start the service-backed dev path
+    env:
+      profile: compose
+    setup:
+      task: setup
+    run:
+      task: dev
+agent:
+  entrypoint: setup
+  default_task: dev
+  safe_tasks:
+    - setup
+  verify_after_changes:
+    - setup
+  writable_paths:
+    - src
+    - docs
+  protected_paths:
+    - ota.yaml
+  notes: |
+    Use `env.profiles.compose.render.dotenv` when the workflow owns one rendered compose env file.
+    Keep repo example truth in `.env.example` and let Ota overlay the workflow-specific values.

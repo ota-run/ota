@@ -1441,13 +1441,13 @@ fn resolve_contract_core_finding_metadata(finding: &Finding) -> FindingResolvedM
             "repo signals match the declared contract",
             "detect",
         )),
-        "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => Some(
-            static_finding_evidence(
+        "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => {
+            Some(static_finding_evidence(
                 "a task body appears to mutate an ota-managed isolated attachment path",
                 "task bodies leave ota-managed isolated attachment paths to the underlying tool",
                 "contract",
-            ),
-        ),
+            ))
+        }
         _ => None,
     };
 
@@ -1456,6 +1456,35 @@ fn resolve_contract_core_finding_metadata(finding: &Finding) -> FindingResolvedM
         owner: "repo_contract",
         evidence,
         provenance: repo_contract_provenance(),
+        policy: None,
+    }
+}
+
+fn resolve_contractless_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
+    let code = finding.code();
+    let evidence = match code {
+        "OTA_CONTRACTLESS_REPO_CONTRACT_MISSING" => Some(static_finding_evidence(
+            "no repo contract was found from the selected path upward",
+            "a repo contract is present and readable",
+            "repo filesystem",
+        )),
+        "OTA_CONTRACTLESS_SIGNAL_INSPECTION_FAILED" => Some(static_finding_evidence(
+            "repo signal inspection failed before a starter contract could be inferred",
+            "repo signal inspection succeeds and a starter contract can be inferred",
+            "detect",
+        )),
+        _ => None,
+    };
+
+    FindingResolvedMetadata {
+        category: "contract",
+        owner: if code == "OTA_CONTRACTLESS_REPO_CONTRACT_MISSING" {
+            "repo_contract"
+        } else {
+            "repo_signals"
+        },
+        evidence,
+        provenance: repo_signals_provenance(),
         policy: None,
     }
 }
@@ -1593,9 +1622,7 @@ fn resolve_remote_finding_metadata(finding: &Finding) -> FindingResolvedMetadata
         )),
         "OTA_REMOTE_TARGET_OS_UNDETERMINED" => Some(FindingEvidence {
             observed: String::from("ota could not determine the remote target operating system"),
-            expected: String::from(
-                "ota can determine the remote target operating system",
-            ),
+            expected: String::from("ota can determine the remote target operating system"),
             source: String::from("remote_backend"),
             checked_at: String::new(),
             command: remote_os_probe_command().to_string(),
@@ -1684,13 +1711,13 @@ fn resolve_environment_finding_metadata(finding: &Finding) -> FindingResolvedMet
             "declared environment sources resolve without key collisions",
             "repo filesystem",
         )),
-        "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH" => Some(
-            probe_finding_evidence(
+        "OTA_RUNTIME_VERSION_MISMATCH" | "OTA_TOOL_VERSION_MISMATCH" => {
+            Some(probe_finding_evidence(
                 finding,
                 "the installed version did not match the contract requirement",
                 "the installed version satisfies the contract requirement",
-            ),
-        ),
+            ))
+        }
         "OTA_RUNTIME_MISSING" | "OTA_TOOL_MISSING" => Some(FindingEvidence {
             observed: String::from("the required runtime or tool was not available"),
             expected: String::from("the required runtime or tool is available on PATH"),
@@ -1709,13 +1736,13 @@ fn resolve_environment_finding_metadata(finding: &Finding) -> FindingResolvedMet
             "the resolved executable could not report a version",
             "the resolved executable reports a version that satisfies the contract",
         )),
-        "OTA_RUNTIME_VERSION_UNPARSEABLE" | "OTA_TOOL_VERSION_UNPARSEABLE" => Some(
-            probe_finding_evidence(
+        "OTA_RUNTIME_VERSION_UNPARSEABLE" | "OTA_TOOL_VERSION_UNPARSEABLE" => {
+            Some(probe_finding_evidence(
                 finding,
                 "the resolved executable did not emit a parseable version",
                 "the resolved executable emits a parseable version that satisfies the contract",
-            ),
-        ),
+            ))
+        }
         "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
             Some(static_finding_evidence(
                 "the selected native prerequisite check did not pass",
@@ -1742,6 +1769,32 @@ fn resolve_environment_finding_metadata(finding: &Finding) -> FindingResolvedMet
         } else {
             repo_contract_provenance()
         },
+        policy: None,
+    }
+}
+
+fn resolve_contractless_environment_finding_metadata(
+    finding: &Finding,
+) -> FindingResolvedMetadata<'_> {
+    let evidence = match finding.code() {
+        "OTA_CONTRACTLESS_HOST_TOOL_AVAILABLE" => Some(static_finding_evidence(
+            "the inferred host tool is already available on PATH",
+            "the inferred host tool remains available on PATH",
+            "host",
+        )),
+        "OTA_CONTRACTLESS_HOST_TOOL_MISSING" => Some(static_finding_evidence(
+            "the inferred host tool is not available on PATH",
+            "the inferred host tool is available on PATH",
+            "host",
+        )),
+        _ => None,
+    };
+
+    FindingResolvedMetadata {
+        category: "environment",
+        owner: "host",
+        evidence,
+        provenance: repo_signals_provenance(),
         policy: None,
     }
 }
@@ -1974,6 +2027,58 @@ fn resolve_policy_finding_metadata(finding: &Finding) -> FindingResolvedMetadata
     }
 }
 
+fn resolve_policy_effect_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
+    let policy = match finding.code() {
+        "OTA_POLICY_EFFECT_ALLOWED" => PolicyFindingContext {
+            outcome: "allowed_by_policy",
+            reason: "effect_allowed",
+            source: "org",
+            install_scope: "repo_local",
+            mutation_allowed: true,
+        },
+        "OTA_POLICY_EFFECT_WARNED" => PolicyFindingContext {
+            outcome: "warned_by_policy",
+            reason: "effect_warned",
+            source: "org",
+            install_scope: "repo_local",
+            mutation_allowed: true,
+        },
+        _ => PolicyFindingContext {
+            outcome: "blocked_by_policy",
+            reason: "effect_denied",
+            source: "org",
+            install_scope: "repo_local",
+            mutation_allowed: false,
+        },
+    };
+
+    FindingResolvedMetadata {
+        category: "policy",
+        owner: "org_policy",
+        evidence: Some(static_finding_evidence(
+            "org policy evaluated a requested task effect",
+            "org policy keeps the requested task effect decision explicit",
+            "org_policy",
+        )),
+        provenance: org_policy_provenance(),
+        policy: Some(policy),
+    }
+}
+
+fn resolve_adapter_bootstrap_failure_metadata(_: &Finding) -> FindingResolvedMetadata<'_> {
+    FindingResolvedMetadata {
+        category: "provisioning",
+        owner: "repo_contract",
+        evidence: Some(static_finding_evidence(
+            "the declared adapter bootstrap path did not complete in the selected execution environment",
+            "the declared adapter bootstrap path completes in the selected execution environment",
+            "repo_contract",
+        )),
+        provenance: repo_contract_provenance(),
+        policy: None,
+    }
+}
+
 fn finding_registry_entry(code: &str) -> Option<FindingRegistryEntry> {
     let resolver = match code {
         "OTA_TASKS_MISSING"
@@ -1983,11 +2088,25 @@ fn finding_registry_entry(code: &str) -> Option<FindingRegistryEntry> {
         | "OTA_DEVCONTAINER_RUNTIME_DRIFT"
         | "OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT"
         | "OTA_CONTRACT_DRIFT"
+        | "OTA_CONTRACTLESS_REPO_CONTRACT_MISSING"
+        | "OTA_CONTRACTLESS_SIGNAL_INSPECTION_FAILED"
+        | "OTA_CONTRACTLESS_SIGNAL"
         | "OTA_SELECTED_TASK_PATH_NETWORK_REQUIRED"
         | "OTA_SELECTED_TASK_PATH_DEPENDENCY_HYDRATION"
         | "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE"
         | "OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH" => {
-            resolve_contract_core_finding_metadata as for<'a> fn(&'a Finding) -> FindingResolvedMetadata<'a>
+            if matches!(
+                code,
+                "OTA_CONTRACTLESS_REPO_CONTRACT_MISSING"
+                    | "OTA_CONTRACTLESS_SIGNAL_INSPECTION_FAILED"
+                    | "OTA_CONTRACTLESS_SIGNAL"
+            ) {
+                resolve_contractless_finding_metadata
+                    as for<'a> fn(&'a Finding) -> FindingResolvedMetadata<'a>
+            } else {
+                resolve_contract_core_finding_metadata
+                    as for<'a> fn(&'a Finding) -> FindingResolvedMetadata<'a>
+            }
         }
         "OTA_LIFECYCLE_EPHEMERAL_BACKEND_ONLY"
         | "OTA_LIFECYCLE_EPHEMERAL_ADVISORY"
@@ -2028,6 +2147,8 @@ fn finding_registry_entry(code: &str) -> Option<FindingRegistryEntry> {
         | "OTA_SERVICE_UNVERIFIABLE" => resolve_service_finding_metadata,
         "OTA_ENV_MISSING"
         | "OTA_ENV_INVALID"
+        | "OTA_CONTRACTLESS_HOST_TOOL_AVAILABLE"
+        | "OTA_CONTRACTLESS_HOST_TOOL_MISSING"
         | "OTA_ENV_SOURCE_MISSING_REQUIRED"
         | "OTA_ENV_SOURCE_PARSE_FAILED"
         | "OTA_ENV_SOURCE_INVALID_STRUCTURE"
@@ -2047,7 +2168,16 @@ fn finding_registry_entry(code: &str) -> Option<FindingRegistryEntry> {
         | "OTA_TOOL_PROBE_FAILED"
         | "OTA_TOOL_VERSION_UNPARSEABLE"
         | "OTA_NATIVE_PREREQUISITE_MISSING"
-        | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => resolve_environment_finding_metadata,
+        | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
+            if matches!(
+                code,
+                "OTA_CONTRACTLESS_HOST_TOOL_AVAILABLE" | "OTA_CONTRACTLESS_HOST_TOOL_MISSING"
+            ) {
+                resolve_contractless_environment_finding_metadata
+            } else {
+                resolve_environment_finding_metadata
+            }
+        }
         "OTA_CONTAINER_APT_VERSION_UNAVAILABLE"
         | "OTA_CONTAINER_APT_PACKAGE_UNAVAILABLE"
         | "OTA_CONTAINER_APT_INDEX_UNAVAILABLE"
@@ -2068,11 +2198,26 @@ fn finding_registry_entry(code: &str) -> Option<FindingRegistryEntry> {
         | "OTA_REMOTE_PROVISIONING_BACKEND_FAILED" => resolve_provisioning_finding_metadata,
         "OTA_POLICY_PACK_VIOLATION"
         | "OTA_POLICY_PACK_INVALID"
+        | "OTA_POLICY_EFFECT_ALLOWED"
+        | "OTA_POLICY_EFFECT_WARNED"
+        | "OTA_POLICY_EFFECT_DENIED"
         | "OTA_POLICY_BACKED_VERSION_RULES_DECLARED"
         | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
         | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
         | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED"
-        | "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => resolve_policy_finding_metadata,
+        | "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => {
+            if matches!(
+                code,
+                "OTA_POLICY_EFFECT_ALLOWED"
+                    | "OTA_POLICY_EFFECT_WARNED"
+                    | "OTA_POLICY_EFFECT_DENIED"
+            ) {
+                resolve_policy_effect_finding_metadata
+            } else {
+                resolve_policy_finding_metadata
+            }
+        }
+        "OTA_ADAPTER_BOOTSTRAP_FAILED" => resolve_adapter_bootstrap_failure_metadata,
         s if s.starts_with("OTA_CONTRACT_ADVISORY_") => resolve_contract_core_finding_metadata,
         _ => return None,
     };
@@ -2394,9 +2539,7 @@ pub(crate) fn provisioning_installability_finding(
                 "the host target could not refresh the configured `{backend}` sources, so ota could not verify or install {}",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            format!(
-                "fix the host `{backend}` repository access, then rerun `{rerun_command}`"
-            ),
+            format!("fix the host `{backend}` repository access, then rerun `{rerun_command}`"),
         ),
         (ProvisioningExecutionTarget::Native, backend, _) => (
             "OTA_HOST_PROVISIONING_BACKEND_FAILED",
@@ -2519,9 +2662,7 @@ pub(crate) fn provisioning_installability_finding(
                 "{remote_label} could not refresh the configured `{backend}` sources, so ota could not verify or install {}",
                 provisioning_diagnosis_requirement_summary(diagnosis)
             ),
-            format!(
-                "fix the remote `{backend}` repository access, then rerun `{rerun_command}`"
-            ),
+            format!("fix the remote `{backend}` repository access, then rerun `{rerun_command}`"),
         ),
         (ProvisioningExecutionTarget::Remote { .. }, backend, _) => (
             "OTA_REMOTE_PROVISIONING_BACKEND_FAILED",
@@ -2540,7 +2681,15 @@ pub(crate) fn provisioning_installability_finding(
         ),
     };
 
-    Finding::identified(code, "provisioning", owner, FindingSeverity::Error, summary, why, next)
+    Finding::identified(
+        code,
+        "provisioning",
+        owner,
+        FindingSeverity::Error,
+        summary,
+        why,
+        next,
+    )
 }
 
 impl FindingIdentity {
@@ -2596,7 +2745,8 @@ impl Finding {
     }
 
     fn policy_context(&self) -> Option<PolicyFindingContext<'_>> {
-        self.resolved_metadata().and_then(|metadata| metadata.policy)
+        self.resolved_metadata()
+            .and_then(|metadata| metadata.policy)
     }
 
     pub(crate) fn code(&self) -> &str {
@@ -2950,7 +3100,15 @@ fn remote_backend_finding(
     why: impl Into<String>,
     next: impl Into<String>,
 ) -> Finding {
-    Finding::identified(code, "remote", "remote_backend", severity, summary, why, next)
+    Finding::identified(
+        code,
+        "remote",
+        "remote_backend",
+        severity,
+        summary,
+        why,
+        next,
+    )
 }
 
 impl Serialize for Finding {
@@ -16312,8 +16470,7 @@ workflows:
             .expect("surface readiness finding should be present");
         assert!(matches!(
             finding.code(),
-            "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
-                | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED" | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
         ));
         assert_eq!(finding.category(), "execution");
         assert_eq!(finding.owner(), "repo_contract");
@@ -16385,8 +16542,7 @@ workflows:
             .expect("surface timeout finding should be present");
         assert!(matches!(
             finding.code(),
-            "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
-                | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED" | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
         ));
         assert_eq!(finding.category(), "execution");
         assert_eq!(finding.owner(), "repo_contract");
@@ -19923,8 +20079,11 @@ tasks:
 "#,
         )
         .unwrap();
-        let remote_report =
-            diagnose_contract_in_mode(&remote_contract, synthetic_contract_path(), DoctorMode::Remote);
+        let remote_report = diagnose_contract_in_mode(
+            &remote_contract,
+            synthetic_contract_path(),
+            DoctorMode::Remote,
+        );
         let remote_finding = remote_report
             .findings
             .iter()
@@ -20133,6 +20292,24 @@ tasks:
                 code: "OTA_CONTRACT_DRIFT",
                 category: "contract",
                 owner_surface: "repo_contract",
+                provenance_key_surface: "repo_signals",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACTLESS_REPO_CONTRACT_MISSING",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_signals",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACTLESS_SIGNAL",
+                category: "contract",
+                owner_surface: "repo_signals",
+                provenance_key_surface: "repo_signals",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACTLESS_SIGNAL_INSPECTION_FAILED",
+                category: "contract",
+                owner_surface: "repo_signals",
                 provenance_key_surface: "repo_signals",
             },
             DoctorFindingReferenceEntry {
@@ -20430,6 +20607,18 @@ tasks:
                 provenance_key_surface: "repo_contract",
             },
             DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACTLESS_HOST_TOOL_AVAILABLE",
+                category: "environment",
+                owner_surface: "host",
+                provenance_key_surface: "repo_signals",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACTLESS_HOST_TOOL_MISSING",
+                category: "environment",
+                owner_surface: "host",
+                provenance_key_surface: "repo_signals",
+            },
+            DoctorFindingReferenceEntry {
                 code: "OTA_NATIVE_PREREQUISITE_MISSING",
                 category: "environment",
                 owner_surface: "host|container_target|remote_target",
@@ -20592,6 +20781,12 @@ tasks:
                 provenance_key_surface: "org_policy",
             },
             DoctorFindingReferenceEntry {
+                code: "OTA_ADAPTER_BOOTSTRAP_FAILED",
+                category: "provisioning",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
                 code: "OTA_REMOTE_APT_INDEX_UNAVAILABLE",
                 category: "provisioning",
                 owner_surface: "remote_target",
@@ -20635,6 +20830,24 @@ tasks:
             },
             DoctorFindingReferenceEntry {
                 code: "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_EFFECT_ALLOWED",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_EFFECT_DENIED",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_EFFECT_WARNED",
                 category: "policy",
                 owner_surface: "org_policy",
                 provenance_key_surface: "org_policy",
@@ -20716,6 +20929,15 @@ tasks:
         production_source.to_string()
     }
 
+    fn commands_production_source() -> String {
+        let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli/commands.rs");
+        let source = fs::read_to_string(&source_path).expect("commands source should load");
+        let (production_source, _) = source
+            .split_once("#[cfg(test)]\nmod tests {")
+            .expect("commands tests module marker should exist");
+        production_source.to_string()
+    }
+
     fn extract_ota_codes(source: &str) -> std::collections::BTreeSet<String> {
         let mut codes = std::collections::BTreeSet::new();
         let mut index = 0usize;
@@ -20747,8 +20969,8 @@ tasks:
             .collect()
     }
 
-    fn shipped_workspace_finding_codes_from_production_source(
-    ) -> std::collections::BTreeSet<String> {
+    fn shipped_workspace_finding_codes_from_production_source() -> std::collections::BTreeSet<String>
+    {
         let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/workspace.rs");
         let source = fs::read_to_string(&source_path).expect("workspace source should load");
         let diagnose_start = source
@@ -20778,6 +21000,18 @@ tasks:
             cursor = &after_first_quote[second_quote + 1..];
         }
         codes
+    }
+
+    fn shipped_command_finding_codes_from_production_source() -> std::collections::BTreeSet<String>
+    {
+        extract_ota_codes(&commands_production_source())
+            .into_iter()
+            .filter(|code| {
+                code != "OTA_DOCTOR_FINDING_UNKNOWN"
+                    && code != "OTA_CONTRACT_ADVISORY_"
+                    && super::finding_registry_entry(code).is_some()
+            })
+            .collect()
     }
 
     fn surface_allows(surface: &str, value: &str) -> bool {
@@ -20901,13 +21135,13 @@ field is not emitted for that finding family.
         let production_codes: std::collections::BTreeSet<_> =
             shipped_doctor_finding_codes_from_production_source()
                 .into_iter()
+                .chain(shipped_command_finding_codes_from_production_source())
                 .chain(shipped_workspace_finding_codes_from_production_source())
                 .collect();
 
         assert_eq!(
-            reference_codes,
-            production_codes,
-            "doctor finding reference catalog must cover the full shipped repo and workspace production surface"
+            reference_codes, production_codes,
+            "doctor finding reference catalog must cover the full shipped repo, command, and workspace production surface"
         );
 
         for entry in shipped_doctor_finding_reference_entries() {
@@ -20915,16 +21149,20 @@ field is not emitted for that finding family.
                 identity: Some(super::FindingIdentity::new(
                     entry.code,
                     entry.category,
-                    entry.owner_surface.split('|').next().unwrap_or("repo_contract"),
+                    entry
+                        .owner_surface
+                        .split('|')
+                        .next()
+                        .unwrap_or("repo_contract"),
                 )),
                 severity: FindingSeverity::Warn,
                 summary: String::from("reference finding"),
                 why: String::from("reference finding"),
                 next: String::from("reference finding"),
             };
-            finding
-                .resolved_metadata()
-                .unwrap_or_else(|| panic!("reference entry must resolve via registry: {}", entry.code));
+            finding.resolved_metadata().unwrap_or_else(|| {
+                panic!("reference entry must resolve via registry: {}", entry.code)
+            });
 
             assert_eq!(finding.category(), entry.category, "{}", entry.code);
             assert!(
@@ -20978,7 +21216,8 @@ field is not emitted for that finding family.
         let actual = fs::read_to_string(&doc_path).expect("doctor finding reference should load");
 
         assert_eq!(
-            actual, expected,
+            actual,
+            expected,
             "doctor finding reference doc drifted: {}",
             doc_path.display()
         );
@@ -21072,15 +21311,23 @@ policies:
             .iter()
             .find(|finding| finding.summary == "Policy-backed version rules are declared")
             .expect("policy-backed version finding should be present");
-        assert_eq!(version_finding.code(), "OTA_POLICY_BACKED_VERSION_RULES_DECLARED");
+        assert_eq!(
+            version_finding.code(),
+            "OTA_POLICY_BACKED_VERSION_RULES_DECLARED"
+        );
         assert_eq!(version_finding.category(), "policy");
         assert_eq!(version_finding.owner(), "org_policy");
         assert_eq!(version_finding.provenance().as_deref(), Some("org policy"));
-        assert_eq!(version_finding.provenance_key().as_deref(), Some("org_policy"));
-        let version_json =
-            serde_json::to_value(version_finding).expect("policy-backed version finding should serialize");
         assert_eq!(
-            version_json.get("policy_reason").and_then(|value| value.as_str()),
+            version_finding.provenance_key().as_deref(),
+            Some("org_policy")
+        );
+        let version_json = serde_json::to_value(version_finding)
+            .expect("policy-backed version finding should serialize");
+        assert_eq!(
+            version_json
+                .get("policy_reason")
+                .and_then(|value| value.as_str()),
             Some("policy_backed_version_rules_declared")
         );
         assert!(
@@ -22136,8 +22383,8 @@ policies:
         assert_eq!(finding.owner(), "org_policy");
         assert_eq!(finding.provenance().as_deref(), Some("org policy"));
         assert_eq!(finding.provenance_key().as_deref(), Some("org_policy"));
-        let json =
-            serde_json::to_value(finding).expect("strict policy compliance finding should serialize");
+        let json = serde_json::to_value(finding)
+            .expect("strict policy compliance finding should serialize");
         assert_eq!(
             json.get("policy_reason").and_then(|value| value.as_str()),
             Some("strict_version_noncompliance")

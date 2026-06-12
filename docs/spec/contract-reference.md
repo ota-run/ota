@@ -86,7 +86,6 @@ toolchains:
       - rustfmt
     fulfillment:
       mode: run
-toolchains:
   node:
     version: "22"
     package_managers:
@@ -1163,6 +1162,8 @@ Declared source rules:
 - `env`: optional literal env overlay injected into selected workflow tasks before task-owned `env`
 - `render.dotenv.path`: optional repo-relative dotenv artifact path ota should materialize during
   workflow execution
+- `render.dotenv.template`: optional repo-relative dotenv template ota should use as the base
+  content before applying rendered env overlays; keep it separate from `render.dotenv.path`
 - `render.dotenv.include`: optional ordered env names ota should resolve and emit into that dotenv
   artifact
 
@@ -1176,11 +1177,57 @@ Profile rules:
   task `env`, and mode-branch `env` still win when they declare the same values
 - rendered dotenv artifacts are injected automatically into selected workflow tasks as the first
   profile-owned `env_file`; do not duplicate the same path in `env_files`
-- rendered dotenv artifacts are replaced deterministically on each `ota up` run before service
-  startup or setup, so workflow-owned compose interpolation no longer requires a separate
-  `ensure_env_file` prepare task
+- rendered dotenv artifacts are re-rendered deterministically on each `ota up` run before service
+  startup or setup; when `render.dotenv.template` is declared, ota starts from that template and
+  then replaces the declared profile/env keys, so workflow-owned compose interpolation no longer
+  requires a separate `ensure_env_file` prepare task
 - use profiles when one workflow/runtime shape needs a truthful env overlay without hiding that
   selection in shell glue or ad hoc setup notes
+
+Example:
+
+```yaml
+version: 1
+project:
+  name: workflow-rendered-env
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    compose:
+      sources:
+        - kind: dotenv
+          path: .env.local
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.compose
+          template: .env.example
+          include:
+            - DATABASE_URL
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      file: docker-compose.yml
+      service: api
+      env_file: .env.compose
+tasks:
+  dev:
+    run: pnpm dev
+    requires_services:
+      - api
+workflows:
+  default: compose-dev
+  compose-dev:
+    env:
+      profile: compose
+    run:
+      task: dev
+```
 
 `PATH` is a standard search-path env var, so it is the one env key that supports structured
 composition. Most env vars are simple single values instead.
@@ -2756,6 +2803,8 @@ Current behavior:
 - use `env.profile.render.dotenv` when that workflow also needs one concrete dotenv artifact on disk
   for compose interpolation or another repo-owned runtime input, and Ota should materialize it
   automatically instead of routing through a synthetic prepare action
+- add `env.profile.render.dotenv.template` when that artifact should preserve repo-owned baseline
+  entries from an example file while Ota deterministically overlays the workflow-specific values
 - do not use `prepare.task` for service startup or runtime launch; that still belongs in `setup.task`, `services`, or `run.task`
 - use `services.<name>.manager.env_file` when one compose-managed service depends on a workflow/runtime-specific interpolation file and Ota should own that `docker compose --env-file ...` input instead of repeating it inside shell commands
 - `doctor` diagnoses the default workflow by default when it declares workflow readiness probes,

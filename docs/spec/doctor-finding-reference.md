@@ -58,6 +58,9 @@ field is not emitted for that finding family.
 | `OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_TASK_MUTATES_MANAGED_ISOLATED_PATH` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_DRIFT` | `contract` | `repo_contract` | `repo_signals` |
+| `OTA_CONTRACTLESS_REPO_CONTRACT_MISSING` | `contract` | `repo_contract` | `repo_signals` |
+| `OTA_CONTRACTLESS_SIGNAL` | `contract` | `repo_signals` | `repo_signals` |
+| `OTA_CONTRACTLESS_SIGNAL_INSPECTION_FAILED` | `contract` | `repo_signals` | `repo_signals` |
 | `OTA_DEVCONTAINER_PACKAGE_MANAGER_DRIFT` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_DEVCONTAINER_RUNTIME_DRIFT` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_REPO_HYGIENE_GITIGNORE_UNREADABLE` | `contract` | `repo_contract` | `repo_contract` |
@@ -127,6 +130,8 @@ field is not emitted for that finding family.
 | `OTA_ENV_SOURCE_KEY_COLLISION` | `environment` | `repo_contract` | `repo_contract` |
 | `OTA_ENV_SOURCE_MISSING_REQUIRED` | `environment` | `repo_contract` | `repo_contract` |
 | `OTA_ENV_SOURCE_PARSE_FAILED` | `environment` | `repo_contract` | `repo_contract` |
+| `OTA_CONTRACTLESS_HOST_TOOL_AVAILABLE` | `environment` | `host` | `repo_signals` |
+| `OTA_CONTRACTLESS_HOST_TOOL_MISSING` | `environment` | `host` | `repo_signals` |
 | `OTA_NATIVE_PREREQUISITE_MISSING` | `environment` | `host\|container_target\|remote_target` | `repo_contract` |
 | `OTA_NATIVE_PREREQUISITE_TIMED_OUT` | `environment` | `host\|container_target\|remote_target` | `repo_contract` |
 | `OTA_RUNTIME_MISSING` | `environment` | `host\|container_target\|remote_target` | `repo_contract` |
@@ -159,6 +164,7 @@ field is not emitted for that finding family.
 | `OTA_HOST_PROVISIONING_INDEX_UNAVAILABLE` | `provisioning` | `host` | `org_policy` |
 | `OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE` | `provisioning` | `host` | `org_policy` |
 | `OTA_HOST_PROVISIONING_VERSION_UNAVAILABLE` | `provisioning` | `host` | `org_policy` |
+| `OTA_ADAPTER_BOOTSTRAP_FAILED` | `provisioning` | `repo_contract` | `repo_contract` |
 | `OTA_REMOTE_APT_INDEX_UNAVAILABLE` | `provisioning` | `remote_target` | `org_policy` |
 | `OTA_REMOTE_APT_PACKAGE_UNAVAILABLE` | `provisioning` | `remote_target` | `org_policy` |
 | `OTA_REMOTE_APT_VERSION_UNAVAILABLE` | `provisioning` | `remote_target` | `org_policy` |
@@ -172,6 +178,9 @@ field is not emitted for that finding family.
 | Code | Category | Owner Surface | Provenance Key Surface |
 | --- | --- | --- | --- |
 | `OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED` | `policy` | `org_policy` | `org_policy` |
+| `OTA_POLICY_EFFECT_ALLOWED` | `policy` | `org_policy` | `org_policy` |
+| `OTA_POLICY_EFFECT_DENIED` | `policy` | `org_policy` | `org_policy` |
+| `OTA_POLICY_EFFECT_WARNED` | `policy` | `org_policy` | `org_policy` |
 | `OTA_POLICY_BACKED_PROVISIONING_DECLARED` | `policy` | `org_policy` | `org_policy` |
 | `OTA_POLICY_BACKED_VERSION_RULES_DECLARED` | `policy` | `org_policy` | `org_policy` |
 | `OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT` | `policy` | `org_policy` | `org_policy` |

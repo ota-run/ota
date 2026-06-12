@@ -1987,6 +1987,18 @@ fn validate_env(env: &EnvConfig, errors: &mut Vec<ValidationError>) {
                     "`env.profiles.{name}.render.dotenv.path` must be a repo-relative path that does not escape the repo"
                 )));
             }
+            if let Some(template) = dotenv.template.as_deref() {
+                let template = template.trim();
+                if template.is_empty() || !is_safe_repo_relative_file_path(template) {
+                    errors.push(ValidationError::new(format!(
+                        "`env.profiles.{name}.render.dotenv.template` must be a repo-relative path that does not escape the repo"
+                    )));
+                } else if template == path {
+                    errors.push(ValidationError::new(format!(
+                        "`env.profiles.{name}.render.dotenv.template` must not equal `render.dotenv.path`; keep the template as immutable repo truth and render into a separate artifact path"
+                    )));
+                }
+            }
             if profile
                 .env_files
                 .iter()
@@ -11500,6 +11512,7 @@ env:
       render:
         dotenv:
           path: .env.docker-build
+          template: ../.env.example
           include:
             - bad-key
             - DATABASE_URL
@@ -11519,10 +11532,50 @@ workflows:
             "`env.profiles.docker-build.render.dotenv.path` must not be duplicated in `env.profiles.docker-build.env_files`"
         ));
         assert!(error.contains(
+            "`env.profiles.docker-build.render.dotenv.template` must be a repo-relative path that does not escape the repo"
+        ));
+        assert!(error.contains(
             "`env.profiles.docker-build.render.dotenv.include` has invalid env key `bad-key`"
         ));
         assert!(error.contains(
             "`env.profiles.docker-build.render.dotenv.include` references unknown env key `DATABASE_URL`"
+        ));
+    }
+
+    #[test]
+    fn rejects_workflow_env_profile_render_template_equal_to_output_path() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    docker-build:
+      render:
+        dotenv:
+          path: .env.docker-build
+          template: .env.docker-build
+          include:
+            - DATABASE_URL
+workflows:
+  default: app
+  app:
+    env:
+      profile: docker-build
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("render template should not equal output path")
+            .to_string();
+        assert!(error.contains(
+            "`env.profiles.docker-build.render.dotenv.template` must not equal `render.dotenv.path`; keep the template as immutable repo truth and render into a separate artifact path"
         ));
     }
 

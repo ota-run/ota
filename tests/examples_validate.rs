@@ -31,38 +31,44 @@ use ota::workspace::{
     load_workspace_contract, parse_workspace_contract_str, validate_workspace_contract,
 };
 
+fn discover_example_files(root: &Path, filename: &str) -> Vec<PathBuf> {
+    fn walk(directory: &Path, filename: &str, matches: &mut Vec<PathBuf>) {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, filename, matches);
+            } else if path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value == filename)
+            {
+                matches.push(path);
+            }
+        }
+    }
+
+    let mut matches = Vec::new();
+    walk(root, filename, &mut matches);
+    matches.sort();
+    matches
+}
+
 fn example_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
-    vec![
-        root.join("basic-go").join("ota.yaml"),
-        root.join("basic-dotnet").join("ota.yaml"),
-        root.join("basic-java").join("ota.yaml"),
-        root.join("basic-node").join("ota.yaml"),
-        root.join("basic-python").join("ota.yaml"),
-        root.join("basic-rust").join("ota.yaml"),
-        root.join("basic-script").join("ota.yaml"),
-        root.join("basic-services").join("ota.yaml"),
-        root.join("full-contract").join("ota.yaml"),
-        root.join("fullstack-node-go").join("ota.yaml"),
-        root.join("mixed-node-python").join("ota.yaml"),
-    ]
+    discover_example_files(&root, "ota.yaml")
 }
 
 fn workspace_example_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
-    vec![
-        root.join("workspace-basic").join("ota.workspace.yaml"),
-        root.join("workspace-acquire").join("ota.workspace.yaml"),
-    ]
+    discover_example_files(&root, "ota.workspace.yaml")
 }
 
 fn policy_example_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
-    vec![
-        root.join("full-contract")
-            .join(".ota")
-            .join("org-policy.yaml"),
-    ]
+    discover_example_files(&root, "org-policy.yaml")
 }
 
 fn yaml_fenced_blocks(markdown: &str) -> Vec<String> {

@@ -2381,6 +2381,8 @@ pub struct EnvProfileRenderSpec {
 #[serde(deny_unknown_fields)]
 pub struct EnvProfileDotenvRenderSpec {
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<String>,
 }
