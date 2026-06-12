@@ -15627,7 +15627,7 @@ readiness:
     backend-ready:
       kind: http
       url: http://127.0.0.1:{port}/healthz/readiness
-      timeout: 100
+      timeout: 1000
 checks:
   - name: backend-ready
     kind: health
@@ -15885,7 +15885,7 @@ readiness:
     backend-ready:
       kind: http
       url: http://127.0.0.1:{port}/healthz/readiness
-      timeout: 100
+      timeout: 1000
 workflows:
   default: backend
   backend:
@@ -20010,7 +20010,7 @@ readiness:
     backend-ready:
       kind: http
       url: http://127.0.0.1:{workflow_port}/healthz/readiness
-      timeout: 100
+      timeout: 1000
 workflows:
   default: backend
   backend:
