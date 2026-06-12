@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added a release-gated skills-sync governance check for contract-surface widening: maintainer
+  changes to core schema/validator/spec/example surfaces must now update
+  `docs/policy/skills-sync-status.yaml` with either a synced `ota-run/skills` commit or an
+  explicit waiver reason, and the release gate plus repo task surface now enforce that discipline
 - moved published repo/workspace contract schema ownership into a Rust-backed generator module and
   added a sync/export path via `cargo run --bin sync_published_contract_schemas`; CI compatibility
   tests now fail when `docs/spec/json-schemas/contract.json` or

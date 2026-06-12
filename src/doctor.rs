@@ -1553,9 +1553,15 @@ fn resolve_execution_finding_metadata(finding: &Finding) -> FindingResolvedMetad
         _ => None,
     };
 
+    let owner = if finding.code() == "OTA_CONTEXT_HOST_PLATFORM_UNSUPPORTED" {
+        "host"
+    } else {
+        "repo_contract"
+    };
+
     FindingResolvedMetadata {
         category: "execution",
-        owner: "repo_contract",
+        owner,
         evidence,
         provenance: repo_contract_provenance(),
         policy: None,

@@ -91,6 +91,19 @@ This keeps maintainer pushes and release work aligned with the same public trust
 expects users to rely on, without turning every specialist proof workflow into a permanent merge
 gate.
 
+## Skills sync discipline
+
+Contract-surface and governance-surface widening should not ship quietly while the first-party
+`ota-run/skills` package still teaches an older product shape.
+
+The release gate therefore requires an explicit update to the skills-sync status record whenever
+maintainers change core contract-shape files. That update must either:
+
+- record the synced `ota-run/skills` commit, or
+- record an explicit waiver reason
+
+See [skills-sync-governance.md](skills-sync-governance.md).
+
 ## Related policy pages
 
 - [CONTRIBUTING.md](../../CONTRIBUTING.md)

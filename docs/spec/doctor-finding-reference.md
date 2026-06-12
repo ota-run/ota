@@ -82,7 +82,7 @@ field is not emitted for that finding family.
 | `OTA_CONTAINER_DOCTOR_HOST_SCOPE_NOTE` | `execution` | `repo_contract` | `repo_contract` |
 | `OTA_CONTAINER_IMAGE_UNAVAILABLE` | `execution` | `container_target` | `repo_contract` |
 | `OTA_CONTAINER_MODE_NOT_CONFIGURED` | `execution` | `repo_contract` | `repo_contract` |
-| `OTA_CONTEXT_HOST_PLATFORM_UNSUPPORTED` | `execution` | `repo_contract` | `repo_contract` |
+| `OTA_CONTEXT_HOST_PLATFORM_UNSUPPORTED` | `execution` | `host` | `repo_contract` |
 | `OTA_FILE_CHECK_FAILED` | `execution` | `repo_contract` | `repo_contract` |
 | `OTA_FILE_CHECK_TIMED_OUT` | `execution` | `repo_contract` | `repo_contract` |
 | `OTA_LIFECYCLE_EPHEMERAL_ADVISORY` | `execution` | `repo_contract` | `repo_contract` |
