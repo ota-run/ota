@@ -26,6 +26,26 @@
 
 ## Unreleased
 
+- moved published repo/workspace contract schema ownership into a Rust-backed generator module and
+  added a sync/export path via `cargo run --bin sync_published_contract_schemas`; CI compatibility
+  tests now fail when `docs/spec/json-schemas/contract.json` or
+  `docs/spec/json-schemas/workspace-contract.json` drift from that generator, closing the remaining
+  hand-edited published-schema split-brain
+- tightened generated-schema governance again: the release gate and repo `compat` task now rerun
+  the published-schema generator and fail on `git diff --exit-code` drift before the schema/output
+  contract tests run, so publication proves regenerated artifacts rather than inferring sync only
+  from downstream test coverage
+- tightened the type-model boundary behind the published repo/workspace contract schemas: shipped
+  examples and canonical contract docs examples now validate not only as authored YAML, but also
+  after loading through the Rust contract types and projecting back to authoring JSON values, so
+  the published schemas are exercised against the real Rust-owned authoring-model boundary rather
+  than only raw source files
+- published and enforced the full machine-readable workspace contract schema at
+  `docs/spec/json-schemas/workspace-contract.json` /
+  `https://dist.ota.run/spec/json-schemas/latest/workspace-contract.json`; shipped workspace
+  examples and canonical workspace contract docs now validate against that published schema, and
+  the compatibility surface now treats both repo and workspace contract schemas as release-gated
+  public APIs
 - published and enforced the full machine-readable repo contract schema at
   `docs/spec/json-schemas/contract.json` /
   `https://dist.ota.run/spec/json-schemas/latest/contract.json`; shipped example contracts and

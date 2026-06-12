@@ -37295,10 +37295,9 @@ fn repo_verdict_from_findings(findings: &[Finding]) -> DoctorVerdict {
         return DoctorVerdict::PolicyBlocked;
     }
 
-    if findings
-        .iter()
-        .any(|finding| finding.code().starts_with("OTA_AGENT_"))
-    {
+    if findings.iter().any(|finding| {
+        finding.code().starts_with("OTA_AGENT_") && finding.severity == FindingSeverity::Error
+    }) {
         return DoctorVerdict::AgentBlocked;
     }
 

@@ -263,7 +263,10 @@ fn workspace_repo_primary_blocker(
             summary: finding.summary.clone(),
             why: finding.why.clone(),
             next: finding.next.clone(),
-            code: finding.identity.as_ref().map(|identity| identity.code.clone()),
+            code: finding
+                .identity
+                .as_ref()
+                .map(|identity| identity.code.clone()),
             provenance: finding.provenance(),
             provenance_key: finding.provenance_key(),
         })

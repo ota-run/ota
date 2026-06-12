@@ -2722,7 +2722,10 @@ services:
         json["findings"][0]["provenance_key"]
     );
     assert_eq!(json["findings"][0]["severity"], "error");
-    assert_eq!(json["findings"][0]["summary"], "Service healthcheck failed: postgres");
+    assert_eq!(
+        json["findings"][0]["summary"],
+        "Service healthcheck failed: postgres"
+    );
     assert_eq!(json["findings"][1]["severity"], "warn");
     assert_eq!(
         json["findings"][1]["summary"],
