@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- published and enforced the full machine-readable repo contract schema at
+  `docs/spec/json-schemas/contract.json` /
+  `https://dist.ota.run/spec/json-schemas/latest/contract.json`; shipped example contracts and
+  canonical repo contract docs now validate against that published schema so contract publication
+  is a governed release surface instead of an optional artifact
 - hardened finding identity across governance surfaces: advisory-backed doctor findings now carry
   explicit stable identity, `ota explain --json` preserves that code through `steps[].code`
   instead of re-deriving advisory identity from rendered summary text, and `ota annotations`

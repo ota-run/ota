@@ -23,7 +23,7 @@
 use std::fs;
 use std::path::Path;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn load_schema(path: &str) -> Value {
     let schema_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
@@ -64,11 +64,9 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("tasks").is_some());
     assert!(member_agent_properties.get("protected_paths").is_some());
-    assert!(
-        member_agent_properties
-            .get("inferred_boundary_reviewed")
-            .is_some()
-    );
+    assert!(member_agent_properties
+        .get("inferred_boundary_reviewed")
+        .is_some());
     assert!(task_properties.get("selected_variant_os").is_some());
     assert!(task_properties.get("requires_services").is_some());
     assert!(task_properties.get("after_success").is_some());
@@ -82,33 +80,23 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_launch.get("exe").is_some());
     assert!(task_launch.get("image").is_some());
     assert!(task_launch.get("volumes").is_some());
-    assert!(
-        task_action_variants
-            .iter()
-            .any(|variant| variant["properties"]["kind"] == json!({ "const": "copy_if_missing" }))
-    );
-    assert!(
-        task_action_variants
-            .iter()
-            .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_env_file" }))
-    );
-    assert!(
-        task_action_variants
-            .iter()
-            .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_file" }))
-    );
+    assert!(task_action_variants
+        .iter()
+        .any(|variant| variant["properties"]["kind"] == json!({ "const": "copy_if_missing" })));
+    assert!(task_action_variants
+        .iter()
+        .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_env_file" })));
+    assert!(task_action_variants
+        .iter()
+        .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_file" })));
     assert!(task_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_kind_enum.iter().any(|entry| entry == "container"));
-    assert!(
-        task_kind_enum
-            .iter()
-            .any(|entry| entry == "copy_if_missing")
-    );
-    assert!(
-        task_kind_enum
-            .iter()
-            .any(|entry| entry == "ensure_env_file")
-    );
+    assert!(task_kind_enum
+        .iter()
+        .any(|entry| entry == "copy_if_missing"));
+    assert!(task_kind_enum
+        .iter()
+        .any(|entry| entry == "ensure_env_file"));
     assert!(task_kind_enum.iter().any(|entry| entry == "ensure_file"));
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "container"));
@@ -232,11 +220,9 @@ fn doctor_schema_includes_agent_summary() {
     assert!(member_properties.get("member").is_some());
     assert!(member_properties.get("findings").is_some());
     assert!(member_agent_properties.get("protected_paths").is_some());
-    assert!(
-        member_agent_properties
-            .get("inferred_boundary_reviewed")
-            .is_some()
-    );
+    assert!(member_agent_properties
+        .get("inferred_boundary_reviewed")
+        .is_some());
     assert!(execution_properties.get("default_context").is_some());
     assert!(execution_properties.get("contexts").is_some());
     assert!(execution_context_properties.get("name").is_some());
@@ -251,16 +237,12 @@ fn doctor_schema_includes_agent_summary() {
     assert!(provisioning_entry.get("resolved_version").is_some());
     assert!(provisioning_entry.get("policy_match").is_some());
     assert!(properties["summary"]["properties"].get("verdict").is_some());
-    assert!(
-        properties["summary"]["properties"]
-            .get("primary_blocker")
-            .is_some()
-    );
-    assert!(
-        properties["summary"]["properties"]
-            .get("agent_verdict")
-            .is_some()
-    );
+    assert!(properties["summary"]["properties"]
+        .get("primary_blocker")
+        .is_some());
+    assert!(properties["summary"]["properties"]
+        .get("agent_verdict")
+        .is_some());
     assert!(
         properties["summary"]["properties"]["primary_blocker"]["properties"]
             .get("code")
@@ -361,16 +343,12 @@ fn execution_topology_schema_covers_declared_graph_fields() {
     assert!(readiness.get("signal_probes").is_some());
     assert!(probe.get("target").is_some());
     assert!(surface.get("readiness").is_some());
-    assert!(
-        task_kind_enum
-            .iter()
-            .any(|entry| entry == "copy_if_missing")
-    );
-    assert!(
-        task_kind_enum
-            .iter()
-            .any(|entry| entry == "ensure_env_file")
-    );
+    assert!(task_kind_enum
+        .iter()
+        .any(|entry| entry == "copy_if_missing"));
+    assert!(task_kind_enum
+        .iter()
+        .any(|entry| entry == "ensure_env_file"));
     assert!(task_kind_enum.iter().any(|entry| entry == "ensure_file"));
 }
 
@@ -447,21 +425,15 @@ fn up_schema_keeps_aggregate_member_output_separate_from_repo_receipts() {
     );
     assert_eq!(
         aggregate["required"],
-        serde_json::json!([
-            "ok", "path", "dry_run", "status", "phase", "findings", "members"
-        ])
+        serde_json::json!(["ok", "path", "dry_run", "status", "phase", "findings", "members"])
     );
     assert!(aggregate["properties"].get("receipt").is_none());
-    assert!(
-        aggregate_member_variants[0]["properties"]
-            .get("stderr")
-            .is_some()
-    );
-    assert!(
-        aggregate_member_variants[1]["properties"]
-            .get("contract_identity")
-            .is_some()
-    );
+    assert!(aggregate_member_variants[0]["properties"]
+        .get("stderr")
+        .is_some());
+    assert!(aggregate_member_variants[1]["properties"]
+        .get("contract_identity")
+        .is_some());
 }
 
 #[test]
@@ -788,11 +760,9 @@ fn detect_schema_includes_comparison_preview() {
     assert!(success.get("config").is_some());
     assert!(success.get("inferred").is_some());
     assert!(success.get("toolchain_opportunities").is_some());
-    assert!(
-        shared["$defs"]["toolchainOpportunity"]["properties"]
-            .get("candidate_providers")
-            .is_some()
-    );
+    assert!(shared["$defs"]["toolchainOpportunity"]["properties"]
+        .get("candidate_providers")
+        .is_some());
     assert!(failure.get("next").is_some());
 }
 
@@ -832,53 +802,37 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(diff.get("gate").is_some());
     assert!(diff["gate"]["properties"].get("blocking_summary").is_some());
     assert!(diff["gate"]["properties"].get("blocking_next").is_some());
-    assert!(
-        diff["gate"]["properties"]
-            .get("blocking_provenance")
-            .is_some()
-    );
-    assert!(
-        diff["gate"]["properties"]
-            .get("blocking_provenance_key")
-            .is_some()
-    );
+    assert!(diff["gate"]["properties"]
+        .get("blocking_provenance")
+        .is_some());
+    assert!(diff["gate"]["properties"]
+        .get("blocking_provenance_key")
+        .is_some());
     assert!(diff_baseline.get("selection_path").is_some());
     assert!(diff_baseline.get("promoted_at").is_some());
     assert!(diff_baseline.get("contract_identity").is_some());
     assert!(diff_baseline.get("contract_identity_details").is_some());
-    assert!(
-        diff["current"]["properties"]
-            .get("contract_identity")
-            .is_some()
-    );
-    assert!(
-        diff["current"]["properties"]
-            .get("contract_identity_details")
-            .is_some()
-    );
+    assert!(diff["current"]["properties"]
+        .get("contract_identity")
+        .is_some());
+    assert!(diff["current"]["properties"]
+        .get("contract_identity_details")
+        .is_some());
     assert!(diff_summary.get("baseline_ok").is_some());
     assert!(diff_summary.get("current_ok").is_some());
     assert!(diff_summary.get("comparison").is_some());
-    assert!(
-        diff_summary["comparison"]["properties"]
-            .get("baseline_identity_label")
-            .is_some()
-    );
-    assert!(
-        diff_summary["comparison"]["properties"]
-            .get("current_identity_label")
-            .is_some()
-    );
-    assert!(
-        diff_summary["comparison"]["properties"]
-            .get("identity_changed")
-            .is_some()
-    );
-    assert!(
-        diff_summary["comparison"]["properties"]
-            .get("readiness_change")
-            .is_some()
-    );
+    assert!(diff_summary["comparison"]["properties"]
+        .get("baseline_identity_label")
+        .is_some());
+    assert!(diff_summary["comparison"]["properties"]
+        .get("current_identity_label")
+        .is_some());
+    assert!(diff_summary["comparison"]["properties"]
+        .get("identity_changed")
+        .is_some());
+    assert!(diff_summary["comparison"]["properties"]
+        .get("readiness_change")
+        .is_some());
     assert!(diff_summary.get("introduced").is_some());
     assert!(diff_summary.get("resolved").is_some());
     assert!(diff_summary.get("unchanged").is_some());
@@ -972,9 +926,7 @@ fn shared_inference_schema_includes_annotation_metadata() {
     assert!(inference.get("field").is_some());
     assert_eq!(
         inference["type"]["enum"],
-        json!([
-            "project", "runtime", "tool", "env", "service", "check", "task", "agent", "field"
-        ])
+        json!(["project", "runtime", "tool", "env", "service", "check", "task", "agent", "field"])
     );
     assert!(inference.get("value").is_some());
     assert!(inference.get("source").is_some());
@@ -1017,20 +969,16 @@ fn init_schema_includes_optional_next_on_failures() {
     let provenance = &shared["$defs"]["contractFieldProvenance"]["properties"];
 
     assert!(success_required.iter().any(|entry| entry == "provenance"));
-    assert!(
-        success["mode"]
-            .as_object()
-            .and_then(|mode| mode.get("enum"))
-            .and_then(|mode| mode.as_array())
-            .is_some_and(|values| values.iter().any(|value| value == "pack"))
-    );
-    assert!(
-        success["pack"]
-            .as_object()
-            .and_then(|pack| pack.get("enum"))
-            .and_then(|pack| pack.as_array())
-            .is_some_and(|values| values.iter().any(|value| value == "php-composer"))
-    );
+    assert!(success["mode"]
+        .as_object()
+        .and_then(|mode| mode.get("enum"))
+        .and_then(|mode| mode.as_array())
+        .is_some_and(|values| values.iter().any(|value| value == "pack")));
+    assert!(success["pack"]
+        .as_object()
+        .and_then(|pack| pack.get("enum"))
+        .and_then(|pack| pack.as_array())
+        .is_some_and(|values| values.iter().any(|value| value == "php-composer")));
     assert!(success.get("pack").is_some());
     assert!(success.get("pack_options").is_some());
     assert_eq!(
@@ -1165,24 +1113,20 @@ fn workspace_init_schema_exists_and_covers_scaffold_fields() {
     assert!(provenance.get("provenance_key").is_some());
     assert!(provenance.get("source").is_some());
     assert!(provenance.get("confidence").is_some());
-    let provenance_enum =
-        shared["$defs"]["contractFieldProvenance"]["properties"]["provenance"]["enum"]
-            .as_array()
-            .expect("provenance enum");
-    let provenance_key_enum =
-        shared["$defs"]["contractFieldProvenance"]["properties"]["provenance_key"]["enum"]
-            .as_array()
-            .expect("provenance key enum");
-    assert!(
-        provenance_enum
-            .iter()
-            .any(|entry| entry == "workspace-declared")
-    );
-    assert!(
-        provenance_key_enum
-            .iter()
-            .any(|entry| entry == "workspace_contract")
-    );
+    let provenance_enum = shared["$defs"]["contractFieldProvenance"]["properties"]["provenance"]
+        ["enum"]
+        .as_array()
+        .expect("provenance enum");
+    let provenance_key_enum = shared["$defs"]["contractFieldProvenance"]["properties"]
+        ["provenance_key"]["enum"]
+        .as_array()
+        .expect("provenance key enum");
+    assert!(provenance_enum
+        .iter()
+        .any(|entry| entry == "workspace-declared"));
+    assert!(provenance_key_enum
+        .iter()
+        .any(|entry| entry == "workspace_contract"));
     assert!(repo_summary.get("name").is_some());
     assert!(repo_summary.get("path").is_some());
     assert!(failure.get("next").is_some());
@@ -1218,33 +1162,23 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     assert!(task.get("action").is_some());
     assert!(task_launch.get("exe").is_some());
     assert!(task_launch.get("image").is_some());
-    assert!(
-        task_action_variants
-            .iter()
-            .any(|variant| variant["properties"]["kind"] == json!({ "const": "copy_if_missing" }))
-    );
-    assert!(
-        task_action_variants
-            .iter()
-            .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_env_file" }))
-    );
-    assert!(
-        task_action_variants
-            .iter()
-            .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_file" }))
-    );
+    assert!(task_action_variants
+        .iter()
+        .any(|variant| variant["properties"]["kind"] == json!({ "const": "copy_if_missing" })));
+    assert!(task_action_variants
+        .iter()
+        .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_env_file" })));
+    assert!(task_action_variants
+        .iter()
+        .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_file" })));
     assert!(task_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_kind_enum.iter().any(|entry| entry == "container"));
-    assert!(
-        task_kind_enum
-            .iter()
-            .any(|entry| entry == "copy_if_missing")
-    );
-    assert!(
-        task_kind_enum
-            .iter()
-            .any(|entry| entry == "ensure_env_file")
-    );
+    assert!(task_kind_enum
+        .iter()
+        .any(|entry| entry == "copy_if_missing"));
+    assert!(task_kind_enum
+        .iter()
+        .any(|entry| entry == "ensure_env_file"));
     assert!(task_kind_enum.iter().any(|entry| entry == "ensure_file"));
 }
 
@@ -1449,11 +1383,9 @@ fn up_schema_includes_member_grouping() {
     assert!(runtime_properties.get("stderr").is_some());
     assert!(runtime_properties.get("members").is_some());
     assert!(runtime_receipt_properties.get("runtime").is_some());
-    assert!(
-        runtime_receipt_properties
-            .get("service_termination")
-            .is_some()
-    );
+    assert!(runtime_receipt_properties
+        .get("service_termination")
+        .is_some());
     assert!(runtime_receipt_properties.get("next_steps").is_some());
     assert!(runtime_receipt_properties.get("workloads").is_some());
     assert!(runtime_member_properties.get("member").is_some());
@@ -1591,12 +1523,13 @@ fn release_gate_workflow_publishes_all_schema_artifacts_to_latest_and_versioned_
 }
 
 #[test]
-fn full_contract_schema_is_covered_by_schema_publication_when_present() {
+fn full_contract_schema_is_published_and_covered_by_schema_publication() {
     let schema_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas/contract.json");
-    if !schema_path.exists() {
-        return;
-    }
+    assert!(
+        schema_path.exists(),
+        "full contract schema must be published at docs/spec/json-schemas/contract.json"
+    );
 
     let workflow_path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release-gate.yml");

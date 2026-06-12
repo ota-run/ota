@@ -23,13 +23,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use ota::doctor::{FindingSeverity, diagnose_policy_review};
+use jsonschema::{Draft, JSONSchema};
+use ota::doctor::{diagnose_policy_review, FindingSeverity};
 use ota::parser::{load_contract, parse_contract_str};
-use ota::policy_pack::{OrgPolicyPack, load_org_policy_pack_auto};
+use ota::policy_pack::{load_org_policy_pack_auto, OrgPolicyPack};
 use ota::validator::validate_contract;
 use ota::workspace::{
     load_workspace_contract, parse_workspace_contract_str, validate_workspace_contract,
 };
+use serde_json::Value;
 
 fn discover_example_files(root: &Path, filename: &str) -> Vec<PathBuf> {
     fn walk(directory: &Path, filename: &str, matches: &mut Vec<PathBuf>) {
@@ -69,6 +71,39 @@ fn workspace_example_paths() -> Vec<PathBuf> {
 fn policy_example_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
     discover_example_files(&root, "org-policy.yaml")
+}
+
+fn load_json(path: &Path) -> Value {
+    let contents = fs::read_to_string(path).expect("JSON file should be readable");
+    serde_json::from_str(&contents).expect("JSON file should parse")
+}
+
+fn published_contract_schema() -> JSONSchema {
+    let schema_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas/contract.json");
+    let schema = load_json(&schema_path);
+    JSONSchema::options()
+        .with_draft(Draft::Draft202012)
+        .compile(&schema)
+        .expect("published contract schema should compile")
+}
+
+fn assert_matches_published_contract_schema(source: &Path, contents: &str, compiled: &JSONSchema) {
+    let instance: Value = serde_yaml::from_str(contents).unwrap_or_else(|error| {
+        panic!(
+            "contract example `{}` should parse as YAML for published schema validation: {error}",
+            source.display()
+        )
+    });
+
+    if let Err(errors) = compiled.validate(&instance) {
+        let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+        panic!(
+            "contract example `{}` did not match published contract schema:\n{}",
+            source.display(),
+            messages.join("\n")
+        );
+    }
 }
 
 fn yaml_fenced_blocks(markdown: &str) -> Vec<String> {
@@ -159,6 +194,21 @@ fn shipped_examples_load_and_validate() {
         validate_contract(&contract).unwrap_or_else(|error| {
             panic!("example `{}` should validate: {error}", path.display());
         });
+    }
+}
+
+#[test]
+fn shipped_examples_match_published_contract_schema() {
+    let compiled = published_contract_schema();
+
+    for path in example_paths() {
+        let contents = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "example `{}` should load for schema validation: {error}",
+                path.display()
+            );
+        });
+        assert_matches_published_contract_schema(&path, &contents, &compiled);
     }
 }
 
@@ -333,6 +383,40 @@ fn canonical_docs_contract_examples_load_and_validate() {
         assert!(
             validated > 0,
             "docs file `{}` should contain at least one full contract example",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn canonical_docs_repo_contract_examples_match_published_contract_schema() {
+    let compiled = published_contract_schema();
+
+    for (path, kind) in canonical_docs_contract_examples() {
+        if !matches!(kind, DocContractKind::Repo) {
+            continue;
+        }
+
+        let markdown = fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!(
+                "docs example file `{}` should load for schema validation: {error}",
+                path.display()
+            )
+        });
+        let mut validated = 0;
+
+        for block in yaml_fenced_blocks(&markdown) {
+            if !is_full_repo_contract_example(&block) {
+                continue;
+            }
+
+            assert_matches_published_contract_schema(&path, &block, &compiled);
+            validated += 1;
+        }
+
+        assert!(
+            validated > 0,
+            "docs file `{}` should contain at least one full repo contract example",
             path.display()
         );
     }
