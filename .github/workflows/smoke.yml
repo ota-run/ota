@@ -71,6 +71,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export CARGO_HTTP_MULTIPLEXING=false
+          export CARGO_NET_RETRY=10
           if command -v rustup >/dev/null 2>&1; then
             CARGO_CMD="$(rustup which cargo)"
             RUSTC_CMD="$(rustup which rustc)"
