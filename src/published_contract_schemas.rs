@@ -704,7 +704,9 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "additionalProperties": false,
       "properties": {
         "profile": { "type": "string" },
-        "compose_env_file_services": { "$ref": "#/$defs/stringArray" }
+        "compose_env_file_services": { "$ref": "#/$defs/stringArray" },
+        "compose_files": { "$ref": "#/$defs/stringArray" },
+        "compose_project_name": { "type": "string" }
       }
     },
     "workflowServices": {

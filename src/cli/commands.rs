@@ -1397,6 +1397,18 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(value) => format!(
+            "{} workflow `{}` task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.workflow_name,
+            value.task_name,
+            paint_key("Path:"),
+            render_validate_warning_detail(&value.location),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::SensitiveAgentWritablePath(value) => format!(
             "{} path `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -52147,6 +52159,53 @@ workflows:
     }
 
     #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_binds_compose_files_and_project_name_to_selected_tasks()
+     {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: env-profile-compose-overlays
+workflows:
+  default: app
+  app:
+    env:
+      compose_files:
+        - compose.base.yaml
+      compose_project_name: workflow-app
+    run:
+      task: dev
+tasks:
+  dev:
+    adapter_inputs:
+      compose:
+        files:
+          - compose.dev.yaml
+    run: docker compose up
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(&contract, None)
+            .expect("workflow compose overlays should adjust contract");
+        let task = adjusted.tasks.get("dev").expect("task should exist");
+        let compose = task
+            .adapter_inputs
+            .compose
+            .as_ref()
+            .expect("compose adapter inputs should exist");
+        assert_eq!(
+            compose.files,
+            vec![
+                String::from("compose.base.yaml"),
+                String::from("compose.dev.yaml")
+            ]
+        );
+        assert_eq!(compose.project_name.as_deref(), Some("workflow-app"));
+    }
+
+    #[test]
     fn render_selected_workflow_env_profile_artifacts_writes_dotenv_from_profile_truth() {
         let _env_lock = crate::test_support::env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -52419,6 +52478,61 @@ workflows:
             Some(value) => unsafe { std::env::set_var("DATABASE_URL", value) },
             None => unsafe { std::env::remove_var("DATABASE_URL") },
         }
+    }
+
+    #[test]
+    fn materialize_selected_workflow_env_profile_for_task_binds_workflow_compose_overlays_without_profile()
+     {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: workflow-compose-overlays
+tasks:
+  build:
+    run: pnpm build
+    execution:
+      default_mode: native
+      modes:
+        container:
+          run: docker compose up -d
+workflows:
+  default: container-build
+  container-build:
+    env:
+      compose_files:
+        - compose.base.yaml
+      compose_project_name: workflow-app
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let mut target = super::LoadedContractTarget {
+            contract,
+            contract_path,
+        };
+        super::materialize_selected_workflow_env_profile_for_task(
+            &mut target,
+            None,
+            "build",
+        )
+        .expect("workflow compose overlays should materialize");
+
+        let task = target.contract.tasks.get("build").expect("task present");
+        assert!(task.adapter_inputs.compose.is_none());
+        let compose = task
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.modes.container.as_ref())
+            .and_then(|branch| branch.adapter_inputs.compose.as_ref())
+            .expect("container compose adapter inputs should exist");
+        assert_eq!(compose.files, vec![String::from("compose.base.yaml")]);
+        assert_eq!(compose.project_name.as_deref(), Some("workflow-app"));
     }
 
     #[test]
@@ -81568,9 +81682,13 @@ fn contract_adjusted_for_selected_workflow_env_profile(
     contract: &Contract,
     workflow_name: Option<&str>,
 ) -> Option<Contract> {
+    contract
+        .selected_workflow(workflow_name)
+        .and_then(|(_, workflow)| workflow.env.as_ref())?;
     let profile = contract
-        .selected_workflow_env_profile(workflow_name)?
-        .clone();
+        .selected_workflow_env_profile(workflow_name)
+        .cloned()
+        .unwrap_or_default();
     let task_names = contract.selected_workflow_task_closure_names(workflow_name);
     let rendered_dotenv_path = profile
         .render
@@ -81579,7 +81697,16 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         .map(|dotenv| dotenv.path.clone());
     let compose_env_file_services =
         contract.selected_workflow_compose_env_file_service_names(workflow_name);
-    if task_names.is_empty() && profile.sources.is_empty() && compose_env_file_services.is_empty() {
+    let workflow_compose_files = contract.selected_workflow_compose_files(workflow_name);
+    let workflow_compose_project_name = contract
+        .selected_workflow_compose_project_name(workflow_name)
+        .map(str::to_string);
+    if task_names.is_empty()
+        && profile.sources.is_empty()
+        && compose_env_file_services.is_empty()
+        && workflow_compose_files.is_empty()
+        && workflow_compose_project_name.is_none()
+    {
         return None;
     }
 
@@ -81596,12 +81723,19 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         let Some(task) = adjusted.tasks.get_mut(task_name.as_str()) else {
             continue;
         };
-        if let Some(path) = rendered_dotenv_path.as_ref() {
-            if !bind_rendered_dotenv_to_compose_task_adapter_inputs(task, path) {
-                if !task.env_files.iter().any(|existing| existing == path) {
-                    task.env_files.insert(0, path.clone());
-                }
+        if !bind_workflow_compose_adapter_overlays(
+            task,
+            rendered_dotenv_path.as_deref(),
+            &workflow_compose_files,
+            workflow_compose_project_name.as_deref(),
+        ) {
+            if let Some(path) = rendered_dotenv_path.as_ref()
+                && !task.env_files.iter().any(|existing| existing == path)
+            {
+                task.env_files.insert(0, path.clone());
             }
+        }
+        if rendered_dotenv_path.is_some() {
             if !profile.env_files.is_empty() {
                 let mut merged_env_files = profile.env_files.clone();
                 for path in &task.env_files {
@@ -81655,7 +81789,30 @@ fn workflow_env_profile_applies_to_task(
         .any(|declared| declared == task_name)
 }
 
-fn bind_rendered_dotenv_to_compose_task_adapter_inputs(task: &mut TaskSpec, path: &str) -> bool {
+fn prepend_unique_paths(target: &mut Vec<String>, additions: &[String]) {
+    if additions.is_empty() {
+        return;
+    }
+    let mut merged = Vec::with_capacity(additions.len() + target.len());
+    for value in additions {
+        if !merged.iter().any(|existing| existing == value) {
+            merged.push(value.clone());
+        }
+    }
+    for value in target.iter() {
+        if !merged.iter().any(|existing| existing == value) {
+            merged.push(value.clone());
+        }
+    }
+    *target = merged;
+}
+
+fn bind_workflow_compose_adapter_overlays(
+    task: &mut TaskSpec,
+    rendered_dotenv_path: Option<&str>,
+    workflow_compose_files: &[String],
+    workflow_compose_project_name: Option<&str>,
+) -> bool {
     let mut bound = false;
     if task.adapter_inputs.compose.is_some()
         || shell_uses_docker_compose(task.run.as_deref())
@@ -81671,8 +81828,14 @@ fn bind_rendered_dotenv_to_compose_task_adapter_inputs(task: &mut TaskSpec, path
             .adapter_inputs
             .compose
             .get_or_insert_with(crate::schema::TaskComposeAdapterInputsSpec::default);
-        if !compose.env_files.iter().any(|existing| existing == path) {
+        if let Some(path) = rendered_dotenv_path
+            && !compose.env_files.iter().any(|existing| existing == path)
+        {
             compose.env_files.insert(0, path.to_string());
+        }
+        prepend_unique_paths(&mut compose.files, workflow_compose_files);
+        if compose.project_name.is_none() {
+            compose.project_name = workflow_compose_project_name.map(str::to_string);
         }
         bound = true;
     }
@@ -81694,8 +81857,14 @@ fn bind_rendered_dotenv_to_compose_task_adapter_inputs(task: &mut TaskSpec, path
                     .adapter_inputs
                     .compose
                     .get_or_insert_with(crate::schema::TaskComposeAdapterInputsSpec::default);
-                if !compose.env_files.iter().any(|existing| existing == path) {
+                if let Some(path) = rendered_dotenv_path
+                    && !compose.env_files.iter().any(|existing| existing == path)
+                {
                     compose.env_files.insert(0, path.to_string());
+                }
+                prepend_unique_paths(&mut compose.files, workflow_compose_files);
+                if compose.project_name.is_none() {
+                    compose.project_name = workflow_compose_project_name.map(str::to_string);
                 }
                 bound = true;
             }
@@ -81727,27 +81896,31 @@ fn materialize_selected_workflow_env_profile_for_task(
     task_name: &str,
 ) -> Result<(), String> {
     let task_name = canonical_declared_task_name(&target.contract, task_name);
-    if target
+    let has_workflow_env = target
         .contract
-        .selected_workflow_env_profile_name(workflow_name)
-        .is_none()
-        || !workflow_env_profile_applies_to_task(
-            &target.contract,
-            workflow_name,
-            task_name.as_str(),
-        )
+        .selected_workflow(workflow_name)
+        .and_then(|(_, workflow)| workflow.env.as_ref())
+        .is_some();
+    if !has_workflow_env
+        || !workflow_env_profile_applies_to_task(&target.contract, workflow_name, task_name.as_str())
     {
         return Ok(());
     }
 
-    let policy_env =
-        load_policy_env_overlay(&target.contract_path).map_err(|error| error.to_string())?;
-    render_selected_workflow_env_profile_artifacts(
-        &target.contract,
-        &target.contract_path,
-        workflow_name,
-        Some(&policy_env.values),
-    )?;
+    if target
+        .contract
+        .selected_workflow_env_profile_name(workflow_name)
+        .is_some()
+    {
+        let policy_env =
+            load_policy_env_overlay(&target.contract_path).map_err(|error| error.to_string())?;
+        render_selected_workflow_env_profile_artifacts(
+            &target.contract,
+            &target.contract_path,
+            workflow_name,
+            Some(&policy_env.values),
+        )?;
+    }
     if let Some(adjusted) =
         contract_adjusted_for_selected_workflow_env_profile(&target.contract, workflow_name)
     {

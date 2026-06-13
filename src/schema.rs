@@ -445,6 +445,24 @@ impl Contract {
             .unwrap_or_default()
     }
 
+    pub fn selected_workflow_compose_files(&self, workflow_name: Option<&str>) -> Vec<String> {
+        self.selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.env.as_ref())
+            .map(|env| env.compose_files.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn selected_workflow_compose_project_name(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Option<&str> {
+        self.selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.env.as_ref())
+            .and_then(|env| env.compose_project_name.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
     fn collect_task_dependency_closure(
         &self,
         name: &str,
@@ -528,6 +546,10 @@ pub struct WorkflowEnvSpec {
     pub profile: Option<String>,
     #[serde(default)]
     pub compose_env_file_services: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compose_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_project_name: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]

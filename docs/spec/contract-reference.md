@@ -2829,6 +2829,10 @@ Fields:
 - `<name>.env.profile`: optional env profile name from `env.profiles`
 - `<name>.env.compose_env_file_services`: optional compose-managed services that should consume the
   selected workflow profile's rendered dotenv artifact as `services.<service>.manager.env_file`
+- `<name>.env.compose_files`: optional ordered repo-relative compose file overlays the workflow
+  should project into compose-running task paths through `tasks.<name>.adapter_inputs.compose.files`
+- `<name>.env.compose_project_name`: optional compose project name the workflow should project into
+  compose-running task paths when that selected path does not already declare one
 - `<name>.prepare.task`: optional native finite task ota should run first as explicit host preparation for that workflow
   - must reference a declared task with one finite body: `run`, `script`, `command`, `prepare`, or `action`
   - must not reference a `launch` task or a task with `runtime`
@@ -2860,15 +2864,27 @@ Workflow env adapter rules:
 
 - use `<name>.env.compose_env_file_services` when the workflow owns one rendered dotenv artifact
   and named compose services should consume that exact file
+- use `<name>.env.compose_files` when the workflow owns the base compose file stack for the
+  selected runnable path and task-local compose file truth should only append narrower overlays
+- use `<name>.env.compose_project_name` when one workflow should own compose project naming across
+  its selected compose task closure instead of repeating task-local project-name truth
 - this keeps compose adapter input ownership on the workflow env surface instead of duplicating
   the same `manager.env_file` path across services
 - when the selected workflow task closure includes a compose-running task, ota also projects that
   rendered dotenv artifact into `tasks.<name>.adapter_inputs.compose.env_files` instead of
   misrouting it through process `env_files`
+- ota prepends `<name>.env.compose_files` ahead of task-local `adapter_inputs.compose.files`,
+  preserving declared task additions without letting workflow-owned base compose files drift back
+  into shell `docker compose -f` flags
+- ota applies `<name>.env.compose_project_name` only when the selected task path does not already
+  declare one; validate/doctor warn if task-local compose project naming duplicates workflow truth
 - every referenced service must declare `manager.kind: compose`
 - the selected profile must declare `render.dotenv`
 - if a referenced service also declares `manager.env_file`, it must match the workflow-owned
   rendered dotenv path exactly
+- `<name>.env.compose_files` must stay repo-relative and must not escape the repo
+- `<name>.env.compose_files` / `compose_project_name` require the selected workflow task closure to
+  include at least one compose-running task path or declared compose adapter input
 
 Prepare vs setup vs run:
 

@@ -4043,6 +4043,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => {
                 ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory)
             }
+            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory) => {
+                ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory)
+            }
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 ContractAdvisory::SensitiveAgentWritablePath(advisory)
             }
@@ -4104,7 +4107,8 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         | ContractAdvisory::ReplaceableShellCheck(_)
         | ContractAdvisory::ReplaceableShellEnvMutation(_)
         | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
-        | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_) => advisory.summary(),
+        | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
+        | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_) => advisory.summary(),
         ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
             "`agent.writable_paths` includes sensitive {} `{}`",
             advisory.category, advisory.path

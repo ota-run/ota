@@ -37,11 +37,12 @@ use crate::schema::{
     AgentPosture, Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
     ExtensionKind, Lifecycle, OrchestratorKind, RuntimeRequirement, ServiceProducerSpec,
-    ServiceSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
-    TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
-    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
-    ToolRequirement, ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec,
-    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
+    ServiceSpec, TaskCommandSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode,
+    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
+    TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode,
+    ToolchainFulfillmentSource, ToolchainSpec, parse_memory_size_bytes,
+    parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
     declared_toolchain_contract, fulfillment_source_legacy_provider,
@@ -6351,6 +6352,9 @@ pub enum ContractAdvisory {
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
     ReplaceableComposeEnvFileOwnership(ReplaceableComposeEnvFileOwnershipAdvisory),
     DuplicateWorkflowRenderedEnvOwnership(DuplicateWorkflowRenderedEnvOwnershipAdvisory),
+    DuplicateWorkflowComposeProjectNameOwnership(
+        DuplicateWorkflowComposeProjectNameOwnershipAdvisory,
+    ),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
     SensitiveWriteException(SensitiveWriteExceptionAdvisory),
     AgentBootstrapUnpinned(AgentBootstrapUnpinnedAdvisory),
@@ -6439,6 +6443,14 @@ pub struct DuplicateWorkflowRenderedEnvOwnershipAdvisory {
     pub location: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateWorkflowComposeProjectNameOwnershipAdvisory {
+    pub workflow_name: String,
+    pub task_name: String,
+    pub project_name: String,
+    pub location: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplaceableShellCheckKind {
     File,
@@ -6521,6 +6533,9 @@ impl ContractAdvisory {
             }
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP"
+            }
+            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP"
             }
             ContractAdvisory::SensitiveAgentWritablePath(_) => {
                 "OTA_CONTRACT_ADVISORY_SENSITIVE_AGENT_WRITABLE_PATH"
@@ -6614,6 +6629,10 @@ impl ContractAdvisory {
                 "workflow `{}` profile `{}` duplicates rendered env artifact ownership in task `{}`",
                 advisory.workflow_name, advisory.profile_name, advisory.task_name
             ),
+            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory) => format!(
+                "workflow `{}` duplicates compose project-name ownership in task `{}`",
+                advisory.workflow_name, advisory.task_name
+            ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
                 "`agent.writable_paths` includes sensitive {} `{}`",
                 advisory.category, advisory.path
@@ -6704,6 +6723,13 @@ impl ContractAdvisory {
                 advisory.task_name,
                 advisory.location
             ),
+            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory) => format!(
+                "workflow `{}` owns compose project name `{}`, but task `{}` also declares its own value under `{}`; selected-path project naming should stay in one declarative place",
+                advisory.workflow_name,
+                advisory.project_name,
+                advisory.task_name,
+                advisory.location
+            ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => advisory.reason.clone(),
             ContractAdvisory::SensitiveWriteException(advisory) => advisory.reason.clone(),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
@@ -6736,6 +6762,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
+            | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6759,6 +6786,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
+            | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6783,6 +6811,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
+            | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6854,6 +6883,10 @@ impl ContractAdvisory {
                 advisory.workflow_name,
                 advisory.profile_name,
                 advisory.path
+            ),
+            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory) => format!(
+                "remove `{}` from task `{}` or drop `workflows.{}.env.compose_project_name`; selected-path compose project naming should be owned by one declarative surface",
+                advisory.location, advisory.task_name, advisory.workflow_name
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 format!("{}", sensitive_agent_writable_path_next(advisory))
@@ -6958,6 +6991,9 @@ pub fn collect_contract_advisories_with_contract_path(
         contract,
     ));
     advisories.extend(collect_duplicate_workflow_rendered_env_ownership_advisories(contract));
+    advisories.extend(collect_duplicate_workflow_compose_project_name_ownership_advisories(
+        contract,
+    ));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
     advisories.extend(collect_sensitive_write_exception_advisories(contract));
     advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
@@ -7384,6 +7420,88 @@ fn collect_duplicate_workflow_rendered_env_ownership_advisories(
                                 location,
                             },
                         ));
+                    }
+                }
+            }
+        }
+    }
+    advisories
+}
+
+fn collect_duplicate_workflow_compose_project_name_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let Some(workflows) = contract.workflows.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut advisories = Vec::new();
+    let mut seen = BTreeSet::new();
+    for (workflow_name, workflow) in &workflows.items {
+        let Some(project_name) = workflow
+            .env
+            .as_ref()
+            .and_then(|env| env.compose_project_name.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+
+        for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name.as_str()))
+        {
+            let Some(task) = contract.tasks.get(task_name.as_str()) else {
+                continue;
+            };
+            if task
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .and_then(|compose| compose.project_name.as_deref())
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+            {
+                let location = format!("tasks.{task_name}.adapter_inputs.compose.project_name");
+                if seen.insert((workflow_name.clone(), task_name.clone(), location.clone())) {
+                    advisories.push(
+                        ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(
+                            DuplicateWorkflowComposeProjectNameOwnershipAdvisory {
+                                workflow_name: workflow_name.clone(),
+                                task_name: task_name.clone(),
+                                project_name: project_name.to_string(),
+                                location,
+                            },
+                        ),
+                    );
+                }
+            }
+            if let Some(execution) = task.execution.as_ref() {
+                for (backend, branch) in execution.modes.iter() {
+                    if branch
+                        .adapter_inputs
+                        .compose
+                        .as_ref()
+                        .and_then(|compose| compose.project_name.as_deref())
+                        .map(str::trim)
+                        .is_none_or(|value| value.is_empty())
+                    {
+                        continue;
+                    }
+                    let location = format!(
+                        "tasks.{task_name}.execution.modes.{}.adapter_inputs.compose.project_name",
+                        format_backend(backend)
+                    );
+                    if seen.insert((workflow_name.clone(), task_name.clone(), location.clone())) {
+                        advisories.push(
+                            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(
+                                DuplicateWorkflowComposeProjectNameOwnershipAdvisory {
+                                    workflow_name: workflow_name.clone(),
+                                    task_name: task_name.clone(),
+                                    project_name: project_name.to_string(),
+                                    location,
+                                },
+                            ),
+                        );
                     }
                 }
             }
@@ -10054,6 +10172,43 @@ fn validate_repo_relative_env_check_path(
     }
 }
 
+fn shell_uses_docker_compose(command: Option<&str>) -> bool {
+    command
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| value.to_ascii_lowercase().contains("docker compose"))
+}
+
+fn command_uses_docker_compose(command: Option<&TaskCommandSpec>) -> bool {
+    command.is_some_and(|command| {
+        command.exe.trim().eq_ignore_ascii_case("docker")
+            && command
+                .args
+                .first()
+                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose"))
+    })
+}
+
+fn task_supports_compose_adapter_inputs(task: &TaskSpec) -> bool {
+    task.adapter_inputs.compose.is_some()
+        || shell_uses_docker_compose(task.run.as_deref())
+        || shell_uses_docker_compose(task.script.as_deref())
+        || command_uses_docker_compose(task.command.as_ref())
+        || task.variants.iter().any(|variant| {
+            shell_uses_docker_compose(variant.run.as_deref())
+                || shell_uses_docker_compose(variant.script.as_deref())
+                || command_uses_docker_compose(variant.command.as_ref())
+        })
+        || task.execution.as_ref().is_some_and(|execution| {
+            execution.modes.iter().any(|(_, branch)| {
+                branch.adapter_inputs.compose.is_some()
+                    || shell_uses_docker_compose(branch.run.as_deref())
+                    || shell_uses_docker_compose(branch.script.as_deref())
+                    || command_uses_docker_compose(branch.command.as_ref())
+            })
+        })
+}
+
 fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
     let Some(workflows) = contract.workflows.as_ref() else {
         return;
@@ -10105,6 +10260,36 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
             } else if !contract.env.profiles.contains_key(profile) {
                 errors.push(ValidationError::new(format!(
                     "`workflows.{name}.env.profile` references unknown env profile `{profile}`"
+                )));
+            }
+        }
+        if let Some(env) = workflow.env.as_ref() {
+            for (index, path) in env.compose_files.iter().enumerate() {
+                let field = format!("workflows.{name}.env.compose_files[{index}]");
+                if !is_safe_repo_relative_file_path(path.trim()) {
+                    errors.push(ValidationError::new(format!(
+                        "`{field}` must be a repo-relative path that does not escape the repo"
+                    )));
+                }
+            }
+            if env
+                .compose_project_name
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.env.compose_project_name` must not be empty"
+                )));
+            }
+            if (!env.compose_files.is_empty() || env.compose_project_name.is_some())
+                && !contract
+                    .selected_workflow_task_closure_names(Some(name.as_str()))
+                    .iter()
+                    .filter_map(|task_name| contract.tasks.get(task_name))
+                    .any(task_supports_compose_adapter_inputs)
+            {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.env.compose_files` / `compose_project_name` require the selected workflow task closure to include at least one compose-running task path or declared compose adapter input"
                 )));
             }
         }
@@ -11912,6 +12097,71 @@ workflows:
         ));
         assert!(error.contains(
             "`workflows.app.env.compose_env_file_services` references unknown service `cache`"
+        ));
+    }
+
+    #[test]
+    fn validates_workflow_compose_task_overlays() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: docker compose up
+workflows:
+  default: app
+  app:
+    env:
+      compose_files:
+        - compose.base.yaml
+      compose_project_name: app-local
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("workflow compose overlays should validate");
+    }
+
+    #[test]
+    fn rejects_invalid_workflow_compose_task_overlays() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    env:
+      compose_files:
+        - ../compose.base.yaml
+      compose_project_name: "   "
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("invalid workflow compose overlays should fail validation")
+            .to_string();
+        assert!(error.contains(
+            "`workflows.app.env.compose_files[0]` must be a repo-relative path that does not escape the repo"
+        ));
+        assert!(error.contains(
+            "`workflows.app.env.compose_project_name` must not be empty"
+        ));
+        assert!(error.contains(
+            "`workflows.app.env.compose_files` / `compose_project_name` require the selected workflow task closure to include at least one compose-running task path or declared compose adapter input"
         ));
     }
 
@@ -26375,6 +26625,45 @@ workflows:
                 if value.workflow_name == "docker-build"
                     && value.task_name == "build"
                     && value.path == ".env.docker-build"
+        )));
+    }
+
+    #[test]
+    fn collects_duplicate_workflow_compose_project_name_ownership_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    execution:
+      modes:
+        container:
+          adapter_inputs:
+            compose:
+              project_name: task-local
+          run: docker compose up
+    run: pnpm build
+workflows:
+  default: compose
+  compose:
+    env:
+      compose_project_name: workflow-local
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(value)
+                if value.workflow_name == "compose"
+                    && value.task_name == "build"
+                    && value.project_name == "workflow-local"
         )));
     }
 

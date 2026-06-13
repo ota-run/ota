@@ -244,6 +244,12 @@ and the selected task path is a compose-running task, ota projects that artifact
 `tasks.<name>.adapter_inputs.compose.env_files` rather than pretending the compose interpolation
 file is a process env overlay.
 
+When the workflow also owns compose adapter overlays, declare them under
+`workflows.<name>.env.compose_files` and `workflows.<name>.env.compose_project_name`. Ota projects
+those into compose-running task paths as adapter input truth, not process env: workflow compose
+files prepend the selected path's `adapter_inputs.compose.files`, and workflow compose project name
+fills the selected path only when task-local compose project naming is absent.
+
 If a declared source is present but invalid, ota fails instead of silently skipping it.
 If a declared source has `must_exist: true` and is missing, ota reports that as a readiness failure
 even if another layer provides the env value.
