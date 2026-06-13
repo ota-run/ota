@@ -171,9 +171,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install ota
-        run: |
-          curl -fsSL https://dist.ota.run/install.sh | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        run: curl -fsSL https://dist.ota.run/install.sh | sh
       - name: Validate contract
         run: ota validate
       - name: Diagnose readiness
@@ -191,6 +189,10 @@ jobs:
 In this shape, the repo contract owns the database service and the CI job stays thin.
 The repo is expected to carry the matching Compose definition; ota only models and runs the
 service boundary declared in `ota.yaml`.
+
+In GitHub Actions, prefer the plain installer command without extra path glue. The hosted install
+scripts now export the resolved ota bin directory to `GITHUB_PATH` automatically, including the
+Windows install path, so workflows do not need to guess `~/.local/bin` versus `%LOCALAPPDATA%`.
 
 ```yaml
 version: 1
@@ -248,9 +250,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install ota
-        run: |
-          curl -fsSL https://dist.ota.run/install.sh | sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        run: curl -fsSL https://dist.ota.run/install.sh | sh
       - name: Validate contract
         run: ota validate
       - name: Prepare repo

@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- strengthened the hosted install contract for CI and especially Windows GitHub Actions: the
+  release installers now export the resolved ota bin directory to `GITHUB_PATH` automatically when
+  that environment file is present, so workflow authors no longer need to guess post-install
+  binary locations such as `%LOCALAPPDATA%\\ota\\bin`; the install docs and hosted-validation
+  guidance now treat the plain installer invocation as the canonical GitHub Actions pattern
+
 ## 1.6.20
 
 - added a release-gated skills-sync governance check for contract-surface widening: maintainer

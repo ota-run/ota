@@ -76,6 +76,9 @@ Install the latest release binary:
 curl -fsSL https://dist.ota.run/install.sh | sh
 ```
 
+When the installer runs inside GitHub Actions, it now exports the resolved ota bin directory to
+`GITHUB_PATH` automatically so later workflow steps can call `ota` without hand-written path glue.
+
 Persist the install directory on `PATH` explicitly:
 
 ```bash
@@ -87,6 +90,9 @@ Windows PowerShell:
 ```powershell
 irm https://dist.ota.run/install.ps1 | iex
 ```
+
+When the PowerShell installer runs inside GitHub Actions, it now appends the resolved ota bin
+directory to `GITHUB_PATH` automatically, including the Windows `%LOCALAPPDATA%\\ota\\bin` path.
 
 Persist the Windows install directory on `PATH` explicitly:
 

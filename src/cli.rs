@@ -27875,6 +27875,15 @@ tasks:
             script.contains("if ($releaseInstallStatus -eq \"pending\")\n    {\n        exit 0"),
             "{script}"
         );
+        assert!(script.contains("function Export-OtaGitHubPath"), "{script}");
+        assert!(
+            script.contains("Add-Content -Path $env:GITHUB_PATH -Value $Dir"),
+            "{script}"
+        );
+        assert!(
+            script.contains("Export-OtaGitHubPath (Split-Path -Parent $binaryPath)"),
+            "{script}"
+        );
     }
 
     #[test]
@@ -28087,6 +28096,15 @@ tasks:
                 < script
                     .find("elif command -v ota >/dev/null 2>&1")
                     .expect("PATH fallback branch"),
+            "{script}"
+        );
+        assert!(script.contains("export_github_path()"), "{script}");
+        assert!(
+            script.contains("printf '%s\\n' \"${dir}\" >> \"${GITHUB_PATH}\""),
+            "{script}"
+        );
+        assert!(
+            script.contains("export_github_path \"$(dirname \"${binary_path}\")\""),
             "{script}"
         );
     }

@@ -240,6 +240,28 @@ function Ensure-OtaOnPath {
     }
 }
 
+function Export-OtaGitHubPath {
+    param([string]$Dir)
+
+    if ([string]::IsNullOrWhiteSpace($Dir) -or [string]::IsNullOrWhiteSpace($env:GITHUB_PATH)) {
+        return
+    }
+
+    try {
+        if (Test-Path -LiteralPath $env:GITHUB_PATH) {
+            $existingEntries = Get-Content -LiteralPath $env:GITHUB_PATH -ErrorAction Stop
+            if ($existingEntries -contains $Dir) {
+                return
+            }
+        }
+
+        Add-Content -Path $env:GITHUB_PATH -Value $Dir
+        Write-OtaInfo "exported $Dir to GITHUB_PATH for subsequent GitHub Actions steps"
+    } catch {
+        Write-OtaWarn "warning: could not append $Dir to GITHUB_PATH automatically"
+    }
+}
+
 function Test-OtaFileInUseError
 {
     param([System.Management.Automation.ErrorRecord]$ErrorRecord)
@@ -679,6 +701,10 @@ if ([string]::IsNullOrWhiteSpace($versionOutput)) {
 } else {
     $versionOutput = $versionOutput -replace '^ota\s+', ''
     $versionOutput = $versionOutput -replace '^[^\x00-\x7F]+\s*', ''
+}
+
+if (-not [string]::IsNullOrWhiteSpace($binaryPath)) {
+    Export-OtaGitHubPath (Split-Path -Parent $binaryPath)
 }
 
 $duplicatePaths = @()

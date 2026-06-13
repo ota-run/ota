@@ -142,6 +142,25 @@ ota_error() {
   fi
 }
 
+export_github_path() {
+  dir="$1"
+  if [ -z "${dir}" ] || [ -z "${GITHUB_PATH:-}" ]; then
+    return 0
+  fi
+
+  if [ -f "${GITHUB_PATH}" ] && grep -Fx "${dir}" "${GITHUB_PATH}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if printf '%s\n' "${dir}" >> "${GITHUB_PATH}"; then
+    ota_info "exported ${dir} to GITHUB_PATH for subsequent GitHub Actions steps"
+    return 0
+  fi
+
+  ota_warn "warning: could not append ${dir} to GITHUB_PATH automatically"
+  return 1
+}
+
 detect_shell_rc_file() {
   shell_name="$(basename "${SHELL:-sh}")"
   case "${shell_name}" in
@@ -668,6 +687,11 @@ fi
 if [ -x "$HOME/.cargo/bin/${binary_name}" ] && [ "$binary_path" != "$HOME/.cargo/bin/${binary_name}" ]; then
   duplicate_paths="${duplicate_paths}${duplicate_paths:+, }$HOME/.cargo/bin/${binary_name}"
 fi
+
+if [ -n "${binary_path}" ]; then
+  export_github_path "$(dirname "${binary_path}")"
+fi
+
 if [ -n "$duplicate_paths" ]; then
   if [ -n "${path_binary}" ] && [ "${path_binary}" != "${binary_path}" ]; then
     ota_warn "warning: multiple ota binaries were found; verified $binary_path, but PATH is using $path_binary"
