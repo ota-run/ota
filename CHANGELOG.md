@@ -26,10 +26,28 @@
 
 ## Unreleased
 
+- clarified that `command.exe` is not allowlisted: the docs now say the executable may be any repo-truthful binary or path, and that the named examples are illustrative rather than exhaustive
+- clarified the public command-body contract: `command.exe` is now documented explicitly as a generic executable name or path rather than an npm-shaped field, with representative families such as `npm`, `pnpm`, `yarn`, `bun`, `node`, `python3`, `go`, `bundle`, `docker`, absolute paths, and repo-local binaries
 - widened finite setup modeling again: tasks can now declare `prepare.kind: sequence` to execute
   more than one ordered structural prepare step in a single truthful setup lane, which closes the
   remaining mixed-ecosystem fallback to ad hoc shell setup bodies such as Node hydration plus
   Python `uv` hydration in one repo-level `setup` task
+- aligned published task inventory truth with the widened setup surface: `ota tasks` text now
+  renders structured prepare lanes truthfully, the published `tasks.json` / `workspace-tasks.json`
+  schemas now cover additive `prepare`, additive `aggregate`, additive `effects`, task `env` /
+  `inputs`, `ensure_bundle`, and the concrete emitted task kinds (`sequence`,
+  `dependency_hydration`, `aggregate`), and regression coverage now locks both the schema surface
+  and the emitted JSON/task-listing shapes against future drift
+- fixed recursive published-schema validation on the machine path itself: `ota json validate`
+  no longer flattens every `$ref` before compilation, so recursive task schemas such as
+  `tasks.json` / `workspace-tasks.json` validate through the library’s own internal-ref handling
+  plus a preloaded published-schema document store, and regression coverage now proves that both
+  repo and workspace task inventory payloads validate successfully through the shipped command
+- widened finite task execution with first-class `command`: tasks and mode branches can now model
+  stable argv-owned finite execution without shell glue, published task inventory schemas now emit
+  structured `command` objects alongside existing `launch` summaries, and the Python starter plus
+  first-party Python examples now use that surface for `uv run ...` test lanes instead of opaque
+  `run` strings
 - fixed Python starter machine-truth and Python ownership symmetry together: `ota init --pack python
   --json` now publishes provenance for the actual `tasks.setup.prepare` / `requirements` /
   `effects` fields instead of stale `tasks.setup.run`, and both the Python starter and uv-backed

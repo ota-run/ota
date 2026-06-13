@@ -38,9 +38,10 @@
             "required": ["os", "kind"],
             "properties": {
               "os": { "type": "string" },
-              "kind": { "enum": ["run", "script"] },
+              "kind": { "enum": ["run", "script", "command"] },
               "run": { "type": "string" },
-              "script": { "type": "string" }
+              "script": { "type": "string" },
+              "command": { "$ref": "./tasks.json#/$defs/taskCommand" }
             }
           }
         },

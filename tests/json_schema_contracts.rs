@@ -37,7 +37,11 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     let schema = load_schema("docs/spec/json-schemas/tasks.json");
     let success = &schema["oneOf"][0]["properties"];
     let workflow_properties = &schema["$defs"]["workflowSummary"]["properties"];
+    let task_command = &schema["$defs"]["taskCommand"]["properties"];
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
+    let task_prepare = &schema["$defs"]["taskPrepare"]["properties"];
+    let task_aggregate = &schema["$defs"]["taskAggregate"]["properties"];
+    let task_input = &schema["$defs"]["taskInput"]["properties"];
     let task_action_variants = schema["$defs"]["taskAction"]["oneOf"]
         .as_array()
         .expect("task action variants");
@@ -77,12 +81,29 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_properties.get("after_always").is_some());
     assert!(task_properties.get("variants").is_some());
     assert!(task_properties.get("default_mode").is_some());
+    assert!(task_properties.get("env").is_some());
+    assert!(task_properties.get("inputs").is_some());
     assert!(task_properties.get("modes").is_some());
+    assert!(task_properties.get("command").is_some());
+    assert!(
+        task_properties["variants"]["items"]["properties"]
+            .get("command")
+            .is_some()
+    );
     assert!(task_properties.get("launch").is_some());
     assert!(task_properties.get("action").is_some());
+    assert!(task_properties.get("prepare").is_some());
+    assert!(task_properties.get("aggregate").is_some());
+    assert!(task_command.get("exe").is_some());
+    assert!(task_command.get("args").is_some());
     assert!(task_launch.get("exe").is_some());
     assert!(task_launch.get("image").is_some());
     assert!(task_launch.get("volumes").is_some());
+    assert!(task_prepare.get("steps").is_some());
+    assert!(task_prepare.get("source_kind").is_some());
+    assert!(task_aggregate.get("tasks").is_some());
+    assert!(task_input.get("required").is_some());
+    assert!(task_input.get("allowed").is_some());
     assert!(
         task_action_variants
             .iter()
@@ -98,8 +119,20 @@ fn tasks_schema_includes_agent_and_variant_fields() {
             .iter()
             .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_file" }))
     );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_bundle" }))
+    );
     assert!(task_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_kind_enum.iter().any(|entry| entry == "container"));
+    assert!(task_kind_enum.iter().any(|entry| entry == "sequence"));
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "dependency_hydration")
+    );
+    assert!(task_kind_enum.iter().any(|entry| entry == "aggregate"));
     assert!(
         task_kind_enum
             .iter()
@@ -111,16 +144,28 @@ fn tasks_schema_includes_agent_and_variant_fields() {
             .any(|entry| entry == "ensure_env_file")
     );
     assert!(task_kind_enum.iter().any(|entry| entry == "ensure_file"));
+    assert!(task_kind_enum.iter().any(|entry| entry == "ensure_bundle"));
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "container"));
+    assert!(task_mode_kind_enum.iter().any(|entry| entry == "sequence"));
+    assert!(
+        task_mode_kind_enum
+            .iter()
+            .any(|entry| entry == "dependency_hydration")
+    );
     assert!(member_task_properties.get("requires_services").is_some());
     assert!(member_task_properties.get("after_success").is_some());
     assert!(member_task_properties.get("after_failure").is_some());
     assert!(member_task_properties.get("after_always").is_some());
     assert!(member_task_properties.get("default_mode").is_some());
+    assert!(member_task_properties.get("env").is_some());
+    assert!(member_task_properties.get("inputs").is_some());
     assert!(member_task_properties.get("modes").is_some());
     assert!(member_task_properties.get("launch").is_some());
     assert!(member_task_properties.get("action").is_some());
+    assert!(member_task_properties.get("effects").is_some());
+    assert!(member_task_properties.get("prepare").is_some());
+    assert!(member_task_properties.get("aggregate").is_some());
 }
 
 #[test]
@@ -347,6 +392,7 @@ fn execution_topology_schema_covers_declared_graph_fields() {
     assert!(task.get("launch").is_some());
     assert!(task.get("action").is_some());
     assert!(task.get("variants").is_some());
+    assert!(task["variants"]["items"]["properties"].get("command").is_some());
     assert!(task.get("modes").is_some());
     assert_eq!(
         task["launch"]["$ref"],
@@ -1198,7 +1244,10 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     let task_kind_enum = task["kind"]["enum"]
         .as_array()
         .expect("workspace task kind enum");
+    let task_command = &schema["$defs"]["taskCommand"]["properties"];
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
+    let task_prepare = &schema["$defs"]["taskPrepare"]["properties"];
+    let task_aggregate = &schema["$defs"]["taskAggregate"]["properties"];
     let task_action_variants = schema["$defs"]["taskAction"]["oneOf"]
         .as_array()
         .expect("task action variants");
@@ -1215,10 +1264,17 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
     assert!(task.get("after_success").is_some());
     assert!(task.get("after_failure").is_some());
     assert!(task.get("after_always").is_some());
+    assert!(task.get("command").is_some());
     assert!(task.get("launch").is_some());
     assert!(task.get("action").is_some());
+    assert!(task.get("prepare").is_some());
+    assert!(task.get("aggregate").is_some());
+    assert!(task_command.get("exe").is_some());
+    assert!(task_command.get("args").is_some());
     assert!(task_launch.get("exe").is_some());
     assert!(task_launch.get("image").is_some());
+    assert!(task_prepare.get("steps").is_some());
+    assert!(task_aggregate.get("tasks").is_some());
     assert!(
         task_action_variants
             .iter()
@@ -1234,8 +1290,20 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
             .iter()
             .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_file" }))
     );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"] == json!({ "const": "ensure_bundle" }))
+    );
     assert!(task_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_kind_enum.iter().any(|entry| entry == "container"));
+    assert!(task_kind_enum.iter().any(|entry| entry == "sequence"));
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "dependency_hydration")
+    );
+    assert!(task_kind_enum.iter().any(|entry| entry == "aggregate"));
     assert!(
         task_kind_enum
             .iter()
@@ -1247,6 +1315,7 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
             .any(|entry| entry == "ensure_env_file")
     );
     assert!(task_kind_enum.iter().any(|entry| entry == "ensure_file"));
+    assert!(task_kind_enum.iter().any(|entry| entry == "ensure_bundle"));
 }
 
 #[test]

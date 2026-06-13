@@ -18676,6 +18676,37 @@ tasks:
     }
 
     #[test]
+    fn tasks_json_reports_command_tasks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    description: Run the Python test suite
+    command:
+      exe: uv
+      args:
+        - run
+        - pytest
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["tasks"][0]["name"], "test");
+        assert_eq!(json["tasks"][0]["kind"], "command");
+        assert_eq!(json["tasks"][0]["command"]["exe"], "uv");
+        assert_eq!(json["tasks"][0]["command"]["args"][0], "run");
+        assert_eq!(json["tasks"][0]["command"]["args"][1], "pytest");
+        assert!(json["tasks"][0].get("run").is_none());
+        assert!(json["tasks"][0].get("script").is_none());
+    }
+
+    #[test]
     fn tasks_json_reports_required_services() {
         let fixture = ContractFixture::new(
             r#"
@@ -18747,6 +18778,54 @@ tasks:
     }
 
     #[test]
+    fn tasks_json_reports_command_variants() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    command:
+      exe: python3
+      args:
+        - -m
+        - pytest
+    variants:
+      - when:
+          os: windows
+        command:
+          exe: py
+          args:
+            - -3
+            - -m
+            - pytest
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let task = &json["tasks"][0];
+
+        match std::env::consts::OS {
+            "windows" => {
+                assert_eq!(task["command"]["exe"], "py");
+                assert_eq!(task["selected_variant_os"], "windows");
+            }
+            _ => {
+                assert_eq!(task["command"]["exe"], "python3");
+                assert!(task.get("selected_variant_os").is_none());
+            }
+        }
+
+        assert_eq!(task["variants"][0]["os"], "windows");
+        assert_eq!(task["variants"][0]["kind"], "command");
+        assert_eq!(task["variants"][0]["command"]["exe"], "py");
+    }
+
+    #[test]
     fn tasks_json_reports_mode_aware_execution_branches() {
         let fixture = ContractFixture::new(
             r#"
@@ -18811,6 +18890,73 @@ tasks:
         assert_eq!(container["lifecycle"], "persistent");
         assert_eq!(container["kind"], "run");
         assert_eq!(container["has_runtime"], true);
+    }
+
+    #[test]
+    fn json_validate_accepts_recursive_tasks_schema_payload() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      pnpm: "10"
+  python:
+    version: "3.12"
+tasks:
+  setup:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: uv
+            cwd: api
+    requirements:
+      toolchains:
+        - node
+        - python
+    effects:
+      writes:
+        - node_modules
+        - .venv
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+
+        let tasks = run_with(["ota", "tasks", "--json", fixture.path()]);
+        assert_eq!(tasks.exit_code, 0);
+        let payload: Value = serde_json::from_str(&tasks.stdout).unwrap();
+        let payload_path = fixture.dir.path().join("tasks.json");
+        fs::write(&payload_path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
+
+        let output = run_with([
+            "ota",
+            "json",
+            "validate",
+            "--schema",
+            "tasks.json",
+            "--input",
+            payload_path.to_str().unwrap(),
+        ]);
+        assert_eq!(output.exit_code, 0);
+        assert!(
+            strip_ansi(&output.stdout).contains("validated"),
+            "{}",
+            output.stdout
+        );
     }
 
     #[test]
@@ -39227,6 +39373,72 @@ tasks:
         assert_eq!(json["repos"][0]["tasks"][0]["requires_services"], json!([]));
         assert_eq!(json["repos"][1]["name"], "api");
         assert_eq!(json["repos"][1]["depends_on"][0], "db");
+    }
+
+    #[test]
+    fn json_validate_accepts_recursive_workspace_tasks_schema_payload() {
+        let fixture = WorkspaceFixture::new_multi_repo();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join("services")
+                .join("db")
+                .join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: db
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      pnpm: "10"
+tasks:
+  setup:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let tasks = run_with(["ota", "workspace", "tasks", "--json", fixture.path()]);
+        assert_eq!(tasks.exit_code, 0);
+        let payload: Value = serde_json::from_str(&tasks.stdout).unwrap();
+        let payload_path = fixture.dir.path().join("workspace-tasks.json");
+        fs::write(&payload_path, serde_json::to_vec_pretty(&payload).unwrap()).unwrap();
+
+        let output = run_with([
+            "ota",
+            "json",
+            "validate",
+            "--schema",
+            "workspace-tasks.json",
+            "--input",
+            payload_path.to_str().unwrap(),
+        ]);
+        assert_eq!(output.exit_code, 0);
+        assert!(
+            strip_ansi(&output.stdout).contains("validated"),
+            "{}",
+            output.stdout
+        );
     }
 
     #[test]

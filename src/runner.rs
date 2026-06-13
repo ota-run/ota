@@ -6604,6 +6604,22 @@ fn execute_task_with_hooks(
         preflight_native_runtime_listener_binds(task_name, runtime)?;
     }
     let mut shell_command = match execution.launch() {
+        _ if execution.command().is_some()
+            && (!matches!(backend, ResolvedExecutionBackend::Native { .. })
+                || matches!(mode, TaskExecutionMode::CaptureActivation)
+                || !backend_fulfillment_preparation
+                    .source_managed_actions
+                    .is_empty()
+                || path_export.is_some()) =>
+        {
+            let command = execution.command().expect("checked command execution");
+            Some(shell_quote_command_argv(
+                &backend,
+                command.exe.as_str(),
+                &command.args,
+            ))
+        }
+        _ if execution.command().is_some() => None,
         Some(crate::schema::TaskLaunchSpec::Command(command))
             if !matches!(backend, ResolvedExecutionBackend::Native { .. })
                 || matches!(mode, TaskExecutionMode::CaptureActivation)
@@ -6655,6 +6671,15 @@ fn execute_task_with_hooks(
     } else if let Some(prepare) = execution.prepare() {
         PreparedTaskExecution::Preparation {
             prepare: prepare.clone(),
+        }
+    } else if let Some(command) = execution.command() {
+        if let Some(command) = shell_command {
+            PreparedTaskExecution::Shell { command }
+        } else {
+            PreparedTaskExecution::NativeCommand {
+                exe: command.exe.clone(),
+                args: command.args.clone(),
+            }
         }
     } else {
         match execution.launch() {
@@ -33148,6 +33173,32 @@ tasks:
         assert_eq!(outcome.stdout, "hello");
         assert_eq!(outcome.stderr, "error");
         assert_eq!(outcome.executed_tasks, vec![String::from("quickstart")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_executes_command_task() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    command:
+      exe: bash
+      args:
+        - -c
+        - printf hello && printf error >&2
+"#,
+        );
+
+        let outcome = run_task_captured(&fixture.contract, fixture.file_path(), "test").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.stdout, "hello");
+        assert_eq!(outcome.stderr, "error");
+        assert_eq!(outcome.executed_tasks, vec![String::from("test")]);
     }
 
     #[cfg(unix)]

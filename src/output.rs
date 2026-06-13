@@ -2970,6 +2970,8 @@ pub struct TaskSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<TaskCommandSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub launch: Option<TaskLaunchSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<TaskActionSummary<'a>>,
@@ -3079,6 +3081,7 @@ impl<'a> TaskSummary<'a> {
             script: (resolved_execution.kind == "script")
                 .then(|| resolved_execution.shell_body())
                 .flatten(),
+            command: summarize_task_command(resolved_execution.command()),
             launch: summarize_task_launch(resolved_execution.launch()),
             action: summarize_task_action(resolved_execution.action()),
             prepare: summarize_task_prepare(resolved_execution.prepare()),
@@ -3107,6 +3110,10 @@ impl<'a> TaskSummary<'a> {
                         .expect("validated task variant must declare exactly one execution form"),
                     run: variant.run.as_deref(),
                     script: variant.script.as_deref(),
+                    command: variant
+                        .command
+                        .as_ref()
+                        .and_then(|command| summarize_task_command(Some(command))),
                 })
                 .collect(),
             modes: task
@@ -3137,6 +3144,7 @@ impl<'a> TaskSummary<'a> {
                                 kind: branch_execution.map(|execution| execution.kind),
                                 run: branch.run.as_deref(),
                                 script: branch.script.as_deref(),
+                                command: summarize_task_command(branch.command.as_ref()),
                                 launch: branch
                                     .launch
                                     .as_ref()
@@ -3198,10 +3206,19 @@ pub struct TaskModeView<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<TaskCommandSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub launch: Option<TaskLaunchSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepare: Option<TaskPrepareSummary<'a>>,
     pub has_runtime: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TaskCommandSummary<'a> {
+    pub exe: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<&'a str>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -3299,6 +3316,15 @@ pub struct TaskActionSummary<'a> {
     pub from: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to: Option<&'a str>,
+}
+
+fn summarize_task_command<'a>(
+    command: Option<&'a crate::schema::TaskCommandSpec>,
+) -> Option<TaskCommandSummary<'a>> {
+    command.map(|command| TaskCommandSummary {
+        exe: command.exe.as_str(),
+        args: command.args.iter().map(String::as_str).collect(),
+    })
 }
 
 fn summarize_task_launch<'a>(

@@ -85,6 +85,18 @@
         }
       }
     },
+    "taskCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exe"],
+      "properties": {
+        "exe": { "type": "string" },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
     "taskAction": {
       "oneOf": [
         {
@@ -100,61 +112,103 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "path", "vars"],
+          "required": ["kind", "to"],
           "properties": {
             "kind": { "const": "ensure_env_file" },
-            "path": { "type": "string" },
-            "template": { "type": "string" },
-            "vars": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "value": { "type": "string" },
-                  "mode": { "enum": ["missing", "replace"] },
-                  "random": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "bytes": { "type": "integer", "minimum": 1 },
-                      "encoding": { "enum": ["hex", "base64"] }
-                    }
-                  }
-                }
-              }
-            }
+            "from": { "type": "string" },
+            "to": { "type": "string" }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "path"],
+          "required": ["kind", "to"],
           "properties": {
             "kind": { "const": "ensure_file" },
-            "path": { "type": "string" },
-            "template": { "type": "string" },
-            "value": { "type": "string" },
-            "random": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "bytes": { "type": "integer", "minimum": 1 },
-                "encoding": { "enum": ["hex", "base64"] }
-              }
-            }
+            "from": { "type": "string" },
+            "to": { "type": "string" }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "path"],
+          "required": ["kind", "to"],
           "properties": {
             "kind": { "const": "ensure_directory" },
-            "path": { "type": "string" }
+            "to": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "ensure_bundle" }
           }
         }
       ]
+    },
+    "taskPrepare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["sequence", "dependency_hydration"] },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/taskPrepare" }
+        },
+        "medium": { "enum": ["container_images", "package_dependencies"] },
+        "source_kind": {
+          "enum": [
+            "docker_compose",
+            "node_package_manager",
+            "bundler",
+            "uv",
+            "poetry",
+            "go_modules"
+          ]
+        },
+        "cwd": { "type": "string" },
+        "file": { "type": "string" },
+        "manager": { "enum": ["npm", "pnpm", "yarn", "bundle", "uv", "poetry"] },
+        "mode": { "enum": ["install", "ci", "sync", "download"] },
+        "group_mode": { "enum": ["with", "only"] },
+        "groups": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "frozen_lockfile": { "type": "boolean" },
+        "no_root": { "type": "boolean" },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "taskAggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tasks"],
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "taskInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "required": { "type": "boolean" },
+        "default": { "type": "string" },
+        "allowed": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
     },
     "taskEffects": {
       "type": "object",
@@ -237,15 +291,26 @@
               "category": { "type": "string" },
               "context": { "type": "string" },
               "default_mode": { "enum": ["native", "container", "remote"] },
+              "env": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              },
               "env_files": {
                 "type": "array",
                 "items": { "type": "string" }
               },
-              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory"] },
+              "inputs": {
+                "type": "object",
+                "additionalProperties": { "$ref": "#/$defs/taskInput" }
+              },
+              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
+              "command": { "$ref": "#/$defs/taskCommand" },
               "launch": { "$ref": "#/$defs/taskLaunch" },
               "action": { "$ref": "#/$defs/taskAction" },
+              "prepare": { "$ref": "#/$defs/taskPrepare" },
+              "aggregate": { "$ref": "#/$defs/taskAggregate" },
               "effects": { "$ref": "#/$defs/taskEffects" },
               "selected_variant_os": { "type": "string" },
               "depends_on": {
@@ -282,9 +347,10 @@
                   "required": ["os", "kind"],
                   "properties": {
                     "os": { "type": "string" },
-                    "kind": { "enum": ["run", "script"] },
+                    "kind": { "enum": ["run", "script", "command"] },
                     "run": { "type": "string" },
-                    "script": { "type": "string" }
+                    "script": { "type": "string" },
+                    "command": { "$ref": "#/$defs/taskCommand" }
                   }
                 }
               },
@@ -302,10 +368,12 @@
                       "items": { "type": "string" }
                     },
                     "lifecycle": { "enum": ["persistent", "ephemeral"] },
-                    "kind": { "enum": ["run", "script", "command", "container"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
+                    "command": { "$ref": "#/$defs/taskCommand" },
                     "launch": { "$ref": "#/$defs/taskLaunch" },
+                    "prepare": { "$ref": "#/$defs/taskPrepare" },
                     "has_runtime": { "type": "boolean" }
                   }
                 }
@@ -376,15 +444,27 @@
                     "category": { "type": "string" },
                     "context": { "type": "string" },
                     "default_mode": { "enum": ["native", "container", "remote"] },
+                    "env": {
+                      "type": "object",
+                      "additionalProperties": { "type": "string" }
+                    },
                     "env_files": {
                       "type": "array",
                       "items": { "type": "string" }
                     },
-                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory"] },
+                    "inputs": {
+                      "type": "object",
+                      "additionalProperties": { "$ref": "#/$defs/taskInput" }
+                    },
+                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
+                    "command": { "$ref": "#/$defs/taskCommand" },
                     "launch": { "$ref": "#/$defs/taskLaunch" },
                     "action": { "$ref": "#/$defs/taskAction" },
+                    "prepare": { "$ref": "#/$defs/taskPrepare" },
+                    "aggregate": { "$ref": "#/$defs/taskAggregate" },
+                    "effects": { "$ref": "#/$defs/taskEffects" },
                     "selected_variant_os": { "type": "string" },
                     "depends_on": {
                       "type": "array",
@@ -420,9 +500,10 @@
                         "required": ["os", "kind"],
                         "properties": {
                           "os": { "type": "string" },
-                          "kind": { "enum": ["run", "script"] },
+                          "kind": { "enum": ["run", "script", "command"] },
                           "run": { "type": "string" },
-                          "script": { "type": "string" }
+                          "script": { "type": "string" },
+                          "command": { "$ref": "#/$defs/taskCommand" }
                         }
                       }
                     },
@@ -435,11 +516,17 @@
                         "properties": {
                           "mode": { "enum": ["native", "container", "remote"] },
                           "context": { "type": "string" },
+                          "env_files": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                          },
                           "lifecycle": { "enum": ["persistent", "ephemeral"] },
-                          "kind": { "enum": ["run", "script", "command", "container"] },
+                          "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration"] },
                           "run": { "type": "string" },
                           "script": { "type": "string" },
+                          "command": { "$ref": "#/$defs/taskCommand" },
                           "launch": { "$ref": "#/$defs/taskLaunch" },
+                          "prepare": { "$ref": "#/$defs/taskPrepare" },
                           "has_runtime": { "type": "boolean" }
                         }
                       }

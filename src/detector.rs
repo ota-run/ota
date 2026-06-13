@@ -32,8 +32,8 @@ use toml::Value as TomlValue;
 
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
-    ServiceReadinessKind, TaskActionSpec, TaskEffectsSpec, TaskPrepareSpec, TaskRequirementsSpec,
-    ToolchainFulfillmentMode, ToolchainFulfillmentSpec, ToolchainProvider,
+    ServiceReadinessKind, TaskActionSpec, TaskCommandSpec, TaskEffectsSpec, TaskPrepareSpec,
+    TaskRequirementsSpec, ToolchainFulfillmentMode, ToolchainFulfillmentSpec, ToolchainProvider,
 };
 use crate::toolchains::{
     COREPACK_TOOLCHAIN_NAME, DOTNET_TOOLCHAIN_NAME, GO_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME,
@@ -255,6 +255,8 @@ pub struct DetectTask {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub run: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<TaskCommandSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<TaskActionSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -583,6 +585,7 @@ impl DetectReport {
                             DetectTask {
                                 description,
                                 run: inference.value.clone(),
+                                command: None,
                                 action: None,
                                 prepare: None,
                                 requirements: TaskRequirementsSpec::default(),
@@ -4475,6 +4478,7 @@ impl DetectBuilder {
                 DetectTask {
                     description,
                     run: run.clone(),
+                    command: None,
                     action: None,
                     prepare: None,
                     requirements: TaskRequirementsSpec::default(),

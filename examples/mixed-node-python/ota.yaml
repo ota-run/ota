@@ -68,7 +68,11 @@ tasks:
     context: host
     description: Run the backend test suite
     category: test
-    run: python -m pytest
+    command:
+      exe: uv
+      args:
+        - run
+        - pytest
 checks:
   - name: node-installed
     kind: precondition

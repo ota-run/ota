@@ -45,11 +45,15 @@ Expanded tasks may add variants:
 ```yaml
 tasks:
   setup:
-    run: ./scripts/setup.sh
+    command:
+      exe: python3
+      args: [-m, pytest]
     variants:
       - when:
           os: windows
-        run: .\scripts\setup.ps1
+        command:
+          exe: py
+          args: [-3, -m, pytest]
 ```
 
 ## Current selector support
@@ -65,7 +69,7 @@ Current shipped selector support is:
 - ota checks variants before the default execution
 - the first matching variant for the current OS wins
 - duplicate variants for the same `when.os` are rejected in validation
-- if no variant matches, ota falls back to the default `run` or `script`
+- if no variant matches, ota falls back to the default task body (`run`, `script`, or `command`)
 - if there is no default and no matching variant, task execution fails clearly
 
 ## Design intent

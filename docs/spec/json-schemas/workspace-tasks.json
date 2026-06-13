@@ -34,6 +34,18 @@
         }
       }
     },
+    "taskCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exe"],
+      "properties": {
+        "exe": { "type": "string" },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
     "taskAction": {
       "oneOf": [
         {
@@ -49,60 +61,90 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "path", "vars"],
+          "required": ["kind", "to"],
           "properties": {
             "kind": { "const": "ensure_env_file" },
-            "path": { "type": "string" },
-            "template": { "type": "string" },
-            "vars": {
-              "type": "object",
-              "additionalProperties": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                  "value": { "type": "string" },
-                  "random": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "bytes": { "type": "integer", "minimum": 1 },
-                      "encoding": { "enum": ["hex", "base64"] }
-                    }
-                  }
-                }
-              }
-            }
+            "from": { "type": "string" },
+            "to": { "type": "string" }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "path"],
+          "required": ["kind", "to"],
           "properties": {
             "kind": { "const": "ensure_file" },
-            "path": { "type": "string" },
-            "template": { "type": "string" },
-            "value": { "type": "string" },
-            "random": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "bytes": { "type": "integer", "minimum": 1 },
-                "encoding": { "enum": ["hex", "base64"] }
-              }
-            }
+            "from": { "type": "string" },
+            "to": { "type": "string" }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "path"],
+          "required": ["kind", "to"],
           "properties": {
             "kind": { "const": "ensure_directory" },
-            "path": { "type": "string" }
+            "to": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "ensure_bundle" }
           }
         }
       ]
+    },
+    "taskPrepare": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["sequence", "dependency_hydration"] },
+        "steps": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/taskPrepare" }
+        },
+        "medium": { "enum": ["container_images", "package_dependencies"] },
+        "source_kind": {
+          "enum": [
+            "docker_compose",
+            "node_package_manager",
+            "bundler",
+            "uv",
+            "poetry",
+            "go_modules"
+          ]
+        },
+        "cwd": { "type": "string" },
+        "file": { "type": "string" },
+        "manager": { "enum": ["npm", "pnpm", "yarn", "bundle", "uv", "poetry"] },
+        "mode": { "enum": ["install", "ci", "sync", "download"] },
+        "group_mode": { "enum": ["with", "only"] },
+        "groups": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "frozen_lockfile": { "type": "boolean" },
+        "no_root": { "type": "boolean" },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "taskAggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tasks"],
+      "properties": {
+        "tasks": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
     },
     "taskEffects": {
       "type": "object",
@@ -171,12 +213,15 @@
               "required": ["name", "kind", "depends_on"],
               "properties": {
                 "name": { "type": "string" },
-                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory"] },
+                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
                 "description": { "type": "string" },
                 "run": { "type": "string" },
                 "script": { "type": "string" },
+                "command": { "$ref": "#/$defs/taskCommand" },
                 "launch": { "$ref": "#/$defs/taskLaunch" },
                 "action": { "$ref": "#/$defs/taskAction" },
+                "prepare": { "$ref": "#/$defs/taskPrepare" },
+                "aggregate": { "$ref": "#/$defs/taskAggregate" },
                 "effects": { "$ref": "#/$defs/taskEffects" },
                 "depends_on": {
                   "type": "array",

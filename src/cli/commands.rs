@@ -9549,6 +9549,7 @@ fn build_assist_add_task_proposal(
         targets: BTreeMap::new(),
         run: None,
         script: None,
+        command: None,
         prepare: None,
         launch: None,
         action: None,
@@ -36277,16 +36278,15 @@ fn validate_payload_with_schema(schema_name: &str, payload: &JsonValue) -> Resul
     }
 
     let raw_schema = load_json_value(&schema_path)?;
-    let resolved_schema = resolve_schema_refs_runtime(&raw_schema, &schema_path)?;
-    let compiled = JSONSchema::options()
-        .with_draft(Draft::Draft202012)
-        .compile(&resolved_schema)
-        .map_err(|error| {
-            format!(
-                "failed to compile schema `{}`: {error}",
-                schema_path.display()
-            )
-        })?;
+    let mut options = JSONSchema::options();
+    options.with_draft(Draft::Draft202012);
+    register_schema_documents(&mut options, &schema_dir)?;
+    let compiled = options.compile(&raw_schema).map_err(|error| {
+        format!(
+            "failed to compile schema `{}`: {error}",
+            schema_path.display()
+        )
+    })?;
     if let Err(errors) = compiled.validate(payload) {
         let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
         return Err(format!(
@@ -36326,83 +36326,34 @@ fn load_json_value(path: &Path) -> Result<JsonValue, String> {
         .map_err(|error| format!("failed to parse {} as JSON: {error}", path.display()))
 }
 
-fn resolve_schema_refs_runtime(
-    value: &JsonValue,
-    current_path: &Path,
-) -> Result<JsonValue, String> {
-    match value {
-        JsonValue::Object(map) if map.len() == 1 && map.contains_key("$ref") => {
-            let reference = map
-                .get("$ref")
-                .and_then(|value| value.as_str())
-                .ok_or_else(|| String::from("schema $ref must be a string"))?;
-            let (file_part, pointer_part) = reference.split_once('#').unwrap_or((reference, ""));
-            let target_path = if file_part.is_empty() {
-                current_path.to_path_buf()
-            } else {
-                current_path
-                    .parent()
-                    .ok_or_else(|| {
-                        format!("schema path has no parent: {}", current_path.display())
-                    })?
-                    .join(file_part)
-            };
-            let target_value = load_json_value(&target_path)?;
-            let pointer = pointer_part.trim_start_matches('#');
-            let referenced = resolve_json_pointer_runtime(&target_value, pointer)?;
-            resolve_schema_refs_runtime(referenced, &target_path)
+fn register_schema_documents(
+    options: &mut jsonschema::CompilationOptions,
+    schema_dir: &Path,
+) -> Result<(), String> {
+    let entries = fs::read_dir(schema_dir).map_err(|error| {
+        format!(
+            "failed to read schema directory {}: {error}",
+            schema_dir.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to read schema directory entry under {}: {error}",
+                schema_dir.display()
+            )
+        })?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
         }
-        JsonValue::Object(map) => {
-            let mut resolved = serde_json::Map::new();
-            for (key, inner) in map {
-                resolved.insert(
-                    key.clone(),
-                    resolve_schema_refs_runtime(inner, current_path)?,
-                );
-            }
-            Ok(JsonValue::Object(resolved))
-        }
-        JsonValue::Array(items) => {
-            let mut resolved = Vec::with_capacity(items.len());
-            for inner in items {
-                resolved.push(resolve_schema_refs_runtime(inner, current_path)?);
-            }
-            Ok(JsonValue::Array(resolved))
-        }
-        _ => Ok(value.clone()),
-    }
-}
-
-fn resolve_json_pointer_runtime<'a>(
-    value: &'a JsonValue,
-    pointer: &str,
-) -> Result<&'a JsonValue, String> {
-    if pointer.is_empty() {
-        return Ok(value);
-    }
-    let mut current = value;
-    for segment in pointer.trim_start_matches('/').split('/') {
-        let segment = segment.replace("~1", "/").replace("~0", "~");
-        current = match current {
-            JsonValue::Object(map) => map
-                .get(segment.as_str())
-                .ok_or_else(|| format!("missing object pointer segment `{segment}`"))?,
-            JsonValue::Array(items) => {
-                let index: usize = segment
-                    .parse()
-                    .map_err(|_| format!("invalid array pointer segment `{segment}`"))?;
-                items
-                    .get(index)
-                    .ok_or_else(|| format!("missing array pointer index `{index}`"))?
-            }
-            _ => {
-                return Err(format!(
-                    "cannot traverse pointer segment `{segment}` on non-container value"
-                ));
-            }
+        let document = load_json_value(&path)?;
+        let Some(id) = document.get("$id").and_then(JsonValue::as_str) else {
+            continue;
         };
+        options.with_document(id.to_string(), document);
     }
-    Ok(current)
+    Ok(())
 }
 
 fn apply_schema_assertions(
@@ -45222,6 +45173,7 @@ tasks:
             kind: "script",
             run: None,
             script: Some("./scripts/api/run-api-tests.sh"),
+            command: None,
             launch: None,
             action: None,
             prepare: None,
@@ -45294,6 +45246,7 @@ tasks:
             kind: "script",
             run: None,
             script: Some("./scripts/api/run-api-tests.sh"),
+            command: None,
             launch: None,
             action: None,
             prepare: None,
@@ -45347,6 +45300,7 @@ tasks:
             kind: "aggregate",
             run: None,
             script: None,
+            command: None,
             launch: None,
             action: None,
             prepare: None,
@@ -45412,6 +45366,7 @@ tasks:
             kind: "script",
             run: Some("pnpm dev"),
             script: None,
+            command: None,
             launch: None,
             action: None,
             prepare: None,
@@ -45487,6 +45442,7 @@ tasks:
             kind: "script",
             run: None,
             script: Some("pnpm install"),
+            command: None,
             launch: None,
             action: None,
             prepare: None,
@@ -45538,6 +45494,7 @@ tasks:
             kind: "prepare",
             run: None,
             script: None,
+            command: None,
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
@@ -45920,6 +45877,7 @@ workflows:
                 kind: "command",
                 run: None,
                 script: None,
+                command: None,
                 launch: Some(crate::output::TaskLaunchSummary {
                     kind: "command",
                     exe: Some("npx"),
@@ -46468,6 +46426,7 @@ tasks:
             DetectTask {
                 description: None,
                 run: String::from("npm install"),
+                command: None,
                 action: None,
                 prepare: None,
                 requirements: crate::schema::TaskRequirementsSpec::default(),
@@ -46546,6 +46505,7 @@ tasks:
             DetectTask {
                 description: None,
                 run: String::from("npm install"),
+                command: None,
                 action: None,
                 prepare: None,
                 requirements: crate::schema::TaskRequirementsSpec::default(),

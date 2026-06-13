@@ -2371,6 +2371,7 @@ fn validate_tasks(
 
         let has_base_fields = task.run.is_some()
             || task.script.is_some()
+            || task.command.is_some()
             || task.prepare.is_some()
             || task.launch.is_some()
             || task.action.is_some()
@@ -2379,18 +2380,28 @@ fn validate_tasks(
             .execution
             .as_ref()
             .is_some_and(|execution| execution.modes.any());
-        match (task.run.as_deref(), task.script.as_deref()) {
-            (Some(run), _) if run.trim().is_empty() => errors.push(ValidationError::new(format!(
-                "task `{name}` must declare a non-empty `run` command"
-            ))),
-            (_, Some(script)) if script.trim().is_empty() => errors.push(ValidationError::new(
+        match (
+            task.run.as_deref(),
+            task.script.as_deref(),
+            task.command.as_ref(),
+        ) {
+            (Some(run), _, _) if run.trim().is_empty() => errors.push(ValidationError::new(
+                format!("task `{name}` must declare a non-empty `run` command"),
+            )),
+            (_, Some(script), _) if script.trim().is_empty() => errors.push(ValidationError::new(
                 format!("task `{name}` must declare a non-empty `script` body"),
             )),
+            (_, _, Some(command)) if command.exe.trim().is_empty() => {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must declare a non-empty `command.exe`"
+                )))
+            }
             _ => {}
         }
         let execution_field_count = [
             task.run.is_some(),
             task.script.is_some(),
+            task.command.is_some(),
             task.prepare.is_some(),
             task.launch.is_some(),
             task.action.is_some(),
@@ -2401,13 +2412,13 @@ fn validate_tasks(
         .count();
         if execution_field_count > 1 {
             errors.push(ValidationError::new(format!(
-                "task `{name}` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
+                "task `{name}` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
             )));
         }
 
         if !has_base_fields && task.variants.is_empty() && !has_mode_branches {
             errors.push(ValidationError::new(format!(
-                "task `{name}` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
+                "task `{name}` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
             )));
         }
         if let Some(launch) = task.launch.as_ref() {
@@ -2551,22 +2562,34 @@ fn validate_tasks(
                 )));
             }
 
-            match (variant.run.as_deref(), variant.script.as_deref()) {
-                (Some(run), None) if run.trim().is_empty() => {
+            match (
+                variant.run.as_deref(),
+                variant.script.as_deref(),
+                variant.command.as_ref(),
+            ) {
+                (Some(run), None, None) if run.trim().is_empty() => {
                     errors.push(ValidationError::new(format!(
                         "task `{name}` variant #{index} must declare a non-empty `run` command"
                     )))
                 }
-                (None, Some(script)) if script.trim().is_empty() => {
+                (None, Some(script), None) if script.trim().is_empty() => {
                     errors.push(ValidationError::new(format!(
                         "task `{name}` variant #{index} must declare a non-empty `script` body"
                     )))
                 }
-                (Some(_), Some(_)) => errors.push(ValidationError::new(format!(
-                    "task `{name}` variant #{index} must not declare both `run` and `script`"
+                (None, None, Some(command)) if command.exe.trim().is_empty() => {
+                    errors.push(ValidationError::new(format!(
+                        "task `{name}` variant #{index} must declare a non-empty `command.exe`"
+                    )))
+                }
+                (Some(_), Some(_), None)
+                | (Some(_), None, Some(_))
+                | (None, Some(_), Some(_))
+                | (Some(_), Some(_), Some(_)) => errors.push(ValidationError::new(format!(
+                    "task `{name}` variant #{index} must not declare more than one of `run`, `script`, or `command`"
                 ))),
-                (None, None) => errors.push(ValidationError::new(format!(
-                    "task `{name}` variant #{index} must declare exactly one of `run` or `script`"
+                (None, None, None) => errors.push(ValidationError::new(format!(
+                    "task `{name}` variant #{index} must declare exactly one of `run`, `script`, or `command`"
                 ))),
                 _ => {}
             }
@@ -2938,6 +2961,7 @@ fn validate_task_mode_execution(
             has_fallback_execution,
             task.run.is_some(),
             task.script.is_some(),
+            task.command.is_some(),
             task.prepare.is_some(),
             task.launch.is_some(),
             task.action.is_some(),
@@ -2980,34 +3004,55 @@ fn validate_task_mode_execution(
         match (
             branch.run.as_deref(),
             branch.script.as_deref(),
+            branch.command.as_ref(),
             branch.prepare.as_ref(),
             branch.launch.as_ref(),
         ) {
-            (Some(run), None, None, None) if run.trim().is_empty() => errors.push(ValidationError::new(
+            (Some(run), None, None, None, None) if run.trim().is_empty() => errors.push(ValidationError::new(
                 format!(
                     "task `{task_name}` mode `{mode_name}` must declare a non-empty `run` command"
                 ),
             )),
-            (None, Some(script), None, None) if script.trim().is_empty() => {
+            (None, Some(script), None, None, None) if script.trim().is_empty() => {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` mode `{mode_name}` must declare a non-empty `script` body"
                 )))
             }
-            (Some(_), Some(_), None, None)
-            | (Some(_), None, Some(_), None)
-            | (Some(_), None, None, Some(_))
-            | (None, Some(_), Some(_), None)
-            | (None, Some(_), None, Some(_))
-            | (None, None, Some(_), Some(_))
-            | (Some(_), Some(_), Some(_), None)
-            | (Some(_), Some(_), None, Some(_))
-            | (Some(_), None, Some(_), Some(_))
-            | (None, Some(_), Some(_), Some(_))
-            | (Some(_), Some(_), Some(_), Some(_)) => errors.push(ValidationError::new(format!(
-                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run`, `script`, `prepare`, or `launch`"
+            (None, None, Some(command), None, None) if command.exe.trim().is_empty() => {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` mode `{mode_name}` must declare a non-empty `command.exe`"
+                )))
+            }
+            (Some(_), Some(_), None, None, None)
+            | (Some(_), None, Some(_), None, None)
+            | (Some(_), None, None, Some(_), None)
+            | (Some(_), None, None, None, Some(_))
+            | (None, Some(_), Some(_), None, None)
+            | (None, Some(_), None, Some(_), None)
+            | (None, Some(_), None, None, Some(_))
+            | (None, None, Some(_), Some(_), None)
+            | (None, None, Some(_), None, Some(_))
+            | (None, None, None, Some(_), Some(_))
+            | (Some(_), Some(_), Some(_), None, None)
+            | (Some(_), Some(_), None, Some(_), None)
+            | (Some(_), Some(_), None, None, Some(_))
+            | (Some(_), None, Some(_), Some(_), None)
+            | (Some(_), None, Some(_), None, Some(_))
+            | (Some(_), None, None, Some(_), Some(_))
+            | (None, Some(_), Some(_), Some(_), None)
+            | (None, Some(_), Some(_), None, Some(_))
+            | (None, Some(_), None, Some(_), Some(_))
+            | (None, None, Some(_), Some(_), Some(_))
+            | (Some(_), Some(_), Some(_), Some(_), None)
+            | (Some(_), Some(_), Some(_), None, Some(_))
+            | (Some(_), Some(_), None, Some(_), Some(_))
+            | (Some(_), None, Some(_), Some(_), Some(_))
+            | (None, Some(_), Some(_), Some(_), Some(_))
+            | (Some(_), Some(_), Some(_), Some(_), Some(_)) => errors.push(ValidationError::new(format!(
+                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run`, `script`, `command`, `prepare`, or `launch`"
             ))),
-            (None, None, None, None) if !has_fallback_execution => errors.push(ValidationError::new(format!(
-                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run`, `script`, `prepare`, or `launch` because the task has no base execution to inherit"
+            (None, None, None, None, None) if !has_fallback_execution => errors.push(ValidationError::new(format!(
+                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run`, `script`, `command`, `prepare`, or `launch` because the task has no base execution to inherit"
             ))),
             _ => {}
         }
@@ -3020,6 +3065,8 @@ fn validate_task_mode_execution(
                 branch.run.is_some() || (!has_mode_execution_body(branch) && task.run.is_some()),
                 branch.script.is_some()
                     || (!has_mode_execution_body(branch) && task.script.is_some()),
+                branch.command.is_some()
+                    || (!has_mode_execution_body(branch) && task.command.is_some()),
                 branch.prepare.is_some()
                     || (!has_mode_execution_body(branch) && task.prepare.is_some()),
                 branch.launch.is_some()
@@ -3061,6 +3108,7 @@ fn validate_task_mode_execution(
 fn has_mode_execution_body(branch: &crate::schema::TaskModeBranchSpec) -> bool {
     branch.run.is_some()
         || branch.script.is_some()
+        || branch.command.is_some()
         || branch.prepare.is_some()
         || branch.launch.is_some()
 }
@@ -3072,6 +3120,7 @@ fn validate_task_execution_orchestrator(
     has_fallback_execution: bool,
     has_run: bool,
     has_script: bool,
+    has_command: bool,
     has_prepare: bool,
     has_launch: bool,
     has_action: bool,
@@ -3092,7 +3141,13 @@ fn validate_task_execution_orchestrator(
         )));
     }
 
-    if !(has_run || has_script || has_prepare || has_launch || has_action || has_fallback_execution)
+    if !(has_run
+        || has_script
+        || has_command
+        || has_prepare
+        || has_launch
+        || has_action
+        || has_fallback_execution)
     {
         errors.push(ValidationError::new(format!(
             "{scope} `{task_name}` declares `execution.orchestrator`, but no executable task body resolves on that path"
@@ -3110,6 +3165,11 @@ fn validate_task_execution_orchestrator(
             if has_prepare {
                 errors.push(ValidationError::new(format!(
                     "{scope} `{task_name}` uses `execution.orchestrator.mode: task`, but `prepare` tasks do not provide an orchestrator task name in this slice"
+                )));
+            }
+            if has_command {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: task`, but `command` tasks do not provide an orchestrator task name"
                 )));
             }
             if has_launch {

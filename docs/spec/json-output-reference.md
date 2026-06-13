@@ -1529,7 +1529,7 @@ Success:
       "name": "setup",
       "description": "Prepare mixed repo dependencies",
       "notes": "Use this after cloning the repo.\n",
-      "kind": "prepare",
+      "kind": "sequence",
       "prepare": {
         "kind": "sequence",
         "steps": [
@@ -1568,6 +1568,17 @@ Success:
       "depends_on": [],
       "requires_services": ["postgres"],
       "safe_for_agent": false
+    },
+    {
+      "name": "test",
+      "kind": "command",
+      "command": {
+        "exe": "uv",
+        "args": ["run", "pytest"]
+      },
+      "depends_on": ["setup"],
+      "requires_services": [],
+      "safe_for_agent": true
     }
   ]
 }

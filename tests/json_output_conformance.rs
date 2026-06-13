@@ -76,6 +76,21 @@ fn run_ota_failure_stdout_json(args: &[&str], cwd: &Path) -> Value {
     serde_json::from_slice(&output.stdout).expect("command should emit valid stdout JSON")
 }
 
+fn run_ota_success_text(args: &[&str], cwd: &Path) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_ota"))
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("ota command should run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "ota command should succeed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    stdout.into_owned()
+}
+
 fn schema_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/spec/json-schemas")
 }
@@ -85,76 +100,23 @@ fn load_json(path: &Path) -> Value {
     serde_json::from_str(&contents).expect("JSON file should parse")
 }
 
-fn decode_json_pointer_segment(segment: &str) -> String {
-    segment.replace("~1", "/").replace("~0", "~")
-}
-
-fn resolve_json_pointer<'a>(value: &'a Value, pointer: &str) -> &'a Value {
-    if pointer.is_empty() {
-        return value;
-    }
-    let mut current = value;
-    for segment in pointer.trim_start_matches('/').split('/') {
-        let segment = decode_json_pointer_segment(segment);
-        current = match current {
-            Value::Object(map) => map
-                .get(segment.as_str())
-                .unwrap_or_else(|| panic!("missing object pointer segment `{segment}`")),
-            Value::Array(items) => {
-                let index: usize = segment
-                    .parse()
-                    .unwrap_or_else(|_| panic!("invalid array pointer segment `{segment}`"));
-                items
-                    .get(index)
-                    .unwrap_or_else(|| panic!("missing array pointer index `{index}`"))
-            }
-            _ => panic!("cannot traverse pointer segment `{segment}`"),
-        };
-    }
-    current
-}
-
-fn resolve_schema_refs(value: &Value, current_path: &Path) -> Value {
-    match value {
-        Value::Object(map) if map.len() == 1 && map.contains_key("$ref") => {
-            let reference = map["$ref"].as_str().expect("$ref should be a string");
-            let (file_part, pointer_part) = reference.split_once('#').unwrap_or((reference, ""));
-            let target_path = if file_part.is_empty() {
-                current_path.to_path_buf()
-            } else {
-                current_path
-                    .parent()
-                    .expect("schema path should have a parent")
-                    .join(file_part)
-            };
-            let target_value = load_json(&target_path);
-            let pointer = pointer_part.trim_start_matches('#');
-            let referenced = resolve_json_pointer(&target_value, pointer);
-            resolve_schema_refs(referenced, &target_path)
-        }
-        Value::Object(map) => Value::Object(
-            map.iter()
-                .map(|(key, inner)| (key.clone(), resolve_schema_refs(inner, current_path)))
-                .collect(),
-        ),
-        Value::Array(items) => Value::Array(
-            items
-                .iter()
-                .map(|inner| resolve_schema_refs(inner, current_path))
-                .collect(),
-        ),
-        _ => value.clone(),
-    }
-}
-
 fn assert_matches_schema(schema_name: &str, instance: &Value) {
     let schema_path = schema_dir().join(schema_name);
     let raw_schema = load_json(&schema_path);
-    let schema = resolve_schema_refs(&raw_schema, &schema_path);
-    let compiled = JSONSchema::options()
-        .with_draft(Draft::Draft202012)
-        .compile(&schema)
-        .expect("schema should compile");
+    let mut options = JSONSchema::options();
+    options.with_draft(Draft::Draft202012);
+    for entry in fs::read_dir(schema_dir()).expect("schema dir should be readable") {
+        let entry = entry.expect("schema dir entry should load");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let document = load_json(&path);
+        if let Some(id) = document.get("$id").and_then(Value::as_str) {
+            options.with_document(id.to_string(), document);
+        }
+    }
+    let compiled = options.compile(&raw_schema).expect("schema should compile");
     if let Err(errors) = compiled.validate(instance) {
         let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
         panic!(
@@ -437,6 +399,185 @@ tasks:
 }
 
 #[test]
+fn tasks_json_output_reports_command_shape() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: task-command-demo
+tasks:
+  test:
+    command:
+      exe: uv
+      args:
+        - run
+        - pytest
+"#,
+    );
+
+    let json = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("tasks.json", &json);
+    assert_eq!(json["tasks"][0]["name"], "test");
+    assert_eq!(json["tasks"][0]["kind"], "command");
+    assert_eq!(json["tasks"][0]["command"]["exe"], "uv");
+    assert_eq!(json["tasks"][0]["command"]["args"][0], "run");
+    assert_eq!(json["tasks"][0]["command"]["args"][1], "pytest");
+}
+
+#[test]
+fn tasks_json_output_reports_prepare_sequence_and_aggregate_shapes() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: task-prepare-demo
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      pnpm: "10"
+  python:
+    version: "3.12"
+tasks:
+  setup:
+    description: Prepare mixed dependencies
+    env:
+      OTA_ENV: local
+    inputs:
+      profile:
+        required: true
+        default: dev
+        allowed:
+          - dev
+          - ci
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+            frozen_lockfile: true
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: uv
+            cwd: api
+    requirements:
+      toolchains:
+        - node
+        - python
+    effects:
+      writes:
+        - node_modules
+        - .venv
+      network: true
+      network_kind: dependency_hydration
+  verify:
+    aggregate:
+      tasks:
+        - setup
+"#,
+    );
+
+    let json = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_eq!(json["tasks"][0]["name"], "setup");
+    assert_eq!(json["tasks"][0]["kind"], "sequence");
+    assert_eq!(json["tasks"][0]["prepare"]["kind"], "sequence");
+    assert_eq!(
+        json["tasks"][0]["prepare"]["steps"][0]["kind"],
+        "dependency_hydration"
+    );
+    assert_eq!(json["tasks"][1]["name"], "verify");
+    assert_eq!(json["tasks"][1]["kind"], "aggregate");
+    assert_eq!(json["tasks"][1]["aggregate"]["tasks"][0], "setup");
+}
+
+#[test]
+fn json_validate_accepts_recursive_tasks_schema_payload() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: task-prepare-demo
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      pnpm: "10"
+  python:
+    version: "3.12"
+tasks:
+  setup:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: uv
+            cwd: api
+    requirements:
+      toolchains:
+        - node
+        - python
+    effects:
+      writes:
+        - node_modules
+        - .venv
+      network: true
+      network_kind: dependency_hydration
+"#,
+    );
+
+    let payload = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    let payload_path = fixture.path().join("tasks.json");
+    fs::write(
+        &payload_path,
+        serde_json::to_vec_pretty(&payload).expect("payload should serialize"),
+    )
+    .expect("payload should write");
+
+    let stdout = run_ota_success_text(
+        &[
+            "json",
+            "validate",
+            "--schema",
+            "tasks.json",
+            "--input",
+            payload_path.to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert!(stdout.contains("validated"), "{stdout}");
+}
+
+#[test]
 fn services_json_output_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(
@@ -632,6 +773,162 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("workspace-tasks.json", &json);
+}
+
+#[test]
+fn workspace_tasks_json_output_reports_prepare_sequence_shape() {
+    let fixture = TempDir::new().expect("fixture");
+    write_workspace_contract(
+        &fixture,
+        r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        "apps/web",
+        r#"
+version: 1
+project:
+  name: web
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      pnpm: "10"
+  python:
+    version: "3.12"
+tasks:
+  setup:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+            frozen_lockfile: true
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: uv
+            cwd: api
+    requirements:
+      toolchains:
+        - node
+        - python
+    effects:
+      writes:
+        - node_modules
+        - .venv
+      network: true
+      network_kind: dependency_hydration
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "workspace",
+            "tasks",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_eq!(json["repos"][0]["tasks"][0]["kind"], "sequence");
+    assert_eq!(json["repos"][0]["tasks"][0]["prepare"]["kind"], "sequence");
+}
+
+#[test]
+fn json_validate_accepts_recursive_workspace_tasks_schema_payload() {
+    let fixture = TempDir::new().expect("fixture");
+    write_workspace_contract(
+        &fixture,
+        r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    required: true
+"#,
+        "apps/web",
+        r#"
+version: 1
+project:
+  name: web
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      pnpm: "10"
+  python:
+    version: "3.12"
+tasks:
+  setup:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: uv
+            cwd: api
+    requirements:
+      toolchains:
+        - node
+        - python
+    effects:
+      writes:
+        - node_modules
+        - .venv
+      network: true
+      network_kind: dependency_hydration
+"#,
+    );
+
+    let payload = run_ota(
+        &[
+            "workspace",
+            "tasks",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    let payload_path = fixture.path().join("workspace-tasks.json");
+    fs::write(
+        &payload_path,
+        serde_json::to_vec_pretty(&payload).expect("payload should serialize"),
+    )
+    .expect("payload should write");
+
+    let stdout = run_ota_success_text(
+        &[
+            "json",
+            "validate",
+            "--schema",
+            "workspace-tasks.json",
+            "--input",
+            payload_path.to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert!(stdout.contains("validated"), "{stdout}");
 }
 
 #[test]

@@ -50,7 +50,11 @@ tasks:
       network_kind: dependency_hydration
   test:
     description: Run the Python test suite
-    run: uv run pytest
+    command:
+      exe: uv
+      args:
+        - run
+        - pytest
     depends_on:
       - setup
     requirements:

@@ -1707,7 +1707,7 @@ Task-effect rules:
 `aggregate` rules:
 
 - use `aggregate` when the task is only a named dependency-closure entrypoint and does not have its own command body
-- `aggregate` is a task body, so it is mutually exclusive with `run`, `script`, `prepare`, `launch`, and `action`
+- `aggregate` is a task body, so it is mutually exclusive with `run`, `script`, `command`, `prepare`, `launch`, and `action`
 - `aggregate.tasks` entries must resolve to known tasks
 - `aggregate.tasks` order is preserved during execution
 - aggregate-member failures become the aggregate task result
@@ -1815,6 +1815,7 @@ tasks:
 - `modes.<mode>.env_files`: optional ordered repo-relative dotenv overlays appended after task-level `env_files`
 - `modes.<mode>.run`: optional single-line command override for that mode
 - `modes.<mode>.script`: optional multiline script override for that mode
+- `modes.<mode>.command`: optional structured finite command override for that mode
 - `modes.<mode>.prepare`: optional structured preparation override for that mode
 - `modes.<mode>.launch`: optional structured launch override for that mode
 - `modes.<mode>.runtime`: optional runtime/listener override for that mode
@@ -1834,13 +1835,20 @@ tasks:
 
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
-- when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`prepare`/`launch`, and `runtime`
+- when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`command`/`prepare`/`launch`, and `runtime`
 - use `env_files` when one task path owns a workflow-specific dotenv overlay such as a `docker compose` interpolation file and that ownership should stay declarative instead of being hard-coded into the shell body
-- when a selected branch omits `run`/`script`/`prepare`/`launch`, ota falls back to the task-level execution body (including OS variants)
+- when a selected branch omits `run`/`script`/`command`/`prepare`/`launch`, ota falls back to the task-level execution body (including OS variants)
 - when a task declares `execution.modes`, an explicit `--mode` must resolve to a declared branch
   unless it matches `default_mode`; unsupported explicit overrides fail early with a mode-branch error
 - use `modes.<mode>` only for mode-specific overrides; you do not need an empty branch such as `modes.native: {}` just to pair with `default_mode: native`
 - `modes.native.lifecycle` and `modes.remote.lifecycle` are invalid; lifecycle is only valid for container execution
+
+`command` fields:
+
+- `command.exe`: required executable name or path; this is generic process truth rather than an npm-specific field, and may be `npm`, `pnpm`, `yarn`, `bun`, `node`, `python3`, `go`, `bundle`, `docker`, an absolute path, or a repo-local executable path
+- `command.args`: optional argument list
+
+Ota does not maintain an allowlist for `command.exe`. The examples above are illustrative, not exhaustive; the executable may be any repo-truthful binary or path as long as the contract declares its requirements honestly.
 
 `launch` fields:
 
@@ -1907,8 +1915,8 @@ idempotent: if `to` already exists, Ota leaves it untouched.
 
 Use `action` when the task is deterministic host repo preparation such as copying templates,
 seeding env files, creating bootstrap files, or creating directories. Do not use `action` for
-arbitrary command execution or backend-local mutation paths; use `run`, `script`, or `launch`
-there instead.
+arbitrary command execution or backend-local mutation paths; use `run`, `script`, `command`, or
+`launch` there instead.
 
 Use `action.kind: ensure_env_file` when a setup path needs deterministic env bootstrap without a
 shell script. It creates `action.path` (optionally seeded from `action.template`) and appends only
@@ -1950,11 +1958,11 @@ step kind, and keeps validation/error reporting inside the contract surface.
   repo-global
 - use `tasks.<name>.requirements` when a prerequisite belongs only to one contributor, quickstart,
   or packaged-runtime path
-- `launch.kind: command` implicitly scopes `launch.exe` as a task-path tool requirement (default
-  version `*`) so selected-workflow precondition diagnosis and activation surfaces include launch
-  executables even when `requirements.tools` is omitted
+- `command.exe` and `launch.kind: command` both implicitly scope their executable as a task-path
+  tool requirement (default version `*`) so selected-workflow precondition diagnosis and
+  activation surfaces include those executables even when `requirements.tools` is omitted
 - declare `requirements.tools.<name>` explicitly when you need to pin a version, attach
-  acquisition metadata, or override defaults for that launch executable
+  acquisition metadata, or override defaults for that executable
 - `requirements.tools` is task-path truth and can be self-contained: tool names do not need a
   matching top-level `tools.<name>` declaration to validate
 - if a required tool is owned by one or more declared toolchains, keep ownership deterministic by
@@ -1987,14 +1995,20 @@ step kind, and keeps validation/error reporting inside the contract surface.
 - each task must declare exactly one executable source:
   - `run`
   - `script`
+  - `command`
   - `launch`
   - `action`
 - `run` stays the simple shell shorthand
 - `script` stays the multiline shell escape hatch
+- `command` is for finite argv-owned execution that Ota should model structurally without shell
+  parsing
 - `launch` is for structured, inspectable starts that Ota should render and reason about without
   hiding everything inside one shell string
 - `action` is for small built-in setup mutations that should stay deterministic and
   cross-platform instead of becoming shell-specific snippets
+- prefer `command` for finite task bodies such as `uv run pytest`, `poetry run pytest`,
+  `bundle exec rake test`, or `npm run build` when the repo truth is one executable plus a stable
+  argument vector rather than shell composition
 - for long-running service processes, prefer `launch.kind: command` over opaque shell `run` or
   `script`
 - pair `launch.kind: command` with `runtime.kind: service` plus `runtime.surfaces` or
@@ -2006,6 +2020,7 @@ step kind, and keeps validation/error reporting inside the contract surface.
 - reserve `run` for finite shell tasks, pipelines, or real escape-hatch cases where a structured
   executable shape would be misleading or unavailable
 - reserve `script` for multiline finite shell escape hatches, not long-running service ownership
+- `command` reuses existing task env, input, receipt, dependency, and agent-safety behavior
 - `launch.kind: command` reuses existing task env, input, receipt, dependency, and agent-safety
   behavior
 - `launch.kind: container` is a task launch source, not an execution context
@@ -2022,6 +2037,11 @@ Examples:
 
 ```yaml
 tasks:
+  test:
+    command:
+      exe: uv
+      args: [run, pytest]
+
   dev:
     launch:
       kind: command
@@ -2603,7 +2623,7 @@ tasks:
 Variant fields:
 
 - `when.os`: required for each current variant entry; supported values are `linux`, `macos`, and `windows`
-- exactly one of `run` or `script`
+- exactly one of `run`, `script`, or `command`
 
 Hook fields:
 
@@ -2626,14 +2646,14 @@ tasks:
 Rules:
 
 - task names must not be empty
-- tasks must declare exactly one task body: `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`, unless the task intentionally resolves through variants or execution-mode inheritance
+- tasks must declare exactly one task body: `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`, unless the task intentionally resolves through variants or execution-mode inheritance
 - input names must use lowercase snake_case
 - input defaults must not be empty
 - input allowed values must not be empty
 - `run` must be non-empty when present
 - `script` must be non-empty when present
 - variant entries must declare `when.os`
-- variant entries must declare exactly one of `run` or `script`
+- variant entries must declare exactly one of `run`, `script`, or `command`
 - duplicate variants for the same `when.os` are rejected
 - dependency references must resolve to known tasks
 - aggregate member references must resolve to known tasks
@@ -2647,6 +2667,7 @@ Rules:
 Current execution model:
 
 - `run` and `script` are shell-compatible execution forms
+- `command` is the structured finite argv execution form
 - `aggregate` executes its declared `aggregate.tasks` in order and records the parent aggregate task as the requested entrypoint
 - task `env` values are applied when ota runs the task and override repo-level env with the same name
 - when variants are declared, ota resolves the best matching `when.os` entry first and falls back to the default execution
@@ -2795,7 +2816,7 @@ Fields:
 - `<name>.notes`: optional multiline notes shown during `ota workflows` and `ota tasks --workflow` summaries
 - `<name>.env.profile`: optional env profile name from `env.profiles`
 - `<name>.prepare.task`: optional native finite task ota should run first as explicit host preparation for that workflow
-  - must reference a declared task with one finite body: `run`, `script`, `prepare`, or `action`
+  - must reference a declared task with one finite body: `run`, `script`, `command`, `prepare`, or `action`
   - must not reference a `launch` task or a task with `runtime`
   - must resolve to native execution
   - intended for deterministic local file preparation such as `copy_if_missing`, `ensure_env_file`, or `ensure_bundle`

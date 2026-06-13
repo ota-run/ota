@@ -3430,6 +3430,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub script: Option<String>,
     #[serde(default)]
+    pub command: Option<TaskCommandSpec>,
+    #[serde(default)]
     pub prepare: Option<TaskPrepareSpec>,
     #[serde(default)]
     pub launch: Option<TaskLaunchSpec>,
@@ -3470,17 +3472,19 @@ impl TaskSpec {
         match (
             self.run.as_ref(),
             self.script.as_ref(),
+            self.command.as_ref(),
             self.prepare.as_ref(),
             self.launch.as_ref(),
             self.action.as_ref(),
             self.aggregate.as_ref(),
         ) {
-            (Some(_), None, None, None, None, None) => Some("run"),
-            (None, Some(_), None, None, None, None) => Some("script"),
-            (None, None, Some(prepare), None, None, None) => Some(prepare.kind_str()),
-            (None, None, None, Some(launch), None, None) => Some(launch.kind_str()),
-            (None, None, None, None, Some(action), None) => Some(action.kind_str()),
-            (None, None, None, None, None, Some(_)) => Some("aggregate"),
+            (Some(_), None, None, None, None, None, None) => Some("run"),
+            (None, Some(_), None, None, None, None, None) => Some("script"),
+            (None, None, Some(_), None, None, None, None) => Some("command"),
+            (None, None, None, Some(prepare), None, None, None) => Some(prepare.kind_str()),
+            (None, None, None, None, Some(launch), None, None) => Some(launch.kind_str()),
+            (None, None, None, None, None, Some(action), None) => Some(action.kind_str()),
+            (None, None, None, None, None, None, Some(_)) => Some("aggregate"),
             _ => None,
         }
     }
@@ -3489,13 +3493,14 @@ impl TaskSpec {
         match (
             self.run.as_deref(),
             self.script.as_deref(),
+            self.command.as_ref(),
             self.prepare.as_ref(),
             self.launch.as_ref(),
             self.action.as_ref(),
             self.aggregate.as_ref(),
         ) {
-            (Some(run), None, None, None, None, None) => Some(run),
-            (None, Some(script), None, None, None, None) => Some(script),
+            (Some(run), None, None, None, None, None, None) => Some(run),
+            (None, Some(script), None, None, None, None, None) => Some(script),
             _ => None,
         }
     }
@@ -3509,6 +3514,7 @@ impl TaskSpec {
                 Some(TaskExecution {
                     kind: self.default_execution_kind()?,
                     body: self.default_execution_body(),
+                    command: self.command.as_ref(),
                     launch: self.launch.as_ref(),
                     action: self.action.as_ref(),
                     prepare: self.prepare.as_ref(),
@@ -3912,6 +3918,12 @@ impl TaskSpec {
 
     pub fn declared_command_launch_executables(&self) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
+        if let Some(command) = self.command.as_ref() {
+            let exe = command.exe.trim();
+            if !exe.is_empty() {
+                names.insert(exe.to_string());
+            }
+        }
         if let Some(TaskLaunchSpec::Command(command)) = self.launch.as_ref() {
             let exe = command.exe.trim();
             if !exe.is_empty() {
@@ -3920,6 +3932,12 @@ impl TaskSpec {
         }
         if let Some(execution) = self.execution.as_ref() {
             for (_, branch) in execution.modes.iter() {
+                if let Some(command) = branch.command.as_ref() {
+                    let exe = command.exe.trim();
+                    if !exe.is_empty() {
+                        names.insert(exe.to_string());
+                    }
+                }
                 if let Some(TaskLaunchSpec::Command(command)) = branch.launch.as_ref() {
                     let exe = command.exe.trim();
                     if !exe.is_empty() {
@@ -3937,6 +3955,13 @@ impl TaskSpec {
         os: &str,
     ) -> Option<String> {
         let execution = self.resolved_execution_for_backend(backend, os)?;
+        if let Some(command) = execution.command() {
+            let exe = command.exe.trim();
+            if exe.is_empty() {
+                return None;
+            }
+            return Some(exe.to_string());
+        }
         if let Some(launch) = execution.launch() {
             let TaskLaunchSpec::Command(command) = launch else {
                 return None;
@@ -3963,9 +3988,10 @@ impl TaskSpec {
     fn inferred_command_tool_requirements(&self) -> BTreeMap<String, ToolRequirement> {
         let mut tools = BTreeMap::new();
         if let Some(exe) = self
-            .launch
+            .command
             .as_ref()
-            .and_then(command_launch_executable)
+            .and_then(task_command_executable)
+            .or_else(|| self.launch.as_ref().and_then(command_launch_executable))
             .or_else(|| {
                 self.run
                     .as_deref()
@@ -3981,6 +4007,14 @@ impl TaskSpec {
         }
         tools
     }
+}
+
+fn task_command_executable(command: &TaskCommandSpec) -> Option<String> {
+    let exe = command.exe.trim();
+    if exe.is_empty() {
+        return None;
+    }
+    Some(exe.to_string())
 }
 
 fn command_launch_executable(launch: &TaskLaunchSpec) -> Option<String> {
@@ -4177,6 +4211,8 @@ pub struct TaskModeBranchSpec {
     #[serde(default)]
     pub script: Option<String>,
     #[serde(default)]
+    pub command: Option<TaskCommandSpec>,
+    #[serde(default)]
     pub prepare: Option<TaskPrepareSpec>,
     #[serde(default)]
     pub launch: Option<TaskLaunchSpec>,
@@ -4189,13 +4225,15 @@ impl TaskModeBranchSpec {
         match (
             self.run.as_ref(),
             self.script.as_ref(),
+            self.command.as_ref(),
             self.prepare.as_ref(),
             self.launch.as_ref(),
         ) {
-            (Some(_), None, None, None) => Some("run"),
-            (None, Some(_), None, None) => Some("script"),
-            (None, None, Some(prepare), None) => Some(prepare.kind_str()),
-            (None, None, None, Some(launch)) => Some(launch.kind_str()),
+            (Some(_), None, None, None, None) => Some("run"),
+            (None, Some(_), None, None, None) => Some("script"),
+            (None, None, Some(_), None, None) => Some("command"),
+            (None, None, None, Some(prepare), None) => Some(prepare.kind_str()),
+            (None, None, None, None, Some(launch)) => Some(launch.kind_str()),
             _ => None,
         }
     }
@@ -4204,11 +4242,12 @@ impl TaskModeBranchSpec {
         match (
             self.run.as_deref(),
             self.script.as_deref(),
+            self.command.as_ref(),
             self.prepare.as_ref(),
             self.launch.as_ref(),
         ) {
-            (Some(run), None, None, None) => Some(run),
-            (None, Some(script), None, None) => Some(script),
+            (Some(run), None, None, None, None) => Some(run),
+            (None, Some(script), None, None, None) => Some(script),
             _ => None,
         }
     }
@@ -4217,6 +4256,7 @@ impl TaskModeBranchSpec {
         Some(TaskExecution {
             kind: self.execution_kind()?,
             body: self.execution_body(),
+            command: self.command.as_ref(),
             launch: self.launch.as_ref(),
             action: None,
             prepare: self.prepare.as_ref(),
@@ -4244,6 +4284,8 @@ pub enum TaskLaunchSpec {
     Command(TaskCommandLaunchSpec),
     Container(TaskContainerLaunchSpec),
 }
+
+pub type TaskCommandSpec = TaskCommandLaunchSpec;
 
 impl TaskLaunchSpec {
     pub const fn kind_str(&self) -> &'static str {
@@ -4274,6 +4316,17 @@ pub struct TaskCommandLaunchSpec {
     pub exe: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
+}
+
+impl TaskCommandSpec {
+    pub fn preview(&self) -> String {
+        let mut preview = self.exe.clone();
+        for arg in &self.args {
+            preview.push(' ');
+            preview.push_str(arg);
+        }
+        preview
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -5288,21 +5341,32 @@ pub struct TaskVariantSpec {
     pub run: Option<String>,
     #[serde(default)]
     pub script: Option<String>,
+    #[serde(default)]
+    pub command: Option<TaskCommandSpec>,
 }
 
 impl TaskVariantSpec {
     pub fn execution_kind(&self) -> Option<&'static str> {
-        match (self.run.as_ref(), self.script.as_ref()) {
-            (Some(_), None) => Some("run"),
-            (None, Some(_)) => Some("script"),
+        match (
+            self.run.as_ref(),
+            self.script.as_ref(),
+            self.command.as_ref(),
+        ) {
+            (Some(_), None, None) => Some("run"),
+            (None, Some(_), None) => Some("script"),
+            (None, None, Some(_)) => Some("command"),
             _ => None,
         }
     }
 
     pub fn execution_body(&self) -> Option<&str> {
-        match (self.run.as_deref(), self.script.as_deref()) {
-            (Some(run), None) => Some(run),
-            (None, Some(script)) => Some(script),
+        match (
+            self.run.as_deref(),
+            self.script.as_deref(),
+            self.command.as_ref(),
+        ) {
+            (Some(run), None, None) => Some(run),
+            (None, Some(script), None) => Some(script),
             _ => None,
         }
     }
@@ -5311,6 +5375,7 @@ impl TaskVariantSpec {
         Some(TaskExecution {
             kind: self.execution_kind()?,
             body: self.execution_body(),
+            command: self.command.as_ref(),
             launch: None,
             action: None,
             prepare: None,
@@ -5348,6 +5413,7 @@ fn merged_named_requirements(base: &[String], overlay: &[String]) -> Vec<String>
 pub struct TaskExecution<'a> {
     pub kind: &'static str,
     pub body: Option<&'a str>,
+    pub command: Option<&'a TaskCommandSpec>,
     pub launch: Option<&'a TaskLaunchSpec>,
     pub action: Option<&'a TaskActionSpec>,
     pub prepare: Option<&'a TaskPrepareSpec>,
@@ -5358,6 +5424,10 @@ pub struct TaskExecution<'a> {
 impl<'a> TaskExecution<'a> {
     pub fn shell_body(&self) -> Option<&'a str> {
         self.body
+    }
+
+    pub fn command(&self) -> Option<&'a TaskCommandSpec> {
+        self.command
     }
 
     pub fn launch(&self) -> Option<&'a TaskLaunchSpec> {
@@ -5379,6 +5449,7 @@ impl<'a> TaskExecution<'a> {
     pub fn preview(&self) -> String {
         self.body
             .map(ToOwned::to_owned)
+            .or_else(|| self.command.map(TaskCommandSpec::preview))
             .or_else(|| self.launch.map(TaskLaunchSpec::preview))
             .or_else(|| self.action.map(TaskActionSpec::preview))
             .or_else(|| self.prepare.map(TaskPrepareSpec::preview))
@@ -5395,6 +5466,8 @@ pub struct TaskVariantView<'a> {
     pub run: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<crate::output::TaskCommandSummary<'a>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

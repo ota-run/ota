@@ -33,7 +33,7 @@ use crate::detector::{
 use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentBoundaryProvenanceConfig, AgentConfig,
     AgentExceptionsConfig, AgentInferredBoundaryConfig, AgentPosture, EnvSource, EnvSourceKind,
-    FileCheckExpectation, TaskActionSpec, TaskCopyIfMissingActionSpec,
+    FileCheckExpectation, TaskActionSpec, TaskCommandSpec, TaskCopyIfMissingActionSpec,
     TaskDependencyHydrationMedium, TaskDependencyHydrationPrepareSpec,
     TaskDependencyHydrationSourceSpec, TaskEffectsSpec, TaskNetworkEffectKind, TaskPrepareSpec,
     TaskRequirementsSpec, TaskUvHydrationSourceSpec,
@@ -190,7 +190,7 @@ impl StarterPack {
             Self::Python => StarterPackCatalogEntry {
                 pack: self,
                 summary: "Conventional Python starter with uv-managed toolchain ownership and uv-native setup/test tasks.",
-                when: "Use this for Python repos that should start from toolchain-owned Python (`toolchains.python`) and uv-managed dependency hydration plus task execution. The default test path uses `uv run pytest`, and you can switch to `uv run python -m unittest` with `--test-runner unittest` when that is the repo's conventional test entrypoint.",
+                when: "Use this for Python repos that should start from toolchain-owned Python (`toolchains.python`) and uv-managed dependency hydration plus task execution. The default test path uses first-class `command` task execution for `uv run pytest`, and you can switch to `uv run python -m unittest` with `--test-runner unittest` when that is the repo's conventional test entrypoint.",
                 toolchains: &["python"],
                 runtimes: &[],
                 tools: &[],
@@ -398,10 +398,21 @@ impl PythonTestRunner {
         Self::Pytest
     }
 
-    fn test_command(self) -> &'static str {
+    fn test_command_spec(self) -> TaskCommandSpec {
         match self {
-            Self::Pytest => "uv run pytest",
-            Self::Unittest => "uv run python -m unittest",
+            Self::Pytest => TaskCommandSpec {
+                exe: String::from("uv"),
+                args: vec![String::from("run"), String::from("pytest")],
+            },
+            Self::Unittest => TaskCommandSpec {
+                exe: String::from("uv"),
+                args: vec![
+                    String::from("run"),
+                    String::from("python"),
+                    String::from("-m"),
+                    String::from("unittest"),
+                ],
+            },
         }
     }
 
@@ -740,6 +751,7 @@ fn add_detected_env_copy_setup(contract: &mut DetectContract, root: &Path) {
         DetectTask {
             description: Some(format!("Create `{to}` from `{from}` when it is missing.")),
             run: String::new(),
+            command: None,
             action: Some(TaskActionSpec::CopyIfMissing(TaskCopyIfMissingActionSpec {
                 from: from.to_string(),
                 to: to.to_string(),
@@ -2128,6 +2140,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                 DetectTask {
                     description: Some(String::from("Hydrate Python dependencies through uv.")),
                     run: String::new(),
+                    command: None,
                     action: None,
                     prepare: Some(TaskPrepareSpec::DependencyHydration(
                         TaskDependencyHydrationPrepareSpec {
@@ -2160,9 +2173,9 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             );
             contract.tasks.insert(
                 String::from("test"),
-                pack_task(
+                pack_task_command(
                     "test",
-                    test_runner.test_command(),
+                    test_runner.test_command_spec(),
                     Some(match test_runner {
                         PythonTestRunner::Pytest => {
                             String::from("Run the default Python test command.")
@@ -2489,6 +2502,34 @@ fn pack_task(task_name: &str, run: &str, description: Option<String>) -> DetectT
     DetectTask {
         description,
         run: String::from(run),
+        command: None,
+        action: None,
+        prepare: None,
+        requirements: TaskRequirementsSpec::default(),
+        effects: TaskEffectsSpec::default(),
+        depends_on: Vec::new(),
+        notes: Some(notes),
+        internal: task_name == "setup",
+        safe_for_agent: false,
+    }
+}
+
+fn pack_task_command(
+    task_name: &str,
+    command: TaskCommandSpec,
+    description: Option<String>,
+) -> DetectTask {
+    let mut notes = String::from("Run `ota run ");
+    notes.push_str(task_name);
+    notes.push_str("` to execute this task.\n");
+    if let Some(note) = description.as_deref() {
+        notes.push_str(note);
+    }
+
+    DetectTask {
+        description,
+        run: String::new(),
+        command: Some(command),
         action: None,
         prepare: None,
         requirements: TaskRequirementsSpec::default(),
@@ -2549,6 +2590,7 @@ mod tests {
             DetectTask {
                 description: None,
                 run: String::from("echo setup"),
+                command: None,
                 action: None,
                 prepare: None,
                 requirements: crate::schema::TaskRequirementsSpec::default(),
@@ -2874,6 +2916,7 @@ mod tests {
             DetectTask {
                 description: None,
                 run: String::from("nimble test"),
+                command: None,
                 action: None,
                 prepare: None,
                 requirements: crate::schema::TaskRequirementsSpec::default(),
