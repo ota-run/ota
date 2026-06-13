@@ -66,14 +66,12 @@ services:
       name: local
       file: docker-compose.yml
       service: api
-      env_file: .env.compose
   postgres:
     manager:
       kind: compose
       name: local
       file: docker-compose.yml
       service: postgres
-      env_file: .env.compose
 tasks:
   setup:
     context: host
@@ -119,6 +117,9 @@ workflows:
     description: Render `.env.compose` from `.env.example` plus selected workflow env truth, then start the service-backed dev path
     env:
       profile: compose
+      compose_env_file_services:
+        - api
+        - postgres
     setup:
       task: setup
     run:

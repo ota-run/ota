@@ -1184,10 +1184,12 @@ Profile rules:
   task `env`, and mode-branch `env` still win when they declare the same values
 - rendered dotenv artifacts are injected automatically into selected workflow tasks as the first
   profile-owned `env_file`; do not duplicate the same path in `env_files`
-- rendered dotenv artifacts are re-rendered deterministically on each `ota up` run before service
-  startup or setup; when `render.dotenv.template` is declared, ota starts from that template and
-  then replaces the declared profile/env keys, so workflow-owned compose interpolation no longer
-  requires a separate `ensure_env_file` prepare task
+- rendered dotenv artifacts are re-rendered deterministically on each workflow-owned execution
+  path before they are consumed: `ota up`, `ota proof runtime`, and direct `ota run` for tasks in
+  the selected workflow task closure all materialize the artifact from contract truth
+- when `render.dotenv.template` is declared, ota starts from that template and then replaces the
+  declared profile/env keys, so workflow-owned compose interpolation no longer requires a separate
+  `ensure_env_file` prepare task
 - use profiles when one workflow/runtime shape needs a truthful env overlay without hiding that
   selection in shell glue or ad hoc setup notes
 
@@ -2819,6 +2821,8 @@ Fields:
 - `<name>.description`: optional operator-facing summary
 - `<name>.notes`: optional multiline notes shown during `ota workflows` and `ota tasks --workflow` summaries
 - `<name>.env.profile`: optional env profile name from `env.profiles`
+- `<name>.env.compose_env_file_services`: optional compose-managed services that should consume the
+  selected workflow profile's rendered dotenv artifact as `services.<service>.manager.env_file`
 - `<name>.prepare.task`: optional native finite task ota should run first as explicit host preparation for that workflow
   - must reference a declared task with one finite body: `run`, `script`, `command`, `prepare`, or `action`
   - must not reference a `launch` task or a task with `runtime`
@@ -2845,6 +2849,17 @@ Service manager fields:
 - `services.<name>.manager.file`: optional compose file path for `kind: compose`
 - `services.<name>.manager.env_file`: optional repo-relative compose env-file path for `kind: compose`
 - `services.<name>.manager.service`: optional compose service name override; required today for `kind: compose`
+
+Workflow env adapter rules:
+
+- use `<name>.env.compose_env_file_services` when the workflow owns one rendered dotenv artifact
+  and named compose services should consume that exact file
+- this keeps compose adapter input ownership on the workflow env surface instead of duplicating
+  the same `manager.env_file` path across services
+- every referenced service must declare `manager.kind: compose`
+- the selected profile must declare `render.dotenv`
+- if a referenced service also declares `manager.env_file`, it must match the workflow-owned
+  rendered dotenv path exactly
 
 Prepare vs setup vs run:
 

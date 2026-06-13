@@ -435,6 +435,16 @@ impl Contract {
             .and_then(|name| self.env.profiles.get(name))
     }
 
+    pub fn selected_workflow_compose_env_file_service_names(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Vec<String> {
+        self.selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.env.as_ref())
+            .map(|env| env.compose_env_file_services.clone())
+            .unwrap_or_default()
+    }
+
     fn collect_task_dependency_closure(
         &self,
         name: &str,
@@ -516,6 +526,8 @@ pub struct WorkflowTaskRefSpec {
 pub struct WorkflowEnvSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    #[serde(default)]
+    pub compose_env_file_services: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]

@@ -393,7 +393,11 @@ fn execution_topology_schema_covers_declared_graph_fields() {
     assert!(task.get("launch").is_some());
     assert!(task.get("action").is_some());
     assert!(task.get("variants").is_some());
-    assert!(task["variants"]["items"]["properties"].get("command").is_some());
+    assert!(
+        task["variants"]["items"]["properties"]
+            .get("command")
+            .is_some()
+    );
     assert!(task.get("modes").is_some());
     assert_eq!(
         task["launch"]["$ref"],

@@ -10030,6 +10030,52 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 )));
             }
         }
+        if let Some(env) = workflow.env.as_ref()
+            && !env.compose_env_file_services.is_empty()
+        {
+            let profile_name = env.profile.as_deref().map(str::trim).unwrap_or_default();
+            let profile = contract.env.profiles.get(profile_name);
+            let rendered_path = profile
+                .and_then(|profile| profile.render.as_ref())
+                .and_then(|render| render.dotenv.as_ref())
+                .map(|dotenv| dotenv.path.trim());
+            if profile_name.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.env.compose_env_file_services` requires `workflows.{name}.env.profile`"
+                )));
+            } else if rendered_path.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.env.compose_env_file_services` requires `env.profiles.{profile_name}.render.dotenv` so the workflow owns a rendered env-file artifact"
+                )));
+            }
+            for service_name in &env.compose_env_file_services {
+                let Some(service) = contract.services.get(service_name) else {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.env.compose_env_file_services` references unknown service `{service_name}`"
+                    )));
+                    continue;
+                };
+                let Some(manager) = service.manager.as_ref() else {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.env.compose_env_file_services` requires service `{service_name}` to declare `manager.kind: compose`"
+                    )));
+                    continue;
+                };
+                if manager.kind != crate::schema::ServiceManagerKind::Compose {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.env.compose_env_file_services` requires service `{service_name}` to declare `manager.kind: compose`"
+                    )));
+                }
+                if let (Some(rendered_path), Some(env_file)) =
+                    (rendered_path, manager.env_file.as_deref().map(str::trim))
+                    && env_file != rendered_path
+                {
+                    errors.push(ValidationError::new(format!(
+                        "`services.{service_name}.manager.env_file` must match `env.profiles.{profile_name}.render.dotenv.path` when `workflows.{name}.env.compose_env_file_services` owns that adapter input"
+                    )));
+                }
+            }
+        }
         if let Some(prepare) = workflow.prepare.as_ref() {
             validate_task_reference(
                 &format!("workflows.{name}.prepare.task"),
@@ -11698,6 +11744,96 @@ workflows:
             .to_string();
         assert!(error.contains(
             "`env.profiles.docker-build.render.dotenv.template` must not equal `render.dotenv.path`; keep the template as immutable repo truth and render into a separate artifact path"
+        ));
+    }
+
+    #[test]
+    fn validates_workflow_compose_env_file_service_binding() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  profiles:
+    compose:
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.compose
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      service: api
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    env:
+      profile: compose
+      compose_env_file_services:
+        - api
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_workflow_compose_env_file_service_binding() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  profiles:
+    compose:
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.compose
+services:
+  api:
+    manager:
+      kind: host
+      env_file: .env.other
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    env:
+      profile: compose
+      compose_env_file_services:
+        - api
+        - cache
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("invalid compose env-file binding should fail validation")
+            .to_string();
+        assert!(error.contains(
+            "`workflows.app.env.compose_env_file_services` requires service `api` to declare `manager.kind: compose`"
+        ));
+        assert!(error.contains(
+            "`workflows.app.env.compose_env_file_services` references unknown service `cache`"
         ));
     }
 

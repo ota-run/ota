@@ -703,7 +703,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "profile": { "type": "string" }
+        "profile": { "type": "string" },
+        "compose_env_file_services": { "$ref": "#/$defs/stringArray" }
       }
     },
     "workflowServices": {
@@ -936,6 +937,15 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         }
       ]
     },
+    "taskCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exe"],
+      "properties": {
+        "exe": { "type": "string" },
+        "args": { "$ref": "#/$defs/stringArray" }
+      }
+    },
     "taskLaunch": {
       "oneOf": [
         {
@@ -1018,6 +1028,15 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "additionalProperties": false,
           "required": ["kind", "cwd"],
           "properties": {
+            "kind": { "const": "uv" },
+            "cwd": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "cwd"],
+          "properties": {
             "kind": { "const": "go_modules" },
             "cwd": { "type": "string" }
           }
@@ -1025,15 +1044,31 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       ]
     },
     "taskPrepare": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["kind", "medium", "source"],
-      "properties": {
-        "kind": { "const": "dependency_hydration" },
-        "medium": { "enum": ["container_images", "package_dependencies"] },
-        "source": { "$ref": "#/$defs/taskPrepareSource" },
-        "targets": { "$ref": "#/$defs/stringArray" }
-      }
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "medium", "source"],
+          "properties": {
+            "kind": { "const": "dependency_hydration" },
+            "medium": { "enum": ["container_images", "package_dependencies"] },
+            "source": { "$ref": "#/$defs/taskPrepareSource" },
+            "targets": { "$ref": "#/$defs/stringArray" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "steps"],
+          "properties": {
+            "kind": { "const": "sequence" },
+            "steps": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/taskPrepare" }
+            }
+          }
+        }
+      ]
     },
     "taskEffects": {
       "type": "object",
@@ -1262,7 +1297,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           }
         },
         "run": { "type": "string" },
-        "script": { "type": "string" }
+        "script": { "type": "string" },
+        "command": { "$ref": "#/$defs/taskCommand" }
       }
     },
     "taskExecutionOrchestrator": {
@@ -1289,6 +1325,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         },
         "run": { "type": "string" },
         "script": { "type": "string" },
+        "command": { "$ref": "#/$defs/taskCommand" },
         "prepare": { "$ref": "#/$defs/taskPrepare" },
         "launch": { "$ref": "#/$defs/taskLaunch" },
         "runtime": { "$ref": "#/$defs/taskRuntime" }
@@ -1316,7 +1353,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "checks": { "$ref": "#/$defs/stringArray" }
+        "os": { "type": "string" }
       }
     },
     "taskAggregate": {
@@ -1351,6 +1388,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         },
         "run": { "type": "string" },
         "script": { "type": "string" },
+        "command": { "$ref": "#/$defs/taskCommand" },
         "prepare": { "$ref": "#/$defs/taskPrepare" },
         "launch": { "$ref": "#/$defs/taskLaunch" },
         "action": { "$ref": "#/$defs/taskAction" },

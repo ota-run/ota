@@ -14961,11 +14961,17 @@ fn render_run_preview_target(
     requested_task_name: &str,
     overrides: ExecutionOverrides,
     member: Option<&str>,
-    target: LoadedContractTarget,
+    mut target: LoadedContractTarget,
     format: OutputFormat,
     persist_logs: bool,
 ) -> CommandOutput {
     let task_name = canonical_declared_task_name(&target.contract, requested_task_name);
+    if workflow_env_profile_applies_to_task(&target.contract, None, task_name.as_str())
+        && let Some(adjusted) =
+            contract_adjusted_for_selected_workflow_env_profile(&target.contract, None)
+    {
+        target.contract = adjusted;
+    }
     let Some(task) = target.contract.tasks.get(task_name.as_str()) else {
         let error = render_run_error(RunError::UnknownTask {
             task: requested_task_name.to_string(),
@@ -44426,6 +44432,7 @@ workflows:
         .expect("likely cause should be detected");
         assert!(likely.contains("Redis"), "{likely}");
         assert!(likely.contains("task `env_files`"), "{likely}");
+        assert!(likely.contains("compose `manager.env_file`"), "{likely}");
     }
 
     #[test]
@@ -52058,7 +52065,66 @@ workflows:
     }
 
     #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_binds_rendered_dotenv_to_compose_services()
+     {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: env-profile-compose
+env:
+  profiles:
+    compose:
+      render:
+        dotenv:
+          path: .env.compose
+services:
+  api:
+    manager:
+      kind: compose
+  cache:
+    manager:
+      kind: compose
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: compose
+  compose:
+    env:
+      profile: compose
+      compose_env_file_services:
+        - api
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(&contract, None)
+            .expect("workflow env profile should adjust contract");
+        assert_eq!(
+            adjusted
+                .services
+                .get("api")
+                .and_then(|service| service.manager.as_ref())
+                .and_then(|manager| manager.env_file.as_deref()),
+            Some(".env.compose")
+        );
+        assert_eq!(
+            adjusted
+                .services
+                .get("cache")
+                .and_then(|service| service.manager.as_ref())
+                .and_then(|manager| manager.env_file.as_deref()),
+            None
+        );
+    }
+
+    #[test]
     fn render_selected_workflow_env_profile_artifacts_writes_dotenv_from_profile_truth() {
+        let _env_lock = crate::test_support::env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
         let contract = parse_contract_str(
@@ -52114,7 +52180,77 @@ workflows:
     }
 
     #[test]
+    fn materialize_selected_workflow_env_profile_for_task_writes_rendered_dotenv_for_run_paths() {
+        let _env_lock = crate::test_support::env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: env-profile-run-materialization
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    docker-build:
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
+tasks:
+  build:
+    run: pnpm build
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let mut target = super::LoadedContractTarget {
+            contract,
+            contract_path: contract_path.clone(),
+        };
+        let prior_database_url = std::env::var_os("DATABASE_URL");
+        unsafe {
+            std::env::set_var("DATABASE_URL", "postgres://workflow-owned");
+        }
+        super::materialize_selected_workflow_env_profile_for_task(&mut target, None, "build")
+            .expect("workflow env materialization should succeed");
+
+        let rendered = fs::read_to_string(fixture.path().join(".env.docker-build")).unwrap();
+        assert_eq!(
+            rendered,
+            "DATABASE_URL=postgres://workflow-owned\nREDIS_HOST=redis\n"
+        );
+        assert_eq!(
+            target
+                .contract
+                .tasks
+                .get("build")
+                .and_then(|task| task.env_files.first())
+                .map(String::as_str),
+            Some(".env.docker-build")
+        );
+        match prior_database_url {
+            Some(value) => unsafe { std::env::set_var("DATABASE_URL", value) },
+            None => unsafe { std::env::remove_var("DATABASE_URL") },
+        }
+    }
+
+    #[test]
     fn render_selected_workflow_env_profile_artifacts_renders_from_template_truth() {
+        let _env_lock = crate::test_support::env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
         let contract = parse_contract_str(
@@ -68159,12 +68295,22 @@ fn run_single_contract_target_streaming(
     task_name: &str,
     overrides: ExecutionOverrides,
     member: Option<&str>,
-    target: LoadedContractTarget,
+    mut target: LoadedContractTarget,
     task_inputs: &[String],
     show_receipt: bool,
     details_footer: &str,
     persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
+    if let Err(error) =
+        materialize_selected_workflow_env_profile_for_task(&mut target, None, task_name)
+    {
+        return Err(RunCommandFailure {
+            message: stylize_text_failure("ota run", &error),
+            summary: None,
+            exit_code: 1,
+            receipt: None,
+        });
+    }
     let task_name = canonical_declared_task_name(&target.contract, task_name);
     let prepared_logs = prepare_streaming_durable_run_logs(
         &target.contract_path,
@@ -68425,12 +68571,22 @@ fn run_single_contract_target_captured(
     task_name: &str,
     overrides: ExecutionOverrides,
     member: Option<&str>,
-    target: LoadedContractTarget,
+    mut target: LoadedContractTarget,
     task_inputs: &[String],
     show_receipt: bool,
     details_footer: &str,
     persist_logs: bool,
 ) -> Result<String, RunCommandFailure> {
+    if let Err(error) =
+        materialize_selected_workflow_env_profile_for_task(&mut target, None, task_name)
+    {
+        return Err(RunCommandFailure {
+            message: stylize_text_failure("ota run", &error),
+            summary: None,
+            exit_code: 1,
+            receipt: None,
+        });
+    }
     let task_name = canonical_declared_task_name(&target.contract, task_name);
     match run_task_captured_with_args_with_overrides_with_policy(
         &target.contract,
@@ -81057,7 +81213,7 @@ fn runtime_loopback_drift_hint_from_log(path: &Path) -> Option<String> {
         };
 
         return Some(format!(
-            "likely config drift: the runtime is still targeting {service} on loopback inside a multi-service startup path; move that host binding into a workflow-scoped env overlay or task `env_files` instead of `127.0.0.1` / `localhost`"
+            "likely config drift: the runtime is still targeting {service} on loopback inside a multi-service startup path; move that host binding into a workflow-scoped env overlay, rendered workflow env artifact, task `env_files`, or compose `manager.env_file` instead of `127.0.0.1` / `localhost`"
         ));
     }
     None
@@ -81185,7 +81341,14 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         .selected_workflow_env_profile(workflow_name)?
         .clone();
     let task_names = contract.selected_workflow_task_closure_names(workflow_name);
-    if task_names.is_empty() && profile.sources.is_empty() {
+    let rendered_dotenv_path = profile
+        .render
+        .as_ref()
+        .and_then(|render| render.dotenv.as_ref())
+        .map(|dotenv| dotenv.path.clone());
+    let compose_env_file_services =
+        contract.selected_workflow_compose_env_file_service_names(workflow_name);
+    if task_names.is_empty() && profile.sources.is_empty() && compose_env_file_services.is_empty() {
         return None;
     }
 
@@ -81197,11 +81360,6 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         }
     }
     adjusted.env.sources = merged_sources;
-    let rendered_dotenv_path = profile
-        .render
-        .as_ref()
-        .and_then(|render| render.dotenv.as_ref())
-        .map(|dotenv| dotenv.path.clone());
 
     for task_name in task_names {
         let Some(task) = adjusted.tasks.get_mut(task_name.as_str()) else {
@@ -81228,7 +81386,66 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         }
     }
 
+    if let Some(path) = rendered_dotenv_path.as_ref() {
+        for service_name in compose_env_file_services {
+            let Some(service) = adjusted.services.get_mut(service_name.as_str()) else {
+                continue;
+            };
+            let Some(manager) = service.manager.as_mut() else {
+                continue;
+            };
+            if manager.kind == crate::schema::ServiceManagerKind::Compose {
+                manager.env_file = Some(path.clone());
+            }
+        }
+    }
+
     Some(adjusted)
+}
+
+fn workflow_env_profile_applies_to_task(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    task_name: &str,
+) -> bool {
+    contract
+        .selected_workflow_task_closure_names(workflow_name)
+        .iter()
+        .any(|declared| declared == task_name)
+}
+
+fn materialize_selected_workflow_env_profile_for_task(
+    target: &mut LoadedContractTarget,
+    workflow_name: Option<&str>,
+    task_name: &str,
+) -> Result<(), String> {
+    let task_name = canonical_declared_task_name(&target.contract, task_name);
+    if target
+        .contract
+        .selected_workflow_env_profile_name(workflow_name)
+        .is_none()
+        || !workflow_env_profile_applies_to_task(
+            &target.contract,
+            workflow_name,
+            task_name.as_str(),
+        )
+    {
+        return Ok(());
+    }
+
+    let policy_env = load_policy_env_overlay(&target.contract_path);
+    render_selected_workflow_env_profile_artifacts(
+        &target.contract,
+        &target.contract_path,
+        workflow_name,
+        policy_env.as_ref().ok().map(|overlay| &overlay.values),
+    )?;
+    if let Some(adjusted) =
+        contract_adjusted_for_selected_workflow_env_profile(&target.contract, workflow_name)
+    {
+        target.contract = adjusted;
+    }
+    Ok(())
 }
 
 fn selected_workflow_env_profile_render_preview_action(
@@ -81394,7 +81611,7 @@ fn selected_workflow_env_profile_rendered_artifact_entries(
         }
     }
     for service_name in contract.selected_workflow_required_service_names(workflow_name) {
-        let Some(service) = contract.services.get(service_name.as_str()) else {
+        let Some(service) = adjusted.services.get(service_name.as_str()) else {
             continue;
         };
         if service

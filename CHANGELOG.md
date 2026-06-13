@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- made workflow-owned env materialization more first-class across real execution paths: selected
+  workflow profiles can now declare `env.compose_env_file_services` to bind one rendered dotenv
+  artifact directly into named compose-managed services, direct `ota run` now materializes
+  selected workflow dotenv artifacts before executing tasks in the workflow closure, and proof
+  runtime likely-cause hints now point operators at workflow overlays, rendered artifacts, task
+  `env_files`, and compose `manager.env_file` instead of implying shell glue is the primary fix
 - widened first-party sync governance beyond `ota-run/skills`: the release gate and repo task
   surface now also govern `ota-run/ota-site` through one shared first-party consumer sync check,
   with explicit status records for both the skills package and the public docs site so canonical
