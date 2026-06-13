@@ -52249,6 +52249,64 @@ workflows:
     }
 
     #[test]
+    fn materialize_selected_workflow_env_profile_for_task_fails_on_invalid_policy_overlay() {
+        let _env_lock = crate::test_support::env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: env-profile-run-materialization
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    docker-build:
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
+tasks:
+  build:
+    run: pnpm build
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let invalid_policy_path = fixture.path().join("invalid-policy.yaml");
+        fs::write(&invalid_policy_path, "not: [valid\n").unwrap();
+        let original_policy = std::env::var_os("OTA_POLICY");
+        unsafe {
+            std::env::set_var("OTA_POLICY", &invalid_policy_path);
+        }
+
+        let mut target = super::LoadedContractTarget {
+            contract,
+            contract_path: contract_path.clone(),
+        };
+        let error =
+            super::materialize_selected_workflow_env_profile_for_task(&mut target, None, "build")
+                .expect_err("invalid policy overlay should fail workflow env materialization");
+        assert!(error.contains("policy"), "{error}");
+
+        match original_policy {
+            Some(value) => unsafe { std::env::set_var("OTA_POLICY", value) },
+            None => unsafe { std::env::remove_var("OTA_POLICY") },
+        }
+    }
+
+    #[test]
     fn render_selected_workflow_env_profile_artifacts_renders_from_template_truth() {
         let _env_lock = crate::test_support::env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -81433,12 +81491,13 @@ fn materialize_selected_workflow_env_profile_for_task(
         return Ok(());
     }
 
-    let policy_env = load_policy_env_overlay(&target.contract_path);
+    let policy_env =
+        load_policy_env_overlay(&target.contract_path).map_err(|error| error.to_string())?;
     render_selected_workflow_env_profile_artifacts(
         &target.contract,
         &target.contract_path,
         workflow_name,
-        policy_env.as_ref().ok().map(|overlay| &overlay.values),
+        Some(&policy_env.values),
     )?;
     if let Some(adjusted) =
         contract_adjusted_for_selected_workflow_env_profile(&target.contract, workflow_name)
