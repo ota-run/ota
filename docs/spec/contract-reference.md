@@ -1718,7 +1718,9 @@ Task-effect rules:
 
 `prepare` fields:
 
-- `prepare.kind`: required preparation classifier; `dependency_hydration` is the first shipped slice
+- `prepare.kind`: required preparation classifier; ota currently ships `dependency_hydration` and `sequence`
+- `prepare.kind: sequence`
+  - `prepare.steps`: required non-empty ordered list of child prepare steps
 - `prepare.kind: dependency_hydration`
   - `prepare.medium: container_images`
     - `prepare.source.kind: docker_compose`
@@ -1734,6 +1736,8 @@ Task-effect rules:
     - `prepare.source.kind: bundler`
     - `prepare.source.cwd`: required repo-relative working directory for the Bundler invocation
     - `prepare.source.path`: required repo-relative bundle install path for the repo-local gem lane
+    - `prepare.source.kind: uv`
+    - `prepare.source.cwd`: required repo-relative working directory for the `uv sync` invocation
     - `prepare.source.kind: poetry`
     - `prepare.source.cwd`: required repo-relative working directory for the Poetry install invocation
     - `prepare.source.groups`: optional dependency-group list for `poetry install --with ...` or `--only ...`
@@ -1747,19 +1751,58 @@ Task-effect rules:
 - use `prepare` when the task is a finite setup phase ota should understand structurally instead of as opaque shell glue
 - `prepare` is an executable task body, so a task may declare `prepare` without `run`
 - `prepare` still needs explicit `requirements` and `effects`; ota should understand both intent and side effects
+- `prepare.kind: sequence` uses the parent task's `requirements`, `effects`, and execution path for each ordered child step
+- `prepare.kind: sequence` must declare at least one child step under `prepare.steps`
+- use `prepare.kind: sequence` when one honest setup lane needs more than one structural finite step, such as Node hydration plus Python hydration in one repo-level `setup` task
 - `prepare.kind: dependency_hydration` currently requires `requirements.tools.docker`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: bundler` currently requires `requirements.toolchains: [ruby]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: uv` currently requires `requirements.toolchains: [python]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: poetry` currently requires `requirements.toolchains: [python]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: go_modules` currently requires `requirements.toolchains: [go]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.source.manager: pnpm` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `pnpm install --frozen-lockfile`
 - `prepare.source.manager: npm` currently supports `mode: install` or `mode: ci`; use `mode: ci` when the repo truth is lockfile-strict npm hydration
 - `prepare.source.manager: yarn` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `yarn install --immutable`
 - `prepare.source.kind: bundler` currently executes the narrow canonical repo-local gem hydration lane: `bundle config set path <path> && bundle install`
+- `prepare.source.kind: uv` currently executes the narrow canonical uv hydration lane: `uv sync`
 - `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
 - `prepare` does not replace workflow `prepare.task`; workflow prepare is still the explicit host bootstrap lane that points at one native finite task
 - `prepare` is not orchestrator-managed in the current shipped slice
+
+Example:
+
+```yaml
+tasks:
+  setup:
+    description: Hydrate frontend and backend dependencies
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+            frozen_lockfile: true
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: uv
+            cwd: .
+    requirements:
+      toolchains:
+        - node
+        - python
+    effects:
+      writes:
+        - node_modules
+        - .venv
+      network: true
+      network_kind: dependency_hydration
+```
 
 `execution` fields:
 

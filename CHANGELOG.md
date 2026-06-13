@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- widened finite setup modeling again: tasks can now declare `prepare.kind: sequence` to execute
+  more than one ordered structural prepare step in a single truthful setup lane, which closes the
+  remaining mixed-ecosystem fallback to ad hoc shell setup bodies such as Node hydration plus
+  Python `uv` hydration in one repo-level `setup` task
+- fixed Python starter machine-truth and Python ownership symmetry together: `ota init --pack python
+  --json` now publishes provenance for the actual `tasks.setup.prepare` / `requirements` /
+  `effects` fields instead of stale `tasks.setup.run`, and both the Python starter and uv-backed
+  detector synthesis now declare `toolchains.python.package_managers.uv` when uv owns the lane
 - strengthened the hosted install contract for CI and especially Windows GitHub Actions: the
   release installers now export the resolved ota bin directory to `GITHUB_PATH` automatically when
   that environment file is present, so workflow authors no longer need to guess post-install

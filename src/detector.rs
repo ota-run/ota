@@ -32,8 +32,8 @@ use toml::Value as TomlValue;
 
 use crate::schema::{
     EnvConfig, EnvSource, EnvSourceKind, FileCheckExpectation, ServiceManagerKind,
-    ServiceReadinessKind, TaskActionSpec, ToolchainFulfillmentMode, ToolchainFulfillmentSpec,
-    ToolchainProvider,
+    ServiceReadinessKind, TaskActionSpec, TaskEffectsSpec, TaskPrepareSpec, TaskRequirementsSpec,
+    ToolchainFulfillmentMode, ToolchainFulfillmentSpec, ToolchainProvider,
 };
 use crate::toolchains::{
     COREPACK_TOOLCHAIN_NAME, DOTNET_TOOLCHAIN_NAME, GO_TOOLCHAIN_NAME, JAVA_TOOLCHAIN_NAME,
@@ -196,7 +196,7 @@ impl Inference {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Default, Clone, Serialize)]
 pub struct DetectContract {
     pub version: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -249,7 +249,7 @@ pub struct DetectExecutionContext {
     pub backend: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DetectTask {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -257,6 +257,12 @@ pub struct DetectTask {
     pub run: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<TaskActionSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepare: Option<TaskPrepareSpec>,
+    #[serde(default, skip_serializing_if = "TaskRequirementsSpec::is_empty")]
+    pub requirements: TaskRequirementsSpec,
+    #[serde(default, skip_serializing_if = "TaskEffectsSpec::is_empty")]
+    pub effects: TaskEffectsSpec,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -353,7 +359,7 @@ pub enum DetectCheckSeverity {
     Info,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DetectReport {
     pub root: PathBuf,
     pub contract: DetectContract,
@@ -578,6 +584,9 @@ impl DetectReport {
                                 description,
                                 run: inference.value.clone(),
                                 action: None,
+                                prepare: None,
+                                requirements: TaskRequirementsSpec::default(),
+                                effects: TaskEffectsSpec::default(),
                                 depends_on: Vec::new(),
                                 notes,
                                 internal: setup_task_is_internal(task_name),
@@ -4467,6 +4476,9 @@ impl DetectBuilder {
                     description,
                     run: run.clone(),
                     action: None,
+                    prepare: None,
+                    requirements: TaskRequirementsSpec::default(),
+                    effects: TaskEffectsSpec::default(),
                     depends_on: Vec::new(),
                     notes,
                     internal,
@@ -4869,7 +4881,7 @@ fn synthesize_uv_python_toolchain(
         DetectToolchainSpec {
             provider: ToolchainProvider::Uv,
             version: python_version.clone(),
-            package_managers: BTreeMap::new(),
+            package_managers: BTreeMap::from([(String::from("uv"), String::from("*"))]),
             fulfillment: None,
         },
     );
@@ -4888,6 +4900,15 @@ fn synthesize_uv_python_toolchain(
             String::from("toolchains.python.version"),
             python_version,
             version_source,
+            confidence,
+        ),
+    );
+    inferences.insert(
+        String::from("toolchains.python.package_managers.uv"),
+        Inference::new(
+            String::from("toolchains.python.package_managers.uv"),
+            String::from("*"),
+            String::from("uv.lock"),
             confidence,
         ),
     );
@@ -7325,12 +7346,12 @@ channel = "1.85.0"
         let report = detect_repo(fixture.path()).unwrap();
 
         assert_eq!(
-            report
-                .contract
-                .toolchains
-                .get("python")
-                .map(|toolchain| (toolchain.provider, toolchain.version.as_str())),
-            Some((ToolchainProvider::Uv, ">=3.12,<3.14"))
+            report.contract.toolchains.get("python").map(|toolchain| (
+                toolchain.provider,
+                toolchain.version.as_str(),
+                toolchain.package_managers.get("uv").map(String::as_str),
+            )),
+            Some((ToolchainProvider::Uv, ">=3.12,<3.14", Some("*")))
         );
         assert!(report.contract.runtimes.get("python").is_none());
         assert!(report.contract.tools.get("uv").is_none());
@@ -7342,6 +7363,10 @@ channel = "1.85.0"
                     && inference.value == "uv"
                     && inference.confidence == Confidence::Medium)
         );
+        assert!(report.inferences.iter().any(|inference| inference.field
+            == "toolchains.python.package_managers.uv"
+            && inference.value == "*"
+            && inference.confidence == Confidence::Medium));
         assert!(
             report
                 .inferences

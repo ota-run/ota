@@ -8,11 +8,17 @@ execution:
   contexts:
     host:
       backend: native
-runtimes:
-  node: "22"
-  python: ">=3.12"
-tools:
-  pnpm: "10"
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10"
+  python:
+    provider: uv
+    version: ">=3.12"
+    package_managers:
+      uv: "*"
 env:
   vars:
     OTA_API_ENV:
@@ -25,9 +31,31 @@ tasks:
     context: host
     description: Install frontend and backend dependencies
     category: setup
-    script: |
-      pnpm install
-      python -m pip install -r requirements.txt
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: uv
+            cwd: .
+    requirements:
+      toolchains:
+        - node
+        - python
+    effects:
+      writes:
+        - node_modules
+        - .venv
+      network: true
+      network_kind: dependency_hydration
     safe_for_agent: true
   dev:
     context: host
@@ -62,6 +90,8 @@ agent:
     - src
     - app
     - docs
+    - node_modules
+    - .venv
   protected_paths:
     - ota.yaml
   notes: |

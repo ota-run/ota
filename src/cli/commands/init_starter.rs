@@ -34,6 +34,9 @@ use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentBoundaryProvenanceConfig, AgentConfig,
     AgentExceptionsConfig, AgentInferredBoundaryConfig, AgentPosture, EnvSource, EnvSourceKind,
     FileCheckExpectation, TaskActionSpec, TaskCopyIfMissingActionSpec,
+    TaskDependencyHydrationMedium, TaskDependencyHydrationPrepareSpec,
+    TaskDependencyHydrationSourceSpec, TaskEffectsSpec, TaskNetworkEffectKind, TaskPrepareSpec,
+    TaskRequirementsSpec, TaskUvHydrationSourceSpec,
 };
 
 const INIT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
@@ -187,7 +190,7 @@ impl StarterPack {
             Self::Python => StarterPackCatalogEntry {
                 pack: self,
                 summary: "Conventional Python starter with uv-managed toolchain ownership and uv-native setup/test tasks.",
-                when: "Use this for Python repos that should start from toolchain-owned Python (`toolchains.python`) and uv-managed task execution. The default test path uses `uv run pytest`, and you can switch to `uv run python -m unittest` with `--test-runner unittest` when that is the repo's conventional test entrypoint.",
+                when: "Use this for Python repos that should start from toolchain-owned Python (`toolchains.python`) and uv-managed dependency hydration plus task execution. The default test path uses `uv run pytest`, and you can switch to `uv run python -m unittest` with `--test-runner unittest` when that is the repo's conventional test entrypoint.",
                 toolchains: &["python"],
                 runtimes: &[],
                 tools: &[],
@@ -195,7 +198,7 @@ impl StarterPack {
                 tasks: &["setup", "test"],
                 options: PYTHON_PACK_OPTIONS,
                 does_not_infer: &[
-                    "repo-specific pyproject dependency groups, lock strategy, or uv workspace layout beyond the seeded `uv sync` + test loop",
+                    "repo-specific pyproject dependency groups, lock strategy, or uv workspace layout beyond the seeded uv hydration lane plus test loop",
                     "repo-specific test layout beyond the selected `pytest` or `unittest` entrypoint",
                 ],
             },
@@ -741,6 +744,9 @@ fn add_detected_env_copy_setup(contract: &mut DetectContract, root: &Path) {
                 from: from.to_string(),
                 to: to.to_string(),
             })),
+            prepare: None,
+            requirements: TaskRequirementsSpec::default(),
+            effects: TaskEffectsSpec::default(),
             depends_on: Vec::new(),
             notes: Some(format!(
                 "Run `ota run {copy_task_name}` to materialize the local environment file without overwriting existing values."
@@ -2106,22 +2112,51 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             let test_runner = config
                 .selected_python_test_runner()
                 .expect("python pack should always resolve a test runner");
+            let mut package_managers = BTreeMap::new();
+            package_managers.insert(String::from("uv"), String::from("*"));
             contract.toolchains.insert(
                 String::from("python"),
                 DetectToolchainSpec {
                     provider: crate::schema::ToolchainProvider::Uv,
                     version: String::from("3.12"),
-                    package_managers: BTreeMap::new(),
+                    package_managers,
                     fulfillment: None,
                 },
             );
             contract.tasks.insert(
                 String::from("setup"),
-                pack_task(
-                    "setup",
-                    "uv sync",
-                    Some(String::from("Install and sync dependencies with uv.")),
-                ),
+                DetectTask {
+                    description: Some(String::from("Hydrate Python dependencies through uv.")),
+                    run: String::new(),
+                    action: None,
+                    prepare: Some(TaskPrepareSpec::DependencyHydration(
+                        TaskDependencyHydrationPrepareSpec {
+                            medium: TaskDependencyHydrationMedium::PackageDependencies,
+                            source: TaskDependencyHydrationSourceSpec::Uv(
+                                TaskUvHydrationSourceSpec {
+                                    cwd: String::from("."),
+                                },
+                            ),
+                            targets: Vec::new(),
+                        },
+                    )),
+                    requirements: TaskRequirementsSpec {
+                        toolchains: vec![String::from("python")],
+                        ..TaskRequirementsSpec::default()
+                    },
+                    effects: TaskEffectsSpec {
+                        writes: vec![String::from(".venv")],
+                        network: true,
+                        network_kind: Some(TaskNetworkEffectKind::DependencyHydration),
+                        ..TaskEffectsSpec::default()
+                    },
+                    depends_on: Vec::new(),
+                    notes: Some(String::from(
+                        "Run `ota run setup` to execute this task.\nHydrate Python dependencies through uv.",
+                    )),
+                    internal: true,
+                    safe_for_agent: false,
+                },
             );
             contract.tasks.insert(
                 String::from("test"),
@@ -2455,6 +2490,9 @@ fn pack_task(task_name: &str, run: &str, description: Option<String>) -> DetectT
         description,
         run: String::from(run),
         action: None,
+        prepare: None,
+        requirements: TaskRequirementsSpec::default(),
+        effects: TaskEffectsSpec::default(),
         depends_on: Vec::new(),
         notes: Some(notes),
         internal: task_name == "setup",
@@ -2512,6 +2550,9 @@ mod tests {
                 description: None,
                 run: String::from("echo setup"),
                 action: None,
+                prepare: None,
+                requirements: crate::schema::TaskRequirementsSpec::default(),
+                effects: crate::schema::TaskEffectsSpec::default(),
                 depends_on: Vec::new(),
                 notes: None,
                 internal: false,
@@ -2834,6 +2875,9 @@ mod tests {
                 description: None,
                 run: String::from("nimble test"),
                 action: None,
+                prepare: None,
+                requirements: crate::schema::TaskRequirementsSpec::default(),
+                effects: crate::schema::TaskEffectsSpec::default(),
                 depends_on: Vec::new(),
                 notes: None,
                 internal: false,

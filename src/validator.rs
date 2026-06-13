@@ -3416,6 +3416,16 @@ fn validate_task_prepare(
     errors: &mut Vec<ValidationError>,
 ) {
     match prepare {
+        crate::schema::TaskPrepareSpec::Sequence(spec) => {
+            if spec.steps.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` prepare `sequence` must declare at least one entry in `prepare.steps`"
+                )));
+            }
+            for step in &spec.steps {
+                validate_task_prepare(task_name, step, requirements, effects, _backend, errors);
+            }
+        }
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
             for (index, target) in spec.targets.iter().enumerate() {
                 if target.trim().is_empty() {
@@ -3624,6 +3634,58 @@ fn validate_task_prepare(
                     if effects.writes.is_empty() {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: bundler` must declare at least one durable repo write in `effects.writes`"
+                        )));
+                    }
+                }
+                crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
+                    if spec.medium
+                        != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: uv` must use `prepare.medium: package_dependencies`"
+                        )));
+                    }
+                    if !spec.targets.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: uv` must omit `prepare.targets`; ota executes the declared uv hydration lane structurally"
+                        )));
+                    }
+                    if source.cwd.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `uv` must declare a non-empty `prepare.source.cwd`"
+                        )));
+                    } else {
+                        validate_repo_relative_file_action_path(
+                            task_name,
+                            "prepare.source.cwd",
+                            source.cwd.as_str(),
+                            errors,
+                        );
+                    }
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "python")
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: uv` must declare `requirements.toolchains: [python]`"
+                        )));
+                    }
+                    if !effects.network {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network: true`"
+                        )));
+                    }
+                    if effects.network_kind
+                        != Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
+                        )));
+                    }
+                    if effects.writes.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: uv` must declare at least one durable repo write in `effects.writes`"
                         )));
                     }
                 }
@@ -17805,6 +17867,152 @@ tasks:
         assert!(
             rendered.contains("must declare at least one durable repo write in `effects.writes`")
         );
+    }
+
+    #[test]
+    fn accepts_prepare_only_uv_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      uv: ">=0.7"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
+    requirements:
+      toolchains:
+        - python
+    effects:
+      writes:
+        - .venv
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("uv prepare should validate");
+    }
+
+    #[test]
+    fn rejects_uv_prepare_without_python_toolchain_and_writes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("uv prepare without python toolchain should fail");
+        let rendered = errors.to_string();
+        assert!(rendered.contains("must declare `requirements.toolchains: [python]`"));
+        assert!(
+            rendered.contains("must declare at least one durable repo write in `effects.writes`")
+        );
+    }
+
+    #[test]
+    fn accepts_sequence_prepare_for_mixed_node_and_python_hydration() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10"
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      uv: ">=0.7"
+tasks:
+  setup:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+            frozen_lockfile: true
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: uv
+            cwd: api
+    requirements:
+      toolchains:
+        - node
+        - python
+    effects:
+      writes:
+        - node_modules
+        - api/.venv
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("sequence prepare should validate");
+    }
+
+    #[test]
+    fn rejects_empty_prepare_sequence() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    prepare:
+      kind: sequence
+      steps: []
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("empty prepare sequence should fail");
+        assert!(errors.to_string().contains(
+            "task `setup` prepare `sequence` must declare at least one entry in `prepare.steps`"
+        ));
     }
 
     #[test]

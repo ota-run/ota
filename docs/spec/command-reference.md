@@ -300,6 +300,8 @@ Text output:
   collapsing
 - each task may include `kind`, `os`, `category`, `depends_on`, `safe_for_agent`, and variant count
 - each task may include `Launch` when the resolved execution source is structured `launch`
+- each task may include `Prepare` when the resolved execution source is a first-class `prepare`
+  body, including ordered `prepare.kind: sequence` summaries
 - each task may include `env`, `inputs`, `effects`, and `requires_services`
 - each task may include `Description` and `Notes`, where `Notes` can describe purpose and usage
 - each task includes a short execution preview
@@ -327,6 +329,8 @@ JSON output:
 - each task includes the resolved execution plus optional `selected_variant_os` and `variants`
 - each task may include additive `effects` with declared `writes`, `network`, and
   `external_state`
+- each task may include additive `prepare`; sequence prepares keep a nested `steps[]` tree, while
+  dependency-hydration prepares expose `medium`, `source_kind`, `cwd`, `manager`, and `mode`
 - each task may include additive `launch` when the resolved execution source is structured command
   or packaged-container launch
 - failure: `ok`, `path`, and either `errors` or `error`

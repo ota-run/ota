@@ -25494,11 +25494,24 @@ name = "fastapi"
         assert_eq!(json["inferred"], json!([]));
         assert_eq!(json["config"]["toolchains"]["python"]["provider"], "uv");
         assert_eq!(json["config"]["toolchains"]["python"]["version"], "3.12");
+        assert_eq!(
+            json["config"]["toolchains"]["python"]["package_managers"]["uv"],
+            "*"
+        );
         assert!(json["config"]["tools"].is_null());
         assert!(json["config"]["checks"].is_null());
+        assert!(json["config"]["tasks"]["setup"]["run"].is_null());
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["kind"],
+            "dependency_hydration"
+        );
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["kind"],
+            "uv"
+        );
         assert_eq!(
             json["config"]["tasks"]["setup"]["description"],
-            "Install and sync dependencies with uv."
+            "Hydrate Python dependencies through uv."
         );
         assert_eq!(
             json["config"]["tasks"]["test"]["description"],
@@ -25518,6 +25531,51 @@ name = "fastapi"
         assert_eq!(setup_description["provenance"], "template-derived");
         assert_eq!(
             setup_description["source"],
+            "ota.init#starter_pack.python.test_runner.pytest"
+        );
+        let setup_prepare_kind = provenance
+            .iter()
+            .find(|entry| entry["field"] == "tasks.setup.prepare.kind")
+            .expect("setup prepare kind provenance");
+        assert_eq!(setup_prepare_kind["provenance"], "template-derived");
+        assert_eq!(
+            setup_prepare_kind["source"],
+            "ota.init#starter_pack.python.test_runner.pytest"
+        );
+        let setup_prepare_cwd = provenance
+            .iter()
+            .find(|entry| entry["field"] == "tasks.setup.prepare.source.cwd")
+            .expect("setup prepare cwd provenance");
+        assert_eq!(setup_prepare_cwd["provenance"], "template-derived");
+        assert_eq!(
+            setup_prepare_cwd["source"],
+            "ota.init#starter_pack.python.test_runner.pytest"
+        );
+        let setup_requirements = provenance
+            .iter()
+            .find(|entry| entry["field"] == "tasks.setup.requirements.toolchains.0")
+            .expect("setup requirements provenance");
+        assert_eq!(setup_requirements["provenance"], "template-derived");
+        assert_eq!(
+            setup_requirements["source"],
+            "ota.init#starter_pack.python.test_runner.pytest"
+        );
+        let setup_network_kind = provenance
+            .iter()
+            .find(|entry| entry["field"] == "tasks.setup.effects.network_kind")
+            .expect("setup effects provenance");
+        assert_eq!(setup_network_kind["provenance"], "template-derived");
+        assert_eq!(
+            setup_network_kind["source"],
+            "ota.init#starter_pack.python.test_runner.pytest"
+        );
+        let uv_owner = provenance
+            .iter()
+            .find(|entry| entry["field"] == "toolchains.python.package_managers.uv")
+            .expect("uv package-manager provenance");
+        assert_eq!(uv_owner["provenance"], "template-derived");
+        assert_eq!(
+            uv_owner["source"],
             "ota.init#starter_pack.python.test_runner.pytest"
         );
         let test_description = provenance

@@ -4389,12 +4389,14 @@ impl TaskActionSpec {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskPrepareSpec {
     DependencyHydration(TaskDependencyHydrationPrepareSpec),
+    Sequence(TaskPrepareSequenceSpec),
 }
 
 impl TaskPrepareSpec {
     pub const fn kind_str(&self) -> &'static str {
         match self {
             Self::DependencyHydration(_) => "dependency_hydration",
+            Self::Sequence(_) => "sequence",
         }
     }
 
@@ -4422,6 +4424,12 @@ impl TaskPrepareSpec {
                     source.cwd.trim(),
                     source.path.trim()
                 ),
+                TaskDependencyHydrationSourceSpec::Uv(source) => format!(
+                    "hydrate {} with {} in `{}`",
+                    spec.medium.label(),
+                    source.command_preview(),
+                    source.cwd.trim()
+                ),
                 TaskDependencyHydrationSourceSpec::Poetry(source) => format!(
                     "hydrate {} with {} in `{}`",
                     spec.medium.label(),
@@ -4434,8 +4442,22 @@ impl TaskPrepareSpec {
                     source.cwd.trim()
                 ),
             },
+            Self::Sequence(spec) => format!(
+                "prepare sequence: {}",
+                spec.steps
+                    .iter()
+                    .map(TaskPrepareSpec::preview)
+                    .collect::<Vec<_>>()
+                    .join(" -> ")
+            ),
         }
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskPrepareSequenceSpec {
+    pub steps: Vec<TaskPrepareSpec>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -4469,6 +4491,7 @@ pub enum TaskDependencyHydrationSourceSpec {
     DockerCompose(TaskDockerComposeHydrationSourceSpec),
     NodePackageManager(TaskNodePackageManagerHydrationSourceSpec),
     Bundler(TaskBundlerHydrationSourceSpec),
+    Uv(TaskUvHydrationSourceSpec),
     Poetry(TaskPoetryHydrationSourceSpec),
     GoModules(TaskGoModulesHydrationSourceSpec),
 }
@@ -4531,6 +4554,18 @@ impl TaskNodePackageManagerHydrationSourceSpec {
 pub struct TaskBundlerHydrationSourceSpec {
     pub cwd: String,
     pub path: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskUvHydrationSourceSpec {
+    pub cwd: String,
+}
+
+impl TaskUvHydrationSourceSpec {
+    pub fn command_preview(&self) -> String {
+        String::from("uv sync")
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -5812,6 +5847,52 @@ tasks:
         };
         assert_eq!(npm.lockfile_flag(), None);
         assert_eq!(npm.command_preview(), "npm install");
+    }
+
+    #[test]
+    fn uv_prepare_preview_uses_structural_sync_command() {
+        let uv = super::TaskUvHydrationSourceSpec {
+            cwd: String::from("."),
+        };
+        assert_eq!(uv.command_preview(), "uv sync");
+    }
+
+    #[test]
+    fn prepare_sequence_preview_joins_structural_steps() {
+        let prepare = super::TaskPrepareSpec::Sequence(super::TaskPrepareSequenceSpec {
+            steps: vec![
+                super::TaskPrepareSpec::DependencyHydration(
+                    super::TaskDependencyHydrationPrepareSpec {
+                        medium: super::TaskDependencyHydrationMedium::PackageDependencies,
+                        source: super::TaskDependencyHydrationSourceSpec::NodePackageManager(
+                            super::TaskNodePackageManagerHydrationSourceSpec {
+                                cwd: String::from("."),
+                                manager: super::TaskNodePackageManagerKind::Pnpm,
+                                mode: super::TaskNodePackageManagerHydrationMode::Install,
+                                frozen_lockfile: true,
+                            },
+                        ),
+                        targets: Vec::new(),
+                    },
+                ),
+                super::TaskPrepareSpec::DependencyHydration(
+                    super::TaskDependencyHydrationPrepareSpec {
+                        medium: super::TaskDependencyHydrationMedium::PackageDependencies,
+                        source: super::TaskDependencyHydrationSourceSpec::Uv(
+                            super::TaskUvHydrationSourceSpec {
+                                cwd: String::from("api"),
+                            },
+                        ),
+                        targets: Vec::new(),
+                    },
+                ),
+            ],
+        });
+
+        assert_eq!(
+            prepare.preview(),
+            "prepare sequence: hydrate package dependencies with pnpm install --frozen-lockfile in `.` -> hydrate package dependencies with uv sync in `api`"
+        );
     }
 
     #[test]

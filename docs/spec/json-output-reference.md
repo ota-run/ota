@@ -1527,13 +1527,30 @@ Success:
   "tasks": [
     {
       "name": "setup",
-      "description": "Prepare the repo",
+      "description": "Prepare mixed repo dependencies",
       "notes": "Use this after cloning the repo.\n",
-      "kind": "copy_if_missing",
-      "action": {
-        "kind": "copy_if_missing",
-        "from": ".env.example",
-        "to": ".env.local"
+      "kind": "prepare",
+      "prepare": {
+        "kind": "sequence",
+        "steps": [
+          {
+            "kind": "dependency_hydration",
+            "medium": "package_dependencies",
+            "source_kind": "node_package_manager",
+            "cwd": ".",
+            "manager": "pnpm",
+            "mode": "install",
+            "frozen_lockfile": true
+          },
+          {
+            "kind": "dependency_hydration",
+            "medium": "package_dependencies",
+            "source_kind": "uv",
+            "cwd": "api",
+            "manager": "uv",
+            "mode": "sync"
+          }
+        ]
       },
       "env": {
         "JAVA_HOME": "/opt/jdk-21"
@@ -1544,7 +1561,9 @@ Success:
         }
       },
       "effects": {
-        "writes": [".env.local"]
+        "writes": ["node_modules", ".venv"],
+        "network": true,
+        "network_kind": "dependency_hydration"
       },
       "depends_on": [],
       "requires_services": ["postgres"],
@@ -1599,9 +1618,13 @@ Root monorepo summary output can also include grouped member results:
 }
 ```
 
-Each task may also include additive `effects` when the contract declares durable writes
-(`writes`), a connectivity dependency (`network`), an optional network lane classification
-(`network_kind`), or out-of-repo mutation (`external_state`).
+Each task may also include additive `prepare` when the resolved task body is first-class setup
+instead of shell `run` / `script`. Sequence prepares keep a nested `steps[]` tree, while
+dependency-hydration prepares expose structural fields such as `medium`, `source_kind`, `cwd`,
+`manager`, and `mode`.
+Each task may also include additive `effects` when the contract declares durable writes (`writes`),
+a connectivity dependency (`network`), an optional network lane classification (`network_kind`),
+or out-of-repo mutation (`external_state`).
 When the repo declares `workflows`, `ota tasks --json` includes an additive top-level `workflow`
 object for the default workflow, and member summaries may include the same additive field.
 

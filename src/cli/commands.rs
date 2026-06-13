@@ -50,7 +50,9 @@ use crate::contract_drift::{
     DETECT_OWNER_KIND_MERGED, append_contract_drift_findings, collect_detect_changes,
     collect_detect_drift_removals, collect_detect_removals,
 };
-use crate::detector::{Confidence, DetectContract, DetectReport, Inference, detect_repo};
+use crate::detector::{
+    Confidence, DetectContract, DetectReport, DetectTask, Inference, detect_repo,
+};
 use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingSeverity, OTA_PROOF_GITIGNORE_ENTRY,
     OTA_RECEIPTS_GITIGNORE_ENTRY, OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY,
@@ -148,15 +150,15 @@ use crate::runner::{
 use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
     ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessKind,
-    ServiceReadinessSpec, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
-    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode,
-    TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
-    TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
-    TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
-    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
-    ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
-    parse_readiness_duration_spec,
+    ServiceReadinessSpec, TaskDependencyHydrationSourceSpec, TaskPrepareSpec, TaskRuntimeBindSpec,
+    TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec, TaskRuntimeHostProjectionSpec,
+    TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode, TaskRuntimePortSpec,
+    TaskRuntimeProjectionSpec, TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec,
+    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind,
+    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetActivationSpec, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
+    ToolAcquisitionProvider, ToolAcquisitionSpec, format_memory_size_bytes,
+    parse_memory_size_bytes, parse_readiness_duration_spec,
 };
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
@@ -34117,18 +34119,114 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
         fields.push(format!("checks.{index}.run"));
     }
     for (name, task) in &contract.tasks {
-        fields.push(format!("tasks.{name}.run"));
-        if task.description.is_some() {
-            fields.push(format!("tasks.{name}.description"));
-        }
-        if task.internal {
-            fields.push(format!("tasks.{name}.internal"));
-        }
-        if task.safe_for_agent {
-            fields.push(format!("tasks.{name}.safe_for_agent"));
-        }
+        fields.extend(detect_task_field_paths(name, task));
     }
     fields
+}
+
+fn detect_task_field_paths(name: &str, task: &DetectTask) -> Vec<String> {
+    let mut fields = Vec::new();
+    let prefix = format!("tasks.{name}");
+    if !task.run.is_empty() {
+        fields.push(format!("{prefix}.run"));
+    }
+    if task.description.is_some() {
+        fields.push(format!("{prefix}.description"));
+    }
+    if let Some(prepare) = task.prepare.as_ref() {
+        collect_prepare_field_paths(format!("{prefix}.prepare"), prepare, &mut fields);
+    }
+    for (index, toolchain) in task.requirements.toolchains.iter().enumerate() {
+        if !toolchain.trim().is_empty() {
+            fields.push(format!("{prefix}.requirements.toolchains.{index}"));
+        }
+    }
+    for (index, write) in task.effects.writes.iter().enumerate() {
+        if !write.trim().is_empty() {
+            fields.push(format!("{prefix}.effects.writes.{index}"));
+        }
+    }
+    if task.effects.network {
+        fields.push(format!("{prefix}.effects.network"));
+    }
+    if task.effects.network_kind.is_some() {
+        fields.push(format!("{prefix}.effects.network_kind"));
+    }
+    for (index, dependency) in task.depends_on.iter().enumerate() {
+        if !dependency.trim().is_empty() {
+            fields.push(format!("{prefix}.depends_on.{index}"));
+        }
+    }
+    if task.internal {
+        fields.push(format!("{prefix}.internal"));
+    }
+    if task.safe_for_agent {
+        fields.push(format!("{prefix}.safe_for_agent"));
+    }
+    fields
+}
+
+fn collect_prepare_field_paths(
+    prefix: String,
+    prepare: &TaskPrepareSpec,
+    fields: &mut Vec<String>,
+) {
+    fields.push(format!("{prefix}.kind"));
+    match prepare {
+        TaskPrepareSpec::Sequence(spec) => {
+            for (index, step) in spec.steps.iter().enumerate() {
+                collect_prepare_field_paths(format!("{prefix}.steps.{index}"), step, fields);
+            }
+        }
+        TaskPrepareSpec::DependencyHydration(spec) => {
+            fields.push(format!("{prefix}.medium"));
+            fields.push(format!("{prefix}.source.kind"));
+            match &spec.source {
+                TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                    fields.push(format!("{prefix}.source.file"));
+                    for (index, target) in spec.targets.iter().enumerate() {
+                        if !target.trim().is_empty() {
+                            fields.push(format!("{prefix}.targets.{index}"));
+                        }
+                    }
+                    let _ = source;
+                }
+                TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                    fields.push(format!("{prefix}.source.manager"));
+                    fields.push(format!("{prefix}.source.mode"));
+                    if source.frozen_lockfile {
+                        fields.push(format!("{prefix}.source.frozen_lockfile"));
+                    }
+                }
+                TaskDependencyHydrationSourceSpec::Bundler(_source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                    fields.push(format!("{prefix}.source.path"));
+                }
+                TaskDependencyHydrationSourceSpec::Uv(_source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                }
+                TaskDependencyHydrationSourceSpec::Poetry(source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                    if !source.groups.is_empty() {
+                        fields.push(format!("{prefix}.source.group_mode"));
+                        for (index, group) in source.groups.iter().enumerate() {
+                            if !group.trim().is_empty() {
+                                fields.push(format!("{prefix}.source.groups.{index}"));
+                            }
+                        }
+                    }
+                    if source.no_root {
+                        fields.push(format!("{prefix}.source.no_root"));
+                    }
+                }
+                TaskDependencyHydrationSourceSpec::GoModules(_source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                }
+            }
+        }
+    }
 }
 
 fn record_detect_owned_fields(document: &mut YamlValue, fields: Vec<String>) -> Result<(), String> {
@@ -34467,20 +34565,20 @@ fn init_contract_provenance(
         ));
     }
     for (name, task) in &contract.tasks {
-        push_init_field_provenance(
-            &mut provenance,
-            &inference_map,
-            &detected_fields,
-            format!("tasks.{name}.run"),
-            starter_contract_source,
-        );
-        if task.description.is_some() {
+        for field in detect_task_field_paths(name, task) {
+            let template_source = if field.ends_with(".internal") {
+                "ota.init#task_internal"
+            } else if field.ends_with(".safe_for_agent") {
+                "ota.init#task_safe_for_agent"
+            } else {
+                starter_contract_source
+            };
             push_init_field_provenance(
                 &mut provenance,
                 &inference_map,
                 &detected_fields,
-                format!("tasks.{name}.description"),
-                starter_contract_source,
+                field,
+                template_source,
             );
         }
         if task.notes.is_some() {
@@ -34488,21 +34586,6 @@ fn init_contract_provenance(
                 format!("tasks.{name}.notes"),
                 "ota.init#task_notes",
             ));
-        }
-        if task.internal {
-            provenance.push(template_field_provenance(
-                format!("tasks.{name}.internal"),
-                "ota.init#task_internal",
-            ));
-        }
-        if task.safe_for_agent {
-            push_init_field_provenance(
-                &mut provenance,
-                &inference_map,
-                &detected_fields,
-                format!("tasks.{name}.safe_for_agent"),
-                "ota.init#task_safe_for_agent",
-            );
         }
     }
 
@@ -35262,6 +35345,14 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
 
 fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> String {
     match prepare.kind {
+        "sequence" => {
+            let steps = prepare
+                .steps
+                .iter()
+                .map(render_task_prepare_text)
+                .collect::<Vec<_>>();
+            format!("sequence: {}", steps.join(" -> "))
+        }
         "dependency_hydration" => render_dependency_hydration_prepare_text(
             prepare.medium,
             prepare.source_kind,
@@ -35269,7 +35360,10 @@ fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> 
             prepare.file,
             prepare.manager,
             prepare.mode,
+            prepare.group_mode,
+            &prepare.groups,
             prepare.frozen_lockfile,
+            prepare.no_root,
             &prepare.targets,
         ),
         _ => String::from("-"),
@@ -35305,6 +35399,14 @@ fn render_workspace_task_launch_text(launch: &WorkspaceTaskLaunchSummary) -> Str
 
 fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> String {
     match prepare.kind {
+        "sequence" => {
+            let steps = prepare
+                .steps
+                .iter()
+                .map(render_workspace_task_prepare_text)
+                .collect::<Vec<_>>();
+            format!("sequence: {}", steps.join(" -> "))
+        }
         "dependency_hydration" => render_dependency_hydration_prepare_text(
             prepare.medium,
             prepare.source_kind,
@@ -35312,7 +35414,10 @@ fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> 
             prepare.file.as_deref(),
             prepare.manager,
             prepare.mode,
+            prepare.group_mode,
+            &prepare.groups,
             prepare.frozen_lockfile,
+            prepare.no_root,
             &prepare.targets,
         ),
         _ => String::from("-"),
@@ -35326,7 +35431,10 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
     file: Option<&str>,
     manager: Option<&str>,
     mode: Option<&str>,
+    group_mode: Option<&str>,
+    groups: &[T],
     frozen_lockfile: bool,
+    no_root: bool,
     targets: &[T],
 ) -> String {
     let medium = medium.unwrap_or("dependencies").replace('_', " ");
@@ -35359,6 +35467,37 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
                 command.push_str(" --frozen-lockfile");
             }
             format!("hydrate {medium} with `{command}` in `{cwd}`")
+        }
+        Some("bundler") => {
+            let cwd = cwd.unwrap_or(".");
+            let file = file.unwrap_or("Gemfile");
+            format!("hydrate {medium} with `bundle install` in `{cwd}` using `{file}`")
+        }
+        Some("uv") => {
+            let cwd = cwd.unwrap_or(".");
+            format!("hydrate {medium} with `uv sync` in `{cwd}`")
+        }
+        Some("poetry") => {
+            let cwd = cwd.unwrap_or(".");
+            let mut command = String::from("poetry install");
+            if let Some(group_mode) = group_mode {
+                let values = groups
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if !values.is_empty() {
+                    command.push_str(&format!(" --{group_mode} {values}"));
+                }
+            }
+            if no_root {
+                command.push_str(" --no-root");
+            }
+            format!("hydrate {medium} with `{command}` in `{cwd}`")
+        }
+        Some("go_modules") => {
+            let cwd = cwd.unwrap_or(".");
+            format!("hydrate {medium} with `go mod download` in `{cwd}`")
         }
         Some(other) => format!("hydrate {medium} from {}", other.replace('_', " ")),
         None => format!("hydrate {medium} from declared source"),
@@ -45383,6 +45522,102 @@ tasks:
     }
 
     #[test]
+    fn render_tasks_text_surfaces_prepare_sequence() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "setup",
+            context: Some("host"),
+            default_mode: None,
+            description: Some("Prepare the repo"),
+            notes: None,
+            category: None,
+            env: &env,
+            env_files: Vec::new(),
+            inputs: &inputs,
+            kind: "prepare",
+            run: None,
+            script: None,
+            launch: None,
+            action: None,
+            prepare: Some(crate::output::TaskPrepareSummary {
+                kind: "sequence",
+                steps: vec![
+                    crate::output::TaskPrepareSummary {
+                        kind: "dependency_hydration",
+                        steps: Vec::new(),
+                        medium: Some("package_dependencies"),
+                        source_kind: Some("node_package_manager"),
+                        cwd: Some("."),
+                        file: None,
+                        manager: Some("pnpm"),
+                        mode: Some("install"),
+                        group_mode: None,
+                        groups: Vec::new(),
+                        frozen_lockfile: true,
+                        no_root: false,
+                        targets: Vec::new(),
+                    },
+                    crate::output::TaskPrepareSummary {
+                        kind: "dependency_hydration",
+                        steps: Vec::new(),
+                        medium: Some("package_dependencies"),
+                        source_kind: Some("uv"),
+                        cwd: Some("api"),
+                        file: None,
+                        manager: Some("uv"),
+                        mode: Some("sync"),
+                        group_mode: None,
+                        groups: Vec::new(),
+                        frozen_lockfile: false,
+                        no_root: false,
+                        targets: Vec::new(),
+                    },
+                ],
+                medium: None,
+                source_kind: None,
+                cwd: None,
+                file: None,
+                manager: None,
+                mode: None,
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: false,
+                no_root: false,
+                targets: Vec::new(),
+            }),
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary {
+                writes: vec![String::from("node_modules"), String::from(".venv")],
+                network: true,
+                network_kind: Some(crate::schema::TaskNetworkEffectKind::DependencyHydration),
+                external_state: Vec::new(),
+            },
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+
+        assert!(
+            rendered.contains(
+                "Prepare: sequence: hydrate package dependencies with `pnpm install --frozen-lockfile` in `.` -> hydrate package dependencies with `uv sync` in `api`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn workflow_summary_resolves_surface_exposes_to_urls() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -46234,6 +46469,9 @@ tasks:
                 description: None,
                 run: String::from("npm install"),
                 action: None,
+                prepare: None,
+                requirements: crate::schema::TaskRequirementsSpec::default(),
+                effects: crate::schema::TaskEffectsSpec::default(),
                 depends_on: Vec::new(),
                 notes: None,
                 internal: true,
@@ -46309,6 +46547,9 @@ tasks:
                 description: None,
                 run: String::from("npm install"),
                 action: None,
+                prepare: None,
+                requirements: crate::schema::TaskRequirementsSpec::default(),
+                effects: crate::schema::TaskEffectsSpec::default(),
                 depends_on: Vec::new(),
                 notes: None,
                 internal: true,

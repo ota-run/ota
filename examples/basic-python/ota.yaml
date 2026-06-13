@@ -33,11 +33,21 @@ toolchains:
       uv: ">=0.7.0"
 tasks:
   setup:
-    description: Install and sync Python dependencies with uv
-    run: uv sync
+    description: Hydrate Python dependencies through the declared uv lane
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: .
     requirements:
       toolchains:
         - python
+    effects:
+      writes:
+        - .venv
+      network: true
+      network_kind: dependency_hydration
   test:
     description: Run the Python test suite
     run: uv run pytest
@@ -68,6 +78,7 @@ agent:
   verify_after_changes:
     - test
   writable_paths:
+    - .venv
     - docs
     - tests
   protected_paths:

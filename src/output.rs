@@ -3226,6 +3226,8 @@ pub struct TaskLaunchSummary<'a> {
 #[derive(Debug, Serialize, Clone)]
 pub struct TaskPrepareSummary<'a> {
     pub kind: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<TaskPrepareSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub medium: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3253,6 +3255,8 @@ pub struct TaskPrepareSummary<'a> {
 #[derive(Debug, Serialize, Clone)]
 pub struct WorkspaceTaskPrepareSummary {
     pub kind: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<WorkspaceTaskPrepareSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub medium: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3439,6 +3443,25 @@ pub fn summarize_task_prepare(
     prepare: Option<&crate::schema::TaskPrepareSpec>,
 ) -> Option<TaskPrepareSummary<'_>> {
     match prepare? {
+        crate::schema::TaskPrepareSpec::Sequence(spec) => Some(TaskPrepareSummary {
+            kind: "sequence",
+            steps: spec
+                .steps
+                .iter()
+                .filter_map(|step| summarize_task_prepare(Some(step)))
+                .collect(),
+            medium: None,
+            source_kind: None,
+            cwd: None,
+            file: None,
+            manager: None,
+            mode: None,
+            group_mode: None,
+            groups: Vec::new(),
+            frozen_lockfile: false,
+            no_root: false,
+            targets: Vec::new(),
+        }),
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
             let (
                 source_kind,
@@ -3491,6 +3514,17 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                 ),
+                crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
+                    "uv",
+                    Some(source.cwd.as_str()),
+                    None,
+                    Some("uv"),
+                    Some("sync"),
+                    None,
+                    Vec::new(),
+                    false,
+                    false,
+                ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => (
                     "poetry",
                     Some(source.cwd.as_str()),
@@ -3519,6 +3553,7 @@ pub fn summarize_task_prepare(
             };
             Some(TaskPrepareSummary {
                 kind: "dependency_hydration",
+                steps: Vec::new(),
                 medium: Some(match spec.medium {
                     crate::schema::TaskDependencyHydrationMedium::ContainerImages => {
                         "container_images"
@@ -3546,6 +3581,25 @@ pub fn summarize_task_prepare_owned(
     prepare: Option<&crate::schema::TaskPrepareSpec>,
 ) -> Option<WorkspaceTaskPrepareSummary> {
     match prepare? {
+        crate::schema::TaskPrepareSpec::Sequence(spec) => Some(WorkspaceTaskPrepareSummary {
+            kind: "sequence",
+            steps: spec
+                .steps
+                .iter()
+                .filter_map(|step| summarize_task_prepare_owned(Some(step)))
+                .collect(),
+            medium: None,
+            source_kind: None,
+            cwd: None,
+            file: None,
+            manager: None,
+            mode: None,
+            group_mode: None,
+            groups: Vec::new(),
+            frozen_lockfile: false,
+            no_root: false,
+            targets: Vec::new(),
+        }),
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
             let (
                 source_kind,
@@ -3598,6 +3652,17 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                 ),
+                crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
+                    "uv",
+                    Some(source.cwd.clone()),
+                    None,
+                    Some("uv"),
+                    Some("sync"),
+                    None,
+                    Vec::new(),
+                    false,
+                    false,
+                ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => (
                     "poetry",
                     Some(source.cwd.clone()),
@@ -3626,6 +3691,7 @@ pub fn summarize_task_prepare_owned(
             };
             Some(WorkspaceTaskPrepareSummary {
                 kind: "dependency_hydration",
+                steps: Vec::new(),
                 medium: Some(match spec.medium {
                     crate::schema::TaskDependencyHydrationMedium::ContainerImages => {
                         "container_images"

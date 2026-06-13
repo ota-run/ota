@@ -7769,6 +7769,42 @@ fn execute_prepare_task(
     host_port_override: Option<u16>,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
+    if let crate::schema::TaskPrepareSpec::Sequence(spec) = prepare {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut last_exit_code = 0;
+        for step in &spec.steps {
+            let step_output = execute_prepare_task(
+                contract,
+                task,
+                task_name,
+                runtime,
+                step,
+                working_dir,
+                env_overrides,
+                path_export,
+                secret_env_names,
+                backend,
+                deferred_backend_fulfillment,
+                host_port_override,
+                mode.clone(),
+            )?;
+            stdout.push_str(&step_output.stdout);
+            stderr.push_str(&step_output.stderr);
+            last_exit_code = step_output.exit_code;
+        }
+        return Ok(TaskCommandOutput {
+            exit_code: last_exit_code,
+            stdout,
+            stderr,
+            target: None,
+            runtime: None,
+            service_termination: None,
+            execution_note: None,
+            interrupted: false,
+        });
+    }
+
     let command = prepare_task_shell_command(task_name, prepare, backend)?;
     execute_task_command(
         contract,
@@ -7794,6 +7830,12 @@ fn prepare_task_shell_command(
 ) -> Result<String, RunError> {
     let quote_style = shell_quote_style_for_backend(backend);
     match prepare {
+        crate::schema::TaskPrepareSpec::Sequence(spec) => Ok(spec
+            .steps
+            .iter()
+            .map(|step| prepare_task_shell_command(_task_name, step, backend))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(" && ")),
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => match &spec.source {
             crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
                 let cwd = source.cwd.trim();
@@ -7838,6 +7880,10 @@ fn prepare_task_shell_command(
                 "cd {} && bundle config set path {} && bundle install",
                 shell_quote_command_word(source.cwd.trim(), quote_style),
                 shell_quote_command_word(source.path.trim(), quote_style)
+            )),
+            crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => Ok(format!(
+                "cd {} && uv sync",
+                shell_quote_command_word(source.cwd.trim(), quote_style)
             )),
             crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => {
                 let mut command = format!(
@@ -50162,6 +50208,221 @@ tasks:
         );
         assert!(
             logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("api")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_executes_uv_from_declared_cwd() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      uv: ">=0.7"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: uv
+        cwd: api
+    requirements:
+      toolchains:
+        - python
+    effects:
+      writes:
+        - .venv
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("api")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let uv_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo uv 0.7.12\r\n  exit /b 0\r\n)\r\n>> \"%OTA_UV_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'uv 0.7.12\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_UV_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "uv", uv_body);
+        let python_body = if cfg!(windows) {
+            "@echo off\r\necho Python 3.12.8\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'Python 3.12.8\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "python", python_body);
+        let log_path = fixture.dir.path().join("uv.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_UV_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_UV_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "install")
+            .expect("prepare task should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_UV_LOG", value) },
+            None => unsafe { env::remove_var("OTA_UV_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(logged.contains("sync"), "{logged}");
+        assert!(
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("api")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn prepare_sequence_executes_structural_steps_in_declared_order() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+    package_managers:
+      pnpm: "10"
+  python:
+    provider: uv
+    version: "3.12"
+    package_managers:
+      uv: ">=0.7"
+tasks:
+  setup:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: node_package_manager
+            cwd: .
+            manager: pnpm
+            mode: install
+            frozen_lockfile: true
+        - kind: dependency_hydration
+          medium: package_dependencies
+          source:
+            kind: uv
+            cwd: api
+    requirements:
+      toolchains:
+        - node
+        - python
+    effects:
+      writes:
+        - node_modules
+        - api/.venv
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("api")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        let pnpm_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo 10.0.0\r\n  exit /b 0\r\n)\r\n>> \"%OTA_PREPARE_LOG%\" echo pnpm^|%CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.0.0\\n'\n  exit 0\nfi\nprintf 'pnpm|%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_PREPARE_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "pnpm", pnpm_body);
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.12.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'v22.12.0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "node", node_body);
+        let uv_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo uv 0.7.12\r\n  exit /b 0\r\n)\r\n>> \"%OTA_PREPARE_LOG%\" echo uv^|%CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'uv 0.7.12\\n'\n  exit 0\nfi\nprintf 'uv|%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_PREPARE_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "uv", uv_body);
+        let python_body = if cfg!(windows) {
+            "@echo off\r\necho Python 3.12.8\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'Python 3.12.8\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "python", python_body);
+        let log_path = fixture.dir.path().join("prepare.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_PREPARE_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_PREPARE_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("sequence should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_PREPARE_LOG", value) },
+            None => unsafe { env::remove_var("OTA_PREPARE_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        let lines = logged.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2, "{logged}");
+        assert!(lines[0].starts_with("pnpm|"), "{logged}");
+        assert!(lines[0].contains("|install --frozen-lockfile"), "{logged}");
+        assert!(lines[1].starts_with("uv|"), "{logged}");
+        assert!(lines[1].contains("|sync"), "{logged}");
+        assert!(
+            lines[1].contains(
                 fixture
                     .dir
                     .path()
