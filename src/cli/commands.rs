@@ -134,7 +134,8 @@ use crate::runner::{
     TaskExecutionRelation, TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence,
     clean_execution_report, clean_stale_execution, effective_execution,
     effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
-    ensure_task_env_files_ready, env_resolution_source_label, ephemeral_container_name,
+    ensure_task_adapter_inputs_ready, ensure_task_env_files_ready, env_resolution_source_label,
+    ephemeral_container_name,
     host_runtime_readiness_observed, load_declared_env_sources, load_policy_env_overlay,
     named_execution_context, persistent_container_name, preflight_native_runtime_listener_binds,
     reported_task_context_for_backend, resolve_declared_env_source_value,
@@ -155,7 +156,7 @@ use crate::schema::{
     TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode, TaskRuntimePortSpec,
     TaskRuntimeProjectionSpec, TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec,
     TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind,
-    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskCommandSpec, TaskSpec, TaskTargetActivationMode,
     TaskTargetActivationSpec, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
     ToolAcquisitionProvider, ToolAcquisitionSpec, format_memory_size_bytes,
     parse_memory_size_bytes, parse_readiness_duration_spec,
@@ -11965,6 +11966,13 @@ fn build_env_report_with_overrides(
             };
             let backend = effective_task_execution(contract, task_name, overrides).backend;
             ensure_task_env_files_ready(
+                task_name,
+                task,
+                backend,
+                contract_working_dir(contract_path),
+            )
+            .map_err(|error| error.to_string())?;
+            ensure_task_adapter_inputs_ready(
                 task_name,
                 task,
                 backend,
@@ -52265,6 +52273,155 @@ workflows:
     }
 
     #[test]
+    fn materialize_selected_workflow_env_profile_for_task_binds_rendered_dotenv_to_compose_task_adapter_inputs()
+    {
+        let _env_lock = crate::test_support::env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: env-profile-compose-task-materialization
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    docker-build:
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
+tasks:
+  build:
+    run: docker compose -f compose.yaml up -d
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let mut target = super::LoadedContractTarget {
+            contract,
+            contract_path: contract_path.clone(),
+        };
+        let prior_database_url = std::env::var_os("DATABASE_URL");
+        unsafe {
+            std::env::set_var("DATABASE_URL", "postgres://workflow-owned");
+        }
+        super::materialize_selected_workflow_env_profile_for_task(&mut target, None, "build")
+            .expect("workflow env materialization should succeed");
+
+        let rendered = fs::read_to_string(fixture.path().join(".env.docker-build")).unwrap();
+        assert_eq!(
+            rendered,
+            "DATABASE_URL=postgres://workflow-owned\nREDIS_HOST=redis\n"
+        );
+        assert_eq!(
+            target
+                .contract
+                .tasks
+                .get("build")
+                .and_then(|task| task.adapter_inputs.compose.as_ref())
+                .and_then(|compose| compose.env_files.first())
+                .map(String::as_str),
+            Some(".env.docker-build")
+        );
+        assert!(
+            target
+                .contract
+                .tasks
+                .get("build")
+                .is_some_and(|task| task.env_files.is_empty())
+        );
+        match prior_database_url {
+            Some(value) => unsafe { std::env::set_var("DATABASE_URL", value) },
+            None => unsafe { std::env::remove_var("DATABASE_URL") },
+        }
+    }
+
+    #[test]
+    fn materialize_selected_workflow_env_profile_for_task_binds_rendered_dotenv_to_compose_branch_only()
+    {
+        let _env_lock = crate::test_support::env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: env-profile-compose-branch-materialization
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    docker-build:
+      render:
+        dotenv:
+          path: .env.docker-build
+          include:
+            - DATABASE_URL
+tasks:
+  build:
+    run: pnpm build
+    execution:
+      default_mode: native
+      modes:
+        container:
+          run: docker compose -f compose.yaml up -d
+workflows:
+  default: docker-build
+  docker-build:
+    env:
+      profile: docker-build
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let mut target = super::LoadedContractTarget {
+            contract,
+            contract_path: contract_path.clone(),
+        };
+        let prior_database_url = std::env::var_os("DATABASE_URL");
+        unsafe {
+            std::env::set_var("DATABASE_URL", "postgres://workflow-owned");
+        }
+        super::materialize_selected_workflow_env_profile_for_task(&mut target, None, "build")
+            .expect("workflow env materialization should succeed");
+
+        let task = target.contract.tasks.get("build").expect("task present");
+        assert!(task.env_files.is_empty());
+        assert!(task.adapter_inputs.compose.is_none());
+        assert_eq!(
+            task.execution
+                .as_ref()
+                .and_then(|execution| execution.modes.container.as_ref())
+                .and_then(|branch| branch.adapter_inputs.compose.as_ref())
+                .and_then(|compose| compose.env_files.first())
+                .map(String::as_str),
+            Some(".env.docker-build")
+        );
+        match prior_database_url {
+            Some(value) => unsafe { std::env::set_var("DATABASE_URL", value) },
+            None => unsafe { std::env::remove_var("DATABASE_URL") },
+        }
+    }
+
+    #[test]
     fn materialize_selected_workflow_env_profile_for_task_fails_on_invalid_policy_overlay() {
         let _env_lock = crate::test_support::env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -81439,12 +81596,22 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         let Some(task) = adjusted.tasks.get_mut(task_name.as_str()) else {
             continue;
         };
-        if let Some(path) = rendered_dotenv_path.as_ref()
-            && !task.env_files.iter().any(|existing| existing == path)
-        {
-            task.env_files.insert(0, path.clone());
-        }
-        if !profile.env_files.is_empty() {
+        if let Some(path) = rendered_dotenv_path.as_ref() {
+            if !bind_rendered_dotenv_to_compose_task_adapter_inputs(task, path) {
+                if !task.env_files.iter().any(|existing| existing == path) {
+                    task.env_files.insert(0, path.clone());
+                }
+            }
+            if !profile.env_files.is_empty() {
+                let mut merged_env_files = profile.env_files.clone();
+                for path in &task.env_files {
+                    if !merged_env_files.iter().any(|existing| existing == path) {
+                        merged_env_files.push(path.clone());
+                    }
+                }
+                task.env_files = merged_env_files;
+            }
+        } else if !profile.env_files.is_empty() {
             let mut merged_env_files = profile.env_files.clone();
             for path in &task.env_files {
                 if !merged_env_files.iter().any(|existing| existing == path) {
@@ -81486,6 +81653,72 @@ fn workflow_env_profile_applies_to_task(
         .selected_workflow_task_closure_names(workflow_name)
         .iter()
         .any(|declared| declared == task_name)
+}
+
+fn bind_rendered_dotenv_to_compose_task_adapter_inputs(task: &mut TaskSpec, path: &str) -> bool {
+    let mut bound = false;
+    if task.adapter_inputs.compose.is_some()
+        || shell_uses_docker_compose(task.run.as_deref())
+        || shell_uses_docker_compose(task.script.as_deref())
+        || command_uses_docker_compose(task.command.as_ref())
+        || task.variants.iter().any(|variant| {
+            shell_uses_docker_compose(variant.run.as_deref())
+                || shell_uses_docker_compose(variant.script.as_deref())
+                || command_uses_docker_compose(variant.command.as_ref())
+        })
+    {
+        let compose = task
+            .adapter_inputs
+            .compose
+            .get_or_insert_with(crate::schema::TaskComposeAdapterInputsSpec::default);
+        if !compose.env_files.iter().any(|existing| existing == path) {
+            compose.env_files.insert(0, path.to_string());
+        }
+        bound = true;
+    }
+    if let Some(execution) = task.execution.as_mut() {
+        for branch in [
+            execution.modes.native.as_mut(),
+            execution.modes.container.as_mut(),
+            execution.modes.remote.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if branch.adapter_inputs.compose.is_some()
+                || shell_uses_docker_compose(branch.run.as_deref())
+                || shell_uses_docker_compose(branch.script.as_deref())
+                || command_uses_docker_compose(branch.command.as_ref())
+            {
+                let compose = branch
+                    .adapter_inputs
+                    .compose
+                    .get_or_insert_with(crate::schema::TaskComposeAdapterInputsSpec::default);
+                if !compose.env_files.iter().any(|existing| existing == path) {
+                    compose.env_files.insert(0, path.to_string());
+                }
+                bound = true;
+            }
+        }
+    }
+    bound
+}
+
+fn shell_uses_docker_compose(command: Option<&str>) -> bool {
+    command
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| value.to_ascii_lowercase().contains("docker compose"))
+}
+
+fn command_uses_docker_compose(command: Option<&TaskCommandSpec>) -> bool {
+    command.is_some_and(|command| {
+        command.exe.trim().eq_ignore_ascii_case("docker")
+            && command
+                .args
+                .first()
+                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose"))
+    })
 }
 
 fn materialize_selected_workflow_env_profile_for_task(

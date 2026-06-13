@@ -239,6 +239,11 @@ dotenv or properties file as readiness truth across commands, declare that file 
 `env.sources`. If only one workflow/runtime path needs an overlay, keep it on the task through
 `env_files`.
 
+When a selected workflow owns one rendered dotenv artifact through `env.profiles.<name>.render`
+and the selected task path is a compose-running task, ota projects that artifact through
+`tasks.<name>.adapter_inputs.compose.env_files` rather than pretending the compose interpolation
+file is a process env overlay.
+
 If a declared source is present but invalid, ota fails instead of silently skipping it.
 If a declared source has `must_exist: true` and is missing, ota reports that as a readiness failure
 even if another layer provides the env value.

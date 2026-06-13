@@ -2862,6 +2862,9 @@ Workflow env adapter rules:
   and named compose services should consume that exact file
 - this keeps compose adapter input ownership on the workflow env surface instead of duplicating
   the same `manager.env_file` path across services
+- when the selected workflow task closure includes a compose-running task, ota also projects that
+  rendered dotenv artifact into `tasks.<name>.adapter_inputs.compose.env_files` instead of
+  misrouting it through process `env_files`
 - every referenced service must declare `manager.kind: compose`
 - the selected profile must declare `render.dotenv`
 - if a referenced service also declares `manager.env_file`, it must match the workflow-owned

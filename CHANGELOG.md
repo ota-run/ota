@@ -40,6 +40,10 @@
 - validate/doctor now treat shell-owned compose file and project-name flags as the same governance
   class as shell-owned `--env-file`, so hard-coded `docker compose -f` / `--file` / `-p` /
   `--project-name` truth is now pushed toward `tasks.<name>.adapter_inputs.compose.*`
+- selected workflow env-profile materialization now routes rendered dotenv artifacts into
+  compose-running tasks through `tasks.<name>.adapter_inputs.compose.env_files` instead of
+  misrouting that workflow-owned compose interpolation input through process `env_files`; `ota env
+  --task` now also validates task adapter-input files, not just task process env-files
 - restored Python starter command provenance truth all the way through init JSON field paths, so
   generated structured `command` bodies now publish `tasks.<name>.command.exe` /
   `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy
