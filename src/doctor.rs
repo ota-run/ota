@@ -4040,6 +4040,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => {
                 ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory)
             }
+            ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => {
+                ContractAdvisory::ReplaceableBakeFileOwnership(advisory)
+            }
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => {
                 ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory)
             }
@@ -4107,6 +4110,7 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         | ContractAdvisory::ReplaceableShellCheck(_)
         | ContractAdvisory::ReplaceableShellEnvMutation(_)
         | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
+        | ContractAdvisory::ReplaceableBakeFileOwnership(_)
         | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
         | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_) => advisory.summary(),
         ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(

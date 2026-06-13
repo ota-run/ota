@@ -1852,6 +1852,7 @@ tasks:
 - when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`command`/`prepare`/`launch`, and `runtime`
 - use `env_files` for task-process dotenv overlays; use `adapter_inputs.compose.*` when one task path owns `docker compose` interpolation input, compose file selection, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
 - use `adapter_inputs.bake.files` when one task path owns `docker buildx bake` file selection and that truth should project through `BUILDX_BAKE_FILE` instead of shell `-f`
+- validate/doctor warn when Bake file truth stays hard-coded in shell `docker buildx bake -f` / `--file` flags instead of `adapter_inputs.bake.files`
 - when a selected branch omits `run`/`script`/`command`/`prepare`/`launch`, ota falls back to the task-level execution body (including OS variants)
 - when a task declares `execution.modes`, an explicit `--mode` must resolve to a declared branch
   unless it matches `default_mode`; unsupported explicit overrides fail early with a mode-branch error

@@ -55,6 +55,9 @@
   `workflows.<name>.env.adapter_inputs.bake.files`, and Ota projects that truth into
   `docker buildx bake` task paths through `BUILDX_BAKE_FILE` instead of forcing Bake file
   selection to stay hidden in shell `-f` flags
+- validate/doctor now also treat shell-owned `docker buildx bake -f` / `--file` truth as a
+  governance smell, pushing Bake file selection toward `tasks.<name>.adapter_inputs.bake.files`
+  instead of opaque shell flags
 - restored Python starter command provenance truth all the way through init JSON field paths, so
   generated structured `command` bodies now publish `tasks.<name>.command.exe` /
   `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy

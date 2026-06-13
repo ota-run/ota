@@ -6405,6 +6405,7 @@ pub enum ContractAdvisory {
     ReplaceableShellCheck(ReplaceableShellCheckAdvisory),
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
     ReplaceableComposeEnvFileOwnership(ReplaceableComposeEnvFileOwnershipAdvisory),
+    ReplaceableBakeFileOwnership(ReplaceableBakeFileOwnershipAdvisory),
     DuplicateWorkflowRenderedEnvOwnership(DuplicateWorkflowRenderedEnvOwnershipAdvisory),
     DuplicateWorkflowComposeProjectNameOwnership(
         DuplicateWorkflowComposeProjectNameOwnershipAdvisory,
@@ -6484,6 +6485,12 @@ pub struct ReplaceableShellEnvMutationAdvisory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceableComposeEnvFileOwnershipAdvisory {
+    pub task_name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableBakeFileOwnershipAdvisory {
     pub task_name: String,
     pub command: String,
 }
@@ -6585,6 +6592,9 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP"
             }
+            ContractAdvisory::ReplaceableBakeFileOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP"
+            }
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP"
             }
@@ -6679,6 +6689,10 @@ impl ContractAdvisory {
                 "task `{}` hard-codes compose adapter input ownership in shell",
                 advisory.task_name
             ),
+            ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
+                "task `{}` hard-codes Bake file selection in shell",
+                advisory.task_name
+            ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
                 "workflow `{}` profile `{}` duplicates rendered env artifact ownership in task `{}`",
                 advisory.workflow_name, advisory.profile_name, advisory.task_name
@@ -6769,6 +6783,10 @@ impl ContractAdvisory {
                 "task `{}` hard-codes compose shell flags inside shell (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under `adapter_inputs.compose.*` or `services.<name>.manager.env_file`",
                 advisory.task_name, advisory.command
             ),
+            ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
+                "task `{}` hard-codes Bake file selection inside shell (`{}`), which hides `docker buildx bake` adapter input ownership from Ota instead of declaring it under `adapter_inputs.bake.files`",
+                advisory.task_name, advisory.command
+            ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
                 "workflow `{}` profile `{}` renders `{}`, but task `{}` also declares that same file under `{}`; Ota already projects rendered workflow env artifacts into the selected workflow task closure, so the duplicate task ownership is drift-prone",
                 advisory.workflow_name,
@@ -6815,6 +6833,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
+            | ContractAdvisory::ReplaceableBakeFileOwnership(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
@@ -6839,6 +6858,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
+            | ContractAdvisory::ReplaceableBakeFileOwnership(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
@@ -6864,6 +6884,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
+            | ContractAdvisory::ReplaceableBakeFileOwnership(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
@@ -6928,6 +6949,10 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
                 "move compose adapter input ownership out of task `{}` shell: use `tasks.{0}.adapter_inputs.compose.*` when the task owns interpolation, compose file selection, or project naming, or `services.<name>.manager.env_file` when one managed compose service owns interpolation",
+                advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
+                "move Bake file selection out of task `{}` shell: use `tasks.{0}.adapter_inputs.bake.files` when the task owns `docker buildx bake` file selection truth",
                 advisory.task_name
             ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
@@ -7044,6 +7069,7 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_replaceable_compose_env_file_ownership_advisories(
         contract,
     ));
+    advisories.extend(collect_replaceable_bake_file_ownership_advisories(contract));
     advisories.extend(collect_duplicate_workflow_rendered_env_ownership_advisories(contract));
     advisories
         .extend(collect_duplicate_workflow_compose_project_name_ownership_advisories(contract));
@@ -7396,6 +7422,74 @@ fn collect_replaceable_compose_env_file_ownership_advisories(
     advisories
 }
 
+fn collect_replaceable_bake_file_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.action.is_some() || task.aggregate.is_some() {
+            continue;
+        }
+        let task_command = task
+            .run
+            .as_deref()
+            .or(task.script.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(command) = task_command
+            && task
+                .adapter_inputs
+                .bake
+                .as_ref()
+                .is_none_or(crate::schema::TaskBakeAdapterInputsSpec::is_empty)
+            && obvious_bake_file_shell(command)
+        {
+            advisories.push(ContractAdvisory::ReplaceableBakeFileOwnership(
+                ReplaceableBakeFileOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: command.to_string(),
+                },
+            ));
+            continue;
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                let branch_command = branch
+                    .run
+                    .as_deref()
+                    .or(branch.script.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let Some(command) = branch_command else {
+                    continue;
+                };
+                if !task
+                    .adapter_inputs
+                    .bake
+                    .as_ref()
+                    .is_none_or(crate::schema::TaskBakeAdapterInputsSpec::is_empty)
+                    || !branch
+                        .adapter_inputs
+                        .bake
+                        .as_ref()
+                        .is_none_or(crate::schema::TaskBakeAdapterInputsSpec::is_empty)
+                    || !obvious_bake_file_shell(command)
+                {
+                    continue;
+                }
+                advisories.push(ContractAdvisory::ReplaceableBakeFileOwnership(
+                    ReplaceableBakeFileOwnershipAdvisory {
+                        task_name: task_name.clone(),
+                        command: command.to_string(),
+                    },
+                ));
+                break;
+            }
+        }
+    }
+    advisories
+}
+
 fn collect_duplicate_workflow_rendered_env_ownership_advisories(
     contract: &Contract,
 ) -> Vec<ContractAdvisory> {
@@ -7582,6 +7676,11 @@ fn obvious_compose_env_file_shell(command: &str) -> bool {
             || lower.contains(" --file ")
             || lower.contains(" -p ")
             || lower.contains(" --project-name "))
+}
+
+fn obvious_bake_file_shell(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    lower.contains("docker buildx bake") && (lower.contains(" -f ") || lower.contains(" --file "))
 }
 
 fn obvious_file_check_path(command: &str) -> Option<&str> {
@@ -26870,6 +26969,56 @@ tasks:
             advisory,
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(value)
                 if value.task_name == "docker-build"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_bake_file_ownership_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    run: docker buildx bake -f docker-bake.hcl app
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableBakeFileOwnership(value)
+                if value.task_name == "image:build"
+        )));
+    }
+
+    #[test]
+    fn skips_replaceable_bake_file_ownership_advisory_when_bake_adapter_inputs_exist() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    adapter_inputs:
+      bake:
+        files:
+          - docker-bake.hcl
+    run: docker buildx bake -f docker-bake.hcl app
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableBakeFileOwnership(value)
+                if value.task_name == "image:build"
         )));
     }
 

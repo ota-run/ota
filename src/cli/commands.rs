@@ -1385,6 +1385,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::ReplaceableBakeFileOwnership(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("hard-coded Bake file selection"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(value) => format!(
             "{} workflow `{}` profile `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
