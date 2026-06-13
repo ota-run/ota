@@ -3522,6 +3522,60 @@ fn validate_task_adapter_inputs(
             )));
         }
     }
+    if let Some(bake) = adapter_inputs.bake.as_ref() {
+        validate_task_env_files(
+            task_name,
+            &format!("{scope}.bake.files"),
+            &bake.files,
+            errors,
+        );
+    }
+}
+
+fn validate_workflow_adapter_inputs(
+    workflow_name: &str,
+    scope: &str,
+    adapter_inputs: &crate::schema::TaskAdapterInputsSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if let Some(compose) = adapter_inputs.compose.as_ref() {
+        for (index, path) in compose.env_files.iter().enumerate() {
+            let field = format!("{scope}.compose.env_files[{index}]");
+            if !is_safe_repo_relative_file_path(path.trim()) {
+                errors.push(ValidationError::new(format!(
+                    "`{field}` must be a repo-relative path that does not escape the repo"
+                )));
+            }
+        }
+        for (index, path) in compose.files.iter().enumerate() {
+            let field = format!("{scope}.compose.files[{index}]");
+            if !is_safe_repo_relative_file_path(path.trim()) {
+                errors.push(ValidationError::new(format!(
+                    "`{field}` must be a repo-relative path that does not escape the repo"
+                )));
+            }
+        }
+        if compose
+            .project_name
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(str::is_empty)
+        {
+            errors.push(ValidationError::new(format!(
+                "`workflows.{workflow_name}.env.adapter_inputs.compose.project_name` must not be empty"
+            )));
+        }
+    }
+    if let Some(bake) = adapter_inputs.bake.as_ref() {
+        for (index, path) in bake.files.iter().enumerate() {
+            let field = format!("{scope}.bake.files[{index}]");
+            if !is_safe_repo_relative_file_path(path.trim()) {
+                errors.push(ValidationError::new(format!(
+                    "`{field}` must be a repo-relative path that does not escape the repo"
+                )));
+            }
+        }
+    }
 }
 
 fn validate_task_prepare(
@@ -6885,7 +6939,7 @@ impl ContractAdvisory {
                 advisory.path
             ),
             ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory) => format!(
-                "remove `{}` from task `{}` or drop `workflows.{}.env.compose_project_name`; selected-path compose project naming should be owned by one declarative surface",
+                "remove `{}` from task `{}` or keep workflow-owned project naming on `workflows.{}.env.adapter_inputs.compose.project_name`; selected-path compose project naming should be owned by one declarative surface",
                 advisory.location, advisory.task_name, advisory.workflow_name
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
@@ -6991,9 +7045,8 @@ pub fn collect_contract_advisories_with_contract_path(
         contract,
     ));
     advisories.extend(collect_duplicate_workflow_rendered_env_ownership_advisories(contract));
-    advisories.extend(collect_duplicate_workflow_compose_project_name_ownership_advisories(
-        contract,
-    ));
+    advisories
+        .extend(collect_duplicate_workflow_compose_project_name_ownership_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
     advisories.extend(collect_sensitive_write_exception_advisories(contract));
     advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
@@ -7437,11 +7490,13 @@ fn collect_duplicate_workflow_compose_project_name_ownership_advisories(
 
     let mut advisories = Vec::new();
     let mut seen = BTreeSet::new();
-    for (workflow_name, workflow) in &workflows.items {
-        let Some(project_name) = workflow
-            .env
+    for (workflow_name, _) in &workflows.items {
+        let effective_adapter_inputs =
+            contract.selected_workflow_effective_adapter_inputs(Some(workflow_name.as_str()));
+        let Some(project_name) = effective_adapter_inputs
+            .compose
             .as_ref()
-            .and_then(|env| env.compose_project_name.as_deref())
+            .and_then(|compose| compose.project_name.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty())
         else {
@@ -10189,6 +10244,27 @@ fn command_uses_docker_compose(command: Option<&TaskCommandSpec>) -> bool {
     })
 }
 
+fn shell_uses_docker_buildx_bake(command: Option<&str>) -> bool {
+    command
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| value.to_ascii_lowercase().contains("docker buildx bake"))
+}
+
+fn command_uses_docker_buildx_bake(command: Option<&TaskCommandSpec>) -> bool {
+    command.is_some_and(|command| {
+        command.exe.trim().eq_ignore_ascii_case("docker")
+            && command
+                .args
+                .first()
+                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
+            && command
+                .args
+                .get(1)
+                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
+    })
+}
+
 fn task_supports_compose_adapter_inputs(task: &TaskSpec) -> bool {
     task.adapter_inputs.compose.is_some()
         || shell_uses_docker_compose(task.run.as_deref())
@@ -10205,6 +10281,26 @@ fn task_supports_compose_adapter_inputs(task: &TaskSpec) -> bool {
                     || shell_uses_docker_compose(branch.run.as_deref())
                     || shell_uses_docker_compose(branch.script.as_deref())
                     || command_uses_docker_compose(branch.command.as_ref())
+            })
+        })
+}
+
+fn task_supports_bake_adapter_inputs(task: &TaskSpec) -> bool {
+    task.adapter_inputs.bake.is_some()
+        || shell_uses_docker_buildx_bake(task.run.as_deref())
+        || shell_uses_docker_buildx_bake(task.script.as_deref())
+        || command_uses_docker_buildx_bake(task.command.as_ref())
+        || task.variants.iter().any(|variant| {
+            shell_uses_docker_buildx_bake(variant.run.as_deref())
+                || shell_uses_docker_buildx_bake(variant.script.as_deref())
+                || command_uses_docker_buildx_bake(variant.command.as_ref())
+        })
+        || task.execution.as_ref().is_some_and(|execution| {
+            execution.modes.iter().any(|(_, branch)| {
+                branch.adapter_inputs.bake.is_some()
+                    || shell_uses_docker_buildx_bake(branch.run.as_deref())
+                    || shell_uses_docker_buildx_bake(branch.script.as_deref())
+                    || command_uses_docker_buildx_bake(branch.command.as_ref())
             })
         })
 }
@@ -10264,6 +10360,69 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
             }
         }
         if let Some(env) = workflow.env.as_ref() {
+            let workflow_requires_compose_support = env.compose_project_name.is_some()
+                || !env.compose_files.is_empty()
+                || env
+                    .adapter_inputs
+                    .compose
+                    .as_ref()
+                    .is_some_and(|compose| !compose.is_empty());
+            let workflow_requires_bake_support = env
+                .adapter_inputs
+                .bake
+                .as_ref()
+                .is_some_and(|bake| !bake.is_empty());
+            let selected_workflow_tasks = contract
+                .selected_workflow_task_closure_names(Some(name.as_str()))
+                .iter()
+                .filter_map(|task_name| contract.tasks.get(task_name))
+                .collect::<Vec<_>>();
+            let selected_workflow_supports_compose_adapter_inputs = selected_workflow_tasks
+                .iter()
+                .copied()
+                .any(task_supports_compose_adapter_inputs);
+            let selected_workflow_supports_bake_adapter_inputs = selected_workflow_tasks
+                .iter()
+                .copied()
+                .any(task_supports_bake_adapter_inputs);
+            let selected_workflow_supports_adapter_inputs = (!workflow_requires_compose_support
+                || selected_workflow_supports_compose_adapter_inputs)
+                && (!workflow_requires_bake_support
+                    || selected_workflow_supports_bake_adapter_inputs);
+            validate_workflow_adapter_inputs(
+                name,
+                &format!("workflows.{name}.env.adapter_inputs"),
+                &env.adapter_inputs,
+                errors,
+            );
+            if env
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.files.is_empty())
+                && !env.compose_files.is_empty()
+            {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.env.compose_files` duplicates `workflows.{name}.env.adapter_inputs.compose.files`; keep workflow-owned compose file overlays on the canonical `adapter_inputs` surface"
+                )));
+            }
+            if env
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .and_then(|compose| compose.project_name.as_deref())
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+                && env
+                    .compose_project_name
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.env.compose_project_name` duplicates `workflows.{name}.env.adapter_inputs.compose.project_name`; keep workflow-owned compose project naming on the canonical `adapter_inputs` surface"
+                )));
+            }
             for (index, path) in env.compose_files.iter().enumerate() {
                 let field = format!("workflows.{name}.env.compose_files[{index}]");
                 if !is_safe_repo_relative_file_path(path.trim()) {
@@ -10281,15 +10440,39 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     "`workflows.{name}.env.compose_project_name` must not be empty"
                 )));
             }
+            if !env.adapter_inputs.is_empty() && !selected_workflow_supports_adapter_inputs {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.env.adapter_inputs` requires the selected workflow task closure to include task paths that support each declared adapter input family"
+                )));
+            }
             if (!env.compose_files.is_empty() || env.compose_project_name.is_some())
-                && !contract
-                    .selected_workflow_task_closure_names(Some(name.as_str()))
-                    .iter()
-                    .filter_map(|task_name| contract.tasks.get(task_name))
-                    .any(task_supports_compose_adapter_inputs)
+                && !selected_workflow_supports_adapter_inputs
             {
                 errors.push(ValidationError::new(format!(
                     "`workflows.{name}.env.compose_files` / `compose_project_name` require the selected workflow task closure to include at least one compose-running task path or declared compose adapter input"
+                )));
+            }
+            if let Some(profile_name) = env
+                .profile
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                && let Some(rendered_path) = contract
+                    .env
+                    .profiles
+                    .get(profile_name)
+                    .and_then(|profile| profile.render.as_ref())
+                    .and_then(|render| render.dotenv.as_ref())
+                    .map(|dotenv| dotenv.path.trim())
+                && env.adapter_inputs.compose.as_ref().is_some_and(|compose| {
+                    compose
+                        .env_files
+                        .iter()
+                        .any(|path| path.trim() == rendered_path)
+                })
+            {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.env.adapter_inputs.compose.env_files` must not repeat rendered workflow env artifact `{rendered_path}`; ota already projects `env.profiles.{profile_name}.render.dotenv.path` into selected compose task paths"
                 )));
             }
         }
@@ -12128,6 +12311,66 @@ workflows:
     }
 
     #[test]
+    fn validates_canonical_workflow_adapter_inputs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: docker compose up
+workflows:
+  default: app
+  app:
+    env:
+      adapter_inputs:
+        compose:
+          env_files:
+            - .env.compose
+          files:
+            - compose.base.yaml
+          project_name: app-local
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("canonical workflow adapter inputs should validate");
+    }
+
+    #[test]
+    fn validates_canonical_workflow_bake_adapter_inputs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    run: docker buildx bake app
+workflows:
+  default: image
+  image:
+    env:
+      adapter_inputs:
+        bake:
+          files:
+            - docker-bake.hcl
+    run:
+      task: image:build
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("canonical workflow bake adapter inputs should validate");
+    }
+
+    #[test]
     fn rejects_invalid_workflow_compose_task_overlays() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -12157,11 +12400,49 @@ workflows:
         assert!(error.contains(
             "`workflows.app.env.compose_files[0]` must be a repo-relative path that does not escape the repo"
         ));
-        assert!(error.contains(
-            "`workflows.app.env.compose_project_name` must not be empty"
-        ));
+        assert!(error.contains("`workflows.app.env.compose_project_name` must not be empty"));
         assert!(error.contains(
             "`workflows.app.env.compose_files` / `compose_project_name` require the selected workflow task closure to include at least one compose-running task path or declared compose adapter input"
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_canonical_and_legacy_workflow_compose_overlays() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: docker compose up
+workflows:
+  default: app
+  app:
+    env:
+      adapter_inputs:
+        compose:
+          files:
+            - compose.base.yaml
+          project_name: canonical-app
+      compose_files:
+        - compose.legacy.yaml
+      compose_project_name: legacy-app
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("duplicate canonical and legacy workflow compose overlays should fail")
+            .to_string();
+        assert!(error.contains(
+            "`workflows.app.env.compose_files` duplicates `workflows.app.env.adapter_inputs.compose.files`; keep workflow-owned compose file overlays on the canonical `adapter_inputs` surface"
+        ));
+        assert!(error.contains(
+            "`workflows.app.env.compose_project_name` duplicates `workflows.app.env.adapter_inputs.compose.project_name`; keep workflow-owned compose project naming on the canonical `adapter_inputs` surface"
         ));
     }
 
@@ -13370,6 +13651,35 @@ tasks:
     }
 
     #[test]
+    fn validates_task_bake_adapter_inputs_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    adapter_inputs:
+      bake:
+        files:
+          - docker-bake.hcl
+    execution:
+      modes:
+        container:
+          adapter_inputs:
+            bake:
+              files:
+                - docker-bake.container.hcl
+    run: docker buildx bake app
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("task bake adapter inputs should validate");
+    }
+
+    #[test]
     fn rejects_invalid_task_env_files_shape() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -13443,6 +13753,39 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `docker-build` `adapter_inputs.compose.project_name` must not be empty"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_task_bake_adapter_inputs_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    adapter_inputs:
+      bake:
+        files:
+          - ../docker-bake.hcl
+    run: docker buildx bake app
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid bake adapter inputs should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `image:build` `adapter_inputs.bake.files[0]` must be a repo-relative path that does not escape the repo"
             )),
             "{rendered:?}"
         );

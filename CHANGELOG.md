@@ -45,10 +45,16 @@
   misrouting that workflow-owned compose interpolation input through process `env_files`; `ota env
   --task` now also validates task adapter-input files, not just task process env-files
 - widened workflow-owned compose adapter truth beyond rendered dotenv injection: workflows can now
-  declare `workflows.<name>.env.compose_files` and `compose_project_name`, Ota projects those
-  overlays into compose-running task paths with branch-aware precedence, validate/doctor warn when
-  task-local compose project naming drifts against workflow ownership, and the published contract
-  schema now carries the same workflow env surface
+  declare canonical `workflows.<name>.env.adapter_inputs.compose.*` overlays, with
+  `compose_files` / `compose_project_name` kept as backward-compatible aliases; Ota projects that
+  workflow-owned adapter truth into compose-running task paths with branch-aware precedence,
+  validate/doctor warn when task-local compose project naming drifts against workflow ownership,
+  and the published contract schema now carries the same generalized workflow adapter surface
+- proved that generalized adapter surface with a second adapter family: contracts can now declare
+  `tasks.<name>.adapter_inputs.bake.files` plus
+  `workflows.<name>.env.adapter_inputs.bake.files`, and Ota projects that truth into
+  `docker buildx bake` task paths through `BUILDX_BAKE_FILE` instead of forcing Bake file
+  selection to stay hidden in shell `-f` flags
 - restored Python starter command provenance truth all the way through init JSON field paths, so
   generated structured `command` bodies now publish `tasks.<name>.command.exe` /
   `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy

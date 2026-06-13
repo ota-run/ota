@@ -2107,13 +2107,20 @@ fn effective_task_env_for_backend_with_resolved_env(
     if !compose_adapter_files.is_empty() {
         env.insert(
             String::from("COMPOSE_FILE"),
-            compose_file_env_value(&compose_adapter_files),
+            adapter_file_env_value(&compose_adapter_files),
         );
     }
     if let Some(project_name) = task.compose_adapter_project_name_for_backend(backend_kind) {
         env.insert(
             String::from("COMPOSE_PROJECT_NAME"),
             project_name.to_string(),
+        );
+    }
+    let bake_adapter_files = task.bake_adapter_files_for_backend(backend_kind);
+    if !bake_adapter_files.is_empty() {
+        env.insert(
+            String::from("BUILDX_BAKE_FILE"),
+            adapter_file_env_value(&bake_adapter_files),
         );
     }
     env.extend(service_env_bindings_for_task(
@@ -2201,13 +2208,20 @@ pub(crate) fn effective_task_env_for_selection(
     if !compose_adapter_files.is_empty() {
         env.insert(
             String::from("COMPOSE_FILE"),
-            compose_file_env_value(&compose_adapter_files),
+            adapter_file_env_value(&compose_adapter_files),
         );
     }
     if let Some(project_name) = task.compose_adapter_project_name_for_backend(backend) {
         env.insert(
             String::from("COMPOSE_PROJECT_NAME"),
             project_name.to_string(),
+        );
+    }
+    let bake_adapter_files = task.bake_adapter_files_for_backend(backend);
+    if !bake_adapter_files.is_empty() {
+        env.insert(
+            String::from("BUILDX_BAKE_FILE"),
+            adapter_file_env_value(&bake_adapter_files),
         );
     }
     env.extend(service_env_bindings_for_task(
@@ -2252,7 +2266,7 @@ fn load_task_env_file_values(
     merged
 }
 
-fn compose_file_env_value(paths: &[String]) -> String {
+fn adapter_file_env_value(paths: &[String]) -> String {
     let separator = if cfg!(windows) { ';' } else { ':' };
     paths.join(&separator.to_string())
 }
@@ -2318,6 +2332,20 @@ pub(crate) fn ensure_task_adapter_inputs_ready(
             path: trimmed.to_string(),
             details: format!(
                 "compose file `{trimmed}` declared in `adapter_inputs.compose.files` is not readable: {source}"
+            ),
+        })?;
+    }
+    for path in task.bake_adapter_files_for_backend(backend) {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let full_path = working_dir.join(trimmed);
+        fs::metadata(&full_path).map_err(|source| RunError::InvalidEnvSource {
+            kind: String::from("bake_adapter_file"),
+            path: trimmed.to_string(),
+            details: format!(
+                "bake file `{trimmed}` declared in `adapter_inputs.bake.files` is not readable: {source}"
             ),
         })?;
     }
@@ -49556,6 +49584,52 @@ tasks:
         assert_eq!(
             env.get("COMPOSE_PROJECT_NAME").map(String::as_str),
             Some("app-container")
+        );
+    }
+
+    #[test]
+    fn effective_task_env_for_selection_projects_bake_adapter_files() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    adapter_inputs:
+      bake:
+        files:
+          - docker-bake.hcl
+    execution:
+      default_mode: container
+      modes:
+        container:
+          adapter_inputs:
+            bake:
+              files:
+                - docker-bake.container.hcl
+    run: docker buildx bake app
+"#,
+        );
+
+        let env = effective_task_env_for_selection(
+            &fixture.contract,
+            "image:build",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            fixture.dir.path(),
+        )
+        .expect("task env should resolve");
+
+        assert_eq!(
+            env.get("BUILDX_BAKE_FILE").map(String::as_str),
+            Some(if cfg!(windows) {
+                "docker-bake.hcl;docker-bake.container.hcl"
+            } else {
+                "docker-bake.hcl:docker-bake.container.hcl"
+            })
         );
     }
 

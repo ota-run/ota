@@ -705,6 +705,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "properties": {
         "profile": { "type": "string" },
         "compose_env_file_services": { "$ref": "#/$defs/stringArray" },
+        "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
         "compose_files": { "$ref": "#/$defs/stringArray" },
         "compose_project_name": { "type": "string" }
       }
@@ -1321,11 +1322,19 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "project_name": { "type": "string" }
       }
     },
+    "taskBakeAdapterInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "files": { "$ref": "#/$defs/stringArray" }
+      }
+    },
     "taskAdapterInputs": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "compose": { "$ref": "#/$defs/taskComposeAdapterInputs" }
+        "compose": { "$ref": "#/$defs/taskComposeAdapterInputs" },
+        "bake": { "$ref": "#/$defs/taskBakeAdapterInputs" }
       }
     },
     "taskModeBranch": {

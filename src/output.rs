@@ -3024,6 +3024,8 @@ pub struct TaskAggregateSummary {
 pub struct TaskAdapterInputsSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeAdapterInputsSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bake: Option<TaskBakeAdapterInputsSummary<'a>>,
 }
 
 impl<'a> TaskAdapterInputsSummary<'a> {
@@ -3031,6 +3033,10 @@ impl<'a> TaskAdapterInputsSummary<'a> {
         self.compose
             .as_ref()
             .is_none_or(TaskComposeAdapterInputsSummary::is_empty)
+            && self
+                .bake
+                .as_ref()
+                .is_none_or(TaskBakeAdapterInputsSummary::is_empty)
     }
 }
 
@@ -3046,9 +3052,19 @@ pub struct TaskComposeAdapterInputsSummary<'a> {
 
 impl<'a> TaskComposeAdapterInputsSummary<'a> {
     pub fn is_empty(&self) -> bool {
-        self.env_files.is_empty()
-            && self.files.is_empty()
-            && self.project_name.is_none()
+        self.env_files.is_empty() && self.files.is_empty() && self.project_name.is_none()
+    }
+}
+
+#[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
+pub struct TaskBakeAdapterInputsSummary<'a> {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<&'a str>,
+}
+
+impl<'a> TaskBakeAdapterInputsSummary<'a> {
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
     }
 }
 
@@ -3278,6 +3294,13 @@ pub fn summarize_task_adapter_inputs<'a>(
                     .filter(|value| !value.is_empty()),
             })
             .filter(|compose| !compose.is_empty()),
+        bake: adapter_inputs
+            .bake
+            .as_ref()
+            .map(|bake| TaskBakeAdapterInputsSummary {
+                files: bake.files.iter().map(String::as_str).collect(),
+            })
+            .filter(|bake| !bake.is_empty()),
     }
 }
 

@@ -135,13 +135,12 @@ use crate::runner::{
     clean_execution_report, clean_stale_execution, effective_execution,
     effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
     ensure_task_adapter_inputs_ready, ensure_task_env_files_ready, env_resolution_source_label,
-    ephemeral_container_name,
-    host_runtime_readiness_observed, load_declared_env_sources, load_policy_env_overlay,
-    named_execution_context, persistent_container_name, preflight_native_runtime_listener_binds,
-    reported_task_context_for_backend, resolve_declared_env_source_value,
-    resolve_effective_task_container_backend, resolve_execution_backend,
-    resolve_execution_backend_with_contract_path, resolve_named_readiness_probe,
-    resolve_task_env_details, resolve_task_env_details_for_task,
+    ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
+    load_policy_env_overlay, named_execution_context, persistent_container_name,
+    preflight_native_runtime_listener_binds, reported_task_context_for_backend,
+    resolve_declared_env_source_value, resolve_effective_task_container_backend,
+    resolve_execution_backend, resolve_execution_backend_with_contract_path,
+    resolve_named_readiness_probe, resolve_task_env_details, resolve_task_env_details_for_task,
     resolve_task_env_details_for_task_with_policy, resolve_task_env_details_with_policy,
     run_streaming_command_with_loader, run_task_captured_with_args_with_overrides_with_policy,
     run_task_with_args_with_overrides_and_stream_capture,
@@ -151,15 +150,16 @@ use crate::runner::{
 use crate::schema::{
     AgentConfig, Backend, ContainerBackend, Contract, EnvRequirement, EnvSource, EnvSourceKind,
     ExecutionSharedBackend, ExtensionSpec, Lifecycle, RequirementSurface, ServiceReadinessKind,
-    ServiceReadinessSpec, TaskDependencyHydrationSourceSpec, TaskPrepareSpec, TaskRuntimeBindSpec,
-    TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec, TaskRuntimeHostProjectionSpec,
-    TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode, TaskRuntimePortSpec,
-    TaskRuntimeProjectionSpec, TaskRuntimeProtocol, TaskRuntimeReadinessHttpBodySpec,
-    TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind,
-    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskCommandSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetActivationSpec, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
-    ToolAcquisitionProvider, ToolAcquisitionSpec, format_memory_size_bytes,
-    parse_memory_size_bytes, parse_readiness_duration_spec,
+    ServiceReadinessSpec, TaskCommandSpec, TaskDependencyHydrationSourceSpec, TaskPrepareSpec,
+    TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
+    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimeListenerSpec, TaskRuntimePortMode,
+    TaskRuntimePortSpec, TaskRuntimeProjectionSpec, TaskRuntimeProtocol,
+    TaskRuntimeReadinessHttpBodySpec, TaskRuntimeReadinessHttpMethod,
+    TaskRuntimeReadinessHttpSuccessSpec, TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetActivationSpec,
+    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolAcquisitionProvider,
+    ToolAcquisitionSpec, format_memory_size_bytes, parse_memory_size_bytes,
+    parse_readiness_duration_spec,
 };
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
@@ -52206,6 +52206,82 @@ tasks:
     }
 
     #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_binds_canonical_workflow_adapter_inputs()
+    {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-adapter-inputs
+workflows:
+  default: app
+  app:
+    env:
+      adapter_inputs:
+        compose:
+          env_files:
+            - .env.compose
+          files:
+            - compose.base.yaml
+          project_name: workflow-app
+    run:
+      task: dev
+tasks:
+  dev:
+    run: docker compose up
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(&contract, None)
+            .expect("workflow adapter inputs should adjust contract");
+        let compose = adjusted
+            .tasks
+            .get("dev")
+            .and_then(|task| task.adapter_inputs.compose.as_ref())
+            .expect("compose adapter inputs should exist");
+        assert_eq!(compose.env_files, vec![String::from(".env.compose")]);
+        assert_eq!(compose.files, vec![String::from("compose.base.yaml")]);
+        assert_eq!(compose.project_name.as_deref(), Some("workflow-app"));
+    }
+
+    #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_binds_workflow_bake_adapter_inputs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-bake-adapter-inputs
+workflows:
+  default: image
+  image:
+    env:
+      adapter_inputs:
+        bake:
+          files:
+            - docker-bake.hcl
+    run:
+      task: image:build
+tasks:
+  image:build:
+    run: docker buildx bake app
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(&contract, None)
+            .expect("workflow bake adapter inputs should adjust contract");
+        let bake = adjusted
+            .tasks
+            .get("image:build")
+            .and_then(|task| task.adapter_inputs.bake.as_ref())
+            .expect("bake adapter inputs should exist");
+        assert_eq!(bake.files, vec![String::from("docker-bake.hcl")]);
+    }
+
+    #[test]
     fn render_selected_workflow_env_profile_artifacts_writes_dotenv_from_profile_truth() {
         let _env_lock = crate::test_support::env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -52333,7 +52409,7 @@ workflows:
 
     #[test]
     fn materialize_selected_workflow_env_profile_for_task_binds_rendered_dotenv_to_compose_task_adapter_inputs()
-    {
+     {
         let _env_lock = crate::test_support::env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
@@ -52411,7 +52487,7 @@ workflows:
 
     #[test]
     fn materialize_selected_workflow_env_profile_for_task_binds_rendered_dotenv_to_compose_branch_only()
-    {
+     {
         let _env_lock = crate::test_support::env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
@@ -52516,12 +52592,8 @@ workflows:
             contract,
             contract_path,
         };
-        super::materialize_selected_workflow_env_profile_for_task(
-            &mut target,
-            None,
-            "build",
-        )
-        .expect("workflow compose overlays should materialize");
+        super::materialize_selected_workflow_env_profile_for_task(&mut target, None, "build")
+            .expect("workflow compose overlays should materialize");
 
         let task = target.contract.tasks.get("build").expect("task present");
         assert!(task.adapter_inputs.compose.is_none());
@@ -81697,15 +81769,20 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         .map(|dotenv| dotenv.path.clone());
     let compose_env_file_services =
         contract.selected_workflow_compose_env_file_service_names(workflow_name);
-    let workflow_compose_files = contract.selected_workflow_compose_files(workflow_name);
-    let workflow_compose_project_name = contract
-        .selected_workflow_compose_project_name(workflow_name)
-        .map(str::to_string);
+    let mut workflow_adapter_inputs =
+        contract.selected_workflow_effective_adapter_inputs(workflow_name);
+    if let Some(path) = rendered_dotenv_path.as_ref() {
+        let compose = workflow_adapter_inputs
+            .compose
+            .get_or_insert_with(crate::schema::TaskComposeAdapterInputsSpec::default);
+        if !compose.env_files.iter().any(|existing| existing == path) {
+            compose.env_files.insert(0, path.clone());
+        }
+    }
     if task_names.is_empty()
         && profile.sources.is_empty()
         && compose_env_file_services.is_empty()
-        && workflow_compose_files.is_empty()
-        && workflow_compose_project_name.is_none()
+        && workflow_adapter_inputs.is_empty()
     {
         return None;
     }
@@ -81723,12 +81800,7 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         let Some(task) = adjusted.tasks.get_mut(task_name.as_str()) else {
             continue;
         };
-        if !bind_workflow_compose_adapter_overlays(
-            task,
-            rendered_dotenv_path.as_deref(),
-            &workflow_compose_files,
-            workflow_compose_project_name.as_deref(),
-        ) {
+        if !bind_workflow_adapter_overlays(task, &workflow_adapter_inputs) {
             if let Some(path) = rendered_dotenv_path.as_ref()
                 && !task.env_files.iter().any(|existing| existing == path)
             {
@@ -81807,11 +81879,9 @@ fn prepend_unique_paths(target: &mut Vec<String>, additions: &[String]) {
     *target = merged;
 }
 
-fn bind_workflow_compose_adapter_overlays(
+fn bind_workflow_compose_adapter_inputs(
     task: &mut TaskSpec,
-    rendered_dotenv_path: Option<&str>,
-    workflow_compose_files: &[String],
-    workflow_compose_project_name: Option<&str>,
+    workflow_compose: &crate::schema::TaskComposeAdapterInputsSpec,
 ) -> bool {
     let mut bound = false;
     if task.adapter_inputs.compose.is_some()
@@ -81828,14 +81898,10 @@ fn bind_workflow_compose_adapter_overlays(
             .adapter_inputs
             .compose
             .get_or_insert_with(crate::schema::TaskComposeAdapterInputsSpec::default);
-        if let Some(path) = rendered_dotenv_path
-            && !compose.env_files.iter().any(|existing| existing == path)
-        {
-            compose.env_files.insert(0, path.to_string());
-        }
-        prepend_unique_paths(&mut compose.files, workflow_compose_files);
+        prepend_unique_paths(&mut compose.env_files, &workflow_compose.env_files);
+        prepend_unique_paths(&mut compose.files, &workflow_compose.files);
         if compose.project_name.is_none() {
-            compose.project_name = workflow_compose_project_name.map(str::to_string);
+            compose.project_name = workflow_compose.project_name.clone();
         }
         bound = true;
     }
@@ -81857,18 +81923,76 @@ fn bind_workflow_compose_adapter_overlays(
                     .adapter_inputs
                     .compose
                     .get_or_insert_with(crate::schema::TaskComposeAdapterInputsSpec::default);
-                if let Some(path) = rendered_dotenv_path
-                    && !compose.env_files.iter().any(|existing| existing == path)
-                {
-                    compose.env_files.insert(0, path.to_string());
-                }
-                prepend_unique_paths(&mut compose.files, workflow_compose_files);
+                prepend_unique_paths(&mut compose.env_files, &workflow_compose.env_files);
+                prepend_unique_paths(&mut compose.files, &workflow_compose.files);
                 if compose.project_name.is_none() {
-                    compose.project_name = workflow_compose_project_name.map(str::to_string);
+                    compose.project_name = workflow_compose.project_name.clone();
                 }
                 bound = true;
             }
         }
+    }
+    bound
+}
+
+fn bind_workflow_bake_adapter_inputs(
+    task: &mut TaskSpec,
+    workflow_bake: &crate::schema::TaskBakeAdapterInputsSpec,
+) -> bool {
+    let mut bound = false;
+    if task.adapter_inputs.bake.is_some()
+        || shell_uses_docker_buildx_bake(task.run.as_deref())
+        || shell_uses_docker_buildx_bake(task.script.as_deref())
+        || command_uses_docker_buildx_bake(task.command.as_ref())
+        || task.variants.iter().any(|variant| {
+            shell_uses_docker_buildx_bake(variant.run.as_deref())
+                || shell_uses_docker_buildx_bake(variant.script.as_deref())
+                || command_uses_docker_buildx_bake(variant.command.as_ref())
+        })
+    {
+        let bake = task
+            .adapter_inputs
+            .bake
+            .get_or_insert_with(crate::schema::TaskBakeAdapterInputsSpec::default);
+        prepend_unique_paths(&mut bake.files, &workflow_bake.files);
+        bound = true;
+    }
+    if let Some(execution) = task.execution.as_mut() {
+        for branch in [
+            execution.modes.native.as_mut(),
+            execution.modes.container.as_mut(),
+            execution.modes.remote.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if branch.adapter_inputs.bake.is_some()
+                || shell_uses_docker_buildx_bake(branch.run.as_deref())
+                || shell_uses_docker_buildx_bake(branch.script.as_deref())
+                || command_uses_docker_buildx_bake(branch.command.as_ref())
+            {
+                let bake = branch
+                    .adapter_inputs
+                    .bake
+                    .get_or_insert_with(crate::schema::TaskBakeAdapterInputsSpec::default);
+                prepend_unique_paths(&mut bake.files, &workflow_bake.files);
+                bound = true;
+            }
+        }
+    }
+    bound
+}
+
+fn bind_workflow_adapter_overlays(
+    task: &mut TaskSpec,
+    workflow_adapter_inputs: &crate::schema::TaskAdapterInputsSpec,
+) -> bool {
+    let mut bound = false;
+    if let Some(compose) = workflow_adapter_inputs.compose.as_ref() {
+        bound |= bind_workflow_compose_adapter_inputs(task, compose);
+    }
+    if let Some(bake) = workflow_adapter_inputs.bake.as_ref() {
+        bound |= bind_workflow_bake_adapter_inputs(task, bake);
     }
     bound
 }
@@ -81890,6 +82014,27 @@ fn command_uses_docker_compose(command: Option<&TaskCommandSpec>) -> bool {
     })
 }
 
+fn shell_uses_docker_buildx_bake(command: Option<&str>) -> bool {
+    command
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|value| value.to_ascii_lowercase().contains("docker buildx bake"))
+}
+
+fn command_uses_docker_buildx_bake(command: Option<&TaskCommandSpec>) -> bool {
+    command.is_some_and(|command| {
+        command.exe.trim().eq_ignore_ascii_case("docker")
+            && command
+                .args
+                .first()
+                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
+            && command
+                .args
+                .get(1)
+                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
+    })
+}
+
 fn materialize_selected_workflow_env_profile_for_task(
     target: &mut LoadedContractTarget,
     workflow_name: Option<&str>,
@@ -81902,7 +82047,11 @@ fn materialize_selected_workflow_env_profile_for_task(
         .and_then(|(_, workflow)| workflow.env.as_ref())
         .is_some();
     if !has_workflow_env
-        || !workflow_env_profile_applies_to_task(&target.contract, workflow_name, task_name.as_str())
+        || !workflow_env_profile_applies_to_task(
+            &target.contract,
+            workflow_name,
+            task_name.as_str(),
+        )
     {
         return Ok(());
     }

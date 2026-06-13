@@ -44,6 +44,7 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     let task_aggregate = &schema["$defs"]["taskAggregate"]["properties"];
     let task_adapter_inputs = &schema["$defs"]["taskAdapterInputs"]["properties"];
     let task_compose_adapter_inputs = &schema["$defs"]["taskComposeAdapterInputs"]["properties"];
+    let task_bake_adapter_inputs = &schema["$defs"]["taskBakeAdapterInputs"]["properties"];
     let task_input = &schema["$defs"]["taskInput"]["properties"];
     let task_action_variants = schema["$defs"]["taskAction"]["oneOf"]
         .as_array()
@@ -107,9 +108,11 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_prepare.get("source_kind").is_some());
     assert!(task_aggregate.get("tasks").is_some());
     assert!(task_adapter_inputs.get("compose").is_some());
+    assert!(task_adapter_inputs.get("bake").is_some());
     assert!(task_compose_adapter_inputs.get("env_files").is_some());
     assert!(task_compose_adapter_inputs.get("files").is_some());
     assert!(task_compose_adapter_inputs.get("project_name").is_some());
+    assert!(task_bake_adapter_inputs.get("files").is_some());
     assert!(task_input.get("required").is_some());
     assert!(task_input.get("allowed").is_some());
     assert!(
@@ -1756,6 +1759,7 @@ fn full_contract_schema_is_published_and_covered_by_schema_publication() {
     );
     let workflow_env = &schema["$defs"]["workflowEnv"]["properties"];
     assert!(workflow_env.get("compose_env_file_services").is_some());
+    assert!(workflow_env.get("adapter_inputs").is_some());
     assert!(workflow_env.get("compose_files").is_some());
     assert!(workflow_env.get("compose_project_name").is_some());
 }

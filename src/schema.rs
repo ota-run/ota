@@ -463,6 +463,41 @@ impl Contract {
             .filter(|value| !value.is_empty())
     }
 
+    pub fn selected_workflow_effective_adapter_inputs(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> TaskAdapterInputsSpec {
+        let Some(env) = self
+            .selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.env.as_ref())
+        else {
+            return TaskAdapterInputsSpec::default();
+        };
+        let mut adapter_inputs = env.adapter_inputs.clone();
+        if !env.compose_files.is_empty() {
+            let compose = adapter_inputs
+                .compose
+                .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
+            if compose.files.is_empty() {
+                compose.files = env.compose_files.clone();
+            }
+        }
+        if let Some(project_name) = env
+            .compose_project_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let compose = adapter_inputs
+                .compose
+                .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
+            if compose.project_name.is_none() {
+                compose.project_name = Some(project_name.to_string());
+            }
+        }
+        adapter_inputs
+    }
+
     fn collect_task_dependency_closure(
         &self,
         name: &str,
@@ -546,6 +581,8 @@ pub struct WorkflowEnvSpec {
     pub profile: Option<String>,
     #[serde(default)]
     pub compose_env_file_services: Vec<String>,
+    #[serde(default, skip_serializing_if = "TaskAdapterInputsSpec::is_empty")]
+    pub adapter_inputs: TaskAdapterInputsSpec,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub compose_files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3726,6 +3763,21 @@ impl TaskSpec {
             })
     }
 
+    pub fn bake_adapter_files_for_backend(&self, backend: Backend) -> Vec<String> {
+        let mut merged = self
+            .adapter_inputs
+            .bake
+            .as_ref()
+            .map(|bake| bake.files.clone())
+            .unwrap_or_default();
+        if let Some(branch) = self.mode_execution_branch(backend)
+            && let Some(bake) = branch.adapter_inputs.bake.as_ref()
+        {
+            merged.extend(bake.files.clone());
+        }
+        merged
+    }
+
     pub fn env_bindings_for_backend_with_context_name(
         &self,
         _execution: Option<&Execution>,
@@ -5410,6 +5462,8 @@ pub enum TaskTargetKind {
 pub struct TaskAdapterInputsSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeAdapterInputsSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bake: Option<TaskBakeAdapterInputsSpec>,
 }
 
 impl TaskAdapterInputsSpec {
@@ -5417,6 +5471,10 @@ impl TaskAdapterInputsSpec {
         self.compose
             .as_ref()
             .is_none_or(TaskComposeAdapterInputsSpec::is_empty)
+            && self
+                .bake
+                .as_ref()
+                .is_none_or(TaskBakeAdapterInputsSpec::is_empty)
     }
 }
 
@@ -5440,6 +5498,19 @@ impl TaskComposeAdapterInputsSpec {
                 .as_deref()
                 .map(str::trim)
                 .is_none_or(str::is_empty)
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskBakeAdapterInputsSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+}
+
+impl TaskBakeAdapterInputsSpec {
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
     }
 }
 
