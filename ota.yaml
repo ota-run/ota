@@ -199,12 +199,13 @@ tasks:
   compat:
     description: Run the compatibility test gate
     notes: |
-      Use this to validate generated schema sync, schema stability, and fixture coverage before release work.
+      Use this to validate generated schema/doc publication sync, schema stability, and fixture coverage before release work.
     category: test
     script: |
       set -e
       cargo run --bin sync_published_contract_schemas
-      git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json
+      cargo run --bin sync_published_doc_manifests
+      git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json docs/spec/published-docs/canonical-docs.json
       CARGO_INCREMENTAL=0 cargo test contract_is_stable
       CARGO_INCREMENTAL=0 cargo test --test json_schema_contracts
       CARGO_INCREMENTAL=0 cargo test --test json_output_conformance
@@ -216,7 +217,9 @@ tasks:
         script: |
           cargo run --bin sync_published_contract_schemas
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json
+          cargo run --bin sync_published_doc_manifests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json docs/spec/published-docs/canonical-docs.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:CARGO_INCREMENTAL = "0"
           cargo test contract_is_stable
@@ -247,6 +250,14 @@ tasks:
       `docs/spec/json-schemas/workspace-contract.json` from the canonical Rust source.
     category: dev
     run: cargo run --bin sync_published_contract_schemas
+    safe_for_agent: true
+  docs:manifest:sync:
+    description: Regenerate the published canonical docs manifest artifact
+    notes: |
+      Use this after changing the Rust-owned canonical docs publication surface.
+      It rewrites `docs/spec/published-docs/canonical-docs.json` from the canonical Rust source.
+    category: dev
+    run: cargo run --bin sync_published_doc_manifests
     safe_for_agent: true
   release-gate:
     description: Run the GitHub Actions verification suite

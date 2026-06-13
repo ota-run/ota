@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "docs": [
+    {
+      "id": "contract-reference",
+      "title": "ota Contract Reference",
+      "kind": "reference",
+      "source_path": "docs/spec/contract-reference.md",
+      "source_url": "https://github.com/ota-run/ota/blob/main/docs/spec/contract-reference.md",
+      "public_url": "https://ota.run/docs/reference/contract",
+      "canonical_for": [
+        "ota.yaml field semantics",
+        "repo contract validation truth"
+      ]
+    },
+    {
+      "id": "workspace-reference",
+      "title": "ota Workspace Reference",
+      "kind": "reference",
+      "source_path": "docs/spec/workspace-reference.md",
+      "source_url": "https://github.com/ota-run/ota/blob/main/docs/spec/workspace-reference.md",
+      "public_url": "https://ota.run/docs/reference/workspace",
+      "canonical_for": [
+        "ota.workspace.yaml field semantics",
+        "workspace contract validation truth"
+      ]
+    },
+    {
+      "id": "command-reference",
+      "title": "ota Command Reference",
+      "kind": "reference",
+      "source_path": "docs/spec/command-reference.md",
+      "source_url": "https://github.com/ota-run/ota/blob/main/docs/spec/command-reference.md",
+      "public_url": "https://ota.run/docs/reference/command",
+      "canonical_for": [
+        "shipped CLI command behavior",
+        "repo-level command usage semantics"
+      ]
+    },
+    {
+      "id": "json-output-reference",
+      "title": "ota JSON Output Reference",
+      "kind": "reference",
+      "source_path": "docs/spec/json-output-reference.md",
+      "source_url": "https://github.com/ota-run/ota/blob/main/docs/spec/json-output-reference.md",
+      "public_url": "https://ota.run/docs/reference/json-output",
+      "canonical_for": [
+        "machine-readable command output semantics",
+        "JSON output contract guidance"
+      ]
+    },
+    {
+      "id": "execution-topology",
+      "title": "ota Execution Topology",
+      "kind": "reference",
+      "source_path": "docs/spec/execution-topology.md",
+      "source_url": "https://github.com/ota-run/ota/blob/main/docs/spec/execution-topology.md",
+      "public_url": "https://ota.run/docs/reference/execution-topology",
+      "canonical_for": [
+        "execution graph reasoning",
+        "shared backend and runtime topology guidance"
+      ]
+    },
+    {
+      "id": "local-service-topology",
+      "title": "ota Local Service Topology",
+      "kind": "reference",
+      "source_path": "docs/spec/local-service-topology.md",
+      "source_url": "https://github.com/ota-run/ota/blob/main/docs/spec/local-service-topology.md",
+      "public_url": "https://ota.run/docs/reference/local-service-topology",
+      "canonical_for": [
+        "service endpoint ownership",
+        "local runtime topology guidance"
+      ]
+    },
+    {
+      "id": "toolchains-runtimes-tools",
+      "title": "ota Toolchains, Runtimes, Tools, and Orchestrators",
+      "kind": "reference",
+      "source_path": "docs/spec/toolchains-runtimes-tools.md",
+      "source_url": "https://github.com/ota-run/ota/blob/main/docs/spec/toolchains-runtimes-tools.md",
+      "public_url": "https://ota.run/docs/reference/toolchains-runtimes-tools",
+      "canonical_for": [
+        "toolchain ownership semantics",
+        "runtime and tool distinction guidance"
+      ]
+    },
+    {
+      "id": "doctor-finding-reference",
+      "title": "ota Doctor Finding Reference",
+      "kind": "reference",
+      "source_path": "docs/spec/doctor-finding-reference.md",
+      "source_url": "https://github.com/ota-run/ota/blob/main/docs/spec/doctor-finding-reference.md",
+      "public_url": null,
+      "canonical_for": [
+        "stable doctor finding identity catalog",
+        "machine-readable diagnosis code reference"
+      ]
+    }
+  ]
+}

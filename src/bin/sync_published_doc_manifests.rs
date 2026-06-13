@@ -20,24 +20,21 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
-pub(crate) mod capabilities;
-pub mod cli;
-pub(crate) mod contract_drift;
-pub mod detector;
-pub mod doctor;
-pub(crate) mod execution;
-pub mod output;
-pub mod parser;
-pub mod policy_pack;
-pub mod provisioning;
-pub mod published_contract_schemas;
-pub mod published_docs_manifest;
-pub mod runner;
-pub mod schema;
-pub(crate) mod terminal;
-#[cfg(test)]
-pub mod test_support;
-pub(crate) mod toolchains;
-pub mod update;
-pub mod validator;
-pub mod workspace;
+use std::path::Path;
+
+use ota::published_docs_manifest::write_published_doc_manifests;
+
+fn main() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("docs")
+        .join("spec")
+        .join("published-docs");
+    let written = write_published_doc_manifests(&manifest_dir).unwrap_or_else(|error| {
+        eprintln!("{error}");
+        std::process::exit(1);
+    });
+
+    for path in written {
+        println!("{}", path.display());
+    }
+}

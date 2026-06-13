@@ -82,12 +82,27 @@ Ota now also validates those repo/workspace examples after loading them through 
 types and projecting them back to authoring JSON values, so the published schemas stay aligned
 with both authored contract truth and the actual Rust-owned authoring-model boundary.
 
+Published canonical docs manifest:
+
+- `docs/spec/published-docs/canonical-docs.json` /
+  `https://dist.ota.run/spec/published-docs/latest/canonical-docs.json`
+
+This is the compatibility-locked machine-readable publication surface for the canonical docs
+boundary itself. It tells downstream consumers which upstream `ota` source files own key docs
+surfaces such as contract, workspace, command, topology, and machine-output references. The
+checked-in JSON file is a generated artifact owned by the Rust publisher in
+`src/published_docs_manifest.rs`; regenerate it with
+`cargo run --bin sync_published_doc_manifests` instead of hand-editing the published file.
+The release gate and local compatibility task rerun that generator and fail if `git diff
+--exit-code` sees manifest drift afterward.
+
 ## Existing authoritative docs
 
 - `docs/spec/exit-codes.md`
 - `docs/spec/json-output-reference.md`
 - `docs/spec/command-reference.md`
 - `docs/spec/contract-reference.md`
+- `docs/spec/published-docs.md`
 - `docs/spec/workspace-reference.md`
 
 ## Baseline tests that must remain green
@@ -130,7 +145,8 @@ Equivalent expanded command set:
 ```bash
 cargo test contract_is_stable
 cargo run --bin sync_published_contract_schemas
-git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json
+cargo run --bin sync_published_doc_manifests
+git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json docs/spec/published-docs/canonical-docs.json
 cargo test --test json_schema_contracts
 cargo test --test json_output_conformance
 cargo test --test examples_validate

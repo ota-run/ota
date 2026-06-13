@@ -273,12 +273,13 @@ jobs:
           cargo run --quiet --bin ota -- validate ./ota.yaml --plain
           cargo test --test real_repo_fixtures -- --test-threads=1 --skip workspace_refresh_pulls_updated_git_sources_on_real_command_path
 
-      - name: Run release gate (non-Windows) - published schema sync
+      - name: Run release gate (non-Windows) - published surface sync
         if: runner.os == 'macOS'
         timeout-minutes: 10
         run: |
           cargo run --bin sync_published_contract_schemas
-          git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json
+          cargo run --bin sync_published_doc_manifests
+          git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json docs/spec/published-docs/canonical-docs.json
 
       - name: Run release gate (non-Windows) - JSON schema contracts
         if: runner.os == 'macOS'
@@ -466,14 +467,16 @@ jobs:
         timeout-minutes: 10
         run: cargo test contract_is_stable
 
-      - name: Run release gate (Windows) - published schema sync
+      - name: Run release gate (Windows) - published surface sync
         if: runner.os == 'Windows'
         shell: pwsh
         timeout-minutes: 10
         run: |
           cargo run --bin sync_published_contract_schemas
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json
+          cargo run --bin sync_published_doc_manifests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json docs/spec/published-docs/canonical-docs.json
 
       - name: Run release gate (Windows) - JSON schema contracts
         if: runner.os == 'Windows'
@@ -717,7 +720,7 @@ jobs:
           if-no-files-found: error
 
   publish-schemas:
-    name: Publish JSON Schemas to R2
+    name: Publish JSON Schemas and Docs Manifests to R2
     needs: release-tag
     if: needs.release-tag.outputs.created == 'true'
     runs-on: ubuntu-latest
@@ -738,6 +741,20 @@ jobs:
           find docs/spec/json-schemas -maxdepth 1 -type f | sort | while read -r file; do
             filename="$(basename "${file}")"
             for prefix in "spec/json-schemas/latest" "spec/json-schemas/v${version}"; do
+              key="${prefix}/${filename}"
+              npx --yes wrangler r2 object put "${CLOUDFLARE_R2_BUCKET}/${key}" \
+                --file "${file}" \
+                --remote \
+                --content-type application/json
+            done
+          done
+
+      - name: Publish canonical docs manifest
+        run: |
+          version="${{ needs.release-tag.outputs.version }}"
+          find docs/spec/published-docs -maxdepth 1 -type f | sort | while read -r file; do
+            filename="$(basename "${file}")"
+            for prefix in "spec/published-docs/latest" "spec/published-docs/v${version}"; do
               key="${prefix}/${filename}"
               npx --yes wrangler r2 object put "${CLOUDFLARE_R2_BUCKET}/${key}" \
                 --file "${file}" \

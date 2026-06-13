@@ -24,6 +24,7 @@ use std::fs;
 use std::path::Path;
 
 use ota::published_contract_schemas::{generated_contract_schema, published_contract_schemas};
+use ota::published_docs_manifest::{generated_doc_manifest, published_doc_manifests};
 use serde_json::{Value, json};
 
 fn load_schema(path: &str) -> Value {
@@ -1647,17 +1648,76 @@ fn release_gate_workflow_publishes_all_schema_artifacts_to_latest_and_versioned_
         Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/release-gate.yml");
     let workflow = fs::read_to_string(&workflow_path).expect("workflow should be readable");
 
-    assert!(workflow.contains("Publish JSON Schemas to R2"));
+    assert!(workflow.contains("Publish JSON Schemas and Docs Manifests to R2"));
     assert!(workflow.contains("find docs/spec/json-schemas -maxdepth 1 -type f"));
     assert!(workflow.contains("basename \"${file}\""));
     assert!(workflow.contains("spec/json-schemas/latest"));
     assert!(workflow.contains("spec/json-schemas/v${version}"));
+    assert!(workflow.contains("Publish canonical docs manifest"));
+    assert!(workflow.contains("find docs/spec/published-docs -maxdepth 1 -type f"));
+    assert!(workflow.contains("spec/published-docs/latest"));
+    assert!(workflow.contains("spec/published-docs/v${version}"));
     assert!(workflow.contains("--content-type application/json"));
     assert!(workflow.contains("--remote"));
     assert!(workflow.contains("Publish install scripts"));
     assert!(workflow.contains("scripts/install.sh"));
     assert!(workflow.contains("scripts/install.ps1"));
     assert!(workflow.contains("--content-type text/plain"));
+}
+
+#[test]
+fn published_doc_manifest_files_are_generated_and_in_sync() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("docs")
+        .join("spec")
+        .join("published-docs");
+
+    for generated in published_doc_manifests() {
+        let path = manifest_dir.join(generated.filename);
+        let on_disk =
+            fs::read_to_string(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        assert_eq!(
+            on_disk,
+            generated.body,
+            "{} is out of sync with the Rust-owned published docs generator; run `cargo run --bin sync_published_doc_manifests`",
+            path.display()
+        );
+
+        let parsed = generated_doc_manifest(generated.filename)
+            .unwrap_or_else(|| panic!("generated manifest {} should exist", generated.filename));
+        let on_disk_parsed: Value =
+            serde_json::from_str(&on_disk).expect("published doc manifest on disk should parse");
+        assert_eq!(
+            parsed,
+            on_disk_parsed,
+            "{} should serialize to the same JSON value as the Rust-owned published docs generator",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn canonical_docs_manifest_publishes_contract_reference_source_boundary() {
+    let manifest = load_schema("docs/spec/published-docs/canonical-docs.json");
+    let contract = manifest["docs"]
+        .as_array()
+        .expect("canonical docs manifest docs array")
+        .iter()
+        .find(|entry| entry["id"] == json!("contract-reference"))
+        .expect("contract-reference manifest entry");
+
+    assert_eq!(
+        contract["source_path"],
+        json!("docs/spec/contract-reference.md")
+    );
+    assert_eq!(
+        contract["source_url"],
+        json!("https://github.com/ota-run/ota/blob/main/docs/spec/contract-reference.md")
+    );
+    assert_eq!(
+        contract["public_url"],
+        json!("https://ota.run/docs/reference/contract")
+    );
 }
 
 #[test]

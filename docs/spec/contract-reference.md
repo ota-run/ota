@@ -30,6 +30,10 @@ Use this page as the canonical field and validation reference for the shipped co
 For machine-readable contract publication, use
 [`json-schemas/contract.json`](json-schemas/contract.json) locally or
 `https://dist.ota.run/spec/json-schemas/latest/contract.json` in CI, editors, and other tooling.
+For machine-readable docs ownership publication, use
+[`published-docs/canonical-docs.json`](published-docs/canonical-docs.json) locally or
+`https://dist.ota.run/spec/published-docs/latest/canonical-docs.json` when a downstream surface
+needs the canonical upstream source boundary for this page.
 When you need operator guidance for targets, shared backends, activation, and backend fulfillment,
 follow it with [local-service-topology.md](local-service-topology.md).
 Backward-compatibility parsing may continue to accept older shapes, but new and updated contracts

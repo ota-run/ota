@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added a Rust-owned published canonical docs manifest at
+  `docs/spec/published-docs/canonical-docs.json`, with release publication to
+  `https://dist.ota.run/spec/published-docs/latest/canonical-docs.json`; this gives downstream
+  consumers a machine-readable source-of-truth map for key docs surfaces such as contract,
+  workspace, command, JSON output, topology, and doctor finding references instead of forcing
+  them to scrape page chrome or hardcode upstream source paths
 - clarified that `command.exe` is not allowlisted: the docs now say the executable may be any repo-truthful binary or path, and that the named examples are illustrative rather than exhaustive
 - clarified the public command-body contract: `command.exe` is now documented explicitly as a generic executable name or path rather than an npm-shaped field, with representative families such as `npm`, `pnpm`, `yarn`, `bun`, `node`, `python3`, `go`, `bundle`, `docker`, absolute paths, and repo-local binaries
 - widened finite setup modeling again: tasks can now declare `prepare.kind: sequence` to execute
