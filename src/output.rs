@@ -2962,6 +2962,8 @@ pub struct TaskSummary<'a> {
     pub env: &'a BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_files: Vec<&'a str>,
+    #[serde(skip_serializing_if = "TaskAdapterInputsSummary::is_empty")]
+    pub adapter_inputs: TaskAdapterInputsSummary<'a>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub inputs: &'a BTreeMap<String, TaskInputSpec>,
     pub kind: &'a str,
@@ -3016,6 +3018,32 @@ pub struct TaskEffectsSummary {
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct TaskAggregateSummary {
     pub tasks: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
+pub struct TaskAdapterInputsSummary<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeAdapterInputsSummary<'a>>,
+}
+
+impl<'a> TaskAdapterInputsSummary<'a> {
+    pub fn is_empty(&self) -> bool {
+        self.compose
+            .as_ref()
+            .is_none_or(TaskComposeAdapterInputsSummary::is_empty)
+    }
+}
+
+#[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
+pub struct TaskComposeAdapterInputsSummary<'a> {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<&'a str>,
+}
+
+impl<'a> TaskComposeAdapterInputsSummary<'a> {
+    pub fn is_empty(&self) -> bool {
+        self.env_files.is_empty()
+    }
 }
 
 impl TaskEffectsSummary {
@@ -3073,6 +3101,7 @@ impl<'a> TaskSummary<'a> {
             category: task.category.as_deref(),
             env: &task.env,
             env_files: task.env_files.iter().map(String::as_str).collect(),
+            adapter_inputs: summarize_task_adapter_inputs(&task.adapter_inputs),
             inputs: &task.inputs,
             kind: resolved_execution.kind,
             run: (resolved_execution.kind == "run")
@@ -3140,6 +3169,9 @@ impl<'a> TaskSummary<'a> {
                                 mode: task_mode_name(backend),
                                 context: branch_effective.context_name,
                                 env_files: branch.env_files.iter().map(String::as_str).collect(),
+                                adapter_inputs: summarize_task_adapter_inputs(
+                                    &branch.adapter_inputs,
+                                ),
                                 lifecycle: branch.lifecycle.map(format_lifecycle),
                                 kind: branch_execution.map(|execution| execution.kind),
                                 run: branch.run.as_deref(),
@@ -3197,6 +3229,8 @@ pub struct TaskModeView<'a> {
     pub context: Option<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_files: Vec<&'a str>,
+    #[serde(skip_serializing_if = "TaskAdapterInputsSummary::is_empty")]
+    pub adapter_inputs: TaskAdapterInputsSummary<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3219,6 +3253,20 @@ pub struct TaskCommandSummary<'a> {
     pub exe: &'a str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<&'a str>,
+}
+
+pub fn summarize_task_adapter_inputs<'a>(
+    adapter_inputs: &'a crate::schema::TaskAdapterInputsSpec,
+) -> TaskAdapterInputsSummary<'a> {
+    TaskAdapterInputsSummary {
+        compose: adapter_inputs
+            .compose
+            .as_ref()
+            .map(|compose| TaskComposeAdapterInputsSummary {
+                env_files: compose.env_files.iter().map(String::as_str).collect(),
+            })
+            .filter(|compose| !compose.is_empty()),
+    }
 }
 
 #[derive(Debug, Serialize, Clone)]

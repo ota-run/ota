@@ -1278,6 +1278,20 @@
         "mode": { "enum": ["task", "exec"] }
       }
     },
+    "taskComposeAdapterInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "env_files": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "taskAdapterInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "compose": { "$ref": "#/$defs/taskComposeAdapterInputs" }
+      }
+    },
     "taskModeBranch": {
       "type": "object",
       "additionalProperties": false,
@@ -1291,6 +1305,7 @@
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/taskEnvBinding" }
         },
+        "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
         "run": { "type": "string" },
         "script": { "type": "string" },
         "command": { "$ref": "#/$defs/taskCommand" },
@@ -1346,6 +1361,7 @@
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/taskEnvBinding" }
         },
+        "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
         "inputs": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/taskInput" }

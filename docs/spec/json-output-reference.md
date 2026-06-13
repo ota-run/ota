@@ -550,6 +550,9 @@ Notes:
   and optional readiness contract for each reusable surface
 - `tasks[*].env_files` is present when one task owns ordered task-local dotenv overlays for
   execution; these overlays are execution-only inputs, not root `env.sources`
+- `tasks[*].adapter_inputs.compose.env_files` is present when one task owns ordered compose
+  interpolation files; Ota projects these through adapter-aware runtime input rather than
+  pretending they are process dotenv overlays
 - `tasks[*].launch` is present when one task uses structured `launch` instead of shell `run` or
   `script`; it exposes the launch kind plus the structured command or packaged container metadata
 - task-target probe entries also expose `target.observer` and `target.resolution_plane`; the

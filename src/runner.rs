@@ -2096,6 +2096,13 @@ fn effective_task_env_for_backend_with_resolved_env(
             )
         }),
     );
+    let compose_adapter_env_files = task.compose_adapter_env_files_for_backend(backend_kind);
+    if !compose_adapter_env_files.is_empty() {
+        env.insert(
+            String::from("COMPOSE_ENV_FILES"),
+            compose_adapter_env_files.join(","),
+        );
+    }
     env.extend(service_env_bindings_for_task(
         contract,
         task,
@@ -2170,6 +2177,13 @@ pub(crate) fn effective_task_env_for_selection(
                 )
             }),
     );
+    let compose_adapter_env_files = task.compose_adapter_env_files_for_backend(backend);
+    if !compose_adapter_env_files.is_empty() {
+        env.insert(
+            String::from("COMPOSE_ENV_FILES"),
+            compose_adapter_env_files.join(","),
+        );
+    }
     env.extend(service_env_bindings_for_task(
         contract,
         task,
@@ -2238,6 +2252,29 @@ pub(crate) fn ensure_task_env_files_ready(
                 ),
             })?;
         }
+    }
+    Ok(())
+}
+
+pub(crate) fn ensure_task_adapter_inputs_ready(
+    _task_name: &str,
+    task: &TaskSpec,
+    backend: Backend,
+    working_dir: &Path,
+) -> Result<(), RunError> {
+    for path in task.compose_adapter_env_files_for_backend(backend) {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let full_path = working_dir.join(trimmed);
+        fs::metadata(&full_path).map_err(|source| RunError::InvalidEnvSource {
+            kind: String::from("compose_adapter_env_file"),
+            path: trimmed.to_string(),
+            details: format!(
+                "compose adapter env file `{trimmed}` declared in `adapter_inputs.compose.env_files` is not readable: {source}"
+            ),
+        })?;
     }
     Ok(())
 }
@@ -6395,6 +6432,7 @@ fn execute_task_with_hooks(
     }
 
     ensure_task_env_files_ready(task_name, task, backend_kind, working_dir)?;
+    ensure_task_adapter_inputs_ready(task_name, task, backend_kind, working_dir)?;
 
     let prep_env = effective_task_env_for_backend(contract, task, &backend, working_dir);
 
@@ -49413,6 +49451,48 @@ tasks:
         assert_eq!(
             env.get("DATABASE_URL").map(String::as_str),
             Some("postgres://compose")
+        );
+    }
+
+    #[test]
+    fn effective_task_env_for_selection_projects_compose_adapter_env_files() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    adapter_inputs:
+      compose:
+        env_files:
+          - .env.compose
+    execution:
+      default_mode: container
+      modes:
+        container:
+          adapter_inputs:
+            compose:
+              env_files:
+                - .env.container
+    run: docker compose up
+"#,
+        );
+
+        let env = effective_task_env_for_selection(
+            &fixture.contract,
+            "docker-build",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            fixture.dir.path(),
+        )
+        .expect("task env should resolve");
+
+        assert_eq!(
+            env.get("COMPOSE_ENV_FILES").map(String::as_str),
+            Some(".env.compose,.env.container")
         );
     }
 

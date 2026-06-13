@@ -2075,6 +2075,7 @@ fn validate_tasks(
             errors,
         );
         validate_task_env_files(name, "env_files", &task.env_files, errors);
+        validate_task_adapter_inputs(name, "adapter_inputs", &task.adapter_inputs, errors);
         if let Some(execution) = task.execution.as_ref() {
             if let Some(branch) = execution.modes.native.as_ref()
                 && let Some(runtime) = branch.runtime.as_ref()
@@ -2099,6 +2100,12 @@ fn validate_tasks(
                     name,
                     "execution.modes.native.env_files",
                     &branch.env_files,
+                    errors,
+                );
+                validate_task_adapter_inputs(
+                    name,
+                    "execution.modes.native.adapter_inputs",
+                    &branch.adapter_inputs,
                     errors,
                 );
             }
@@ -2127,6 +2134,12 @@ fn validate_tasks(
                     &branch.env_files,
                     errors,
                 );
+                validate_task_adapter_inputs(
+                    name,
+                    "execution.modes.container.adapter_inputs",
+                    &branch.adapter_inputs,
+                    errors,
+                );
             }
             if let Some(branch) = execution.modes.remote.as_ref()
                 && let Some(runtime) = branch.runtime.as_ref()
@@ -2153,6 +2166,12 @@ fn validate_tasks(
                     name,
                     "execution.modes.remote.env_files",
                     &branch.env_files,
+                    errors,
+                );
+                validate_task_adapter_inputs(
+                    name,
+                    "execution.modes.remote.adapter_inputs",
+                    &branch.adapter_inputs,
                     errors,
                 );
             }
@@ -2472,6 +2491,11 @@ fn validate_tasks(
             if !task.env_bindings.is_empty() {
                 errors.push(ValidationError::new(format!(
                     "task `{name}` must not declare `env_bindings` when `aggregate` is present"
+                )));
+            }
+            if !task.adapter_inputs.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must not declare `adapter_inputs` when `aggregate` is present"
                 )));
             }
             if !task.inputs.is_empty() {
@@ -3464,6 +3488,22 @@ fn validate_task_env_files(
     for (index, path) in env_files.iter().enumerate() {
         let field = format!("{scope}[{index}]");
         validate_repo_relative_file_action_path(task_name, field.as_str(), path.as_str(), errors);
+    }
+}
+
+fn validate_task_adapter_inputs(
+    task_name: &str,
+    scope: &str,
+    adapter_inputs: &crate::schema::TaskAdapterInputsSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if let Some(compose) = adapter_inputs.compose.as_ref() {
+        validate_task_env_files(
+            task_name,
+            &format!("{scope}.compose.env_files"),
+            &compose.env_files,
+            errors,
+        );
     }
 }
 
@@ -6637,7 +6677,7 @@ impl ContractAdvisory {
                 advisory.task_name, advisory.command
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "task `{}` hard-codes `docker compose --env-file` inside shell (`{}`), which hides compose env-file ownership from Ota instead of declaring it under task `env_files` or `services.<name>.manager.env_file`",
+                "task `{}` hard-codes `docker compose --env-file` inside shell (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under `adapter_inputs.compose.env_files` or `services.<name>.manager.env_file`",
                 advisory.task_name, advisory.command
             ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
@@ -6788,7 +6828,7 @@ impl ContractAdvisory {
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "move compose env-file ownership out of task `{}` shell: use `tasks.{0}.env_files` when the task owns interpolation, or `services.<name>.manager.env_file` when one managed compose service owns it",
+                "move compose env-file ownership out of task `{}` shell: use `tasks.{0}.adapter_inputs.compose.env_files` when the task owns interpolation, or `services.<name>.manager.env_file` when one managed compose service owns it",
                 advisory.task_name
             ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
@@ -7203,32 +7243,49 @@ fn collect_replaceable_compose_env_file_ownership_advisories(
         if task.action.is_some() || task.aggregate.is_some() {
             continue;
         }
-        let has_any_env_files = !task.env_files.is_empty()
-            || task.execution.as_ref().is_some_and(|execution| {
-                execution
-                    .modes
-                    .iter()
-                    .any(|(_, branch)| !branch.env_files.is_empty())
-            });
-        if has_any_env_files {
-            continue;
-        }
-        let command = task
+        let task_command = task
             .run
             .as_deref()
             .or(task.script.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        let Some(command) = command else {
-            continue;
-        };
-        if obvious_compose_env_file_shell(command) {
+        if let Some(command) = task_command
+            && task.adapter_inputs.is_empty()
+            && obvious_compose_env_file_shell(command)
+        {
             advisories.push(ContractAdvisory::ReplaceableComposeEnvFileOwnership(
                 ReplaceableComposeEnvFileOwnershipAdvisory {
                     task_name: task_name.clone(),
                     command: command.to_string(),
                 },
             ));
+            continue;
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                let branch_command = branch
+                    .run
+                    .as_deref()
+                    .or(branch.script.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let Some(command) = branch_command else {
+                    continue;
+                };
+                if !task.adapter_inputs.is_empty()
+                    || !branch.adapter_inputs.is_empty()
+                    || !obvious_compose_env_file_shell(command)
+                {
+                    continue;
+                }
+                advisories.push(ContractAdvisory::ReplaceableComposeEnvFileOwnership(
+                    ReplaceableComposeEnvFileOwnershipAdvisory {
+                        task_name: task_name.clone(),
+                        command: command.to_string(),
+                    },
+                ));
+                break;
+            }
         }
     }
     advisories
@@ -13007,6 +13064,35 @@ tasks:
     }
 
     #[test]
+    fn validates_task_adapter_inputs_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    adapter_inputs:
+      compose:
+        env_files:
+          - .env.compose
+    execution:
+      modes:
+        container:
+          adapter_inputs:
+            compose:
+              env_files:
+                - .env.container
+    run: docker compose up
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("task adapter inputs should validate");
+    }
+
+    #[test]
     fn rejects_invalid_task_env_files_shape() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -13032,6 +13118,39 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `docker-build` `env_files[0]` must be a repo-relative path that does not escape the repo"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_task_adapter_inputs_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    adapter_inputs:
+      compose:
+        env_files:
+          - ../.env.compose
+    run: docker compose up
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid adapter inputs should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `docker-build` `adapter_inputs.compose.env_files[0]` must be a repo-relative path that does not escape the repo"
             )),
             "{rendered:?}"
         );
@@ -26097,7 +26216,7 @@ tasks:
     }
 
     #[test]
-    fn skips_replaceable_compose_env_file_ownership_advisory_when_branch_env_files_exist() {
+    fn collects_replaceable_compose_env_file_ownership_advisory_when_only_branch_env_files_exist() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -26113,6 +26232,33 @@ tasks:
           env_files:
             - .env.compose
           run: docker compose --env-file .env.compose -f compose.yaml up -d
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(value)
+                if value.task_name == "docker-build"
+        )));
+    }
+
+    #[test]
+    fn skips_replaceable_compose_env_file_ownership_advisory_when_adapter_inputs_exist() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    adapter_inputs:
+      compose:
+        env_files:
+          - .env.compose
+    run: docker compose --env-file .env.compose -f compose.yaml up -d
 "#,
         )
         .unwrap();

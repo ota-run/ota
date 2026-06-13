@@ -26,6 +26,20 @@
 
 ## Unreleased
 
+- widened task adapter input ownership with first-class
+  `tasks.<name>.adapter_inputs.compose.env_files` plus mode-branch overrides, so task-owned
+  `docker compose` interpolation files no longer have to hide inside shell `--env-file` flags or
+  misuse task `env_files`; run preview, `ota env`, execution, validate/doctor, task JSON output,
+  and the published contract schema now all project the same declarative compose adapter input
+  truth
+- restored Python starter command provenance truth all the way through init JSON field paths, so
+  generated structured `command` bodies now publish `tasks.<name>.command.exe` /
+  `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy
+  `run` fields
+- fail workflow-owned rendered env artifacts earlier on policy drift: run-path env rendering now
+  rejects selected workflow outputs that violate the governing contract or can no longer be
+  materialized cleanly, instead of deferring the mismatch into later runtime or service startup
+  failures
 - made workflow-owned env materialization more first-class across real execution paths: selected
   workflow profiles can now declare `env.compose_env_file_services` to bind one rendered dotenv
   artifact directly into named compose-managed services, direct `ota run` now materializes

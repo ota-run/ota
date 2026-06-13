@@ -42,6 +42,8 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     let task_launch = &schema["$defs"]["taskLaunch"]["properties"];
     let task_prepare = &schema["$defs"]["taskPrepare"]["properties"];
     let task_aggregate = &schema["$defs"]["taskAggregate"]["properties"];
+    let task_adapter_inputs = &schema["$defs"]["taskAdapterInputs"]["properties"];
+    let task_compose_adapter_inputs = &schema["$defs"]["taskComposeAdapterInputs"]["properties"];
     let task_input = &schema["$defs"]["taskInput"]["properties"];
     let task_action_variants = schema["$defs"]["taskAction"]["oneOf"]
         .as_array()
@@ -85,6 +87,7 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_properties.get("env").is_some());
     assert!(task_properties.get("inputs").is_some());
     assert!(task_properties.get("modes").is_some());
+    assert!(task_properties.get("adapter_inputs").is_some());
     assert!(task_properties.get("command").is_some());
     assert!(
         task_properties["variants"]["items"]["properties"]
@@ -103,6 +106,8 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_prepare.get("steps").is_some());
     assert!(task_prepare.get("source_kind").is_some());
     assert!(task_aggregate.get("tasks").is_some());
+    assert!(task_adapter_inputs.get("compose").is_some());
+    assert!(task_compose_adapter_inputs.get("env_files").is_some());
     assert!(task_input.get("required").is_some());
     assert!(task_input.get("allowed").is_some());
     assert!(
@@ -162,6 +167,7 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(member_task_properties.get("env").is_some());
     assert!(member_task_properties.get("inputs").is_some());
     assert!(member_task_properties.get("modes").is_some());
+    assert!(member_task_properties.get("adapter_inputs").is_some());
     assert!(member_task_properties.get("launch").is_some());
     assert!(member_task_properties.get("action").is_some());
     assert!(member_task_properties.get("effects").is_some());

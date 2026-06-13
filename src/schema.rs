@@ -3433,6 +3433,8 @@ pub struct TaskSpec {
     pub env_files: Vec<String>,
     #[serde(default)]
     pub env_bindings: BTreeMap<String, TaskEnvBindingSpec>,
+    #[serde(default, skip_serializing_if = "TaskAdapterInputsSpec::is_empty")]
+    pub adapter_inputs: TaskAdapterInputsSpec,
     #[serde(default)]
     pub inputs: BTreeMap<String, TaskInputSpec>,
     #[serde(default)]
@@ -3652,6 +3654,21 @@ impl TaskSpec {
         let mut merged = self.env_files.clone();
         if let Some(branch) = self.mode_execution_branch(backend) {
             merged.extend(branch.env_files.clone());
+        }
+        merged
+    }
+
+    pub fn compose_adapter_env_files_for_backend(&self, backend: Backend) -> Vec<String> {
+        let mut merged = self
+            .adapter_inputs
+            .compose
+            .as_ref()
+            .map(|compose| compose.env_files.clone())
+            .unwrap_or_default();
+        if let Some(branch) = self.mode_execution_branch(backend)
+            && let Some(compose) = branch.adapter_inputs.compose.as_ref()
+        {
+            merged.extend(compose.env_files.clone());
         }
         merged
     }
@@ -4218,6 +4235,8 @@ pub struct TaskModeBranchSpec {
     pub env_files: Vec<String>,
     #[serde(default)]
     pub env_bindings: BTreeMap<String, TaskEnvBindingSpec>,
+    #[serde(default, skip_serializing_if = "TaskAdapterInputsSpec::is_empty")]
+    pub adapter_inputs: TaskAdapterInputsSpec,
     #[serde(default)]
     pub run: Option<String>,
     #[serde(default)]
@@ -5331,6 +5350,34 @@ pub enum TaskTargetAddressView {
 pub enum TaskTargetKind {
     Service,
     Url,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAdapterInputsSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeAdapterInputsSpec>,
+}
+
+impl TaskAdapterInputsSpec {
+    pub fn is_empty(&self) -> bool {
+        self.compose
+            .as_ref()
+            .is_none_or(TaskComposeAdapterInputsSpec::is_empty)
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskComposeAdapterInputsSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<String>,
+}
+
+impl TaskComposeAdapterInputsSpec {
+    pub fn is_empty(&self) -> bool {
+        self.env_files.is_empty()
+    }
 }
 
 pub(crate) fn task_target_env_name(name: &str) -> String {

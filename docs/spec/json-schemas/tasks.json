@@ -97,6 +97,23 @@
         }
       }
     },
+    "taskComposeAdapterInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "env_files": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "taskAdapterInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "compose": { "$ref": "#/$defs/taskComposeAdapterInputs" }
+      }
+    },
     "taskAction": {
       "oneOf": [
         {
@@ -299,6 +316,7 @@
                 "type": "array",
                 "items": { "type": "string" }
               },
+              "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
               "inputs": {
                 "type": "object",
                 "additionalProperties": { "$ref": "#/$defs/taskInput" }
@@ -367,6 +385,7 @@
                       "type": "array",
                       "items": { "type": "string" }
                     },
+                    "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
                     "lifecycle": { "enum": ["persistent", "ephemeral"] },
                     "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration"] },
                     "run": { "type": "string" },
@@ -452,6 +471,7 @@
                       "type": "array",
                       "items": { "type": "string" }
                     },
+                    "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
                     "inputs": {
                       "type": "object",
                       "additionalProperties": { "$ref": "#/$defs/taskInput" }
@@ -520,6 +540,7 @@
                             "type": "array",
                             "items": { "type": "string" }
                           },
+                          "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
                           "lifecycle": { "enum": ["persistent", "ephemeral"] },
                           "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration"] },
                           "run": { "type": "string" },

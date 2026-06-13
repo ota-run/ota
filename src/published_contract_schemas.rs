@@ -1310,6 +1310,20 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "mode": { "enum": ["task", "exec"] }
       }
     },
+    "taskComposeAdapterInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "env_files": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "taskAdapterInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "compose": { "$ref": "#/$defs/taskComposeAdapterInputs" }
+      }
+    },
     "taskModeBranch": {
       "type": "object",
       "additionalProperties": false,
@@ -1323,6 +1337,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/taskEnvBinding" }
         },
+        "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
         "run": { "type": "string" },
         "script": { "type": "string" },
         "command": { "$ref": "#/$defs/taskCommand" },
@@ -1378,6 +1393,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/taskEnvBinding" }
         },
+        "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
         "inputs": {
           "type": "object",
           "additionalProperties": { "$ref": "#/$defs/taskInput" }

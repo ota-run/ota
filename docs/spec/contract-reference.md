@@ -1817,8 +1817,10 @@ tasks:
 - `modes.<mode>.context`: optional context override for that mode
 - `modes.<mode>.lifecycle`: optional lifecycle override for that mode (container mode only)
 - `env_files`: optional ordered repo-relative dotenv overlays injected into the task process before task-level `env`
+- `adapter_inputs.compose.env_files`: optional ordered repo-relative compose interpolation files projected to the selected task mode through `COMPOSE_ENV_FILES`; use this for task-owned `docker compose` adapter input truth rather than process dotenv injection
 - `modes.<mode>.env`: optional env map merged over task-level `env`
 - `modes.<mode>.env_files`: optional ordered repo-relative dotenv overlays appended after task-level `env_files`
+- `modes.<mode>.adapter_inputs.compose.env_files`: optional ordered repo-relative compose interpolation files appended after task-level `adapter_inputs.compose.env_files`
 - `modes.<mode>.run`: optional single-line command override for that mode
 - `modes.<mode>.script`: optional multiline script override for that mode
 - `modes.<mode>.command`: optional structured finite command override for that mode
@@ -1842,7 +1844,7 @@ tasks:
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
 - when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`command`/`prepare`/`launch`, and `runtime`
-- use `env_files` when one task path owns a workflow-specific dotenv overlay such as a `docker compose` interpolation file and that ownership should stay declarative instead of being hard-coded into the shell body
+- use `env_files` for task-process dotenv overlays; use `adapter_inputs.compose.env_files` when one task path owns `docker compose` interpolation input and that ownership should stay declarative instead of being hard-coded into the shell body
 - when a selected branch omits `run`/`script`/`command`/`prepare`/`launch`, ota falls back to the task-level execution body (including OS variants)
 - when a task declares `execution.modes`, an explicit `--mode` must resolve to a declared branch
   unless it matches `default_mode`; unsupported explicit overrides fail early with a mode-branch error
@@ -3097,7 +3099,8 @@ Current behavior:
   (`sed -i`, `perl -pi`) that should instead use `action.kind: ensure_env_file` with explicit
   replacement keys
 - validate/doctor warn when task bodies hard-code `docker compose --env-file ...`; move that
-  ownership to task `env_files` or `services.<name>.manager.env_file` so Ota can reason about it
+  ownership to task `adapter_inputs.compose.env_files` or `services.<name>.manager.env_file` so
+  Ota can reason about it
 - changed-files checks evaluate tracked diffs via git (`base_ref..head_ref` when both refs are
   declared, otherwise against `HEAD`) and may include untracked matches when
   `include_untracked: true`
