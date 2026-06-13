@@ -26,15 +26,14 @@ project:
   name: workflow-rendered-env
   description: Workflow-owned compose env-file example rendered from repo template truth plus selected env overlays
   type: application
-runtimes:
-  node: "22"
-tools:
-  pnpm:
-    version: "10"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.0.0"
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      pnpm: "10.0.0"
+    fulfillment:
+      source: corepack
+      mode: run
 execution:
   default_context: host
   contexts:
@@ -78,13 +77,25 @@ services:
 tasks:
   setup:
     context: host
-    description: Install dependencies before running the dev server
-    run: pnpm install
+    description: Hydrate dependencies before running the dev server
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
     requirements:
-      runtimes:
-        node: "22"
-      tools:
-        pnpm: "10"
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+        - .pnpm-store
+      network: true
+      network_kind: dependency_hydration
   dev:
     context: host
     description: Start the app using the workflow-owned compose env truth
@@ -120,6 +131,8 @@ agent:
   verify_after_changes:
     - setup
   writable_paths:
+    - node_modules
+    - .pnpm-store
     - src
     - docs
   protected_paths:

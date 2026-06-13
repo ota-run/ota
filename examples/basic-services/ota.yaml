@@ -26,15 +26,14 @@ project:
   name: basic-services
   description: Service-backed app example with explicit setup, run, and managed dependency boundaries
   type: application
-runtimes:
-  node: "22"
-tools:
-  pnpm:
-    version: "10"
-    acquisition:
-      provider: corepack
-      package: pnpm
-      version: "10.0.0"
+toolchains:
+  node:
+    version: "22"
+    package_managers:
+      pnpm: "10.0.0"
+    fulfillment:
+      source: corepack
+      mode: run
 execution:
   default_context: host
   contexts:
@@ -127,17 +126,27 @@ tasks:
       to: .env.local
   setup:
     context: host
-    description: Install application dependencies on the host
-    run: pnpm install
+    description: Hydrate application dependencies on the host through the declared pnpm lane
     depends_on:
       - setup:env:local
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
     requirements:
-      runtimes:
-        node: "22"
-      tools:
-        pnpm: "10"
-      checks:
-        - node-installed
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+        - .pnpm-store
+      network: true
+      network_kind: dependency_hydration
   dev:
     context: host
     description: Start the app once the managed services are ready
@@ -153,8 +162,8 @@ tasks:
       - postgres
       - redis
     requirements:
-      tools:
-        pnpm: "10"
+      toolchains:
+        - node
       env:
         - DATABASE_URL
         - REDIS_URL
@@ -185,6 +194,8 @@ agent:
   verify_after_changes:
     - dev
   writable_paths:
+    - node_modules
+    - .pnpm-store
     - src
     - infra
     - docs
@@ -195,4 +206,5 @@ agent:
     Use `ota up --workflow app` when you want Ota to prepare `.env.local`, verify env requirements,
     wait for services, and start the app through one declared path.
     Use `ota up` before starting the service stack.
-    Keep service startup and readiness in the contract instead of in README prose.
+    Keep `toolchains.node` as the owner for Node plus pnpm, and keep service startup and readiness
+    in the contract instead of in README prose.

@@ -33,11 +33,23 @@ toolchains:
       bundler: "2.5"
 tasks:
   setup:
-    description: Install Ruby gem dependencies with Bundler
-    run: bundle install
+    description: Hydrate Ruby gem dependencies through the declared Bundler lane
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
     requirements:
       toolchains:
         - ruby
+    effects:
+      writes:
+        - .bundle
+        - vendor/bundle
+      network: true
+      network_kind: dependency_hydration
   test:
     description: Run the default Ruby test suite
     run: bundle exec rake test
@@ -66,6 +78,8 @@ agent:
   verify_after_changes:
     - test
   writable_paths:
+    - .bundle
+    - vendor/bundle
     - app
     - lib
     - spec

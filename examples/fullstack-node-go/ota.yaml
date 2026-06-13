@@ -3,16 +3,18 @@ project:
   name: fullstack-node-go
   description: Example contract for a Node application with a Go service
   type: application
+toolchains:
+  node:
+    version: "22.4.0"
+    package_managers:
+      npm: "10.8.2"
 execution:
   default_context: host
   contexts:
     host:
       backend: native
 runtimes:
-  node: "22.4.0"
   go: "1.24.0"
-tools:
-  npm: "10.8.2"
 env:
   vars:
     OTA_SERVICE_ENV:
@@ -23,9 +25,24 @@ env:
 tasks:
   setup:
     context: host
-    description: Install application dependencies
+    description: Hydrate application dependencies through the declared npm lane
     category: setup
-    run: npm install
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: ci
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
     safe_for_agent: true
   build:
     context: host
@@ -34,6 +51,9 @@ tasks:
     run: npm run build
     depends_on:
       - setup
+    requirements:
+      toolchains:
+        - node
   service-test:
     context: host
     description: Run the Go service tests
@@ -57,6 +77,7 @@ agent:
   verify_after_changes:
     - service-test
   writable_paths:
+    - node_modules
     - src
     - services
     - docs
