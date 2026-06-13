@@ -25755,22 +25755,23 @@ name = "fastapi"
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["pack"], "python");
         assert_eq!(json["pack_options"]["test_runner"], "unittest");
+        assert_eq!(json["config"]["tasks"]["test"]["command"]["exe"], "uv");
         assert_eq!(
-            json["config"]["tasks"]["test"]["run"],
-            "uv run python -m unittest"
+            json["config"]["tasks"]["test"]["command"]["args"],
+            serde_json::json!(["run", "python", "-m", "unittest"])
         );
         assert_eq!(
             json["config"]["tasks"]["test"]["description"],
             "Run the default Python unittest suite."
         );
-        let task_run = json["provenance"]
+        let task_command = json["provenance"]
             .as_array()
             .expect("provenance array")
             .iter()
-            .find(|entry| entry["field"] == "tasks.test.run")
-            .expect("tasks.test.run provenance");
+            .find(|entry| entry["field"] == "tasks.test.command.exe")
+            .expect("tasks.test.command.exe provenance");
         assert_eq!(
-            task_run["source"],
+            task_command["source"],
             "ota.init#starter_pack.python.test_runner.unittest"
         );
     }

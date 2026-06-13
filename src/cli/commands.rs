@@ -34137,6 +34137,14 @@ fn detect_task_field_paths(name: &str, task: &DetectTask) -> Vec<String> {
     if !task.run.is_empty() {
         fields.push(format!("{prefix}.run"));
     }
+    if let Some(command) = task.command.as_ref() {
+        fields.push(format!("{prefix}.command.exe"));
+        for (index, arg) in command.args.iter().enumerate() {
+            if !arg.trim().is_empty() {
+                fields.push(format!("{prefix}.command.args.{index}"));
+            }
+        }
+    }
     if task.description.is_some() {
         fields.push(format!("{prefix}.description"));
     }
