@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- widened first-party sync governance beyond `ota-run/skills`: the release gate and repo task
+  surface now also govern `ota-run/ota-site` through one shared first-party consumer sync check,
+  with explicit status records for both the skills package and the public docs site so canonical
+  docs or contract-surface widening cannot ship quietly while one consumer still lags behind
 - added a Rust-owned published canonical docs manifest at
   `docs/spec/published-docs/canonical-docs.json`, with release publication to
   `https://dist.ota.run/spec/published-docs/latest/canonical-docs.json`; this gives downstream

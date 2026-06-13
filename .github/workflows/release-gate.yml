@@ -30,12 +30,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Enforce skills sync governance
+      - name: Enforce first-party consumer sync governance
         if: runner.os == 'Linux'
         shell: bash
         env:
-          OTA_SKILLS_SYNC_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        run: ./scripts/check-skills-sync.sh
+          OTA_FIRST_PARTY_SYNC_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/check-first-party-sync.sh
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -83,6 +83,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Enforce first-party consumer sync governance
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          OTA_FIRST_PARTY_SYNC_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: ./scripts/check-first-party-sync.sh
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

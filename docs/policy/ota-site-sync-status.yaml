@@ -23,12 +23,11 @@
 # -->
 
 version: 1
-repository: ota-run/skills
+repository: ota-run/ota-site
 mode: synced
-reviewed_ota_commit: "452f93008ea88fb476344ff0b2a01045598b14e4"
-consumer_commit: "e4b310d9d13c7396eeec2cf5cafd739539373e37"
+reviewed_ota_commit: "df3c525be7a0f51170ea6a49839330f737cd75dd"
+consumer_commit: "23015d02813f333717c18ba6914e795938306675"
 waiver_reason: ""
 notes: >
-  Baseline sync after widening the ota-run/skills package to cover modern and holistic contract
-  surfaces, including aggregate tasks, service launch, dependency hydration, workflow/service/env
-  modeling, and agent/governance review.
+  Baseline sync after the ota-site public docs surface started consuming the Rust-owned published
+  canonical docs manifest instead of hard-coded upstream source links for key reference pages.

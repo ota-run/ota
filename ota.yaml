@@ -234,11 +234,20 @@ tasks:
     depends_on:
       - setup
     safe_for_agent: true
-  skills:sync:check:
-    description: Enforce skills-sync governance for contract-surface changes
+  first-party:sync:check:
+    description: Enforce first-party consumer sync governance for governed surface changes
     notes: |
-      Use this when contract-shape or governance-surface files change and you need to prove the
-      first-party ota-run/skills package was either synced or explicitly waived.
+      Use this when contract-shape, governance-surface, or canonical-docs ownership files change
+      and you need to prove first-party consumer repos such as ota-run/skills or ota-run/ota-site
+      were either synced or explicitly waived.
+    category: test
+    run: ./scripts/check-first-party-sync.sh
+    safe_for_agent: true
+  skills:sync:check:
+    description: Compatibility alias for the first-party consumer sync governance check
+    notes: |
+      Prefer `first-party:sync:check`. This alias keeps older maintainer flows working while the
+      governance surface widens beyond ota-run/skills alone.
     category: test
     run: ./scripts/check-skills-sync.sh
     safe_for_agent: true
@@ -280,7 +289,7 @@ tasks:
     depends_on:
       - ci
       - compat
-      - skills:sync:check
+      - first-party:sync:check
       - dependency-update
     safe_for_agent: true
   ux-review:

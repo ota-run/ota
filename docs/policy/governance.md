@@ -91,15 +91,15 @@ This keeps maintainer pushes and release work aligned with the same public trust
 expects users to rely on, without turning every specialist proof workflow into a permanent merge
 gate.
 
-## Skills sync discipline
+## First-party consumer sync discipline
 
-Contract-surface and governance-surface widening should not ship quietly while the first-party
-`ota-run/skills` package still teaches an older product shape.
+Contract-surface, governance-surface, and canonical-docs widening should not ship quietly while
+first-party consumer repos still teach or render an older product shape.
 
-The release gate therefore requires an explicit update to the skills-sync status record whenever
-maintainers change core contract-shape files. That update must either:
+The release gate therefore requires an explicit update to the affected first-party consumer status
+record whenever maintainers change governed surfaces. That update must either:
 
-- record the synced `ota-run/skills` commit, or
+- record the synced consumer commit, or
 - record an explicit waiver reason
 
 See [skills-sync-governance.md](skills-sync-governance.md).

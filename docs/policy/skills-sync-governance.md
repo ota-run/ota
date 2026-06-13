@@ -22,10 +22,10 @@
    If you need additional information or have any questions, please email: os@ota.run
 -->
 
-# Skills Sync Governance
+# First-Party Consumer Sync Governance
 
 Ota releases and release-gated contract-surface changes must not widen the product quietly while
-the first-party `ota-run/skills` package lags behind.
+first-party consumer repos still teach or render an older product shape.
 
 ## What is enforced
 
@@ -36,21 +36,31 @@ When a change touches contract-shape or contract-governance files such as:
 - key contract/spec docs under `docs/spec/`
 - canonical examples under `examples/`
 
-the release gate requires an update to [skills-sync-status.yaml](skills-sync-status.yaml).
+the release gate requires an update to the affected first-party consumer status file.
 
-That status file must say one of:
+Current governed consumers:
+
+- `ota-run/skills`
+  - status file: [skills-sync-status.yaml](skills-sync-status.yaml)
+  - records whether the first-party Ota skill package was updated or explicitly waived
+- `ota-run/ota-site`
+  - status file: [ota-site-sync-status.yaml](ota-site-sync-status.yaml)
+  - records whether the public docs site was updated or explicitly waived when canonical docs
+    surfaces or published-docs ownership changed
+
+Each status file must say one of:
 
 - `mode: synced`
-  - the matching `ota-run/skills` update has been made
-  - `skills_commit` must record the exact synced skills commit
+  - the matching consumer update has been made
+  - `consumer_commit` must record the exact synced consumer commit
 - `mode: waived`
-  - the maintainer is intentionally shipping without a skills update
+  - the maintainer is intentionally shipping without a consumer update
   - `waiver_reason` must explain why
 
 ## Why this exists
 
-The Ota skill package is part of the product’s execution-governance surface.
-If schema and governance behavior widen without a corresponding skill update or explicit waiver,
-agents drift behind the platform while appearing current.
+The first-party skill package and public docs site are both part of the product surface.
+If schema, governance, or canonical docs behavior widen without a corresponding consumer update or
+explicit waiver, agents and public docs drift behind the platform while appearing current.
 
 This gate makes that drift visible and reviewable.
