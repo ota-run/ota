@@ -553,6 +553,9 @@ Notes:
 - `tasks[*].adapter_inputs.compose.env_files` is present when one task owns ordered compose
   interpolation files; Ota projects these through adapter-aware runtime input rather than
   pretending they are process dotenv overlays
+- `tasks[*].adapter_inputs.compose.files` and `tasks[*].adapter_inputs.compose.project_name` are
+  present when one task owns compose file selection or project naming; Ota projects these through
+  adapter-aware runtime input instead of shell `-f` / `-p` flags
 - `tasks[*].launch` is present when one task uses structured `launch` instead of shell `run` or
   `script`; it exposes the launch kind plus the structured command or packaged container metadata
 - task-target probe entries also expose `target.observer` and `target.resolution_plane`; the

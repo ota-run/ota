@@ -3673,6 +3673,37 @@ impl TaskSpec {
         merged
     }
 
+    pub fn compose_adapter_files_for_backend(&self, backend: Backend) -> Vec<String> {
+        let mut merged = self
+            .adapter_inputs
+            .compose
+            .as_ref()
+            .map(|compose| compose.files.clone())
+            .unwrap_or_default();
+        if let Some(branch) = self.mode_execution_branch(backend)
+            && let Some(compose) = branch.adapter_inputs.compose.as_ref()
+        {
+            merged.extend(compose.files.clone());
+        }
+        merged
+    }
+
+    pub fn compose_adapter_project_name_for_backend(&self, backend: Backend) -> Option<&str> {
+        self.mode_execution_branch(backend)
+            .and_then(|branch| branch.adapter_inputs.compose.as_ref())
+            .and_then(|compose| compose.project_name.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.adapter_inputs
+                    .compose
+                    .as_ref()
+                    .and_then(|compose| compose.project_name.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+    }
+
     pub fn env_bindings_for_backend_with_context_name(
         &self,
         _execution: Option<&Execution>,
@@ -5372,11 +5403,21 @@ impl TaskAdapterInputsSpec {
 pub struct TaskComposeAdapterInputsSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
 }
 
 impl TaskComposeAdapterInputsSpec {
     pub fn is_empty(&self) -> bool {
         self.env_files.is_empty()
+            && self.files.is_empty()
+            && self
+                .project_name
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
     }
 }
 

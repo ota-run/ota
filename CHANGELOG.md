@@ -32,6 +32,14 @@
   misuse task `env_files`; run preview, `ota env`, execution, validate/doctor, task JSON output,
   and the published contract schema now all project the same declarative compose adapter input
   truth
+- widened that same task-owned compose adapter surface beyond env-file interpolation: contracts can
+  now declare `tasks.<name>.adapter_inputs.compose.files` and
+  `tasks.<name>.adapter_inputs.compose.project_name` with mode-branch overrides, and Ota projects
+  them through `COMPOSE_FILE` / `COMPOSE_PROJECT_NAME` so compose file selection and project
+  naming no longer need to stay trapped in shell flags when the task owns them
+- validate/doctor now treat shell-owned compose file and project-name flags as the same governance
+  class as shell-owned `--env-file`, so hard-coded `docker compose -f` / `--file` / `-p` /
+  `--project-name` truth is now pushed toward `tasks.<name>.adapter_inputs.compose.*`
 - restored Python starter command provenance truth all the way through init JSON field paths, so
   generated structured `command` bodies now publish `tasks.<name>.command.exe` /
   `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy

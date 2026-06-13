@@ -3504,6 +3504,22 @@ fn validate_task_adapter_inputs(
             &compose.env_files,
             errors,
         );
+        validate_task_env_files(
+            task_name,
+            &format!("{scope}.compose.files"),
+            &compose.files,
+            errors,
+        );
+        if compose
+            .project_name
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(str::is_empty)
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` `{scope}.compose.project_name` must not be empty"
+            )));
+        }
     }
 }
 
@@ -6591,7 +6607,7 @@ impl ContractAdvisory {
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "task `{}` hard-codes compose env-file ownership in shell",
+                "task `{}` hard-codes compose adapter input ownership in shell",
                 advisory.task_name
             ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
@@ -6677,7 +6693,7 @@ impl ContractAdvisory {
                 advisory.task_name, advisory.command
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "task `{}` hard-codes `docker compose --env-file` inside shell (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under `adapter_inputs.compose.env_files` or `services.<name>.manager.env_file`",
+                "task `{}` hard-codes compose shell flags inside shell (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under `adapter_inputs.compose.*` or `services.<name>.manager.env_file`",
                 advisory.task_name, advisory.command
             ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
@@ -6828,7 +6844,7 @@ impl ContractAdvisory {
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "move compose env-file ownership out of task `{}` shell: use `tasks.{0}.adapter_inputs.compose.env_files` when the task owns interpolation, or `services.<name>.manager.env_file` when one managed compose service owns it",
+                "move compose adapter input ownership out of task `{}` shell: use `tasks.{0}.adapter_inputs.compose.*` when the task owns interpolation, compose file selection, or project naming, or `services.<name>.manager.env_file` when one managed compose service owns interpolation",
                 advisory.task_name
             ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
@@ -7387,7 +7403,12 @@ fn obvious_env_mutation_shell(command: &str) -> bool {
 
 fn obvious_compose_env_file_shell(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
-    lower.contains("docker compose") && lower.contains("--env-file")
+    lower.contains("docker compose")
+        && (lower.contains("--env-file")
+            || lower.contains(" -f ")
+            || lower.contains(" --file ")
+            || lower.contains(" -p ")
+            || lower.contains(" --project-name "))
 }
 
 fn obvious_file_check_path(command: &str) -> Option<&str> {
@@ -13077,6 +13098,9 @@ tasks:
       compose:
         env_files:
           - .env.compose
+        files:
+          - compose.yaml
+        project_name: local
     execution:
       modes:
         container:
@@ -13084,6 +13108,9 @@ tasks:
             compose:
               env_files:
                 - .env.container
+              files:
+                - compose.container.yaml
+              project_name: local-container
     run: docker compose up
 "#,
         )
@@ -13137,6 +13164,9 @@ tasks:
       compose:
         env_files:
           - ../.env.compose
+        files:
+          - ../compose.yaml
+        project_name: "   "
     run: docker compose up
 "#,
         )
@@ -13151,6 +13181,18 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `docker-build` `adapter_inputs.compose.env_files[0]` must be a repo-relative path that does not escape the repo"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `docker-build` `adapter_inputs.compose.files[0]` must be a repo-relative path that does not escape the repo"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `docker-build` `adapter_inputs.compose.project_name` must not be empty"
             )),
             "{rendered:?}"
         );
@@ -26203,6 +26245,29 @@ project:
 tasks:
   docker-build:
     run: docker compose --env-file .env.compose -f compose.yaml up -d
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(value)
+                if value.task_name == "docker-build"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_compose_adapter_ownership_advisory_for_file_and_project_flags() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    run: docker compose -f compose.yaml -p local up -d
 "#,
         )
         .unwrap();

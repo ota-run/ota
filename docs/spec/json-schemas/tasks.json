@@ -104,7 +104,12 @@
         "env_files": {
           "type": "array",
           "items": { "type": "string" }
-        }
+        },
+        "files": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "project_name": { "type": "string" }
       }
     },
     "taskAdapterInputs": {

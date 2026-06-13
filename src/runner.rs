@@ -2103,6 +2103,19 @@ fn effective_task_env_for_backend_with_resolved_env(
             compose_adapter_env_files.join(","),
         );
     }
+    let compose_adapter_files = task.compose_adapter_files_for_backend(backend_kind);
+    if !compose_adapter_files.is_empty() {
+        env.insert(
+            String::from("COMPOSE_FILE"),
+            compose_file_env_value(&compose_adapter_files),
+        );
+    }
+    if let Some(project_name) = task.compose_adapter_project_name_for_backend(backend_kind) {
+        env.insert(
+            String::from("COMPOSE_PROJECT_NAME"),
+            project_name.to_string(),
+        );
+    }
     env.extend(service_env_bindings_for_task(
         contract,
         task,
@@ -2184,6 +2197,19 @@ pub(crate) fn effective_task_env_for_selection(
             compose_adapter_env_files.join(","),
         );
     }
+    let compose_adapter_files = task.compose_adapter_files_for_backend(backend);
+    if !compose_adapter_files.is_empty() {
+        env.insert(
+            String::from("COMPOSE_FILE"),
+            compose_file_env_value(&compose_adapter_files),
+        );
+    }
+    if let Some(project_name) = task.compose_adapter_project_name_for_backend(backend) {
+        env.insert(
+            String::from("COMPOSE_PROJECT_NAME"),
+            project_name.to_string(),
+        );
+    }
     env.extend(service_env_bindings_for_task(
         contract,
         task,
@@ -2224,6 +2250,11 @@ fn load_task_env_file_values(
         merged.extend(values);
     }
     merged
+}
+
+fn compose_file_env_value(paths: &[String]) -> String {
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    paths.join(&separator.to_string())
 }
 
 pub(crate) fn ensure_task_env_files_ready(
@@ -2273,6 +2304,20 @@ pub(crate) fn ensure_task_adapter_inputs_ready(
             path: trimmed.to_string(),
             details: format!(
                 "compose adapter env file `{trimmed}` declared in `adapter_inputs.compose.env_files` is not readable: {source}"
+            ),
+        })?;
+    }
+    for path in task.compose_adapter_files_for_backend(backend) {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let full_path = working_dir.join(trimmed);
+        fs::metadata(&full_path).map_err(|source| RunError::InvalidEnvSource {
+            kind: String::from("compose_adapter_file"),
+            path: trimmed.to_string(),
+            details: format!(
+                "compose file `{trimmed}` declared in `adapter_inputs.compose.files` is not readable: {source}"
             ),
         })?;
     }
@@ -49467,6 +49512,9 @@ tasks:
       compose:
         env_files:
           - .env.compose
+        files:
+          - compose.yaml
+        project_name: app
     execution:
       default_mode: container
       modes:
@@ -49475,6 +49523,9 @@ tasks:
             compose:
               env_files:
                 - .env.container
+              files:
+                - compose.container.yaml
+              project_name: app-container
     run: docker compose up
 "#,
         );
@@ -49493,6 +49544,18 @@ tasks:
         assert_eq!(
             env.get("COMPOSE_ENV_FILES").map(String::as_str),
             Some(".env.compose,.env.container")
+        );
+        assert_eq!(
+            env.get("COMPOSE_FILE").map(String::as_str),
+            Some(if cfg!(windows) {
+                "compose.yaml;compose.container.yaml"
+            } else {
+                "compose.yaml:compose.container.yaml"
+            })
+        );
+        assert_eq!(
+            env.get("COMPOSE_PROJECT_NAME").map(String::as_str),
+            Some("app-container")
         );
     }
 

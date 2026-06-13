@@ -1314,7 +1314,9 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "env_files": { "$ref": "#/$defs/stringArray" }
+        "env_files": { "$ref": "#/$defs/stringArray" },
+        "files": { "$ref": "#/$defs/stringArray" },
+        "project_name": { "type": "string" }
       }
     },
     "taskAdapterInputs": {
