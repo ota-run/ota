@@ -209,6 +209,24 @@ fn canonical_docs_contract_examples() -> Vec<(PathBuf, DocContractKind)> {
     ]
 }
 
+fn assert_file_contains_terms(path: &Path, terms: &[&str]) {
+    let contents = fs::read_to_string(path).unwrap_or_else(|error| {
+        panic!("docs file `{}` should load: {error}", path.display());
+    });
+    let missing = terms
+        .iter()
+        .copied()
+        .filter(|term| !contents.contains(term))
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing.is_empty(),
+        "docs file `{}` is missing required contract-reference terms:\n{}",
+        path.display(),
+        missing.join("\n")
+    );
+}
+
 fn is_full_repo_contract_example(block: &str) -> bool {
     let trimmed = block.trim_start();
     trimmed.starts_with("version:") && trimmed.lines().any(|line| line.trim() == "project:")
@@ -565,6 +583,28 @@ fn canonical_docs_repo_contract_examples_serialize_to_values_that_match_publishe
             path.display()
         );
     }
+}
+
+#[test]
+fn canonical_contract_reference_keeps_structured_command_and_aggregate_guidance() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("docs")
+        .join("spec")
+        .join("contract-reference.md");
+
+    assert_file_contains_terms(
+        &path,
+        &[
+            "`command.exe`: required executable name or path",
+            "Ota does not maintain an allowlist for `command.exe`.",
+            "- `launch.kind: command`",
+            "- for long-running service processes, prefer `launch.kind: command` over opaque shell `run` or",
+            "- `aggregate.tasks`: required non-empty ordered list of task names ota should execute as the aggregate body",
+            "- `aggregate` is a task body, so it is mutually exclusive with `run`, `script`, `command`, `prepare`, `launch`, and `action`",
+            "- tasks must declare exactly one task body: `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`, unless the task intentionally resolves through variants or execution-mode inheritance",
+            "- variant entries must declare exactly one of `run`, `script`, or `command`",
+        ],
+    );
 }
 
 #[test]
