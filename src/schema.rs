@@ -3747,6 +3747,21 @@ impl TaskSpec {
         merged
     }
 
+    pub fn compose_adapter_profiles_for_backend(&self, backend: Backend) -> Vec<String> {
+        let mut merged = self
+            .adapter_inputs
+            .compose
+            .as_ref()
+            .map(|compose| compose.profiles.clone())
+            .unwrap_or_default();
+        if let Some(branch) = self.mode_execution_branch(backend)
+            && let Some(compose) = branch.adapter_inputs.compose.as_ref()
+        {
+            merged.extend(compose.profiles.clone());
+        }
+        merged
+    }
+
     pub fn compose_adapter_project_name_for_backend(&self, backend: Backend) -> Option<&str> {
         self.mode_execution_branch(backend)
             .and_then(|branch| branch.adapter_inputs.compose.as_ref())
@@ -5485,6 +5500,8 @@ pub struct TaskComposeAdapterInputsSpec {
     pub env_files: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_name: Option<String>,
 }
@@ -5493,6 +5510,7 @@ impl TaskComposeAdapterInputsSpec {
     pub fn is_empty(&self) -> bool {
         self.env_files.is_empty()
             && self.files.is_empty()
+            && self.profiles.is_empty()
             && self
                 .project_name
                 .as_deref()

@@ -111,6 +111,7 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_adapter_inputs.get("bake").is_some());
     assert!(task_compose_adapter_inputs.get("env_files").is_some());
     assert!(task_compose_adapter_inputs.get("files").is_some());
+    assert!(task_compose_adapter_inputs.get("profiles").is_some());
     assert!(task_compose_adapter_inputs.get("project_name").is_some());
     assert!(task_bake_adapter_inputs.get("files").is_some());
     assert!(task_input.get("required").is_some());

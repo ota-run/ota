@@ -2110,6 +2110,13 @@ fn effective_task_env_for_backend_with_resolved_env(
             adapter_file_env_value(&compose_adapter_files),
         );
     }
+    let compose_adapter_profiles = task.compose_adapter_profiles_for_backend(backend_kind);
+    if !compose_adapter_profiles.is_empty() {
+        env.insert(
+            String::from("COMPOSE_PROFILES"),
+            compose_adapter_profiles.join(","),
+        );
+    }
     if let Some(project_name) = task.compose_adapter_project_name_for_backend(backend_kind) {
         env.insert(
             String::from("COMPOSE_PROJECT_NAME"),
@@ -2209,6 +2216,13 @@ pub(crate) fn effective_task_env_for_selection(
         env.insert(
             String::from("COMPOSE_FILE"),
             adapter_file_env_value(&compose_adapter_files),
+        );
+    }
+    let compose_adapter_profiles = task.compose_adapter_profiles_for_backend(backend);
+    if !compose_adapter_profiles.is_empty() {
+        env.insert(
+            String::from("COMPOSE_PROFILES"),
+            compose_adapter_profiles.join(","),
         );
     }
     if let Some(project_name) = task.compose_adapter_project_name_for_backend(backend) {
@@ -49542,6 +49556,8 @@ tasks:
           - .env.compose
         files:
           - compose.yaml
+        profiles:
+          - base
         project_name: app
     execution:
       default_mode: container
@@ -49553,6 +49569,8 @@ tasks:
                 - .env.container
               files:
                 - compose.container.yaml
+              profiles:
+                - web
               project_name: app-container
     run: docker compose up
 "#,
@@ -49580,6 +49598,10 @@ tasks:
             } else {
                 "compose.yaml:compose.container.yaml"
             })
+        );
+        assert_eq!(
+            env.get("COMPOSE_PROFILES").map(String::as_str),
+            Some("base,web")
         );
         assert_eq!(
             env.get("COMPOSE_PROJECT_NAME").map(String::as_str),

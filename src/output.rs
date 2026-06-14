@@ -3046,13 +3046,18 @@ pub struct TaskComposeAdapterInputsSummary<'a> {
     pub env_files: Vec<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_name: Option<&'a str>,
 }
 
 impl<'a> TaskComposeAdapterInputsSummary<'a> {
     pub fn is_empty(&self) -> bool {
-        self.env_files.is_empty() && self.files.is_empty() && self.project_name.is_none()
+        self.env_files.is_empty()
+            && self.files.is_empty()
+            && self.profiles.is_empty()
+            && self.project_name.is_none()
     }
 }
 
@@ -3287,6 +3292,7 @@ pub fn summarize_task_adapter_inputs<'a>(
             .map(|compose| TaskComposeAdapterInputsSummary {
                 env_files: compose.env_files.iter().map(String::as_str).collect(),
                 files: compose.files.iter().map(String::as_str).collect(),
+                profiles: compose.profiles.iter().map(String::as_str).collect(),
                 project_name: compose
                     .project_name
                     .as_deref()

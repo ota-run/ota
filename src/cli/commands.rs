@@ -52235,6 +52235,8 @@ workflows:
             - .env.compose
           files:
             - compose.base.yaml
+          profiles:
+            - base
           project_name: workflow-app
     run:
       task: dev
@@ -52254,6 +52256,7 @@ tasks:
             .expect("compose adapter inputs should exist");
         assert_eq!(compose.env_files, vec![String::from(".env.compose")]);
         assert_eq!(compose.files, vec![String::from("compose.base.yaml")]);
+        assert_eq!(compose.profiles, vec![String::from("base")]);
         assert_eq!(compose.project_name.as_deref(), Some("workflow-app"));
     }
 
@@ -81911,6 +81914,7 @@ fn bind_workflow_compose_adapter_inputs(
             .get_or_insert_with(crate::schema::TaskComposeAdapterInputsSpec::default);
         prepend_unique_paths(&mut compose.env_files, &workflow_compose.env_files);
         prepend_unique_paths(&mut compose.files, &workflow_compose.files);
+        prepend_unique_paths(&mut compose.profiles, &workflow_compose.profiles);
         if compose.project_name.is_none() {
             compose.project_name = workflow_compose.project_name.clone();
         }
@@ -81936,6 +81940,7 @@ fn bind_workflow_compose_adapter_inputs(
                     .get_or_insert_with(crate::schema::TaskComposeAdapterInputsSpec::default);
                 prepend_unique_paths(&mut compose.env_files, &workflow_compose.env_files);
                 prepend_unique_paths(&mut compose.files, &workflow_compose.files);
+                prepend_unique_paths(&mut compose.profiles, &workflow_compose.profiles);
                 if compose.project_name.is_none() {
                     compose.project_name = workflow_compose.project_name.clone();
                 }

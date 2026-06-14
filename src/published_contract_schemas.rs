@@ -1319,6 +1319,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "properties": {
         "env_files": { "$ref": "#/$defs/stringArray" },
         "files": { "$ref": "#/$defs/stringArray" },
+        "profiles": { "$ref": "#/$defs/stringArray" },
         "project_name": { "type": "string" }
       }
     },

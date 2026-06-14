@@ -3511,6 +3511,13 @@ fn validate_task_adapter_inputs(
             &compose.files,
             errors,
         );
+        for (index, profile) in compose.profiles.iter().enumerate() {
+            if profile.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` `{scope}.compose.profiles[{index}]` must not be empty"
+                )));
+            }
+        }
         if compose
             .project_name
             .as_deref()
@@ -3553,6 +3560,12 @@ fn validate_workflow_adapter_inputs(
                 errors.push(ValidationError::new(format!(
                     "`{field}` must be a repo-relative path that does not escape the repo"
                 )));
+            }
+        }
+        for (index, profile) in compose.profiles.iter().enumerate() {
+            let field = format!("{scope}.compose.profiles[{index}]");
+            if profile.trim().is_empty() {
+                errors.push(ValidationError::new(format!("`{field}` must not be empty")));
             }
         }
         if compose
@@ -6948,7 +6961,7 @@ impl ContractAdvisory {
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "move compose adapter input ownership out of task `{}` shell: use `tasks.{0}.adapter_inputs.compose.*` when the task owns interpolation, compose file selection, or project naming, or `services.<name>.manager.env_file` when one managed compose service owns interpolation",
+                "move compose adapter input ownership out of task `{}` shell: use `tasks.{0}.adapter_inputs.compose.*` when the task owns interpolation, compose file selection, compose profiles, or project naming, or `services.<name>.manager.env_file` when one managed compose service owns interpolation",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
@@ -7674,6 +7687,7 @@ fn obvious_compose_env_file_shell(command: &str) -> bool {
         && (lower.contains("--env-file")
             || lower.contains(" -f ")
             || lower.contains(" --file ")
+            || lower.contains(" --profile ")
             || lower.contains(" -p ")
             || lower.contains(" --project-name "))
 }
@@ -12430,6 +12444,8 @@ workflows:
             - .env.compose
           files:
             - compose.base.yaml
+          profiles:
+            - web
           project_name: app-local
     run:
       task: dev
@@ -12438,6 +12454,41 @@ workflows:
         .unwrap();
 
         validate_contract(&contract).expect("canonical workflow adapter inputs should validate");
+    }
+
+    #[test]
+    fn rejects_invalid_workflow_compose_profiles_overlay() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: docker compose up
+workflows:
+  default: app
+  app:
+    env:
+      adapter_inputs:
+        compose:
+          profiles:
+            - "   "
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("invalid workflow compose profiles should fail validation")
+            .to_string();
+        assert!(
+            error.contains(
+                "`workflows.app.env.adapter_inputs.compose.profiles[0]` must not be empty"
+            )
+        );
     }
 
     #[test]
@@ -13730,6 +13781,8 @@ tasks:
           - .env.compose
         files:
           - compose.yaml
+        profiles:
+          - local
         project_name: local
     execution:
       modes:
@@ -13740,6 +13793,8 @@ tasks:
                 - .env.container
               files:
                 - compose.container.yaml
+              profiles:
+                - web
               project_name: local-container
     run: docker compose up
 "#,
@@ -13825,6 +13880,8 @@ tasks:
           - ../.env.compose
         files:
           - ../compose.yaml
+        profiles:
+          - "   "
         project_name: "   "
     run: docker compose up
 "#,
@@ -13846,6 +13903,12 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `docker-build` `adapter_inputs.compose.files[0]` must be a repo-relative path that does not escape the repo"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `docker-build` `adapter_inputs.compose.profiles[0]` must not be empty"
             )),
             "{rendered:?}"
         );
@@ -26959,7 +27022,7 @@ project:
   name: ota
 tasks:
   docker-build:
-    run: docker compose -f compose.yaml -p local up -d
+    run: docker compose -f compose.yaml --profile web -p local up -d
 "#,
         )
         .unwrap();

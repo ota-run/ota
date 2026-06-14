@@ -58,6 +58,11 @@
 - validate/doctor now also treat shell-owned `docker buildx bake -f` / `--file` truth as a
   governance smell, pushing Bake file selection toward `tasks.<name>.adapter_inputs.bake.files`
   instead of opaque shell flags
+- widened the Compose adapter family again: contracts can now declare
+  `tasks.<name>.adapter_inputs.compose.profiles` plus
+  `workflows.<name>.env.adapter_inputs.compose.profiles`, Ota projects that truth through
+  `COMPOSE_PROFILES`, and validate/doctor now treat shell `docker compose --profile ...` truth as
+  the same adapter-ownership governance class as shell `--env-file`, `-f`, and `-p`
 - restored Python starter command provenance truth all the way through init JSON field paths, so
   generated structured `command` bodies now publish `tasks.<name>.command.exe` /
   `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy

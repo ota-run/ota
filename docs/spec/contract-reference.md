@@ -1819,12 +1819,14 @@ tasks:
 - `env_files`: optional ordered repo-relative dotenv overlays injected into the task process before task-level `env`
 - `adapter_inputs.compose.env_files`: optional ordered repo-relative compose interpolation files projected to the selected task mode through `COMPOSE_ENV_FILES`; use this for task-owned `docker compose` adapter input truth rather than process dotenv injection
 - `adapter_inputs.compose.files`: optional ordered repo-relative compose file list projected to the selected task mode through `COMPOSE_FILE`
+- `adapter_inputs.compose.profiles`: optional ordered compose profile list projected to the selected task mode through `COMPOSE_PROFILES`
 - `adapter_inputs.compose.project_name`: optional compose project name projected to the selected task mode through `COMPOSE_PROJECT_NAME`
 - `adapter_inputs.bake.files`: optional ordered repo-relative Bake file list projected to the selected task mode through `BUILDX_BAKE_FILE`
 - `modes.<mode>.env`: optional env map merged over task-level `env`
 - `modes.<mode>.env_files`: optional ordered repo-relative dotenv overlays appended after task-level `env_files`
 - `modes.<mode>.adapter_inputs.compose.env_files`: optional ordered repo-relative compose interpolation files appended after task-level `adapter_inputs.compose.env_files`
 - `modes.<mode>.adapter_inputs.compose.files`: optional ordered repo-relative compose file list appended after task-level `adapter_inputs.compose.files`
+- `modes.<mode>.adapter_inputs.compose.profiles`: optional ordered compose profile list appended after task-level `adapter_inputs.compose.profiles`
 - `modes.<mode>.adapter_inputs.compose.project_name`: optional compose project name override for that mode
 - `modes.<mode>.adapter_inputs.bake.files`: optional ordered repo-relative Bake file list appended after task-level `adapter_inputs.bake.files`
 - `modes.<mode>.run`: optional single-line command override for that mode
@@ -1850,7 +1852,7 @@ tasks:
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
 - when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`command`/`prepare`/`launch`, and `runtime`
-- use `env_files` for task-process dotenv overlays; use `adapter_inputs.compose.*` when one task path owns `docker compose` interpolation input, compose file selection, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
+- use `env_files` for task-process dotenv overlays; use `adapter_inputs.compose.*` when one task path owns `docker compose` interpolation input, compose file selection, compose profiles, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
 - use `adapter_inputs.bake.files` when one task path owns `docker buildx bake` file selection and that truth should project through `BUILDX_BAKE_FILE` instead of shell `-f`
 - validate/doctor warn when Bake file truth stays hard-coded in shell `docker buildx bake -f` / `--file` flags instead of `adapter_inputs.bake.files`
 - when a selected branch omits `run`/`script`/`command`/`prepare`/`launch`, ota falls back to the task-level execution body (including OS variants)
@@ -2837,6 +2839,8 @@ Fields:
   compose interpolation files the workflow should project into selected compose task paths
 - `<name>.env.adapter_inputs.compose.files`: optional ordered repo-relative adapter-owned compose
   file overlays the workflow should project into selected compose task paths
+- `<name>.env.adapter_inputs.compose.profiles`: optional ordered adapter-owned compose profile list
+  the workflow should project into selected compose task paths
 - `<name>.env.adapter_inputs.compose.project_name`: optional adapter-owned compose project name the
   workflow should project into selected compose task paths when that path does not already declare
   one
@@ -2890,6 +2894,9 @@ Workflow env adapter rules:
 - ota prepends `<name>.env.adapter_inputs.compose.files` ahead of task-local
   `adapter_inputs.compose.files`, preserving declared task additions without letting workflow-owned
   base compose files drift back into shell `docker compose -f` flags
+- ota prepends `<name>.env.adapter_inputs.compose.profiles` ahead of task-local
+  `adapter_inputs.compose.profiles`, preserving narrower task additions without forcing workflow
+  profile truth back into shell `docker compose --profile ...` flags
 - ota applies `<name>.env.adapter_inputs.compose.project_name` only when the selected task path
   does not already declare one; validate/doctor warn if task-local compose project naming
   duplicates workflow truth
@@ -2902,6 +2909,7 @@ Workflow env adapter rules:
   rendered dotenv path exactly
 - `<name>.env.adapter_inputs.compose.env_files` / `.files` must stay repo-relative and must not
   escape the repo
+- `<name>.env.adapter_inputs.compose.profiles[*]` must not be empty
 - `<name>.env.adapter_inputs.bake.files` must stay repo-relative and must not escape the repo
 - `<name>.env.adapter_inputs` requires the selected workflow task closure to include task paths
   that support each declared adapter input family
@@ -3144,9 +3152,9 @@ Current behavior:
   (`sed -i`, `perl -pi`) that should instead use `action.kind: ensure_env_file` with explicit
   replacement keys
 - validate/doctor warn when task bodies hard-code compose shell flags such as
-  `docker compose --env-file ...`, `-f`, `--file`, `-p`, or `--project-name`; move that ownership
-  to task `adapter_inputs.compose.*` or `services.<name>.manager.env_file` so Ota can reason
-  about it
+  `docker compose --env-file ...`, `-f`, `--file`, `--profile`, `-p`, or `--project-name`; move
+  that ownership to task `adapter_inputs.compose.*` or `services.<name>.manager.env_file` so Ota
+  can reason about it
 - changed-files checks evaluate tracked diffs via git (`base_ref..head_ref` when both refs are
   declared, otherwise against `HEAD`) and may include untracked matches when
   `include_untracked: true`
