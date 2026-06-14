@@ -42,11 +42,11 @@ use crate::schema::{
     AgentPosture, Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
     ExtensionKind, Lifecycle, OrchestratorKind, RuntimeRequirement, ServiceProducerSpec,
-    ServiceSpec, TaskCommandSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode,
-    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
-    TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode,
-    ToolchainFulfillmentSource, ToolchainSpec, parse_memory_size_bytes,
+    ServiceSpec, TaskCommandSpec, TaskModeBranchSpec, TaskNetworkEffectKind,
+    TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
+    TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement,
+    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec, parse_memory_size_bytes,
     parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
@@ -6532,6 +6532,208 @@ pub struct DuplicateWorkflowAdapterInputOwnershipAdvisory {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DuplicateWorkflowAdapterInputField {
+    ComposeEnvFiles,
+    ComposeFiles,
+    ComposeProfiles,
+    ComposeProjectName,
+    BakeFiles,
+}
+
+impl DuplicateWorkflowAdapterInputField {
+    const fn code(self) -> &'static str {
+        match self {
+            Self::ComposeEnvFiles => {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_ENV_FILES_OWNERSHIP"
+            }
+            Self::ComposeFiles => {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_FILES_OWNERSHIP"
+            }
+            Self::ComposeProfiles => {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROFILES_OWNERSHIP"
+            }
+            Self::ComposeProjectName => {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP"
+            }
+            Self::BakeFiles => "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_BAKE_FILES_OWNERSHIP",
+        }
+    }
+
+    const fn family_name(self) -> &'static str {
+        match self {
+            Self::ComposeEnvFiles
+            | Self::ComposeFiles
+            | Self::ComposeProfiles
+            | Self::ComposeProjectName => "compose",
+            Self::BakeFiles => "bake",
+        }
+    }
+
+    const fn field_name(self) -> &'static str {
+        match self {
+            Self::ComposeEnvFiles => "env_files",
+            Self::ComposeFiles | Self::BakeFiles => "files",
+            Self::ComposeProfiles => "profiles",
+            Self::ComposeProjectName => "project_name",
+        }
+    }
+
+    fn workflow_location(self, workflow_name: &str) -> String {
+        match self {
+            Self::ComposeEnvFiles => {
+                format!("workflows.{workflow_name}.env.adapter_inputs.compose.env_files")
+            }
+            Self::ComposeFiles => {
+                format!("workflows.{workflow_name}.env.adapter_inputs.compose.files")
+            }
+            Self::ComposeProfiles => {
+                format!("workflows.{workflow_name}.env.adapter_inputs.compose.profiles")
+            }
+            Self::ComposeProjectName => {
+                format!("workflows.{workflow_name}.env.adapter_inputs.compose.project_name")
+            }
+            Self::BakeFiles => format!("workflows.{workflow_name}.env.adapter_inputs.bake.files"),
+        }
+    }
+
+    fn task_location(self, task_name: &str) -> String {
+        match self {
+            Self::ComposeEnvFiles => format!("tasks.{task_name}.adapter_inputs.compose.env_files"),
+            Self::ComposeFiles => format!("tasks.{task_name}.adapter_inputs.compose.files"),
+            Self::ComposeProfiles => format!("tasks.{task_name}.adapter_inputs.compose.profiles"),
+            Self::ComposeProjectName => {
+                format!("tasks.{task_name}.adapter_inputs.compose.project_name")
+            }
+            Self::BakeFiles => format!("tasks.{task_name}.adapter_inputs.bake.files"),
+        }
+    }
+
+    fn branch_location(self, task_name: &str, backend: Backend) -> String {
+        let backend = format_backend(backend);
+        match self {
+            Self::ComposeEnvFiles => format!(
+                "tasks.{task_name}.execution.modes.{backend}.adapter_inputs.compose.env_files"
+            ),
+            Self::ComposeFiles => {
+                format!("tasks.{task_name}.execution.modes.{backend}.adapter_inputs.compose.files")
+            }
+            Self::ComposeProfiles => format!(
+                "tasks.{task_name}.execution.modes.{backend}.adapter_inputs.compose.profiles"
+            ),
+            Self::ComposeProjectName => format!(
+                "tasks.{task_name}.execution.modes.{backend}.adapter_inputs.compose.project_name"
+            ),
+            Self::BakeFiles => {
+                format!("tasks.{task_name}.execution.modes.{backend}.adapter_inputs.bake.files")
+            }
+        }
+    }
+
+    fn workflow_value(
+        self,
+        adapter_inputs: &crate::schema::TaskAdapterInputsSpec,
+    ) -> Option<String> {
+        match self {
+            Self::ComposeEnvFiles => adapter_inputs
+                .compose
+                .as_ref()
+                .map(|compose| compose.env_files.as_slice())
+                .filter(|values| !values.is_empty())
+                .map(render_adapter_input_value_list),
+            Self::ComposeFiles => adapter_inputs
+                .compose
+                .as_ref()
+                .map(|compose| compose.files.as_slice())
+                .filter(|values| !values.is_empty())
+                .map(render_adapter_input_value_list),
+            Self::ComposeProfiles => adapter_inputs
+                .compose
+                .as_ref()
+                .map(|compose| compose.profiles.as_slice())
+                .filter(|values| !values.is_empty())
+                .map(render_adapter_input_value_list),
+            Self::ComposeProjectName => adapter_inputs
+                .compose
+                .as_ref()
+                .and_then(|compose| compose.project_name.as_deref())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            Self::BakeFiles => adapter_inputs
+                .bake
+                .as_ref()
+                .map(|bake| bake.files.as_slice())
+                .filter(|values| !values.is_empty())
+                .map(render_adapter_input_value_list),
+        }
+    }
+
+    fn task_declared(self, task: &TaskSpec) -> bool {
+        match self {
+            Self::ComposeEnvFiles => task
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.env_files.is_empty()),
+            Self::ComposeFiles => task
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.files.is_empty()),
+            Self::ComposeProfiles => task
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.profiles.is_empty()),
+            Self::ComposeProjectName => task
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .and_then(|compose| compose.project_name.as_deref())
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty()),
+            Self::BakeFiles => task
+                .adapter_inputs
+                .bake
+                .as_ref()
+                .is_some_and(|bake| !bake.files.is_empty()),
+        }
+    }
+
+    fn branch_declared(self, branch: &TaskModeBranchSpec) -> bool {
+        match self {
+            Self::ComposeEnvFiles => branch
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.env_files.is_empty()),
+            Self::ComposeFiles => branch
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.files.is_empty()),
+            Self::ComposeProfiles => branch
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.profiles.is_empty()),
+            Self::ComposeProjectName => branch
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .and_then(|compose| compose.project_name.as_deref())
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty()),
+            Self::BakeFiles => branch
+                .adapter_inputs
+                .bake
+                .as_ref()
+                .is_some_and(|bake| !bake.files.is_empty()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplaceableShellCheckKind {
     File,
     Env,
@@ -6576,7 +6778,7 @@ pub struct TaskExecutionBoundary {
 }
 
 impl ContractAdvisory {
-    pub const fn code(&self) -> &'static str {
+    pub fn code(&self) -> &'static str {
         match self {
             ContractAdvisory::DependsOnBoundary(_) => "OTA_CONTRACT_ADVISORY_DEPENDS_ON_BOUNDARY",
             ContractAdvisory::LikelyUnusedAttachment(_) => {
@@ -6617,8 +6819,8 @@ impl ContractAdvisory {
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP"
             }
-            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_) => {
-                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP"
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(advisory) => {
+                duplicate_workflow_adapter_input_field(advisory).code()
             }
             ContractAdvisory::SensitiveAgentWritablePath(_) => {
                 "OTA_CONTRACT_ADVISORY_SENSITIVE_AGENT_WRITABLE_PATH"
@@ -7582,80 +7784,111 @@ fn collect_duplicate_workflow_adapter_input_ownership_advisories(
     for (workflow_name, _) in &workflows.items {
         let effective_adapter_inputs =
             contract.selected_workflow_effective_adapter_inputs(Some(workflow_name.as_str()));
-        let Some(project_name) = effective_adapter_inputs
-            .compose
-            .as_ref()
-            .and_then(|compose| compose.project_name.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            continue;
-        };
-        let workflow_location =
-            format!("workflows.{workflow_name}.env.adapter_inputs.compose.project_name");
+        let duplicate_fields = [
+            DuplicateWorkflowAdapterInputField::ComposeEnvFiles,
+            DuplicateWorkflowAdapterInputField::ComposeFiles,
+            DuplicateWorkflowAdapterInputField::ComposeProfiles,
+            DuplicateWorkflowAdapterInputField::ComposeProjectName,
+            DuplicateWorkflowAdapterInputField::BakeFiles,
+        ];
 
-        for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name.as_str()))
-        {
-            let Some(task) = contract.tasks.get(task_name.as_str()) else {
+        for field in duplicate_fields {
+            let Some(field_value) = field.workflow_value(&effective_adapter_inputs) else {
                 continue;
             };
-            if task
-                .adapter_inputs
-                .compose
-                .as_ref()
-                .and_then(|compose| compose.project_name.as_deref())
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty())
+            let workflow_location = field.workflow_location(workflow_name);
+
+            for task_name in
+                contract.selected_workflow_task_closure_names(Some(workflow_name.as_str()))
             {
-                let location = format!("tasks.{task_name}.adapter_inputs.compose.project_name");
-                if seen.insert((workflow_name.clone(), task_name.clone(), location.clone())) {
-                    advisories.push(ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(
-                        DuplicateWorkflowAdapterInputOwnershipAdvisory {
-                            workflow_name: workflow_name.clone(),
-                            task_name: task_name.clone(),
-                            adapter_family: String::from("compose"),
-                            field_name: String::from("project_name"),
-                            field_value: project_name.to_string(),
-                            workflow_location: workflow_location.clone(),
-                            location,
-                        },
-                    ));
-                }
-            }
-            if let Some(execution) = task.execution.as_ref() {
-                for (backend, branch) in execution.modes.iter() {
-                    if branch
-                        .adapter_inputs
-                        .compose
-                        .as_ref()
-                        .and_then(|compose| compose.project_name.as_deref())
-                        .map(str::trim)
-                        .is_none_or(|value| value.is_empty())
-                    {
-                        continue;
-                    }
-                    let location = format!(
-                        "tasks.{task_name}.execution.modes.{}.adapter_inputs.compose.project_name",
-                        format_backend(backend)
-                    );
+                let Some(task) = contract.tasks.get(task_name.as_str()) else {
+                    continue;
+                };
+                if field.task_declared(task) {
+                    let location = field.task_location(&task_name);
                     if seen.insert((workflow_name.clone(), task_name.clone(), location.clone())) {
-                        advisories.push(ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(
-                            DuplicateWorkflowAdapterInputOwnershipAdvisory {
-                                workflow_name: workflow_name.clone(),
-                                task_name: task_name.clone(),
-                                adapter_family: String::from("compose"),
-                                field_name: String::from("project_name"),
-                                field_value: project_name.to_string(),
-                                workflow_location: workflow_location.clone(),
-                                location,
-                            },
+                        advisories.push(duplicate_workflow_adapter_input_ownership_advisory(
+                            field,
+                            workflow_name,
+                            &task_name,
+                            &field_value,
+                            &workflow_location,
+                            location,
                         ));
+                    }
+                }
+                if let Some(execution) = task.execution.as_ref() {
+                    for (backend, branch) in execution.modes.iter() {
+                        if !field.branch_declared(branch) {
+                            continue;
+                        }
+                        let location = field.branch_location(&task_name, backend);
+                        if seen.insert((workflow_name.clone(), task_name.clone(), location.clone()))
+                        {
+                            advisories.push(duplicate_workflow_adapter_input_ownership_advisory(
+                                field,
+                                workflow_name,
+                                &task_name,
+                                &field_value,
+                                &workflow_location,
+                                location,
+                            ));
+                        }
                     }
                 }
             }
         }
     }
     advisories
+}
+
+fn duplicate_workflow_adapter_input_ownership_advisory(
+    field: DuplicateWorkflowAdapterInputField,
+    workflow_name: &str,
+    task_name: &str,
+    field_value: &str,
+    workflow_location: &str,
+    location: String,
+) -> ContractAdvisory {
+    ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(
+        DuplicateWorkflowAdapterInputOwnershipAdvisory {
+            workflow_name: workflow_name.to_string(),
+            task_name: task_name.to_string(),
+            adapter_family: String::from(field.family_name()),
+            field_name: String::from(field.field_name()),
+            field_value: field_value.to_string(),
+            workflow_location: workflow_location.to_string(),
+            location,
+        },
+    )
+}
+
+fn duplicate_workflow_adapter_input_field(
+    advisory: &DuplicateWorkflowAdapterInputOwnershipAdvisory,
+) -> DuplicateWorkflowAdapterInputField {
+    match (
+        advisory.adapter_family.as_str(),
+        advisory.field_name.as_str(),
+    ) {
+        ("compose", "env_files") => DuplicateWorkflowAdapterInputField::ComposeEnvFiles,
+        ("compose", "files") => DuplicateWorkflowAdapterInputField::ComposeFiles,
+        ("compose", "profiles") => DuplicateWorkflowAdapterInputField::ComposeProfiles,
+        ("compose", "project_name") => DuplicateWorkflowAdapterInputField::ComposeProjectName,
+        ("bake", "files") => DuplicateWorkflowAdapterInputField::BakeFiles,
+        _ => unreachable!(
+            "unsupported workflow adapter-input advisory field: {}.{}",
+            advisory.adapter_family, advisory.field_name
+        ),
+    }
+}
+
+fn render_adapter_input_value_list(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn obvious_env_mutation_shell(command: &str) -> bool {
@@ -27419,6 +27652,105 @@ workflows:
                     && value.field_name == "project_name"
                     && value.field_value == "workflow-local"
                     && value.workflow_location == "workflows.compose.env.adapter_inputs.compose.project_name"
+        )));
+    }
+
+    #[test]
+    fn collects_duplicate_workflow_adapter_input_ownership_advisories_for_widened_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  compose:dev:
+    adapter_inputs:
+      compose:
+        env_files:
+          - .env.local
+        files:
+          - compose.local.yaml
+        profiles:
+          - web
+    run: docker compose up
+  image:build:
+    execution:
+      modes:
+        container:
+          adapter_inputs:
+            bake:
+              files:
+                - docker-bake.local.hcl
+          run: docker buildx bake app
+    run: echo build
+workflows:
+  default: compose
+  compose:
+    env:
+      adapter_inputs:
+        compose:
+          env_files:
+            - .env.dev
+          files:
+            - compose.dev.yaml
+          profiles:
+            - api
+    run:
+      task: compose:dev
+  image:
+    env:
+      adapter_inputs:
+        bake:
+          files:
+            - docker-bake.hcl
+    run:
+      task: image:build
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(value)
+                if value.workflow_name == "compose"
+                    && value.task_name == "compose:dev"
+                    && value.adapter_family == "compose"
+                    && value.field_name == "env_files"
+                    && value.field_value == ".env.dev"
+                    && value.workflow_location == "workflows.compose.env.adapter_inputs.compose.env_files"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(value)
+                if value.workflow_name == "compose"
+                    && value.task_name == "compose:dev"
+                    && value.adapter_family == "compose"
+                    && value.field_name == "files"
+                    && value.field_value == "compose.dev.yaml"
+                    && value.workflow_location == "workflows.compose.env.adapter_inputs.compose.files"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(value)
+                if value.workflow_name == "compose"
+                    && value.task_name == "compose:dev"
+                    && value.adapter_family == "compose"
+                    && value.field_name == "profiles"
+                    && value.field_value == "api"
+                    && value.workflow_location == "workflows.compose.env.adapter_inputs.compose.profiles"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(value)
+                if value.workflow_name == "image"
+                    && value.task_name == "image:build"
+                    && value.adapter_family == "bake"
+                    && value.field_name == "files"
+                    && value.field_value == "docker-bake.hcl"
+                    && value.workflow_location == "workflows.image.env.adapter_inputs.bake.files"
+                    && value.location == "tasks.image:build.execution.modes.container.adapter_inputs.bake.files"
         )));
     }
 

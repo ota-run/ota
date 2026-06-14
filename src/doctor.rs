@@ -2961,9 +2961,29 @@ impl Finding {
                 "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP"
             }
             s if s.starts_with("workflow `")
+                && s.contains(" duplicates compose `env_files` ownership in task `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_ENV_FILES_OWNERSHIP"
+            }
+            s if s.starts_with("workflow `")
+                && s.contains(" duplicates compose `files` ownership in task `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_FILES_OWNERSHIP"
+            }
+            s if s.starts_with("workflow `")
+                && s.contains(" duplicates compose `profiles` ownership in task `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROFILES_OWNERSHIP"
+            }
+            s if s.starts_with("workflow `")
                 && s.contains(" duplicates compose `project_name` ownership in task `") =>
             {
                 "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP"
+            }
+            s if s.starts_with("workflow `")
+                && s.contains(" duplicates bake `files` ownership in task `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_BAKE_FILES_OWNERSHIP"
             }
             s if s.starts_with("`agent.writable_paths` includes sensitive ") => {
                 "OTA_CONTRACT_ADVISORY_SENSITIVE_AGENT_WRITABLE_PATH"
@@ -19961,11 +19981,47 @@ tasks:
             why: String::from("bake file selection is hidden in shell"),
             next: String::from("move ownership under adapter_inputs.bake.files"),
         };
-        let workflow = Finding {
+        let workflow_compose_env_files = Finding {
+            identity: None,
+            severity: FindingSeverity::Warn,
+            summary: String::from(
+                "workflow `compose` duplicates compose `env_files` ownership in task `build`",
+            ),
+            why: String::from("workflow and task both own the same adapter input"),
+            next: String::from("keep adapter ownership in one declarative place"),
+        };
+        let workflow_compose_files = Finding {
+            identity: None,
+            severity: FindingSeverity::Warn,
+            summary: String::from(
+                "workflow `compose` duplicates compose `files` ownership in task `build`",
+            ),
+            why: String::from("workflow and task both own the same adapter input"),
+            next: String::from("keep adapter ownership in one declarative place"),
+        };
+        let workflow_compose_profiles = Finding {
+            identity: None,
+            severity: FindingSeverity::Warn,
+            summary: String::from(
+                "workflow `compose` duplicates compose `profiles` ownership in task `build`",
+            ),
+            why: String::from("workflow and task both own the same adapter input"),
+            next: String::from("keep adapter ownership in one declarative place"),
+        };
+        let workflow_compose_project_name = Finding {
             identity: None,
             severity: FindingSeverity::Warn,
             summary: String::from(
                 "workflow `compose` duplicates compose `project_name` ownership in task `build`",
+            ),
+            why: String::from("workflow and task both own the same adapter input"),
+            next: String::from("keep adapter ownership in one declarative place"),
+        };
+        let workflow_bake_files = Finding {
+            identity: None,
+            severity: FindingSeverity::Warn,
+            summary: String::from(
+                "workflow `image` duplicates bake `files` ownership in task `build`",
             ),
             why: String::from("workflow and task both own the same adapter input"),
             next: String::from("keep adapter ownership in one declarative place"),
@@ -19976,11 +20032,27 @@ tasks:
             "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP"
         );
         assert_eq!(
-            workflow.code(),
+            workflow_compose_env_files.code(),
+            "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_ENV_FILES_OWNERSHIP"
+        );
+        assert_eq!(
+            workflow_compose_files.code(),
+            "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_FILES_OWNERSHIP"
+        );
+        assert_eq!(
+            workflow_compose_profiles.code(),
+            "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROFILES_OWNERSHIP"
+        );
+        assert_eq!(
+            workflow_compose_project_name.code(),
             "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP"
         );
+        assert_eq!(
+            workflow_bake_files.code(),
+            "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_BAKE_FILES_OWNERSHIP"
+        );
         assert_eq!(bake.category(), "contract");
-        assert_eq!(workflow.owner(), "repo_contract");
+        assert_eq!(workflow_compose_project_name.owner(), "repo_contract");
     }
 
     #[test]
@@ -20173,6 +20245,74 @@ tasks:
             .expect("env source finding should be present");
         findings.push(finding_contract_projection("env", env_finding));
 
+        let contract_bake_advisory = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    run: docker buildx bake -f docker-bake.hcl app
+"#,
+        )
+        .unwrap();
+        let contract_bake_report =
+            diagnose_contract(&contract_bake_advisory, synthetic_contract_path());
+        let contract_bake_finding = contract_bake_report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary
+                    == "task `image:build` hard-codes Bake file selection in its task body"
+            })
+            .expect("replaceable bake advisory should be present");
+        findings.push(finding_contract_projection(
+            "contract_bake",
+            contract_bake_finding,
+        ));
+
+        let contract_workflow_advisory = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    adapter_inputs:
+      compose:
+        files:
+          - compose.local.yaml
+    run: docker compose up
+workflows:
+  default: compose
+  compose:
+    env:
+      adapter_inputs:
+        compose:
+          files:
+            - compose.dev.yaml
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+        let contract_workflow_report =
+            diagnose_contract(&contract_workflow_advisory, synthetic_contract_path());
+        let contract_workflow_finding = contract_workflow_report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary
+                    == "workflow `compose` duplicates compose `files` ownership in task `dev`"
+            })
+            .expect("workflow adapter-input duplicate advisory should be present");
+        findings.push(finding_contract_projection(
+            "contract_workflow",
+            contract_workflow_finding,
+        ));
+
         let provisioning_finding = super::provisioning_installability_finding(
             &ProvisioningFailureDiagnosis {
                 backend: String::from("apt"),
@@ -20263,6 +20403,28 @@ tasks:
                     "policy_reason": serde_json::Value::Null,
                 }),
                 serde_json::json!({
+                    "lane": "contract_bake",
+                    "code": "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP",
+                    "category": "contract",
+                    "owner": "repo_contract",
+                    "severity": "warn",
+                    "summary": "task `image:build` hard-codes Bake file selection in its task body",
+                    "evidence_source": "doctor",
+                    "provenance_key": "repo_contract",
+                    "policy_reason": serde_json::Value::Null,
+                }),
+                serde_json::json!({
+                    "lane": "contract_workflow",
+                    "code": "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_FILES_OWNERSHIP",
+                    "category": "contract",
+                    "owner": "repo_contract",
+                    "severity": "warn",
+                    "summary": "workflow `compose` duplicates compose `files` ownership in task `dev`",
+                    "evidence_source": "doctor",
+                    "provenance_key": "repo_contract",
+                    "policy_reason": serde_json::Value::Null,
+                }),
+                serde_json::json!({
                     "lane": "provisioning",
                     "code": "OTA_HOST_PROVISIONING_PACKAGE_UNAVAILABLE",
                     "category": "provisioning",
@@ -20335,6 +20497,36 @@ tasks:
                 provenance_key_surface: "repo_contract",
             },
             DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_BAKE_FILES_OWNERSHIP",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_ENV_FILES_OWNERSHIP",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_FILES_OWNERSHIP",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROFILES_OWNERSHIP",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
                 code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP",
                 category: "contract",
                 owner_surface: "repo_contract",
@@ -20360,6 +20552,12 @@ tasks:
             },
             DoctorFindingReferenceEntry {
                 code: "OTA_CONTRACT_ADVISORY_LIKELY_UNUSED_ATTACHMENT",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP",
                 category: "contract",
                 owner_surface: "repo_contract",
                 provenance_key_surface: "repo_contract",

@@ -81,6 +81,10 @@
   adapter-input advisory is now internally family-generic instead of Compose-hardcoded, while
   doctor identity fallback coverage now matches the current Bake and workflow adapter-ownership
   summary shapes
+- widened duplicate workflow adapter-input governance beyond Compose `project_name`: doctor and
+  validate now also surface field-specific duplicate ownership advisories for
+  `compose.env_files`, `compose.files`, `compose.profiles`, and `bake.files`, with contract-pack
+  JSON coverage locking those identities into the shipped doctor surface
 - restored Python starter command provenance truth all the way through init JSON field paths, so
   generated structured `command` bodies now publish `tasks.<name>.command.exe` /
   `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy
