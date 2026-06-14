@@ -1296,6 +1296,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "cwd": { "type": "string" },
         "env_files": { "$ref": "#/$defs/stringArray" },
         "files": { "$ref": "#/$defs/stringArray" },
         "profiles": { "$ref": "#/$defs/stringArray" },
@@ -1306,6 +1307,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "cwd": { "type": "string" },
         "files": { "$ref": "#/$defs/stringArray" }
       }
     },

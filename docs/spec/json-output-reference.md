@@ -555,12 +555,18 @@ Notes:
   and optional readiness contract for each reusable surface
 - `tasks[*].env_files` is present when one task owns ordered task-local dotenv overlays for
   execution; these overlays are execution-only inputs, not root `env.sources`
+- `tasks[*].adapter_inputs.compose.cwd` is present when one task owns the adapter working
+  directory for `docker compose`; Ota enters that directory at runtime and reprojects declared
+  compose file inputs relative to it
 - `tasks[*].adapter_inputs.compose.env_files` is present when one task owns ordered compose
   interpolation files; Ota projects these through adapter-aware runtime input rather than
   pretending they are process dotenv overlays
 - `tasks[*].adapter_inputs.compose.files` and `tasks[*].adapter_inputs.compose.project_name` are
   present when one task owns compose file selection or project naming; Ota projects these through
   adapter-aware runtime input instead of shell `-f` / `-p` flags
+- `tasks[*].adapter_inputs.bake.cwd` and `tasks[*].adapter_inputs.bake.files` are present when one
+  task owns Bake adapter root or Bake file selection; Ota projects these through adapter-aware
+  runtime input instead of shell `cd ... &&` / `-f` glue
 - `tasks[*].launch` is present when one task uses structured `launch` instead of shell `run` or
   `script`; it exposes the launch kind plus the structured command or packaged container metadata
 - task-target probe entries also expose `target.observer` and `target.resolution_plane`; the
@@ -741,6 +747,9 @@ Notes:
   `up.log`
 - cleanup failures are reported through top-level `error` and `next` without duplicating the doctor
   findings stream
+- high-confidence runtime-drift hints upgrade readiness-shaped failures to
+  `failure_class: config_drift` so automation can distinguish probable contract/config drift from
+  generic slow-start timeouts
 - timeout-only failures without a blocking primary doctor finding are normalized to
   `failure_class: readiness_timeout`
 - signal-terminated proof runs are normalized to `failure_class: interrupted`
@@ -808,6 +817,7 @@ Blocked:
     "doctor": "./.ota/proof/docker/doctor.json",
     "up_log": "./.ota/proof/docker/up.log"
   },
+  "failure_class": "config_drift",
   "likely_cause": "likely config drift: the runtime is still targeting Redis on loopback inside a multi-service startup path; move that host binding into a workflow-scoped env overlay or task `env_files` instead of `127.0.0.1` / `localhost`"
 }
 ```

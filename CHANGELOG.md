@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- generalized adapter-overlay internals behind a shared adapter-input field registry, so
+  workflow-overlay binding, duplicate-ownership governance, and runtime file-readiness checks now
+  consume one canonical metadata surface instead of carrying separate Compose/Bake match ladders
+- widened `adapter_inputs.compose` and `adapter_inputs.bake` with first-class `cwd`, so tasks and
+  workflows can own adapter-root execution truth without shell `cd ... && docker compose/buildx`
+  glue; Ota now reprojects repo-relative adapter files against that root at runtime and
+  validate/doctor call out replaceable shell-owned adapter cwd patterns
 - widened workflow-owned host preparation so `workflows.<name>.prepare` can now declare either a
   reusable `task` or an inline first-class `action`, letting workflows own deterministic bootstrap
   actions and bundles directly without synthetic helper tasks while keeping `ota up` and workflow

@@ -2306,16 +2306,17 @@ pub fn proof_runtime(
                     proof_runtime_phase_label(refined_proof_phase.as_str())
                 };
                 let ok = proof_runtime_ok(&proof_summary_for_output, proof_error.as_deref());
+                let proof_likely_cause = proof_runtime_likely_cause(
+                    &proof_summary_for_output,
+                    up_process_failure,
+                    &up_log_artifact_path,
+                );
                 let proof_failure_class = proof_runtime_failure_class(
                     &proof_summary_for_output,
                     refined_proof_phase.as_str(),
                     cleanup_error.as_deref(),
                     up_process_failure,
-                    &up_log_artifact_path,
-                );
-                let proof_likely_cause = proof_runtime_likely_cause(
-                    &proof_summary_for_output,
-                    up_process_failure,
+                    proof_likely_cause.as_deref(),
                     &up_log_artifact_path,
                 );
                 let workflow_env_artifacts =
@@ -44075,6 +44076,7 @@ workflows:
             "cleanup",
             Some("cleanup failed"),
             None,
+            None,
             Path::new("./.ota/proof/instant/up.log"),
         );
         assert_eq!(class.as_deref(), Some("cleanup_failure"));
@@ -44102,7 +44104,14 @@ workflows:
             }),
         };
         let class =
-            super::proof_runtime_failure_class(&summary, "run", None, Some("run failed"), &up_log);
+            super::proof_runtime_failure_class(
+                &summary,
+                "run",
+                None,
+                Some("run failed"),
+                None,
+                &up_log,
+            );
         assert_eq!(class.as_deref(), Some("install_or_toolchain_failure"));
     }
 
@@ -44129,6 +44138,7 @@ workflows:
             "readiness",
             None,
             Some("timed out while waiting"),
+            None,
             Path::new("./.ota/proof/instant/up.log"),
         );
         assert_eq!(class.as_deref(), Some("readiness_timeout"));
@@ -44149,6 +44159,7 @@ workflows:
             "readiness",
             None,
             Some("up process exited with code 1"),
+            None,
             Path::new("./.ota/proof/instant/up.log"),
         );
         assert_eq!(class.as_deref(), Some("up_process_failure"));
@@ -44169,9 +44180,39 @@ workflows:
             "readiness",
             None,
             Some("timed out while waiting for readiness"),
+            None,
             Path::new("./.ota/proof/instant/up.log"),
         );
         assert_eq!(class.as_deref(), Some("readiness_timeout"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_marks_config_drift_when_likely_cause_is_present() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Surface readiness timed out: site"),
+                why: String::from("timed out"),
+                next: String::from("rerun"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "readiness",
+            None,
+            Some("timed out while waiting for readiness"),
+            Some("likely config drift: the runtime is still targeting Redis on loopback"),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("config_drift"));
     }
 
     #[test]
@@ -44189,6 +44230,7 @@ workflows:
             "interrupted",
             None,
             Some("runtime proof interrupted by signal"),
+            None,
             Path::new("./.ota/proof/instant/up.log"),
         );
         assert_eq!(class.as_deref(), Some("interrupted"));
@@ -44701,6 +44743,7 @@ workflows:
         let class = super::proof_runtime_failure_class(
             &summary,
             "preconditions",
+            None,
             None,
             None,
             Path::new("./.ota/proof/instant/up.log"),
@@ -52351,6 +52394,7 @@ workflows:
     env:
       adapter_inputs:
         compose:
+          cwd: docker
           env_files:
             - .env.compose
           files:
@@ -52375,6 +52419,7 @@ tasks:
             .and_then(|task| task.adapter_inputs.compose.as_ref())
             .expect("compose adapter inputs should exist");
         assert_eq!(compose.env_files, vec![String::from(".env.compose")]);
+        assert_eq!(compose.cwd.as_deref(), Some("docker"));
         assert_eq!(compose.files, vec![String::from("compose.base.yaml")]);
         assert_eq!(compose.profiles, vec![String::from("base")]);
         assert_eq!(compose.project_name.as_deref(), Some("workflow-app"));
@@ -52439,6 +52484,7 @@ workflows:
     env:
       adapter_inputs:
         bake:
+          cwd: docker
           files:
             - docker-bake.hcl
     run:
@@ -52457,6 +52503,7 @@ tasks:
             .get("image:build")
             .and_then(|task| task.adapter_inputs.bake.as_ref())
             .expect("bake adapter inputs should exist");
+        assert_eq!(bake.cwd.as_deref(), Some("docker"));
         assert_eq!(bake.files, vec![String::from("docker-bake.hcl")]);
         assert!(bake.workflow_overlay_bound);
         assert!(
@@ -75819,8 +75866,11 @@ fn proof_runtime_failure_class(
     phase: &str,
     cleanup_error: Option<&str>,
     up_process_failure: Option<&str>,
+    likely_cause: Option<&str>,
     up_log_artifact_path: &Path,
 ) -> Option<String> {
+    let likely_config_drift = likely_cause
+        .is_some_and(|cause| cause.to_ascii_lowercase().starts_with("likely config drift:"));
     if cleanup_error.is_some() {
         return Some(String::from("cleanup_failure"));
     }
@@ -75837,6 +75887,9 @@ fn proof_runtime_failure_class(
         if up_process_failure
             .is_some_and(|failure| failure.contains("timed out while waiting for readiness"))
         {
+            if likely_config_drift {
+                return Some(String::from("config_drift"));
+            }
             return Some(String::from("readiness_timeout"));
         }
         if up_process_failure.is_some() {
@@ -75855,6 +75908,9 @@ fn proof_runtime_failure_class(
         if proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path) {
             return Some(String::from("install_or_toolchain_failure"));
         }
+        if likely_config_drift {
+            return Some(String::from("config_drift"));
+        }
         return Some(String::from("run_task_exit_before_readiness"));
     }
 
@@ -75863,6 +75919,9 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness timed out:")
     {
+        if likely_config_drift {
+            return Some(String::from("config_drift"));
+        }
         return Some(String::from("readiness_timeout"));
     }
     if primary.summary.starts_with("Surface readiness failed:")
@@ -75870,6 +75929,9 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness failed:")
     {
+        if likely_config_drift {
+            return Some(String::from("config_drift"));
+        }
         return Some(String::from("readiness_check_failed"));
     }
     if primary
@@ -75879,6 +75941,9 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness could not be evaluated:")
     {
+        if likely_config_drift {
+            return Some(String::from("config_drift"));
+        }
         return Some(String::from("readiness_evaluation_failed"));
     }
     Some(match canonical_phase.as_str() {

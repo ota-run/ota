@@ -1328,6 +1328,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "cwd": { "type": "string" },
         "env_files": { "$ref": "#/$defs/stringArray" },
         "files": { "$ref": "#/$defs/stringArray" },
         "profiles": { "$ref": "#/$defs/stringArray" },
@@ -1338,6 +1339,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "cwd": { "type": "string" },
         "files": { "$ref": "#/$defs/stringArray" }
       }
     },

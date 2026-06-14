@@ -3051,6 +3051,8 @@ impl<'a> TaskAdapterInputsSummary<'a> {
 
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
 pub struct TaskComposeAdapterInputsSummary<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_files: Vec<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -3063,7 +3065,8 @@ pub struct TaskComposeAdapterInputsSummary<'a> {
 
 impl<'a> TaskComposeAdapterInputsSummary<'a> {
     pub fn is_empty(&self) -> bool {
-        self.env_files.is_empty()
+        self.cwd.is_none()
+            && self.env_files.is_empty()
             && self.files.is_empty()
             && self.profiles.is_empty()
             && self.project_name.is_none()
@@ -3072,13 +3075,15 @@ impl<'a> TaskComposeAdapterInputsSummary<'a> {
 
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
 pub struct TaskBakeAdapterInputsSummary<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<&'a str>,
 }
 
 impl<'a> TaskBakeAdapterInputsSummary<'a> {
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty()
+        self.cwd.is_none() && self.files.is_empty()
     }
 }
 
@@ -3299,6 +3304,7 @@ pub fn summarize_task_adapter_inputs<'a>(
             .compose
             .as_ref()
             .map(|compose| TaskComposeAdapterInputsSummary {
+                cwd: compose.cwd.as_deref().map(str::trim).filter(|value| !value.is_empty()),
                 env_files: compose.env_files.iter().map(String::as_str).collect(),
                 files: compose.files.iter().map(String::as_str).collect(),
                 profiles: compose.profiles.iter().map(String::as_str).collect(),
@@ -3313,6 +3319,7 @@ pub fn summarize_task_adapter_inputs<'a>(
             .bake
             .as_ref()
             .map(|bake| TaskBakeAdapterInputsSummary {
+                cwd: bake.cwd.as_deref().map(str::trim).filter(|value| !value.is_empty()),
                 files: bake.files.iter().map(String::as_str).collect(),
             })
             .filter(|bake| !bake.is_empty()),

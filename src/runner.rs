@@ -38,6 +38,10 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use crate::adapter_inputs::{
+    ADAPTER_INPUT_FIELDS, rebase_repo_relative_adapter_paths, task_effective_adapter_cwd,
+};
 #[cfg(windows)]
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2096,14 +2100,21 @@ fn effective_task_env_for_backend_with_resolved_env(
             )
         }),
     );
-    let compose_adapter_env_files = task.compose_adapter_env_files_for_backend(backend_kind);
+    let adapter_cwd = task_effective_adapter_cwd(task, backend_kind);
+    let compose_adapter_env_files = rebase_repo_relative_adapter_paths(
+        &task.compose_adapter_env_files_for_backend(backend_kind),
+        adapter_cwd,
+    );
     if !compose_adapter_env_files.is_empty() {
         env.insert(
             String::from("COMPOSE_ENV_FILES"),
             compose_adapter_env_files.join(","),
         );
     }
-    let compose_adapter_files = task.compose_adapter_files_for_backend(backend_kind);
+    let compose_adapter_files = rebase_repo_relative_adapter_paths(
+        &task.compose_adapter_files_for_backend(backend_kind),
+        adapter_cwd,
+    );
     if !compose_adapter_files.is_empty() {
         env.insert(
             String::from("COMPOSE_FILE"),
@@ -2123,7 +2134,10 @@ fn effective_task_env_for_backend_with_resolved_env(
             project_name.to_string(),
         );
     }
-    let bake_adapter_files = task.bake_adapter_files_for_backend(backend_kind);
+    let bake_adapter_files = rebase_repo_relative_adapter_paths(
+        &task.bake_adapter_files_for_backend(backend_kind),
+        adapter_cwd,
+    );
     if !bake_adapter_files.is_empty() {
         env.insert(
             String::from("BUILDX_BAKE_FILE"),
@@ -2204,14 +2218,21 @@ pub(crate) fn effective_task_env_for_selection(
                 )
             }),
     );
-    let compose_adapter_env_files = task.compose_adapter_env_files_for_backend(backend);
+    let adapter_cwd = task_effective_adapter_cwd(task, backend);
+    let compose_adapter_env_files = rebase_repo_relative_adapter_paths(
+        &task.compose_adapter_env_files_for_backend(backend),
+        adapter_cwd,
+    );
     if !compose_adapter_env_files.is_empty() {
         env.insert(
             String::from("COMPOSE_ENV_FILES"),
             compose_adapter_env_files.join(","),
         );
     }
-    let compose_adapter_files = task.compose_adapter_files_for_backend(backend);
+    let compose_adapter_files = rebase_repo_relative_adapter_paths(
+        &task.compose_adapter_files_for_backend(backend),
+        adapter_cwd,
+    );
     if !compose_adapter_files.is_empty() {
         env.insert(
             String::from("COMPOSE_FILE"),
@@ -2231,7 +2252,10 @@ pub(crate) fn effective_task_env_for_selection(
             project_name.to_string(),
         );
     }
-    let bake_adapter_files = task.bake_adapter_files_for_backend(backend);
+    let bake_adapter_files = rebase_repo_relative_adapter_paths(
+        &task.bake_adapter_files_for_backend(backend),
+        adapter_cwd,
+    );
     if !bake_adapter_files.is_empty() {
         env.insert(
             String::from("BUILDX_BAKE_FILE"),
@@ -2321,49 +2345,60 @@ pub(crate) fn ensure_task_adapter_inputs_ready(
     backend: Backend,
     working_dir: &Path,
 ) -> Result<(), RunError> {
-    for path in task.compose_adapter_env_files_for_backend(backend) {
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
+    for field in ADAPTER_INPUT_FIELDS {
+        let Some(kind) = field.runtime_file_kind() else {
             continue;
+        };
+        let label = field
+            .runtime_file_label()
+            .expect("file-backed adapter-input field should have a runtime label");
+        let location = field.task_location(_task_name);
+        for path in field.backend_paths(task, backend) {
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let full_path = working_dir.join(trimmed);
+            fs::metadata(&full_path).map_err(|source| RunError::InvalidEnvSource {
+                kind: kind.to_string(),
+                path: trimmed.to_string(),
+                details: format!(
+                    "{label} `{trimmed}` declared in `{location}` is not readable: {source}"
+                ),
+            })?;
         }
-        let full_path = working_dir.join(trimmed);
-        fs::metadata(&full_path).map_err(|source| RunError::InvalidEnvSource {
-            kind: String::from("compose_adapter_env_file"),
-            path: trimmed.to_string(),
-            details: format!(
-                "compose adapter env file `{trimmed}` declared in `adapter_inputs.compose.env_files` is not readable: {source}"
-            ),
-        })?;
-    }
-    for path in task.compose_adapter_files_for_backend(backend) {
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let full_path = working_dir.join(trimmed);
-        fs::metadata(&full_path).map_err(|source| RunError::InvalidEnvSource {
-            kind: String::from("compose_adapter_file"),
-            path: trimmed.to_string(),
-            details: format!(
-                "compose file `{trimmed}` declared in `adapter_inputs.compose.files` is not readable: {source}"
-            ),
-        })?;
-    }
-    for path in task.bake_adapter_files_for_backend(backend) {
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let full_path = working_dir.join(trimmed);
-        fs::metadata(&full_path).map_err(|source| RunError::InvalidEnvSource {
-            kind: String::from("bake_adapter_file"),
-            path: trimmed.to_string(),
-            details: format!(
-                "bake file `{trimmed}` declared in `adapter_inputs.bake.files` is not readable: {source}"
-            ),
-        })?;
     }
     Ok(())
+}
+
+fn effective_task_execution_working_dir(
+    task: &TaskSpec,
+    backend: Backend,
+    working_dir: &Path,
+) -> PathBuf {
+    task_effective_adapter_cwd(task, backend)
+        .map(|cwd| working_dir.join(cwd))
+        .unwrap_or_else(|| working_dir.to_path_buf())
+}
+
+fn join_backend_cwd_with_adapter_cwd(
+    backend_cwd: Option<&str>,
+    task: Option<&TaskSpec>,
+    backend: Backend,
+) -> Option<String> {
+    let adapter_cwd = task.and_then(|task| task_effective_adapter_cwd(task, backend))?;
+    let adapter_cwd = adapter_cwd.trim();
+    if adapter_cwd.is_empty() {
+        return None;
+    }
+    match backend_cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) {
+        Some(base) => Some(format!(
+            "{}/{}",
+            base.trim_end_matches('/'),
+            adapter_cwd.trim_start_matches("./")
+        )),
+        None => Some(adapter_cwd.to_string()),
+    }
 }
 
 pub fn resolve_task_env_details(
@@ -7705,6 +7740,10 @@ fn execute_task_command(
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
     preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
+    let backend_kind = resolved_execution_backend_kind(backend);
+    let effective_working_dir = task
+        .map(|task| effective_task_execution_working_dir(task, backend_kind, working_dir))
+        .unwrap_or_else(|| working_dir.to_path_buf());
 
     match (backend, execution) {
         (
@@ -7718,7 +7757,7 @@ fn execute_task_command(
                 runtime,
                 exe,
                 args,
-                working_dir,
+                effective_working_dir.as_path(),
                 &resolved_env,
                 mode,
                 backend,
@@ -7766,7 +7805,7 @@ fn execute_task_command(
                     task_name,
                     runtime,
                     command,
-                    working_dir,
+                    effective_working_dir.as_path(),
                     &resolved_env,
                     mode,
                     backend,
@@ -7798,7 +7837,7 @@ fn execute_task_command(
                     context_name.as_deref(),
                     shared_backend_name,
                     command,
-                    working_dir,
+                    effective_working_dir.as_path(),
                     env_overrides,
                     path_export,
                     secret_env_names,
@@ -7832,7 +7871,7 @@ fn execute_task_command(
                         context_name.as_deref(),
                         shared_backend_name,
                         command,
-                        working_dir,
+                        effective_working_dir.as_path(),
                         env_overrides,
                         path_export,
                         secret_env_names,
@@ -7864,39 +7903,47 @@ fn execute_task_command(
                 target,
                 cwd,
                 ssh,
-            } => execute_remote_task_command(
-                task_name,
-                runtime,
-                command,
-                env_overrides,
-                provider,
-                target,
-                cwd.as_deref(),
-                ssh.as_ref(),
-                mode,
-            ),
+            } => {
+                let remote_cwd =
+                    join_backend_cwd_with_adapter_cwd(cwd.as_deref(), task, backend_kind);
+                execute_remote_task_command(
+                    task_name,
+                    runtime,
+                    command,
+                    env_overrides,
+                    provider,
+                    target,
+                    remote_cwd.as_deref(),
+                    ssh.as_ref(),
+                    mode,
+                )
+            }
             ResolvedExecutionBackend::BackendProvider {
                 shared_local_backend: _,
                 provider,
                 command: provider_command,
                 target,
                 cwd,
-            } => execute_backend_provider_task_command(
-                task_name,
-                command,
-                working_dir,
-                env_overrides,
-                provider,
-                provider_command,
-                target,
-                cwd.as_deref(),
-                if matches!(mode, TaskExecutionMode::CaptureActivation) {
-                    BackendProviderCommandContext::Activation
-                } else {
-                    BackendProviderCommandContext::Run
-                },
-                mode,
-            ),
+            } => {
+                let remote_cwd =
+                    join_backend_cwd_with_adapter_cwd(cwd.as_deref(), task, backend_kind);
+                execute_backend_provider_task_command(
+                    task_name,
+                    command,
+                    working_dir,
+                    env_overrides,
+                    provider,
+                    provider_command,
+                    target,
+                    remote_cwd.as_deref(),
+                    if matches!(mode, TaskExecutionMode::CaptureActivation) {
+                        BackendProviderCommandContext::Activation
+                    } else {
+                        BackendProviderCommandContext::Run
+                    },
+                    mode,
+                )
+            }
         },
         _ => Err(RunError::InvalidTaskExecution {
             task: task_name.to_string(),
@@ -49638,10 +49685,11 @@ tasks:
   docker-build:
     adapter_inputs:
       compose:
+        cwd: docker
         env_files:
-          - .env.compose
+          - docker/.env.compose
         files:
-          - compose.yaml
+          - docker/compose.yaml
         profiles:
           - base
         project_name: app
@@ -49651,10 +49699,11 @@ tasks:
         container:
           adapter_inputs:
             compose:
+              cwd: docker
               env_files:
-                - .env.container
+                - docker/.env.container
               files:
-                - compose.container.yaml
+                - docker/compose.container.yaml
               profiles:
                 - web
               project_name: app-container
@@ -49706,16 +49755,18 @@ tasks:
   image:build:
     adapter_inputs:
       bake:
+        cwd: docker
         files:
-          - docker-bake.hcl
+          - docker/docker-bake.hcl
     execution:
       default_mode: container
       modes:
         container:
           adapter_inputs:
             bake:
+              cwd: docker
               files:
-                - docker-bake.container.hcl
+                - docker/docker-bake.container.hcl
     run: docker buildx bake app
 "#,
         );

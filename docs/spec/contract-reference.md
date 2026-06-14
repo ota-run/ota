@@ -1817,17 +1817,21 @@ tasks:
 - `modes.<mode>.context`: optional context override for that mode
 - `modes.<mode>.lifecycle`: optional lifecycle override for that mode (container mode only)
 - `env_files`: optional ordered repo-relative dotenv overlays injected into the task process before task-level `env`
+- `adapter_inputs.compose.cwd`: optional repo-relative adapter working directory ota should enter before executing the selected `docker compose` task path; declared compose env files and compose files stay repo-relative in the contract and are projected relative to this adapter root at runtime
 - `adapter_inputs.compose.env_files`: optional ordered repo-relative compose interpolation files projected to the selected task mode through `COMPOSE_ENV_FILES`; use this for task-owned `docker compose` adapter input truth rather than process dotenv injection
 - `adapter_inputs.compose.files`: optional ordered repo-relative compose file list projected to the selected task mode through `COMPOSE_FILE`
 - `adapter_inputs.compose.profiles`: optional ordered compose profile list projected to the selected task mode through `COMPOSE_PROFILES`
 - `adapter_inputs.compose.project_name`: optional compose project name projected to the selected task mode through `COMPOSE_PROJECT_NAME`
+- `adapter_inputs.bake.cwd`: optional repo-relative adapter working directory ota should enter before executing the selected `docker buildx bake` task path; declared Bake files stay repo-relative in the contract and are projected relative to this adapter root at runtime
 - `adapter_inputs.bake.files`: optional ordered repo-relative Bake file list projected to the selected task mode through `BUILDX_BAKE_FILE`
 - `modes.<mode>.env`: optional env map merged over task-level `env`
 - `modes.<mode>.env_files`: optional ordered repo-relative dotenv overlays appended after task-level `env_files`
+- `modes.<mode>.adapter_inputs.compose.cwd`: optional compose adapter working-directory override for that mode
 - `modes.<mode>.adapter_inputs.compose.env_files`: optional ordered repo-relative compose interpolation files appended after task-level `adapter_inputs.compose.env_files`
 - `modes.<mode>.adapter_inputs.compose.files`: optional ordered repo-relative compose file list appended after task-level `adapter_inputs.compose.files`
 - `modes.<mode>.adapter_inputs.compose.profiles`: optional ordered compose profile list appended after task-level `adapter_inputs.compose.profiles`
 - `modes.<mode>.adapter_inputs.compose.project_name`: optional compose project name override for that mode
+- `modes.<mode>.adapter_inputs.bake.cwd`: optional Bake adapter working-directory override for that mode
 - `modes.<mode>.adapter_inputs.bake.files`: optional ordered repo-relative Bake file list appended after task-level `adapter_inputs.bake.files`
 - `modes.<mode>.run`: optional single-line command override for that mode
 - `modes.<mode>.script`: optional multiline script override for that mode
@@ -1852,10 +1856,11 @@ tasks:
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
 - when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`command`/`prepare`/`launch`, and `runtime`
-- use `env_files` for task-process dotenv overlays; use `adapter_inputs.compose.*` when one task path owns `docker compose` interpolation input, compose file selection, compose profiles, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
-- use `adapter_inputs.bake.files` when one task path owns `docker buildx bake` file selection and that truth should project through `BUILDX_BAKE_FILE` instead of shell `-f`
+- use `env_files` for task-process dotenv overlays; use `adapter_inputs.compose.*` when one task path owns `docker compose` adapter root, interpolation input, compose file selection, compose profiles, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
+- use `adapter_inputs.bake.*` when one task path owns `docker buildx bake` adapter root or file selection and that truth should project through a first-class adapter surface instead of shell `cd ... &&` / `-f`
 - keep `adapter_inputs.compose` / `adapter_inputs.bake` non-empty: empty family markers are a governance smell and validate/doctor warn on them; either declare concrete adapter-owned fields or omit the family entirely
-- validate/doctor warn when Bake file truth stays hard-coded in shell `docker buildx bake -f` / `--file` flags instead of `adapter_inputs.bake.files`
+- validate/doctor warn when Compose adapter root or file/profile/project truth stays hard-coded in shell `docker compose --project-directory ...`, `cd ... && docker compose ...`, `--env-file`, `-f`, `--file`, `--profile`, `-p`, or `--project-name` instead of `adapter_inputs.compose.*`
+- validate/doctor warn when Bake file truth stays hard-coded in shell `docker buildx bake -f` / `--file` flags, or when Bake adapter root stays hard-coded in shell `cd ... && docker buildx bake ...`, instead of `adapter_inputs.bake.*`
 - when a selected branch omits `run`/`script`/`command`/`prepare`/`launch`, ota falls back to the task-level execution body (including OS variants)
 - when a task declares `execution.modes`, an explicit `--mode` must resolve to a declared branch
   unless it matches `default_mode`; unsupported explicit overrides fail early with a mode-branch error
@@ -2846,6 +2851,8 @@ Fields:
 - `<name>.env.profile`: optional env profile name from `env.profiles`
 - `<name>.env.compose_env_file_services`: optional compose-managed services that should consume the
   selected workflow profile's rendered dotenv artifact as `services.<service>.manager.env_file`
+- `<name>.env.adapter_inputs.compose.cwd`: optional repo-relative adapter working directory the
+  workflow should project into selected compose task paths when that path does not already declare one
 - `<name>.env.adapter_inputs.compose.env_files`: optional ordered repo-relative adapter-owned
   compose interpolation files the workflow should project into selected compose task paths
 - `<name>.env.adapter_inputs.compose.files`: optional ordered repo-relative adapter-owned compose
@@ -2855,6 +2862,8 @@ Fields:
 - `<name>.env.adapter_inputs.compose.project_name`: optional adapter-owned compose project name the
   workflow should project into selected compose task paths when that path does not already declare
   one
+- `<name>.env.adapter_inputs.bake.cwd`: optional repo-relative adapter working directory the
+  workflow should project into selected `docker buildx bake` task paths when that path does not already declare one
 - `<name>.env.adapter_inputs.bake.files`: optional ordered repo-relative adapter-owned Bake file
   overlays the workflow should project into selected `docker buildx bake` task paths
 - `<name>.prepare.task`: optional native finite task ota should run first as explicit host preparation for that workflow
@@ -2894,7 +2903,7 @@ Workflow env adapter rules:
 - use `<name>.env.adapter_inputs.compose.*` when one workflow owns adapter-scoped compose input
   truth for the selected runnable path and task-local compose adapter inputs should only carry
   narrower path-specific additions
-- use `<name>.env.adapter_inputs.bake.files` when one workflow owns the base Bake file stack for
+- use `<name>.env.adapter_inputs.bake.*` when one workflow owns the base Bake adapter root or file stack for
   selected `docker buildx bake` task paths and task-local adapter inputs should only carry narrower
   additions
 - this keeps compose adapter input ownership on the workflow env surface instead of duplicating
@@ -2902,6 +2911,9 @@ Workflow env adapter rules:
 - when the selected workflow run path includes a compose-running task, ota also projects that
   rendered dotenv artifact into `tasks.<name>.adapter_inputs.compose.env_files` instead of
   misrouting it through process `env_files`
+- ota applies `<name>.env.adapter_inputs.compose.cwd` only when the selected compose task path
+  does not already declare one; this lets one workflow own `docker/` or similar adapter roots
+  without forcing shell `cd ... && docker compose ...` glue back into task bodies
 - ota prepends `<name>.env.adapter_inputs.compose.files` ahead of task-local
   `adapter_inputs.compose.files`, preserving declared task additions without letting workflow-owned
   base compose files drift back into shell `docker compose -f` flags
@@ -2911,6 +2923,9 @@ Workflow env adapter rules:
 - ota applies `<name>.env.adapter_inputs.compose.project_name` only when the selected task path
   does not already declare one; validate/doctor warn if task-local compose project naming
   duplicates workflow truth
+- ota applies `<name>.env.adapter_inputs.bake.cwd` only when the selected Bake task path does not
+  already declare one; this lets one workflow own a subdirectory-rooted Bake lane without forcing
+  shell `cd ... && docker buildx bake ...` glue back into task bodies
 - ota prepends `<name>.env.adapter_inputs.bake.files` ahead of task-local
   `adapter_inputs.bake.files`, preserving narrower Bake file additions without forcing workflow
   truth back into shell `docker buildx bake -f` flags

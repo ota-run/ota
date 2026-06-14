@@ -70,8 +70,9 @@ tasks:
     description: Start the compose stack with task-owned adapter truth
     adapter_inputs:
       compose:
+        cwd: docker
         env_files:
-          - .env.task
+          - docker/.env.task
     launch:
       kind: command
       exe: docker
@@ -86,10 +87,11 @@ tasks:
     description: Stop the compose stack with task-owned compose file and profile truth
     adapter_inputs:
       compose:
+        cwd: docker
         env_files:
-          - .env.task
+          - docker/.env.task
         files:
-          - docker-compose.yml
+          - docker/docker-compose.yml
         profiles:
           - app
     command:
@@ -105,13 +107,26 @@ tasks:
     description: Start a debug compose lane with task-owned project naming
     adapter_inputs:
       compose:
+        cwd: docker
         env_files:
-          - .env.task
+          - docker/.env.task
         files:
-          - docker-compose.yml
+          - docker/docker-compose.yml
         profiles:
           - debug
         project_name: compose-adapter-inputs-debug
+    launch:
+      kind: command
+      exe: docker
+      args:
+        - compose
+        - up
+    requirements:
+      tools:
+        docker: "*"
+  compose:workflow:up:
+    context: host
+    description: Start the compose stack with workflow-owned adapter root and overlays
     launch:
       kind: command
       exe: docker
@@ -133,10 +148,11 @@ workflows:
         - postgres
       adapter_inputs:
         compose:
+          cwd: docker
           files:
-            - docker-compose.override.yml
+            - docker/docker-compose.override.yml
           profiles:
             - runtime
           project_name: compose-adapter-inputs
     run:
-      task: compose:up
+      task: compose:workflow:up
