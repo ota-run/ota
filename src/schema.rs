@@ -4533,6 +4533,7 @@ pub enum TaskActionSpec {
     EnsureEnvFile(TaskEnsureEnvFileActionSpec),
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
+    EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
     EnsureBundle(TaskEnsureBundleActionSpec),
 }
 
@@ -4543,6 +4544,7 @@ impl TaskActionSpec {
             Self::EnsureEnvFile(_) => "ensure_env_file",
             Self::EnsureFile(_) => "ensure_file",
             Self::EnsureDirectory(_) => "ensure_directory",
+            Self::EnsureContainerNetwork(_) => "ensure_container_network",
             Self::EnsureBundle(_) => "ensure_bundle",
         }
     }
@@ -4585,6 +4587,11 @@ impl TaskActionSpec {
             Self::EnsureDirectory(action) => {
                 format!("ensure directory `{}` exists", action.path)
             }
+            Self::EnsureContainerNetwork(action) => format!(
+                "ensure {} container network `{}` exists",
+                action.provider.label(),
+                action.name
+            ),
             Self::EnsureBundle(action) => {
                 format!(
                     "ensure bootstrap bundle with {} step(s)",
@@ -4917,6 +4924,33 @@ pub struct TaskEnsureFileActionSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskEnsureDirectoryActionSpec {
     pub path: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskEnsureContainerNetworkActionSpec {
+    #[serde(default, skip_serializing_if = "is_default_container_network_provider")]
+    pub provider: TaskContainerNetworkProvider,
+    pub name: String,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskContainerNetworkProvider {
+    #[default]
+    Docker,
+}
+
+impl TaskContainerNetworkProvider {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Docker => "docker",
+        }
+    }
+}
+
+const fn is_default_container_network_provider(value: &TaskContainerNetworkProvider) -> bool {
+    matches!(value, TaskContainerNetworkProvider::Docker)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

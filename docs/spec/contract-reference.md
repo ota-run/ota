@@ -1889,7 +1889,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 `action` fields:
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
-  `ensure_file`, `ensure_directory`, or `ensure_bundle`
+  `ensure_file`, `ensure_directory`, `ensure_container_network`, or `ensure_bundle`
 - `action` is the first-class host file-preparation surface for deterministic repo mutations; in
   the current shipped slice it is native-only because it mutates the host working tree directly
   and Ota does not yet claim one cross-backend persistence/ownership model for container or remote
@@ -1919,6 +1919,9 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
   - `action.random.encoding`: optional `hex` or `base64` (default `hex`)
 - `action.kind: ensure_directory`
   - `action.path`: required repo-relative directory path to create when missing
+- `action.kind: ensure_container_network`
+  - `action.provider`: optional container runtime provider; currently `docker` (default `docker`)
+  - `action.name`: required container network name to inspect/create
 - `action.kind: ensure_bundle`
   - `action.steps`: required ordered list of deterministic bootstrap steps
   - each `action.steps[]` entry uses one of:
@@ -1954,6 +1957,11 @@ secret token file) without shell glue. It creates `action.path` once from one ex
 Use `action.kind: ensure_directory` when setup needs a deterministic repo-local directory without
 shell glue. It creates `action.path` when missing, no-ops when it already exists as a directory,
 and fails if the path already exists as a non-directory.
+
+Use `action.kind: ensure_container_network` when setup needs one deterministic external container
+network without shell glue. It inspects the named provider-owned network, creates it only when
+missing, and keeps Docker network bootstrap on a first-class declarative surface instead of
+hard-coding `docker network inspect/create` logic into `run`, `script`, or `command`.
 
 Use `action.kind: ensure_bundle` when setup needs multiple deterministic bootstrap mutations in one
 task (for example env file seeding plus secret file creation plus cache directory creation) without

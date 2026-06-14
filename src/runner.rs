@@ -8191,6 +8191,9 @@ fn execute_native_file_action_task(
         crate::schema::TaskActionSpec::EnsureDirectory(spec) => {
             execute_ensure_directory_action(task_name, spec, working_dir)
         }
+        crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => {
+            execute_ensure_container_network_action(task_name, spec)
+        }
         crate::schema::TaskActionSpec::EnsureBundle(spec) => {
             execute_ensure_bundle_action(contract, task_name, spec, working_dir, env_overrides)
         }
@@ -8557,6 +8560,66 @@ fn execute_ensure_directory_action(
     Ok(file_action_output(format!(
         "ensured directory `{}`\n",
         spec.path.trim()
+    )))
+}
+
+fn execute_ensure_container_network_action(
+    task_name: &str,
+    spec: &crate::schema::TaskEnsureContainerNetworkActionSpec,
+) -> Result<TaskCommandOutput, RunError> {
+    let name = spec.name.trim();
+    if name.is_empty() {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: String::from(
+                "action `ensure_container_network` must declare a non-empty `name`",
+            ),
+        });
+    }
+
+    let provider = spec.provider.label();
+    let inspect_output = Command::new(provider)
+        .args(["network", "inspect", name])
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not inspect {provider} container network `{name}`: {source}"),
+        })?;
+    if inspect_output.status.success() {
+        return Ok(file_action_output(format!(
+            "{provider} container network `{name}` already exists; no create needed\n"
+        )));
+    }
+
+    let create_output = Command::new(provider)
+        .args(["network", "create", name])
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not create {provider} container network `{name}`: {source}"),
+        })?;
+    if !create_output.status.success() {
+        let stderr = String::from_utf8_lossy(&create_output.stderr)
+            .trim()
+            .to_string();
+        let stdout = String::from_utf8_lossy(&create_output.stdout)
+            .trim()
+            .to_string();
+        let details = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
+        } else {
+            format!("exit status {}", create_output.status)
+        };
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not create {provider} container network `{name}`: {details}"),
+        });
+    }
+
+    Ok(file_action_output(format!(
+        "ensured {provider} container network `{name}`\n"
     )))
 }
 
@@ -49864,6 +49927,98 @@ tasks:
             second
                 .stdout
                 .contains("`.cache/dev` already exists; no directory create needed"),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_container_network_action_creates_network_once() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  network:ensure:
+    action:
+      kind: ensure_container_network
+      name: penpot_shared
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            format!(
+                r#"#!/bin/sh
+state_dir="{state_dir}"
+mkdir -p "$state_dir"
+
+if [ "$1" = "network" ] && [ "$2" = "inspect" ]; then
+  if [ -f "$state_dir/$3" ]; then
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ "$1" = "network" ] && [ "$2" = "create" ]; then
+  : > "$state_dir/$3"
+  exit 0
+fi
+
+exit 1
+"#,
+                state_dir = state_dir.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "network:ensure")
+            .expect("ensure container network action should run");
+        let second = run_task(&fixture.contract, fixture.file_path(), "network:ensure")
+            .expect("ensure container network action should stay idempotent");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert!(
+            first
+                .stdout
+                .contains("ensured docker container network `penpot_shared`"),
+            "{}",
+            first.stdout
+        );
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second.stdout.contains(
+                "docker container network `penpot_shared` already exists; no create needed"
+            ),
             "{}",
             second.stdout
         );

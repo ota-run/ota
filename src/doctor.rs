@@ -4067,6 +4067,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::ReplaceableShellEnvMutation(advisory) => {
                 ContractAdvisory::ReplaceableShellEnvMutation(advisory)
             }
+            ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => {
+                ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory)
+            }
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => {
                 ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory)
             }
@@ -4142,6 +4145,7 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::ServiceUsesOpaqueShellStart(_)
         | ContractAdvisory::ReplaceableShellCheck(_)
         | ContractAdvisory::ReplaceableShellEnvMutation(_)
+        | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
         | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
         | ContractAdvisory::ReplaceableBakeFileOwnership(_)
         | ContractAdvisory::EmptyAdapterInputMarker(_)

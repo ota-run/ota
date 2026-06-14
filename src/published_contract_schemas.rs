@@ -897,6 +897,16 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "kind": { "const": "ensure_directory" },
             "path": { "type": "string" }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "const": "ensure_container_network" },
+            "provider": { "enum": ["docker"] },
+            "name": { "type": "string" }
+          }
         }
       ]
     },

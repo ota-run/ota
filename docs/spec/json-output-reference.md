@@ -201,6 +201,10 @@ Current shape:
       "introduced_in": "1.6.16"
     },
     {
+      "id": "tasks.action.ensure_container_network",
+      "introduced_in": "1.6.21"
+    },
+    {
       "id": "tasks.action.ensure_bundle",
       "introduced_in": "1.6.17"
     },

@@ -83,6 +83,10 @@ const CONTRACT_CAPABILITY_SPECS: &[ContractCapabilitySpec] = &[
         introduced_in: "1.6.16",
     },
     ContractCapabilitySpec {
+        id: "tasks.action.ensure_container_network",
+        introduced_in: "1.6.21",
+    },
+    ContractCapabilitySpec {
         id: "tasks.action.ensure_bundle",
         introduced_in: "1.6.17",
     },
@@ -325,6 +329,9 @@ fn capability_present_in_document(capability: &ContractCapabilitySpec, document:
         "tasks.action.ensure_env_file" => tasks_action_ensure_env_file_present(document),
         "tasks.action.ensure_file" => tasks_action_ensure_file_present(document),
         "tasks.action.ensure_directory" => tasks_action_ensure_directory_present(document),
+        "tasks.action.ensure_container_network" => {
+            tasks_action_ensure_container_network_present(document)
+        }
         "tasks.action.ensure_bundle" => tasks_action_ensure_bundle_present(document),
         "checks.changed_files" => checks_changed_files_present(document),
         "tasks.when.checks" => tasks_when_checks_present(document),
@@ -392,6 +399,12 @@ fn capability_present_in_contract(
             matches!(
                 task.action.as_ref(),
                 Some(crate::schema::TaskActionSpec::EnsureDirectory(_))
+            )
+        }),
+        "tasks.action.ensure_container_network" => contract.tasks.values().any(|task| {
+            matches!(
+                task.action.as_ref(),
+                Some(crate::schema::TaskActionSpec::EnsureContainerNetwork(_))
             )
         }),
         "tasks.action.ensure_bundle" => contract.tasks.values().any(|task| {
@@ -609,6 +622,22 @@ fn tasks_action_ensure_bundle_present(document: &Value) -> bool {
     })
 }
 
+fn tasks_action_ensure_container_network_present(document: &Value) -> bool {
+    let Some(tasks) = mapping_child(document, "tasks").and_then(Value::as_mapping) else {
+        return false;
+    };
+    tasks.values().any(|task| {
+        mapping_child(task, "action")
+            .and_then(Value::as_mapping)
+            .and_then(|action| {
+                action
+                    .get(Value::String(String::from("kind")))
+                    .and_then(Value::as_str)
+            })
+            == Some("ensure_container_network")
+    })
+}
+
 fn checks_changed_files_present(document: &Value) -> bool {
     let Some(checks) = mapping_child(document, "checks").and_then(Value::as_sequence) else {
         return false;
@@ -719,6 +748,10 @@ tasks:
     action:
       kind: ensure_directory
       path: .cache/dev
+  bootstrap:network:
+    action:
+      kind: ensure_container_network
+      name: penpot_shared
     when:
       checks:
         - web-changed
@@ -815,6 +848,7 @@ native_prerequisites:
                 "tasks.action.ensure_env_file",
                 "tasks.action.ensure_file",
                 "tasks.action.ensure_directory",
+                "tasks.action.ensure_container_network",
                 "tasks.action.ensure_bundle",
                 "checks.changed_files",
                 "tasks.when.checks",
@@ -868,6 +902,10 @@ tasks:
     action:
       kind: ensure_directory
       path: .cache/dev
+  bootstrap:network:
+    action:
+      kind: ensure_container_network
+      name: penpot_shared
     when:
       checks:
         - web-changed
@@ -945,6 +983,7 @@ services:
                 "tasks.action.ensure_env_file",
                 "tasks.action.ensure_file",
                 "tasks.action.ensure_directory",
+                "tasks.action.ensure_container_network",
                 "tasks.action.ensure_bundle",
                 "checks.changed_files",
                 "tasks.when.checks",

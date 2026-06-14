@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added first-class container-network bootstrap through `action.kind: ensure_container_network`,
+  so contracts can own external Docker network readiness without shell `docker network inspect ||
+  docker network create` glue; validation, dry-run preview, contract schemas, capability
+  publication, and replaceable-shell governance now understand the new surface
 - fixed workflow prepare validation drift: `workflows.<name>.prepare.task` now accepts finite
   native `command` tasks, matching the published contract/reference surface instead of forcing
   authors back to shell `run`

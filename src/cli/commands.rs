@@ -1374,6 +1374,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::ReplaceableContainerNetworkOwnership(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("replaceable container network bootstrap"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::ReplaceableComposeEnvFileOwnership(value) => format!(
             "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -35397,6 +35408,13 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
         "ensure_directory" => match action.to {
             Some(path) => format!("ensure directory `{path}`"),
             None => String::from("ensure directory"),
+        },
+        "ensure_container_network" => match (action.from, action.to) {
+            (Some(provider), Some(name)) => {
+                format!("ensure {provider} container network `{name}`")
+            }
+            (None, Some(name)) => format!("ensure container network `{name}`"),
+            _ => String::from("ensure container network"),
         },
         _ => String::from("-"),
     }

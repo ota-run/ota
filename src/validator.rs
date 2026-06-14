@@ -3472,6 +3472,18 @@ fn validate_task_action(
                 errors,
             );
         }
+        crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => {
+            if spec.name.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_container_network` must declare a non-empty `action.name`"
+                )));
+            }
+            if spec.name.contains('\n') || spec.name.contains('\r') {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_container_network` `action.name` must not contain newline characters"
+                )));
+            }
+        }
         crate::schema::TaskActionSpec::EnsureBundle(spec) => {
             if spec.steps.is_empty() {
                 errors.push(ValidationError::new(format!(
@@ -6422,6 +6434,7 @@ pub enum ContractAdvisory {
     ServiceUsesOpaqueShellStart(ServiceUsesOpaqueShellStartAdvisory),
     ReplaceableShellCheck(ReplaceableShellCheckAdvisory),
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
+    ReplaceableContainerNetworkOwnership(ReplaceableContainerNetworkOwnershipAdvisory),
     ReplaceableComposeEnvFileOwnership(ReplaceableComposeEnvFileOwnershipAdvisory),
     ReplaceableBakeFileOwnership(ReplaceableBakeFileOwnershipAdvisory),
     EmptyAdapterInputMarker(EmptyAdapterInputMarkerAdvisory),
@@ -6496,6 +6509,12 @@ pub struct ReplaceableShellCheckAdvisory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceableShellEnvMutationAdvisory {
+    pub task_name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableContainerNetworkOwnershipAdvisory {
     pub task_name: String,
     pub command: String,
 }
@@ -6824,6 +6843,9 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableShellEnvMutation(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_MUTATION"
             }
+            ContractAdvisory::ReplaceableContainerNetworkOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_CONTAINER_NETWORK_OWNERSHIP"
+            }
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP"
             }
@@ -6930,6 +6952,10 @@ impl ContractAdvisory {
                 "task `{}` uses replaceable shell env-file mutation",
                 advisory.task_name
             ),
+            ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => format!(
+                "task `{}` hard-codes container network ownership in its task body",
+                advisory.task_name
+            ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
                 "task `{}` hard-codes compose adapter input ownership in its task body",
                 advisory.task_name
@@ -7031,6 +7057,10 @@ impl ContractAdvisory {
                 "task `{}` rewrites one env file through shell mutation (`{}`), which is less portable and less governable than `action.kind: ensure_env_file` with deterministic `mode: replace` keys",
                 advisory.task_name, advisory.command
             ),
+            ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => format!(
+                "task `{}` hard-codes container network bootstrap inside its task body (`{}`), which hides Docker network ownership from Ota instead of declaring it under `action.kind: ensure_container_network`",
+                advisory.task_name, advisory.command
+            ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
                 "task `{}` hard-codes compose adapter flags inside its task body (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under `adapter_inputs.compose.*` or `services.<name>.manager.env_file`",
                 advisory.task_name, advisory.command
@@ -7090,6 +7120,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
             | ContractAdvisory::EmptyAdapterInputMarker(_)
@@ -7116,6 +7147,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
             | ContractAdvisory::EmptyAdapterInputMarker(_)
@@ -7143,6 +7175,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
             | ContractAdvisory::EmptyAdapterInputMarker(_)
@@ -7206,6 +7239,10 @@ impl ContractAdvisory {
             },
             ContractAdvisory::ReplaceableShellEnvMutation(advisory) => format!(
                 "replace shell env-file mutation in task `{}` with `action.kind: ensure_env_file` (or `ensure_bundle`) and explicit `mode: replace` keys",
+                advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => format!(
+                "move container network ownership out of task `{}` body: use `action.kind: ensure_container_network` so Ota owns Docker network bootstrap declaratively",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
@@ -7335,6 +7372,9 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_service_uses_opaque_shell_start_advisories(contract));
     advisories.extend(collect_replaceable_shell_check_advisories(contract));
     advisories.extend(collect_replaceable_shell_env_mutation_advisories(contract));
+    advisories.extend(collect_replaceable_container_network_ownership_advisories(
+        contract,
+    ));
     advisories.extend(collect_replaceable_compose_env_file_ownership_advisories(
         contract,
     ));
@@ -7630,6 +7670,87 @@ fn collect_replaceable_shell_env_mutation_advisories(contract: &Contract) -> Vec
                     command: command.to_string(),
                 },
             ));
+        }
+    }
+    advisories
+}
+
+fn collect_replaceable_container_network_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.aggregate.is_some()
+            || task.action.as_ref().is_some_and(|action| {
+                matches!(
+                    action,
+                    crate::schema::TaskActionSpec::EnsureContainerNetwork(_)
+                )
+            })
+        {
+            continue;
+        }
+
+        let task_shell_command = task
+            .run
+            .as_deref()
+            .or(task.script.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(command) = task_shell_command
+            && obvious_container_network_shell(command)
+        {
+            advisories.push(ContractAdvisory::ReplaceableContainerNetworkOwnership(
+                ReplaceableContainerNetworkOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: command.to_string(),
+                },
+            ));
+            continue;
+        }
+        if let Some(command) = task.command.as_ref()
+            && obvious_container_network_command(command)
+        {
+            advisories.push(ContractAdvisory::ReplaceableContainerNetworkOwnership(
+                ReplaceableContainerNetworkOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: render_task_command_preview(command),
+                },
+            ));
+            continue;
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                let branch_shell_command = branch
+                    .run
+                    .as_deref()
+                    .or(branch.script.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if let Some(command) = branch_shell_command
+                    && obvious_container_network_shell(command)
+                {
+                    advisories.push(ContractAdvisory::ReplaceableContainerNetworkOwnership(
+                        ReplaceableContainerNetworkOwnershipAdvisory {
+                            task_name: task_name.clone(),
+                            command: command.to_string(),
+                        },
+                    ));
+                    break;
+                }
+                let Some(command) = branch.command.as_ref() else {
+                    continue;
+                };
+                if obvious_container_network_command(command) {
+                    advisories.push(ContractAdvisory::ReplaceableContainerNetworkOwnership(
+                        ReplaceableContainerNetworkOwnershipAdvisory {
+                            task_name: task_name.clone(),
+                            command: render_task_command_preview(command),
+                        },
+                    ));
+                    break;
+                }
+            }
         }
     }
     advisories
@@ -8004,6 +8125,23 @@ fn obvious_env_mutation_shell(command: &str) -> bool {
     let mutates_with_perl =
         lower.contains("perl ") && lower.contains("-pi") && lower.contains(".env");
     touches_env && (mutates_with_sed || mutates_with_perl)
+}
+
+fn obvious_container_network_shell(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    lower.contains("docker network") && (lower.contains(" inspect ") || lower.contains(" create "))
+}
+
+fn obvious_container_network_command(command: &TaskCommandSpec) -> bool {
+    command.exe.trim().eq_ignore_ascii_case("docker")
+        && command
+            .args
+            .first()
+            .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("network"))
+        && command.args.iter().any(|arg| {
+            let trimmed = arg.trim();
+            trimmed.eq_ignore_ascii_case("inspect") || trimmed.eq_ignore_ascii_case("create")
+        })
 }
 
 fn obvious_compose_env_file_shell(command: &str) -> bool {
@@ -14526,6 +14664,26 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("ensure_directory action should validate");
+    }
+
+    #[test]
+    fn validates_ensure_container_network_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  network:ensure:
+    action:
+      kind: ensure_container_network
+      name: penpot_shared
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ensure_container_network action should validate");
     }
 
     #[test]
@@ -27579,6 +27737,29 @@ tasks:
             advisory,
             ContractAdvisory::ReplaceableShellEnvMutation(value)
                 if value.task_name == "normalize-env"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_container_network_ownership_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  network:ensure:
+    run: docker network inspect penpot_shared >/dev/null 2>&1 || docker network create penpot_shared >/dev/null
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableContainerNetworkOwnership(value)
+                if value.task_name == "network:ensure"
         )));
     }
 
