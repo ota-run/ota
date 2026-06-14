@@ -20,6 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+pub(crate) mod adapter_inputs;
 pub(crate) mod capabilities;
 pub mod cli;
 pub(crate) mod contract_drift;

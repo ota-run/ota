@@ -26,6 +26,7 @@ use std::path::{Component, Path};
 
 use semver::Version;
 
+use crate::adapter_inputs::ADAPTER_INPUT_FAMILIES;
 use crate::capabilities::{
     format_minimum_version_error, unsupported_declared_contract_capabilities_in_contract,
 };
@@ -37,12 +38,11 @@ use crate::schema::{
     AgentPosture, Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
     ExtensionKind, Lifecycle, OrchestratorKind, RuntimeRequirement, ServiceProducerSpec,
-    ServiceSpec, TaskCommandSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode,
-    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
-    TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode,
-    ToolchainFulfillmentSource, ToolchainSpec, parse_memory_size_bytes,
-    parse_readiness_duration_spec, task_target_env_name,
+    ServiceSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
+    TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
+    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
+    ToolRequirement, ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec,
+    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
     declared_toolchain_contract, fulfillment_source_legacy_provider,
@@ -10352,84 +10352,6 @@ fn validate_repo_relative_env_check_path(
     }
 }
 
-fn shell_uses_docker_compose(command: Option<&str>) -> bool {
-    command
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_some_and(|value| value.to_ascii_lowercase().contains("docker compose"))
-}
-
-fn command_uses_docker_compose(command: Option<&TaskCommandSpec>) -> bool {
-    command.is_some_and(|command| {
-        command.exe.trim().eq_ignore_ascii_case("docker")
-            && command
-                .args
-                .first()
-                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose"))
-    })
-}
-
-fn shell_uses_docker_buildx_bake(command: Option<&str>) -> bool {
-    command
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_some_and(|value| value.to_ascii_lowercase().contains("docker buildx bake"))
-}
-
-fn command_uses_docker_buildx_bake(command: Option<&TaskCommandSpec>) -> bool {
-    command.is_some_and(|command| {
-        command.exe.trim().eq_ignore_ascii_case("docker")
-            && command
-                .args
-                .first()
-                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
-            && command
-                .args
-                .get(1)
-                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
-    })
-}
-
-fn task_supports_compose_adapter_inputs(task: &TaskSpec) -> bool {
-    task.adapter_inputs.compose.is_some()
-        || shell_uses_docker_compose(task.run.as_deref())
-        || shell_uses_docker_compose(task.script.as_deref())
-        || command_uses_docker_compose(task.command.as_ref())
-        || task.variants.iter().any(|variant| {
-            shell_uses_docker_compose(variant.run.as_deref())
-                || shell_uses_docker_compose(variant.script.as_deref())
-                || command_uses_docker_compose(variant.command.as_ref())
-        })
-        || task.execution.as_ref().is_some_and(|execution| {
-            execution.modes.iter().any(|(_, branch)| {
-                branch.adapter_inputs.compose.is_some()
-                    || shell_uses_docker_compose(branch.run.as_deref())
-                    || shell_uses_docker_compose(branch.script.as_deref())
-                    || command_uses_docker_compose(branch.command.as_ref())
-            })
-        })
-}
-
-fn task_supports_bake_adapter_inputs(task: &TaskSpec) -> bool {
-    task.adapter_inputs.bake.is_some()
-        || shell_uses_docker_buildx_bake(task.run.as_deref())
-        || shell_uses_docker_buildx_bake(task.script.as_deref())
-        || command_uses_docker_buildx_bake(task.command.as_ref())
-        || task.variants.iter().any(|variant| {
-            shell_uses_docker_buildx_bake(variant.run.as_deref())
-                || shell_uses_docker_buildx_bake(variant.script.as_deref())
-                || command_uses_docker_buildx_bake(variant.command.as_ref())
-        })
-        || task.execution.as_ref().is_some_and(|execution| {
-            execution.modes.iter().any(|(_, branch)| {
-                branch.adapter_inputs.bake.is_some()
-                    || shell_uses_docker_buildx_bake(branch.run.as_deref())
-                    || shell_uses_docker_buildx_bake(branch.script.as_deref())
-                    || command_uses_docker_buildx_bake(branch.command.as_ref())
-            })
-        })
-}
-
 fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
     let Some(workflows) = contract.workflows.as_ref() else {
         return;
@@ -10485,35 +10407,19 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
             }
         }
         if let Some(env) = workflow.env.as_ref() {
-            let workflow_requires_compose_support = env.compose_project_name.is_some()
-                || !env.compose_files.is_empty()
-                || env
-                    .adapter_inputs
-                    .compose
-                    .as_ref()
-                    .is_some_and(|compose| !compose.is_empty());
-            let workflow_requires_bake_support = env
-                .adapter_inputs
-                .bake
-                .as_ref()
-                .is_some_and(|bake| !bake.is_empty());
             let selected_workflow_tasks = contract
                 .selected_workflow_task_closure_names(Some(name.as_str()))
                 .iter()
                 .filter_map(|task_name| contract.tasks.get(task_name))
                 .collect::<Vec<_>>();
-            let selected_workflow_supports_compose_adapter_inputs = selected_workflow_tasks
-                .iter()
-                .copied()
-                .any(task_supports_compose_adapter_inputs);
-            let selected_workflow_supports_bake_adapter_inputs = selected_workflow_tasks
-                .iter()
-                .copied()
-                .any(task_supports_bake_adapter_inputs);
-            let selected_workflow_supports_adapter_inputs = (!workflow_requires_compose_support
-                || selected_workflow_supports_compose_adapter_inputs)
-                && (!workflow_requires_bake_support
-                    || selected_workflow_supports_bake_adapter_inputs);
+            let selected_workflow_supports_adapter_inputs =
+                ADAPTER_INPUT_FAMILIES.iter().copied().all(|family| {
+                    !family.workflow_requires_support(env)
+                        || selected_workflow_tasks
+                            .iter()
+                            .copied()
+                            .any(|task| family.task_supports(task))
+                });
             validate_workflow_adapter_inputs(
                 name,
                 &format!("workflows.{name}.env.adapter_inputs"),
@@ -12530,6 +12436,77 @@ workflows:
 
         validate_contract(&contract)
             .expect("canonical workflow bake adapter inputs should validate");
+    }
+
+    #[test]
+    fn validates_canonical_workflow_adapter_inputs_across_families() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  verify:
+    aggregate:
+      tasks:
+        - dev
+        - image:build
+  dev:
+    run: docker compose up
+  image:build:
+    run: docker buildx bake app
+workflows:
+  default: app
+  app:
+    env:
+      adapter_inputs:
+        compose:
+          profiles:
+            - web
+        bake:
+          files:
+            - docker-bake.hcl
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("multi-family workflow adapter inputs should validate");
+    }
+
+    #[test]
+    fn rejects_workflow_adapter_inputs_when_selected_closure_misses_declared_family() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: docker compose up
+workflows:
+  default: app
+  app:
+    env:
+      adapter_inputs:
+        bake:
+          files:
+            - docker-bake.hcl
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("missing bake support should fail validation")
+            .to_string();
+        assert!(error.contains(
+            "`workflows.app.env.adapter_inputs` requires the selected workflow task closure to include task paths that support each declared adapter input family"
+        ));
     }
 
     #[test]

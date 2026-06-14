@@ -467,35 +467,10 @@ impl Contract {
         &self,
         workflow_name: Option<&str>,
     ) -> TaskAdapterInputsSpec {
-        let Some(env) = self
-            .selected_workflow(workflow_name)
+        self.selected_workflow(workflow_name)
             .and_then(|(_, workflow)| workflow.env.as_ref())
-        else {
-            return TaskAdapterInputsSpec::default();
-        };
-        let mut adapter_inputs = env.adapter_inputs.clone();
-        if !env.compose_files.is_empty() {
-            let compose = adapter_inputs
-                .compose
-                .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
-            if compose.files.is_empty() {
-                compose.files = env.compose_files.clone();
-            }
-        }
-        if let Some(project_name) = env
-            .compose_project_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            let compose = adapter_inputs
-                .compose
-                .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
-            if compose.project_name.is_none() {
-                compose.project_name = Some(project_name.to_string());
-            }
-        }
-        adapter_inputs
+            .map(crate::adapter_inputs::effective_workflow_adapter_inputs)
+            .unwrap_or_default()
     }
 
     fn collect_task_dependency_closure(

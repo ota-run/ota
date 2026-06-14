@@ -67,6 +67,9 @@
   `services.<name>.manager.profiles` is now first-class for `manager.kind: compose`, Ota threads
   that declarative profile truth through derived compose service commands, and validation rejects
   empty profile entries or host managers pretending to own compose profile selection
+- generalized the workflow adapter-overlay engine behind one shared adapter-family path for
+  Compose and Bake, so support detection, selected-workflow validation, and overlay binding no
+  longer depend on separate hand-wired branches in validator and runtime orchestration
 - restored Python starter command provenance truth all the way through init JSON field paths, so
   generated structured `command` bodies now publish `tasks.<name>.command.exe` /
   `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy
