@@ -8200,6 +8200,26 @@ fn execute_native_file_action_task(
     }
 }
 
+pub(crate) fn execute_workflow_prepare_action(
+    contract: &Contract,
+    contract_path: &Path,
+    workflow_label: &str,
+    action: &crate::schema::TaskActionSpec,
+    policy_env: Option<&BTreeMap<String, String>>,
+) -> Result<TaskCommandOutput, RunError> {
+    let resolved_env = resolve_task_env_details_with_policy(contract, contract_path, None, policy_env)?
+        .into_iter()
+        .map(|(name, value)| (name, value.value))
+        .collect::<BTreeMap<_, _>>();
+    execute_native_file_action_task(
+        Some(contract),
+        workflow_label,
+        action,
+        contract_working_dir(contract_path),
+        &resolved_env,
+    )
+}
+
 fn execute_ensure_bundle_action(
     contract: Option<&Contract>,
     task_name: &str,

@@ -2603,6 +2603,8 @@ pub struct WorkflowSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepare_task: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepare_action: Option<TaskActionSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub setup_task: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_task: Option<&'a str>,
@@ -2706,7 +2708,14 @@ impl<'a> WorkflowSummary<'a> {
             intent: workflow.intent.as_deref(),
             description: workflow.description.as_deref(),
             notes: workflow.notes.as_deref(),
-            prepare_task: workflow.prepare.as_ref().map(|phase| phase.task.as_str()),
+            prepare_task: workflow
+                .prepare
+                .as_ref()
+                .and_then(|phase| phase.task.as_deref()),
+            prepare_action: workflow
+                .prepare
+                .as_ref()
+                .and_then(|phase| summarize_task_action(phase.action.as_ref())),
             setup_task: workflow.setup.as_ref().map(|phase| phase.task.as_str()),
             run_task: workflow.run.as_ref().map(|phase| phase.task.as_str()),
             run_task_launch: workflow

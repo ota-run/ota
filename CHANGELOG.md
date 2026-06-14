@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- widened workflow-owned host preparation so `workflows.<name>.prepare` can now declare either a
+  reusable `task` or an inline first-class `action`, letting workflows own deterministic bootstrap
+  actions and bundles directly without synthetic helper tasks while keeping `ota up` and workflow
+  summaries truthful
 - widened `action.kind: ensure_bundle` so bundled deterministic native setup can now include
   `kind: ensure_container_network` steps, letting one setup owner compose shared Docker network
   bootstrap with other governed bootstrap mutations without falling back to shell orchestration

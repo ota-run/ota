@@ -11183,37 +11183,53 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
             }
         }
         if let Some(prepare) = workflow.prepare.as_ref() {
-            validate_task_reference(
-                &format!("workflows.{name}.prepare.task"),
-                Some(prepare.task.as_str()),
-                &contract.tasks,
-                errors,
-            );
-            if let Some(task) = contract.tasks.get(prepare.task.as_str()) {
-                if task.action.is_none()
-                    && task.run.is_none()
-                    && task.script.is_none()
-                    && task.command.is_none()
-                    && task.prepare.is_none()
-                {
-                    errors.push(ValidationError::new(format!(
-                        "`workflows.{name}.prepare.task` must reference one native finite task body (`run`, `script`, `command`, `prepare`, or `action`), not `{}`",
-                        prepare.task
-                    )));
+            let selected =
+                usize::from(prepare.task.is_some()) + usize::from(prepare.action.is_some());
+            if selected != 1 {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.prepare` must declare exactly one of `task` or `action`"
+                )));
+            }
+            if let Some(task_name) = prepare.task.as_deref() {
+                validate_task_reference(
+                    &format!("workflows.{name}.prepare.task"),
+                    Some(task_name),
+                    &contract.tasks,
+                    errors,
+                );
+                if let Some(task) = contract.tasks.get(task_name) {
+                    if task.action.is_none()
+                        && task.run.is_none()
+                        && task.script.is_none()
+                        && task.command.is_none()
+                        && task.prepare.is_none()
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "`workflows.{name}.prepare.task` must reference one native finite task body (`run`, `script`, `command`, `prepare`, or `action`), not `{task_name}`"
+                        )));
+                    }
+                    if task_execution_backend(contract, task, Backend::Native) != Backend::Native {
+                        errors.push(ValidationError::new(format!(
+                            "`workflows.{name}.prepare.task` must resolve to native execution so host preparation stays explicit"
+                        )));
+                    }
+                    if task.launch.is_some()
+                        || !task.requires_services.is_empty()
+                        || task.runtime.is_some()
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "`workflows.{name}.prepare.task` must stay a finite host prepare task without `launch`, `requires_services`, or `runtime`"
+                        )));
+                    }
                 }
-                if task_execution_backend(contract, task, Backend::Native) != Backend::Native {
-                    errors.push(ValidationError::new(format!(
-                        "`workflows.{name}.prepare.task` must resolve to native execution so host preparation stays explicit"
-                    )));
-                }
-                if task.launch.is_some()
-                    || !task.requires_services.is_empty()
-                    || task.runtime.is_some()
-                {
-                    errors.push(ValidationError::new(format!(
-                        "`workflows.{name}.prepare.task` must stay a finite host prepare task without `launch`, `requires_services`, or `runtime`"
-                    )));
-                }
+            }
+            if let Some(action) = prepare.action.as_ref() {
+                validate_task_action(
+                    &format!("workflow `{name}` prepare"),
+                    action,
+                    Backend::Native,
+                    errors,
+                );
             }
         }
         if let Some(setup) = workflow.setup.as_ref() {
@@ -13643,6 +13659,63 @@ workflows:
         .expect("contract should parse");
 
         validate_contract(&contract).expect("native finite command prepare task should validate");
+    }
+
+    #[test]
+    fn workflow_prepare_accepts_inline_native_action() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: valid-prepare-action
+workflows:
+  default: app
+  app:
+    prepare:
+      action:
+        kind: ensure_bundle
+        steps:
+          - kind: ensure_container_network
+            name: local-dev
+          - kind: copy_if_missing
+            from: .env.example
+            to: .env.local
+"#,
+        )
+        .expect("contract should parse");
+
+        validate_contract(&contract).expect("inline action prepare should validate");
+    }
+
+    #[test]
+    fn rejects_workflow_prepare_that_declares_task_and_action() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: invalid-prepare-both
+tasks:
+  normalize-env:
+    run: cp .env.example .env.local
+workflows:
+  default: app
+  app:
+    prepare:
+      task: normalize-env
+      action:
+        kind: copy_if_missing
+        from: .env.example
+        to: .env.local
+"#,
+        )
+        .expect("contract should parse");
+
+        let error = validate_contract(&contract).expect_err("prepare should reject duplicates");
+        assert!(error.to_string().contains(
+            "`workflows.app.prepare` must declare exactly one of `task` or `action`"
+        ));
     }
 
     #[test]

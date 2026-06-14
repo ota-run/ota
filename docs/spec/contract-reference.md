@@ -1773,7 +1773,7 @@ Task-effect rules:
 - `prepare.source.kind: uv` currently executes the narrow canonical uv hydration lane: `uv sync`
 - `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
-- `prepare` does not replace workflow `prepare.task`; workflow prepare is still the explicit host bootstrap lane that points at one native finite task
+- `prepare` does not replace workflow-owned host bootstrap; workflow prepare is still the explicit host bootstrap lane and now points at one native finite owner (`prepare.task` or `prepare.action`)
 - `prepare` is not orchestrator-managed in the current shipped slice
 
 Example:
@@ -2861,7 +2861,9 @@ Fields:
   - must reference a declared task with one finite body: `run`, `script`, `command`, `prepare`, or `action`
   - must not reference a `launch` task or a task with `runtime`
   - must resolve to native execution
-  - intended for deterministic local file preparation such as `copy_if_missing`, `ensure_env_file`, or `ensure_bundle`
+- `<name>.prepare.action`: optional workflow-owned deterministic host prepare action ota should run first for that workflow
+  - must declare one first-class `action` body such as `copy_if_missing`, `ensure_env_file`, `ensure_container_network`, or `ensure_bundle`
+  - current workflow prepare shape requires exactly one of `<name>.prepare.task` or `<name>.prepare.action`
 - `<name>.setup.task`: optional task ota should treat as the preparation phase for that workflow
 - `<name>.run.task`: optional task ota should treat as the primary runnable surface for that workflow
 - `<name>.services.required`: optional services that belong to that workflow
@@ -2936,8 +2938,8 @@ Prepare vs setup vs run:
 
 - `prepare`
   - host-side deterministic bootstrap before setup
-  - must point to one native `action` task
-  - use it for file preparation such as `copy_if_missing`, `ensure_env_file`, or `ensure_bundle`
+  - must point to one native finite prepare owner: either `prepare.task` or inline `prepare.action`
+  - use it for file or network preparation such as `copy_if_missing`, `ensure_env_file`, `ensure_container_network`, or `ensure_bundle`
 - `setup`
   - repo preparation
   - use it for dependency install, generated artifacts, and other normal bootstrap work
@@ -2954,7 +2956,8 @@ Do not blur these boundaries:
 Current behavior:
 
 - workflows do not replace `tasks`, `services`, or `checks`; they compose those primitives into one canonical operational path
-- use `prepare.task` when the workflow needs one explicit host-side finite normalization/bootstrap step before setup, especially when setup itself should stay container-backed
+- use `prepare.task` when the workflow needs one explicit host-side finite normalization/bootstrap step before setup and that step already deserves its own reusable task identity
+- use `prepare.action` when the workflow itself honestly owns one deterministic bootstrap action or bundle and creating a synthetic helper task would only add glue
 - use `env.profile` when one workflow owns a truthful runtime env overlay or declared-source specialization
   and that selection should stay declarative instead of being repeated across tasks or hidden in shell
 - use `env.profile.render.dotenv` when that workflow also needs one concrete dotenv artifact on disk
@@ -2962,7 +2965,7 @@ Current behavior:
   automatically instead of routing through a synthetic prepare action
 - add `env.profile.render.dotenv.template` when that artifact should preserve repo-owned baseline
   entries from an example file while Ota deterministically overlays the workflow-specific values
-- do not use `prepare.task` for service startup or runtime launch; that still belongs in `setup.task`, `services`, or `run.task`
+- do not use workflow `prepare` for service startup or runtime launch; that still belongs in `setup.task`, `services`, or `run.task`
 - use `services.<name>.manager.env_file` when one compose-managed service depends on a workflow/runtime-specific interpolation file and Ota should own that `docker compose --env-file ...` input instead of repeating it inside shell commands
 - use `services.<name>.manager.profiles` when one compose-managed service owns stable profile
   selection and Ota should pass those `docker compose --profile ...` inputs declaratively instead
@@ -2980,8 +2983,8 @@ Current behavior:
 - use `checks[].probe` when a named check should reuse a named readiness probe outside that
   workflow-scoped path or when the repo does not declare workflows
 - `ota up` now targets the default workflow instead of assuming repo-wide `setup` semantics
-- if `workflows.<default>.prepare.task` is declared, `ota up` runs that host prepare phase before required service startup or setup
-- execution planning carries `prepare.task` as additive workflow context, but it does not become the concrete execution identity for `ota execution plan`
+- if `workflows.<default>.prepare.task` or `.prepare.action` is declared, `ota up` runs that host prepare phase before required service startup or setup
+- execution planning carries workflow `prepare` as additive workflow context, but it does not become the concrete execution identity for `ota execution plan`
 - if `setup.task` already depends on the same action task, direct task execution still follows the task graph while workflow `ota up` avoids running the same prepare action twice
 - if `workflows.<default>.setup.task` is declared, `ota up` uses that task as the setup phase
 - if `workflows.<default>.run.task` is declared and the task has a service runtime, `ota up` activates that task as part of readiness

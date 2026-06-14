@@ -233,8 +233,17 @@ impl Contract {
     pub fn selected_prepare_task_name_for(&self, workflow_name: Option<&str>) -> Option<&str> {
         self.selected_workflow(workflow_name)
             .and_then(|(_, workflow)| workflow.prepare.as_ref())
-            .map(|phase| phase.task.as_str())
+            .and_then(|phase| phase.task.as_deref())
             .filter(|task| !task.trim().is_empty())
+    }
+
+    pub fn selected_prepare_action_for(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Option<&TaskActionSpec> {
+        self.selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.prepare.as_ref())
+            .and_then(|phase| phase.action.as_ref())
     }
 
     pub fn selected_setup_task_name_for(&self, workflow_name: Option<&str>) -> Option<&str> {
@@ -539,7 +548,7 @@ pub struct WorkflowSpec {
     #[serde(default)]
     pub env: Option<WorkflowEnvSpec>,
     #[serde(default)]
-    pub prepare: Option<WorkflowTaskRefSpec>,
+    pub prepare: Option<WorkflowPrepareSpec>,
     #[serde(default)]
     pub setup: Option<WorkflowTaskRefSpec>,
     #[serde(default)]
@@ -556,6 +565,15 @@ pub struct WorkflowSpec {
 #[serde(deny_unknown_fields)]
 pub struct WorkflowTaskRefSpec {
     pub task: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowPrepareSpec {
+    #[serde(default)]
+    pub task: Option<String>,
+    #[serde(default)]
+    pub action: Option<TaskActionSpec>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -6966,6 +6984,46 @@ workflows:
         assert_eq!(
             contract.selected_workflow_task_closure_names(Some("app")),
             vec![String::from("setup:env:local"), String::from("setup")]
+        );
+    }
+
+    #[test]
+    fn selected_prepare_action_respects_explicit_workflow() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-prepare-action
+tasks:
+  setup:
+    run: echo setup
+workflows:
+  default: app
+  app:
+    prepare:
+      action:
+        kind: ensure_bundle
+        steps:
+          - kind: ensure_container_network
+            name: local-dev
+          - kind: copy_if_missing
+            from: .env.example
+            to: .env.local
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            contract.selected_prepare_action_for(Some("app")),
+            Some(crate::schema::TaskActionSpec::EnsureBundle(_))
+        ));
+        assert_eq!(contract.selected_prepare_task_name_for(Some("app")), None);
+        assert_eq!(
+            contract.selected_workflow_task_closure_names(Some("app")),
+            vec![String::from("setup")]
         );
     }
 

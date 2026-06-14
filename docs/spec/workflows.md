@@ -187,7 +187,8 @@ Use workflows for:
 
 Use `prepare` for one explicit host-side bootstrap action before setup, such as creating `.env.local`
 from `.env.example` when the real setup path should still stay container-backed or otherwise non-host.
-It must point at a native `action` task, not an ordinary shell or runtime task.
+It must stay on one native finite host-bootstrap owner: either a reusable `prepare.task` or an
+inline deterministic `prepare.action`, not an ordinary runtime task.
 
 Prepare vs setup vs run:
 
@@ -196,8 +197,9 @@ Prepare vs setup vs run:
 - `run` is the primary operational path
 
 When the run path needs workflow-local dotenv input, keep that ownership on the run task with
-`tasks.<name>.env_files`. Use workflow `prepare.task` only for finite host bootstrap such as
-materializing or rewriting a local env file before setup.
+`tasks.<name>.env_files`. Use workflow `prepare.task` when the bootstrap deserves its own reusable
+task identity, and use inline `prepare.action` when the workflow itself honestly owns one finite
+deterministic bootstrap action or bundle before setup.
 
 Good workflow design keeps those three meanings separate.
 

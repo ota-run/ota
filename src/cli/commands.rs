@@ -35317,6 +35317,26 @@ fn render_task_command_preview(task: &TaskSummary<'_>) -> String {
         .unwrap_or_else(|| String::from("-"))
 }
 
+fn render_workflow_prepare_action_preview(
+    action: &crate::output::TaskActionSummary<'_>,
+) -> String {
+    match action.kind {
+        "copy_if_missing" => format!(
+            "copy_if_missing {} -> {}",
+            action.from.unwrap_or("?"),
+            action.to.unwrap_or("?")
+        ),
+        "ensure_env_file" => format!("ensure_env_file {}", action.to.unwrap_or("?")),
+        "ensure_file" => format!("ensure_file {}", action.to.unwrap_or("?")),
+        "ensure_directory" => format!("ensure_directory {}", action.to.unwrap_or("?")),
+        "ensure_container_network" => {
+            format!("ensure_container_network {}", action.to.unwrap_or("?"))
+        }
+        "ensure_bundle" => String::from("ensure_bundle"),
+        other => other.to_string(),
+    }
+}
+
 fn render_task_aggregate_text(aggregate: &crate::output::TaskAggregateSummary) -> String {
     format!("aggregate: {}", aggregate.tasks.join(", "))
 }
@@ -35716,6 +35736,12 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
             "\n  {} `{}`",
             paint_key("Prepare:"),
             paint_code(&format!("ota run {prepare_task}"))
+        ));
+    } else if let Some(prepare_action) = workflow.prepare_action.as_ref() {
+        output.push_str(&format!(
+            "\n  {} `{}`",
+            paint_key("Prepare:"),
+            paint_code(&format!("workflow action {}", render_workflow_prepare_action_preview(prepare_action)))
         ));
     }
     if let Some(setup_task) = workflow.setup_task {
@@ -40704,6 +40730,10 @@ fn render_agents_markdown(
             output.push_str("- `prepare`: `ota run ");
             output.push_str(prepare_task);
             output.push_str("`\n");
+        } else if let Some(prepare_action) = workflow.prepare_action.as_ref() {
+            output.push_str("- `prepare`: `workflow action ");
+            output.push_str(&render_workflow_prepare_action_preview(prepare_action));
+            output.push_str("`\n");
         }
         if let Some(setup_task) = workflow.setup_task {
             output.push_str("- `setup`: `ota run ");
@@ -45416,6 +45446,7 @@ tasks:
             description: Some("Primary local app workflow"),
             notes: Some("Use this to validate local startup before release"),
             prepare_task: None,
+            prepare_action: None,
             setup_task: Some("setup"),
             run_task: Some("dev"),
             run_task_launch: None,
@@ -49756,6 +49787,7 @@ tasks:
                 description: Some("Build artifacts for local installation testing"),
                 notes: Some("Use this path before packaging artifacts for manual QA."),
                 prepare_task: None,
+                prepare_action: None,
                 setup_task: Some("install:app"),
                 run_task: Some("build"),
                 run_task_launch: None,
@@ -52069,6 +52101,62 @@ workflows:
                 String::from("run host prepare task `setup:env:local`"),
                 String::from("start service `postgres` before `setup`"),
                 String::from("verify service `postgres` readiness before `setup`"),
+                String::from("run task `setup`"),
+                String::from("re-check repo readiness"),
+            ]
+        );
+    }
+
+    #[test]
+    fn up_preview_lists_workflow_owned_prepare_action_before_setup() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up-action
+tasks:
+  setup:
+    run: ./bin/setup
+workflows:
+  default: app
+  app:
+    prepare:
+      action:
+        kind: ensure_bundle
+        steps:
+          - kind: ensure_container_network
+            name: local-dev
+          - kind: copy_if_missing
+            from: .env.example
+            to: .env.local
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            Some("app"),
+            &preflight,
+        );
+
+        assert_eq!(
+            preview.plan.actions,
+            vec![
+                String::from(
+                    "run workflow-owned host prepare action `ensure bootstrap bundle with 2 step(s)`"
+                ),
                 String::from("run task `setup`"),
                 String::from("re-check repo readiness"),
             ]
@@ -57628,6 +57716,7 @@ execution:
             description: None,
             notes: None,
             prepare_task: None,
+            prepare_action: None,
             setup_task: Some("setup"),
             run_task: Some("dev"),
             run_task_launch: None,
@@ -66241,6 +66330,135 @@ workflows:
                 .count(),
             1
         );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["setup"]
+        );
+    }
+
+    #[test]
+    fn up_runs_workflow_owned_prepare_action_before_setup() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = repo.path().join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            format!(
+                r#"#!/bin/sh
+state_dir="{state_dir}"
+mkdir -p "$state_dir"
+
+if [ "$1" = "network" ] && [ "$2" = "inspect" ]; then
+  if [ -f "$state_dir/$3" ]; then
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ "$1" = "network" ] && [ "$2" = "create" ]; then
+  : > "$state_dir/$3"
+  exit 0
+fi
+
+exit 1
+"#,
+                state_dir = state_dir.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: prepare-up-inline-action
+tasks:
+  setup:
+    run: test -f .env.local && echo setup >> run.log
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    prepare:
+      action:
+        kind: ensure_bundle
+        steps:
+          - kind: ensure_container_network
+            name: local-dev
+          - kind: copy_if_missing
+            from: .env.example
+            to: .env.local
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+        fs::write(repo.path().join(".env.example"), "TOKEN=test\n").unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            Some("app"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            result.ok,
+            "status={} phase={} findings={:?} stdout=\n{}\nstderr=\n{}",
+            result.status,
+            result.phase,
+            result
+                .report
+                .findings
+                .iter()
+                .map(|finding| finding.summary.as_str())
+                .collect::<Vec<_>>(),
+            result.stdout,
+            result.stderr
+        );
+        assert_eq!(result.status, "READY");
+        assert!(repo.path().join(".env.local").exists());
+        assert!(repo.path().join("docker-state").join("local-dev").exists());
+        assert!(result.stdout.contains("ensured docker container network `local-dev`"));
         assert_eq!(
             fs::read_to_string(repo.path().join("run.log"))
                 .unwrap()
@@ -81276,6 +81494,11 @@ fn append_up_preview_service_actions_for_workflow(
 
     if let Some(prepare_task) = selected_up_prepare_task_name(contract, workflow_name) {
         actions.push(format!("run host prepare task `{prepare_task}`"));
+    } else if let Some(prepare_action) = selected_up_prepare_action(contract, workflow_name) {
+        actions.push(format!(
+            "run workflow-owned host prepare action `{}`",
+            prepare_action.preview()
+        ));
     }
     append_up_preview_service_phase_actions(
         contract,
@@ -82944,6 +83167,11 @@ fn execute_repo_up_with_behavior(
     }
     let setup_task = selected_up_setup_task_name(contract, workflow_name);
     let prepare_task = selected_up_prepare_task_name(contract, workflow_name);
+    let prepare_action = selected_up_prepare_action(contract, workflow_name);
+    let prepare_phase_label = contract
+        .selected_workflow(workflow_name)
+        .map(|(name, _)| format!("workflow:{name}:prepare"))
+        .unwrap_or_else(|| String::from("workflow:prepare"));
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
     let run_behavior =
         resolve_up_run_behavior(contract, workflow_name, overrides, run_behavior_preference);
@@ -83680,7 +83908,8 @@ fn execute_repo_up_with_behavior(
         });
     }
 
-    if !preflight.ok && setup_task.is_none() && prepare_task.is_none() {
+    if !preflight.ok && setup_task.is_none() && prepare_task.is_none() && prepare_action.is_none()
+    {
         return Ok(RepoUpResult {
             ok: false,
             status: "NOT READY",
@@ -83827,6 +84056,115 @@ fn execute_repo_up_with_behavior(
                         service: None,
                         service_command: None,
                         task: Some(prepare_task_name.to_string()),
+                        task_command: None,
+                        exit_code: None,
+                        stdout,
+                        stderr,
+                    });
+                }
+            }
+            Err(error) => return Err(render_up_run_error(resolved_path, overrides, error)),
+        }
+    } else if let Some(prepare_action) = prepare_action {
+        let prepare_task_command = Some(prepare_action.preview());
+        match crate::runner::execute_workflow_prepare_action(
+            contract,
+            resolved_path,
+            prepare_phase_label.as_str(),
+            prepare_action,
+            policy_env,
+        ) {
+            Ok(outcome) if outcome.exit_code != 0 => {
+                stdout.push_str(&outcome.stdout);
+                stderr.push_str(&outcome.stderr);
+                return Ok(RepoUpResult {
+                    ok: false,
+                    status: "PREPARE FAILED",
+                    phase: "prepare",
+                    preview: None,
+                    receipt: repo_execution_receipt(
+                        resolved_path,
+                        contract,
+                        doctor_report_execution_context(
+                            contract,
+                            resolved_path,
+                            doctor_mode,
+                            Some(crate::schema::Lifecycle::Ephemeral),
+                            &preflight,
+                        ),
+                        "PREPARE FAILED",
+                        "prepare",
+                        workflow_name,
+                        None,
+                        Some(prepare_phase_label.as_str()),
+                        &[],
+                        Some(outcome.exit_code),
+                        None,
+                    ),
+                    report: DoctorReport {
+                        ok: false,
+                        provisioning: None,
+                        adapter_bootstrap: None,
+                        execution_target: None,
+                        findings: Vec::new(),
+                    },
+                    service: None,
+                    service_command: None,
+                    task: Some(prepare_phase_label.clone()),
+                    task_command: prepare_task_command,
+                    exit_code: Some(outcome.exit_code),
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(outcome) => {
+                stdout.push_str(&outcome.stdout);
+                stderr.push_str(&outcome.stderr);
+                preflight = diagnose_preconditions_with_mode_for_workflow_with_overrides(
+                    contract,
+                    resolved_path,
+                    doctor_mode,
+                    workflow_name,
+                    overrides,
+                );
+                append_up_safe_task_effect_policy_findings(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    &mut preflight,
+                );
+                if !preflight.ok && setup_task.is_none() {
+                    return Ok(RepoUpResult {
+                        ok: false,
+                        status: "BLOCKED",
+                        phase: "preconditions",
+                        preview: None,
+                        receipt: repo_execution_receipt(
+                            resolved_path,
+                            contract,
+                            doctor_report_execution_context(
+                                contract,
+                                resolved_path,
+                                doctor_mode,
+                                overrides.lifecycle,
+                                &preflight,
+                            ),
+                            "BLOCKED",
+                            "preconditions",
+                            workflow_name,
+                            None,
+                            Some(prepare_phase_label.as_str()),
+                            &preflight.findings,
+                            None,
+                            preflight
+                                .findings
+                                .first()
+                                .map(|finding| finding.next.clone()),
+                        ),
+                        report: preflight,
+                        service: None,
+                        service_command: None,
+                        task: Some(prepare_phase_label.clone()),
                         task_command: None,
                         exit_code: None,
                         stdout,
@@ -87273,6 +87611,13 @@ fn selected_up_prepare_task_name<'a>(
     contract
         .selected_prepare_task_name_for(workflow_name)
         .filter(|name| contract.tasks.contains_key(*name))
+}
+
+fn selected_up_prepare_action<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+) -> Option<&'a crate::schema::TaskActionSpec> {
+    contract.selected_prepare_action_for(workflow_name)
 }
 
 fn selected_execution_plan_task_name<'a>(
