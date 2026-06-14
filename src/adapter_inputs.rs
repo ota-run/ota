@@ -94,15 +94,31 @@ pub(crate) fn workflow_duplicates_canonical_compose_project_name_alias(
 impl AdapterInputFamily {
     pub(crate) fn task_declares_inputs(self, task: &TaskSpec) -> bool {
         match self {
-            Self::Compose => task.adapter_inputs.compose.is_some(),
-            Self::Bake => task.adapter_inputs.bake.is_some(),
+            Self::Compose => task
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.workflow_overlay_bound),
+            Self::Bake => task
+                .adapter_inputs
+                .bake
+                .as_ref()
+                .is_some_and(|bake| !bake.workflow_overlay_bound),
         }
     }
 
     pub(crate) fn branch_declares_inputs(self, branch: &TaskModeBranchSpec) -> bool {
         match self {
-            Self::Compose => branch.adapter_inputs.compose.is_some(),
-            Self::Bake => branch.adapter_inputs.bake.is_some(),
+            Self::Compose => branch
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.workflow_overlay_bound),
+            Self::Bake => branch
+                .adapter_inputs
+                .bake
+                .as_ref()
+                .is_some_and(|bake| !bake.workflow_overlay_bound),
         }
     }
 
@@ -153,10 +169,14 @@ impl AdapterInputFamily {
                 };
                 let mut bound = false;
                 if self.task_supports_direct_binding(task) {
+                    let inserted = task.adapter_inputs.compose.is_none();
                     let compose = task
                         .adapter_inputs
                         .compose
                         .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
+                    if inserted {
+                        compose.workflow_overlay_bound = true;
+                    }
                     prepend_unique_strings(&mut compose.env_files, &workflow_compose.env_files);
                     prepend_unique_strings(&mut compose.files, &workflow_compose.files);
                     prepend_unique_strings(&mut compose.profiles, &workflow_compose.profiles);
@@ -177,10 +197,14 @@ impl AdapterInputFamily {
                         if !self.branch_supports(branch) {
                             continue;
                         }
+                        let inserted = branch.adapter_inputs.compose.is_none();
                         let compose = branch
                             .adapter_inputs
                             .compose
                             .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
+                        if inserted {
+                            compose.workflow_overlay_bound = true;
+                        }
                         prepend_unique_strings(&mut compose.env_files, &workflow_compose.env_files);
                         prepend_unique_strings(&mut compose.files, &workflow_compose.files);
                         prepend_unique_strings(&mut compose.profiles, &workflow_compose.profiles);
@@ -198,10 +222,14 @@ impl AdapterInputFamily {
                 };
                 let mut bound = false;
                 if self.task_supports_direct_binding(task) {
+                    let inserted = task.adapter_inputs.bake.is_none();
                     let bake = task
                         .adapter_inputs
                         .bake
                         .get_or_insert_with(TaskBakeAdapterInputsSpec::default);
+                    if inserted {
+                        bake.workflow_overlay_bound = true;
+                    }
                     prepend_unique_strings(&mut bake.files, &workflow_bake.files);
                     bound = true;
                 }
@@ -217,10 +245,14 @@ impl AdapterInputFamily {
                         if !self.branch_supports(branch) {
                             continue;
                         }
+                        let inserted = branch.adapter_inputs.bake.is_none();
                         let bake = branch
                             .adapter_inputs
                             .bake
                             .get_or_insert_with(TaskBakeAdapterInputsSpec::default);
+                        if inserted {
+                            bake.workflow_overlay_bound = true;
+                        }
                         prepend_unique_strings(&mut bake.files, &workflow_bake.files);
                         bound = true;
                     }

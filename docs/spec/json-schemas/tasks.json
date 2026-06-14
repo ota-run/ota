@@ -109,14 +109,29 @@
           "type": "array",
           "items": { "type": "string" }
         },
+        "profiles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "project_name": { "type": "string" }
+      }
+    },
+    "taskBakeAdapterInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
       }
     },
     "taskAdapterInputs": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "compose": { "$ref": "#/$defs/taskComposeAdapterInputs" }
+        "compose": { "$ref": "#/$defs/taskComposeAdapterInputs" },
+        "bake": { "$ref": "#/$defs/taskBakeAdapterInputs" }
       }
     },
     "taskAction": {

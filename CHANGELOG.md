@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- fixed workflow-owned adapter-overlay provenance during diagnosis: when Ota injects selected
+  workflow Compose/Bake adapter inputs into runnable task paths for execution, doctor/validate no
+  longer misclassify those synthetic bound values as task-authored duplicate ownership
 - added three missing canonical example families across core and public examples: Bake
   adapter-input ownership through `adapter_inputs.bake.files`, deterministic env bootstrap through
   `action.kind: ensure_env_file`, and bundled host file preparation through

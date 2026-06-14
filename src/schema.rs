@@ -5501,6 +5501,8 @@ pub struct TaskComposeAdapterInputsSpec {
     pub profiles: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_name: Option<String>,
+    #[serde(skip)]
+    pub workflow_overlay_bound: bool,
 }
 
 impl TaskComposeAdapterInputsSpec {
@@ -5521,6 +5523,8 @@ impl TaskComposeAdapterInputsSpec {
 pub struct TaskBakeAdapterInputsSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub files: Vec<String>,
+    #[serde(skip)]
+    pub workflow_overlay_bound: bool,
 }
 
 impl TaskBakeAdapterInputsSpec {

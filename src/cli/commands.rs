@@ -52272,6 +52272,7 @@ tasks:
         assert_eq!(compose.files, vec![String::from("compose.base.yaml")]);
         assert_eq!(compose.profiles, vec![String::from("base")]);
         assert_eq!(compose.project_name.as_deref(), Some("workflow-app"));
+        assert!(compose.workflow_overlay_bound);
     }
 
     #[test]
@@ -52351,6 +52352,18 @@ tasks:
             .and_then(|task| task.adapter_inputs.bake.as_ref())
             .expect("bake adapter inputs should exist");
         assert_eq!(bake.files, vec![String::from("docker-bake.hcl")]);
+        assert!(bake.workflow_overlay_bound);
+        assert!(
+            !crate::validator::collect_contract_advisories(&adjusted)
+                .iter()
+                .any(|advisory| matches!(
+                    advisory,
+                    crate::validator::ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(
+                        value
+                    ) if value.workflow_name == "image" && value.task_name == "image:build"
+                )),
+            "workflow-injected bake inputs must not be reclassified as task-authored duplicates"
+        );
     }
 
     #[test]

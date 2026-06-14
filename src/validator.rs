@@ -6678,25 +6678,20 @@ impl DuplicateWorkflowAdapterInputField {
 
     fn task_declared(self, task: &TaskSpec) -> bool {
         match self {
-            Self::ComposeEnvFiles => task
-                .adapter_inputs
-                .compose
-                .as_ref()
-                .is_some_and(|compose| !compose.env_files.is_empty()),
-            Self::ComposeFiles => task
-                .adapter_inputs
-                .compose
-                .as_ref()
-                .is_some_and(|compose| !compose.files.is_empty()),
-            Self::ComposeProfiles => task
-                .adapter_inputs
-                .compose
-                .as_ref()
-                .is_some_and(|compose| !compose.profiles.is_empty()),
+            Self::ComposeEnvFiles => task.adapter_inputs.compose.as_ref().is_some_and(|compose| {
+                !compose.workflow_overlay_bound && !compose.env_files.is_empty()
+            }),
+            Self::ComposeFiles => task.adapter_inputs.compose.as_ref().is_some_and(|compose| {
+                !compose.workflow_overlay_bound && !compose.files.is_empty()
+            }),
+            Self::ComposeProfiles => task.adapter_inputs.compose.as_ref().is_some_and(|compose| {
+                !compose.workflow_overlay_bound && !compose.profiles.is_empty()
+            }),
             Self::ComposeProjectName => task
                 .adapter_inputs
                 .compose
                 .as_ref()
+                .filter(|compose| !compose.workflow_overlay_bound)
                 .and_then(|compose| compose.project_name.as_deref())
                 .map(str::trim)
                 .is_some_and(|value| !value.is_empty()),
@@ -6704,31 +6699,42 @@ impl DuplicateWorkflowAdapterInputField {
                 .adapter_inputs
                 .bake
                 .as_ref()
-                .is_some_and(|bake| !bake.files.is_empty()),
+                .is_some_and(|bake| !bake.workflow_overlay_bound && !bake.files.is_empty()),
         }
     }
 
     fn branch_declared(self, branch: &TaskModeBranchSpec) -> bool {
         match self {
-            Self::ComposeEnvFiles => branch
-                .adapter_inputs
-                .compose
-                .as_ref()
-                .is_some_and(|compose| !compose.env_files.is_empty()),
+            Self::ComposeEnvFiles => {
+                branch
+                    .adapter_inputs
+                    .compose
+                    .as_ref()
+                    .is_some_and(|compose| {
+                        !compose.workflow_overlay_bound && !compose.env_files.is_empty()
+                    })
+            }
             Self::ComposeFiles => branch
                 .adapter_inputs
                 .compose
                 .as_ref()
-                .is_some_and(|compose| !compose.files.is_empty()),
-            Self::ComposeProfiles => branch
-                .adapter_inputs
-                .compose
-                .as_ref()
-                .is_some_and(|compose| !compose.profiles.is_empty()),
+                .is_some_and(|compose| {
+                    !compose.workflow_overlay_bound && !compose.files.is_empty()
+                }),
+            Self::ComposeProfiles => {
+                branch
+                    .adapter_inputs
+                    .compose
+                    .as_ref()
+                    .is_some_and(|compose| {
+                        !compose.workflow_overlay_bound && !compose.profiles.is_empty()
+                    })
+            }
             Self::ComposeProjectName => branch
                 .adapter_inputs
                 .compose
                 .as_ref()
+                .filter(|compose| !compose.workflow_overlay_bound)
                 .and_then(|compose| compose.project_name.as_deref())
                 .map(str::trim)
                 .is_some_and(|value| !value.is_empty()),
@@ -6736,7 +6742,7 @@ impl DuplicateWorkflowAdapterInputField {
                 .adapter_inputs
                 .bake
                 .as_ref()
-                .is_some_and(|bake| !bake.files.is_empty()),
+                .is_some_and(|bake| !bake.workflow_overlay_bound && !bake.files.is_empty()),
         }
     }
 }
@@ -18753,7 +18759,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
+            "task `dev` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -18776,7 +18782,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
+            "task `dev` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -18803,7 +18809,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
+            "task `dev` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -18830,7 +18836,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
+            "task `dev` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -18853,7 +18859,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `prepare`, `launch`, `action`, or `aggregate`"
+            "task `dev` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
