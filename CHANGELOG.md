@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- tightened adapter-input governance in two connected ways: workflow-owned Compose/Bake overlays
+  now recognize `launch.kind: command` task paths as real adapter consumers, and validate/doctor
+  now warn when `adapter_inputs.compose` or `adapter_inputs.bake` is declared as an empty marker
+  instead of owning concrete adapter truth
 - widened task adapter input ownership with first-class
   `tasks.<name>.adapter_inputs.compose.env_files` plus mode-branch overrides, so task-owned
   `docker compose` interpolation files no longer have to hide inside shell `--env-file` flags or

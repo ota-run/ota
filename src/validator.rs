@@ -42,7 +42,7 @@ use crate::schema::{
     AgentPosture, Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
     ExtensionKind, Lifecycle, OrchestratorKind, RuntimeRequirement, ServiceProducerSpec,
-    ServiceSpec, TaskCommandSpec, TaskModeBranchSpec, TaskNetworkEffectKind,
+    ServiceSpec, TaskCommandSpec, TaskLaunchSpec, TaskModeBranchSpec, TaskNetworkEffectKind,
     TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
     TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement,
@@ -6424,6 +6424,7 @@ pub enum ContractAdvisory {
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
     ReplaceableComposeEnvFileOwnership(ReplaceableComposeEnvFileOwnershipAdvisory),
     ReplaceableBakeFileOwnership(ReplaceableBakeFileOwnershipAdvisory),
+    EmptyAdapterInputMarker(EmptyAdapterInputMarkerAdvisory),
     DuplicateWorkflowRenderedEnvOwnership(DuplicateWorkflowRenderedEnvOwnershipAdvisory),
     DuplicateWorkflowAdapterInputOwnership(DuplicateWorkflowAdapterInputOwnershipAdvisory),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
@@ -6509,6 +6510,13 @@ pub struct ReplaceableComposeEnvFileOwnershipAdvisory {
 pub struct ReplaceableBakeFileOwnershipAdvisory {
     pub task_name: String,
     pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmptyAdapterInputMarkerAdvisory {
+    pub task_name: String,
+    pub adapter_family: String,
+    pub location: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6816,6 +6824,16 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableBakeFileOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP"
             }
+            ContractAdvisory::EmptyAdapterInputMarker(advisory) => {
+                match advisory.adapter_family.as_str() {
+                    "compose" => "OTA_CONTRACT_ADVISORY_EMPTY_COMPOSE_ADAPTER_INPUT_MARKER",
+                    "bake" => "OTA_CONTRACT_ADVISORY_EMPTY_BAKE_ADAPTER_INPUT_MARKER",
+                    _ => unreachable!(
+                        "unsupported adapter family for empty adapter-input marker: {}",
+                        advisory.adapter_family
+                    ),
+                }
+            }
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP"
             }
@@ -6914,6 +6932,10 @@ impl ContractAdvisory {
                 "task `{}` hard-codes Bake file selection in its task body",
                 advisory.task_name
             ),
+            ContractAdvisory::EmptyAdapterInputMarker(advisory) => format!(
+                "task `{}` declares empty {} adapter inputs",
+                advisory.task_name, advisory.adapter_family
+            ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
                 "workflow `{}` profile `{}` duplicates rendered env artifact ownership in task `{}`",
                 advisory.workflow_name, advisory.profile_name, advisory.task_name
@@ -7011,6 +7033,10 @@ impl ContractAdvisory {
                 "task `{}` hard-codes Bake file selection inside its task body (`{}`), which hides `docker buildx bake` adapter input ownership from Ota instead of declaring it under `adapter_inputs.bake.files`",
                 advisory.task_name, advisory.command
             ),
+            ContractAdvisory::EmptyAdapterInputMarker(advisory) => format!(
+                "`{}` is present but empty, so it does not declare any {} adapter input ownership; keep adapter-input surfaces only when they own concrete truth such as env files, compose files, profiles, or project naming",
+                advisory.location, advisory.adapter_family
+            ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
                 "workflow `{}` profile `{}` renders `{}`, but task `{}` also declares that same file under `{}`; Ota already projects rendered workflow env artifacts into the selected workflow task closure, so the duplicate task ownership is drift-prone",
                 advisory.workflow_name,
@@ -7060,6 +7086,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
+            | ContractAdvisory::EmptyAdapterInputMarker(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
@@ -7085,6 +7112,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
+            | ContractAdvisory::EmptyAdapterInputMarker(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
@@ -7111,6 +7139,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
+            | ContractAdvisory::EmptyAdapterInputMarker(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
@@ -7180,6 +7209,10 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
                 "move Bake file selection out of task `{}` body: use `tasks.{0}.adapter_inputs.bake.files` when the task owns `docker buildx bake` file selection truth",
                 advisory.task_name
+            ),
+            ContractAdvisory::EmptyAdapterInputMarker(advisory) => format!(
+                "remove `{}` if the task does not own concrete {} adapter input truth, or declare the real fields under it instead of keeping an empty marker",
+                advisory.location, advisory.adapter_family
             ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
                 "remove `{}` from task `{}`; workflow `{}` profile `{}` already renders `{}` and Ota injects that artifact into the selected workflow task closure automatically",
@@ -7300,6 +7333,7 @@ pub fn collect_contract_advisories_with_contract_path(
         contract,
     ));
     advisories.extend(collect_replaceable_bake_file_ownership_advisories(contract));
+    advisories.extend(collect_empty_adapter_input_marker_advisories(contract));
     advisories.extend(collect_duplicate_workflow_rendered_env_ownership_advisories(contract));
     advisories.extend(collect_duplicate_workflow_adapter_input_ownership_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
@@ -7605,6 +7639,72 @@ fn collect_replaceable_bake_file_ownership_advisories(
     contract: &Contract,
 ) -> Vec<ContractAdvisory> {
     collect_replaceable_adapter_ownership_advisories(contract, AdapterInputFamily::Bake)
+}
+
+fn collect_empty_adapter_input_marker_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task
+            .adapter_inputs
+            .compose
+            .as_ref()
+            .is_some_and(crate::schema::TaskComposeAdapterInputsSpec::is_empty)
+            && task_body_uses_adapter_family(task, AdapterInputFamily::Compose)
+        {
+            advisories.push(empty_adapter_input_marker_advisory(
+                task_name,
+                "compose",
+                format!("tasks.{task_name}.adapter_inputs.compose"),
+            ));
+        }
+        if task
+            .adapter_inputs
+            .bake
+            .as_ref()
+            .is_some_and(crate::schema::TaskBakeAdapterInputsSpec::is_empty)
+            && task_body_uses_adapter_family(task, AdapterInputFamily::Bake)
+        {
+            advisories.push(empty_adapter_input_marker_advisory(
+                task_name,
+                "bake",
+                format!("tasks.{task_name}.adapter_inputs.bake"),
+            ));
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            for (backend, branch) in execution.modes.iter() {
+                let backend = format_backend(backend);
+                if branch
+                    .adapter_inputs
+                    .compose
+                    .as_ref()
+                    .is_some_and(crate::schema::TaskComposeAdapterInputsSpec::is_empty)
+                    && branch_body_uses_adapter_family(branch, AdapterInputFamily::Compose)
+                {
+                    advisories.push(empty_adapter_input_marker_advisory(
+                        task_name,
+                        "compose",
+                        format!(
+                            "tasks.{task_name}.execution.modes.{backend}.adapter_inputs.compose"
+                        ),
+                    ));
+                }
+                if branch
+                    .adapter_inputs
+                    .bake
+                    .as_ref()
+                    .is_some_and(crate::schema::TaskBakeAdapterInputsSpec::is_empty)
+                    && branch_body_uses_adapter_family(branch, AdapterInputFamily::Bake)
+                {
+                    advisories.push(empty_adapter_input_marker_advisory(
+                        task_name,
+                        "bake",
+                        format!("tasks.{task_name}.execution.modes.{backend}.adapter_inputs.bake"),
+                    ));
+                }
+            }
+        }
+    }
+    advisories
 }
 
 fn collect_replaceable_adapter_ownership_advisories(
@@ -8000,6 +8100,90 @@ fn replaceable_adapter_ownership_advisory(
                 command,
             })
         }
+    }
+}
+
+fn empty_adapter_input_marker_advisory(
+    task_name: &str,
+    adapter_family: &str,
+    location: String,
+) -> ContractAdvisory {
+    ContractAdvisory::EmptyAdapterInputMarker(EmptyAdapterInputMarkerAdvisory {
+        task_name: task_name.to_string(),
+        adapter_family: adapter_family.to_string(),
+        location,
+    })
+}
+
+fn task_body_uses_adapter_family(task: &TaskSpec, family: AdapterInputFamily) -> bool {
+    adapter_shell_uses_family(task.run.as_deref(), family)
+        || adapter_shell_uses_family(task.script.as_deref(), family)
+        || adapter_command_uses_family(task.command.as_ref(), family)
+        || adapter_launch_uses_family(task.launch.as_ref(), family)
+        || task.variants.iter().any(|variant| {
+            adapter_shell_uses_family(variant.run.as_deref(), family)
+                || adapter_shell_uses_family(variant.script.as_deref(), family)
+                || adapter_command_uses_family(variant.command.as_ref(), family)
+        })
+}
+
+fn branch_body_uses_adapter_family(
+    branch: &TaskModeBranchSpec,
+    family: AdapterInputFamily,
+) -> bool {
+    adapter_shell_uses_family(branch.run.as_deref(), family)
+        || adapter_shell_uses_family(branch.script.as_deref(), family)
+        || adapter_command_uses_family(branch.command.as_ref(), family)
+        || adapter_launch_uses_family(branch.launch.as_ref(), family)
+}
+
+fn adapter_shell_uses_family(command: Option<&str>, family: AdapterInputFamily) -> bool {
+    let Some(value) = command
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
+    else {
+        return false;
+    };
+    match family {
+        AdapterInputFamily::Compose => value.contains("docker compose"),
+        AdapterInputFamily::Bake => value.contains("docker buildx bake"),
+    }
+}
+
+fn adapter_command_uses_family(
+    command: Option<&TaskCommandSpec>,
+    family: AdapterInputFamily,
+) -> bool {
+    command.is_some_and(|command| {
+        if !command.exe.trim().eq_ignore_ascii_case("docker") {
+            return false;
+        }
+        match family {
+            AdapterInputFamily::Compose => command
+                .args
+                .first()
+                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose")),
+            AdapterInputFamily::Bake => {
+                command
+                    .args
+                    .first()
+                    .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
+                    && command
+                        .args
+                        .get(1)
+                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
+            }
+        }
+    })
+}
+
+fn adapter_launch_uses_family(launch: Option<&TaskLaunchSpec>, family: AdapterInputFamily) -> bool {
+    match launch {
+        Some(TaskLaunchSpec::Command(command)) => {
+            adapter_command_uses_family(Some(command), family)
+        }
+        Some(TaskLaunchSpec::Container(_)) | None => false,
     }
 }
 
@@ -12661,6 +12845,40 @@ workflows:
         .unwrap();
 
         validate_contract(&contract).expect("canonical workflow adapter inputs should validate");
+    }
+
+    #[test]
+    fn validates_workflow_adapter_inputs_for_compose_launch_without_empty_marker() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: docker
+      args:
+        - compose
+        - up
+workflows:
+  default: app
+  app:
+    env:
+      adapter_inputs:
+        compose:
+          env_files:
+            - .env.compose
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("workflow adapter inputs should validate for compose launch tasks");
     }
 
     #[test]
@@ -27458,6 +27676,97 @@ tasks:
             ContractAdvisory::ReplaceableBakeFileOwnership(value)
                 if value.task_name == "image:build"
                     && value.command == "docker buildx bake -f docker-bake.hcl app"
+        )));
+    }
+
+    #[test]
+    fn collects_empty_compose_adapter_input_marker_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    adapter_inputs:
+      compose: {}
+    command:
+      exe: docker
+      args:
+        - compose
+        - down
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::EmptyAdapterInputMarker(value)
+                if value.task_name == "dev"
+                    && value.adapter_family == "compose"
+                    && value.location == "tasks.dev.adapter_inputs.compose"
+        )));
+    }
+
+    #[test]
+    fn collects_empty_branch_bake_adapter_input_marker_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    execution:
+      modes:
+        container:
+          adapter_inputs:
+            bake: {}
+          command:
+            exe: docker
+            args:
+              - buildx
+              - bake
+              - app
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::EmptyAdapterInputMarker(value)
+                if value.task_name == "image:build"
+                    && value.adapter_family == "bake"
+                    && value.location == "tasks.image:build.execution.modes.container.adapter_inputs.bake"
+        )));
+    }
+
+    #[test]
+    fn skips_empty_adapter_input_marker_advisory_for_opaque_wrapper_support_marker() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    adapter_inputs:
+      compose: {}
+    run: ./scripts/dev-compose-wrapper
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::EmptyAdapterInputMarker(value)
+                if value.task_name == "dev"
         )));
     }
 

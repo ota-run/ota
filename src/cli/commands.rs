@@ -1396,6 +1396,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::EmptyAdapterInputMarker(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Path:"),
+            render_validate_warning_detail(&value.location),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(value) => format!(
             "{} workflow `{}` profile `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -52264,6 +52275,50 @@ tasks:
     }
 
     #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_binds_adapter_inputs_to_compose_launch()
+    {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-adapter-inputs-launch
+workflows:
+  default: app
+  app:
+    env:
+      adapter_inputs:
+        compose:
+          env_files:
+            - .env.compose
+          files:
+            - compose.base.yaml
+    run:
+      task: dev
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: docker
+      args:
+        - compose
+        - up
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(&contract, None)
+            .expect("workflow adapter inputs should adjust launch task");
+        let compose = adjusted
+            .tasks
+            .get("dev")
+            .and_then(|task| task.adapter_inputs.compose.as_ref())
+            .expect("compose adapter inputs should bind onto launch task");
+        assert_eq!(compose.env_files, vec![String::from(".env.compose")]);
+        assert_eq!(compose.files, vec![String::from("compose.base.yaml")]);
+    }
+
+    #[test]
     fn contract_adjusted_for_selected_workflow_env_profile_binds_workflow_bake_adapter_inputs() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -56840,6 +56895,37 @@ tasks:
                 && warning.owner == "repo_contract"
                 && warning.severity == "warn"
                 && warning.summary.contains("opaque shell `script`")
+        }));
+    }
+
+    #[test]
+    fn collect_validate_warning_details_exposes_empty_adapter_input_marker_code() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    adapter_inputs:
+      compose: {}
+    command:
+      exe: docker
+      args:
+        - compose
+        - down
+"#,
+        )
+        .unwrap();
+
+        let warnings = super::collect_validate_warning_details(&contract, None);
+        assert!(warnings.iter().any(|warning| {
+            warning.code == "OTA_CONTRACT_ADVISORY_EMPTY_COMPOSE_ADAPTER_INPUT_MARKER"
+                && warning.category == "contract"
+                && warning.owner == "repo_contract"
+                && warning.severity == "warn"
+                && warning.summary.contains("empty compose adapter inputs")
         }));
     }
 

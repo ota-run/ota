@@ -22,7 +22,7 @@
 
 use crate::schema::{
     TaskAdapterInputsSpec, TaskBakeAdapterInputsSpec, TaskCommandSpec,
-    TaskComposeAdapterInputsSpec, TaskModeBranchSpec, TaskSpec, WorkflowEnvSpec,
+    TaskComposeAdapterInputsSpec, TaskLaunchSpec, TaskModeBranchSpec, TaskSpec, WorkflowEnvSpec,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -245,12 +245,14 @@ impl AdapterInputFamily {
             || self.shell_uses_adapter(branch.run.as_deref())
             || self.shell_uses_adapter(branch.script.as_deref())
             || self.command_uses_adapter(branch.command.as_ref())
+            || self.launch_uses_adapter(branch.launch.as_ref())
     }
 
     fn task_uses_adapter(self, task: &TaskSpec) -> bool {
         self.shell_uses_adapter(task.run.as_deref())
             || self.shell_uses_adapter(task.script.as_deref())
             || self.command_uses_adapter(task.command.as_ref())
+            || self.launch_uses_adapter(task.launch.as_ref())
     }
 
     fn shell_uses_adapter(self, command: Option<&str>) -> bool {
@@ -289,6 +291,13 @@ impl AdapterInputFamily {
                 }
             }
         })
+    }
+
+    fn launch_uses_adapter(self, launch: Option<&TaskLaunchSpec>) -> bool {
+        match launch {
+            Some(TaskLaunchSpec::Command(command)) => self.command_uses_adapter(Some(command)),
+            Some(TaskLaunchSpec::Container(_)) | None => false,
+        }
     }
 }
 

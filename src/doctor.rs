@@ -4073,6 +4073,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => {
                 ContractAdvisory::ReplaceableBakeFileOwnership(advisory)
             }
+            ContractAdvisory::EmptyAdapterInputMarker(advisory) => {
+                ContractAdvisory::EmptyAdapterInputMarker(advisory)
+            }
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => {
                 ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory)
             }
@@ -4141,6 +4144,7 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         | ContractAdvisory::ReplaceableShellEnvMutation(_)
         | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
         | ContractAdvisory::ReplaceableBakeFileOwnership(_)
+        | ContractAdvisory::EmptyAdapterInputMarker(_)
         | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
         | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_) => advisory.summary(),
         ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
