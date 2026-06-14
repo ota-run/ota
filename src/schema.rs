@@ -3278,6 +3278,8 @@ pub struct ServiceManagerSpec {
     pub file: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
 }
@@ -3366,6 +3368,16 @@ health=$(docker inspect --format '{{{{if .State.Health}}}}{{{{.State.Health.Stat
             args.push(String::from("--env-file"));
             args.push(env_file.to_string());
         }
+        for profile in self
+            .profiles
+            .iter()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            args.push(String::from("--profile"));
+            args.push(profile.to_string());
+        }
         if let Some(name) = self
             .name
             .as_deref()
@@ -3400,6 +3412,16 @@ health=$(docker inspect --format '{{{{if .State.Health}}}}{{{{.State.Health.Stat
         {
             command.push_str(" --env-file ");
             command.push_str(&shell_single_quote(env_file));
+        }
+        for profile in self
+            .profiles
+            .iter()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            command.push_str(" --profile ");
+            command.push_str(&shell_single_quote(profile));
         }
         if let Some(name) = self.name.as_deref().filter(|name| !name.trim().is_empty()) {
             command.push_str(" -p ");
@@ -6032,6 +6054,9 @@ services:
       name: local
       file: compose.yaml
       env_file: .env.compose
+      profiles:
+        - web
+        - worker
       service: redis
     healthcheck: redis-cli ping
 "#,
@@ -6042,7 +6067,7 @@ services:
         assert_eq!(
             manager.start_command("redis").as_deref(),
             Some(
-                "docker compose -f 'compose.yaml' --env-file '.env.compose' -p 'local' up -d 'redis'"
+                "docker compose -f 'compose.yaml' --env-file '.env.compose' --profile 'web' --profile 'worker' -p 'local' up -d 'redis'"
             )
         );
         assert_eq!(
@@ -6053,6 +6078,10 @@ services:
                 String::from("compose.yaml"),
                 String::from("--env-file"),
                 String::from(".env.compose"),
+                String::from("--profile"),
+                String::from("web"),
+                String::from("--profile"),
+                String::from("worker"),
                 String::from("-p"),
                 String::from("local"),
                 String::from("ps"),

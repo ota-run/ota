@@ -10756,6 +10756,7 @@ fn build_assist_service_proposal(
         name: manager_name_value.clone(),
         file: compose_file_value.clone(),
         env_file: None,
+        profiles: Vec::new(),
         service: compose_service_value.clone(),
     });
     if let (Some(endpoint_name), Some(address), Some(port)) = (
@@ -49795,6 +49796,8 @@ tasks:
                 kind: String::from("compose"),
                 name: None,
                 file: None,
+                env_file: None,
+                profiles: Vec::new(),
                 service: None,
             }),
             provider: None,

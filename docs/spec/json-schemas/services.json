@@ -22,6 +22,8 @@
         "kind": { "type": "string" },
         "name": { "type": "string" },
         "file": { "type": "string" },
+        "env_file": { "type": "string" },
+        "profiles": { "type": "array", "items": { "type": "string" } },
         "service": { "type": "string" }
       }
     },

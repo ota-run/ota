@@ -6961,7 +6961,7 @@ impl ContractAdvisory {
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "move compose adapter input ownership out of task `{}` shell: use `tasks.{0}.adapter_inputs.compose.*` when the task owns interpolation, compose file selection, compose profiles, or project naming, or `services.<name>.manager.env_file` when one managed compose service owns interpolation",
+                "move compose adapter input ownership out of task `{}` shell: use `tasks.{0}.adapter_inputs.compose.*` when the task owns interpolation, compose file selection, compose profiles, or project naming, or `services.<name>.manager.env_file` / `.profiles` when one managed compose service owns those inputs",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
@@ -9371,6 +9371,13 @@ fn validate_services(
                             )));
                         }
                     }
+                    for (index, profile) in manager.profiles.iter().enumerate() {
+                        if profile.trim().is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` manager field `profiles[{index}]` must not be empty"
+                            )));
+                        }
+                    }
                 }
                 crate::schema::ServiceManagerKind::Host => {
                     if manager
@@ -9390,6 +9397,11 @@ fn validate_services(
                     if manager.env_file.is_some() {
                         errors.push(ValidationError::new(format!(
                             "service `{name}` host manager must not declare `manager.env_file`"
+                        )));
+                    }
+                    if !manager.profiles.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` host manager must not declare `manager.profiles`"
                         )));
                     }
                     if manager.service.is_some() {
@@ -16857,6 +16869,8 @@ services:
       name: local
       file: compose.yaml
       env_file: .env.compose
+      profiles:
+        - default
       service: postgres
     healthcheck: pg_isready -U qredex -d qredex
 tasks:
@@ -16895,6 +16909,65 @@ tasks:
             error
                 .to_string()
                 .contains("service `postgres` host manager must not declare `manager.env_file`")
+        }));
+    }
+
+    #[test]
+    fn rejects_invalid_service_manager_profiles() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    manager:
+      kind: compose
+      name: local
+      profiles:
+        - "   "
+      service: postgres
+    healthcheck: pg_isready -U qredex -d qredex
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("service `postgres` manager field `profiles[0]` must not be empty")
+        }));
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    manager:
+      kind: host
+      profiles:
+        - default
+    healthcheck: pg_isready -U qredex -d qredex
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error
+                .to_string()
+                .contains("service `postgres` host manager must not declare `manager.profiles`")
         }));
     }
 

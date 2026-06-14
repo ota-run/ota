@@ -207,6 +207,8 @@ fn services_schema_covers_published_service_summary_fields() {
     assert!(producer.get("task").is_some());
     assert!(producer.get("address_view").is_some());
     assert!(manager.get("kind").is_some());
+    assert!(manager.get("env_file").is_some());
+    assert!(manager.get("profiles").is_some());
     assert!(endpoint.get("address").is_some());
     assert!(endpoint.get("port").is_some());
     assert!(readiness.get("probe").is_some());

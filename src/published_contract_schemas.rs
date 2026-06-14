@@ -648,6 +648,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "name": { "type": "string" },
         "file": { "type": "string" },
         "env_file": { "type": "string" },
+        "profiles": { "$ref": "#/$defs/stringArray" },
         "service": { "type": "string" }
       }
     },

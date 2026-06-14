@@ -63,6 +63,10 @@
   `workflows.<name>.env.adapter_inputs.compose.profiles`, Ota projects that truth through
   `COMPOSE_PROFILES`, and validate/doctor now treat shell `docker compose --profile ...` truth as
   the same adapter-ownership governance class as shell `--env-file`, `-f`, and `-p`
+- widened Compose service-manager ownership to match those task/workflow surfaces:
+  `services.<name>.manager.profiles` is now first-class for `manager.kind: compose`, Ota threads
+  that declarative profile truth through derived compose service commands, and validation rejects
+  empty profile entries or host managers pretending to own compose profile selection
 - restored Python starter command provenance truth all the way through init JSON field paths, so
   generated structured `command` bodies now publish `tasks.<name>.command.exe` /
   `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy

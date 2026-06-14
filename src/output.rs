@@ -4010,6 +4010,10 @@ pub struct ServiceManagerSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub env_file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
 }
 
@@ -4022,6 +4026,8 @@ impl ServiceManagerSummary {
             },
             name: manager.name.clone(),
             file: manager.file.clone(),
+            env_file: manager.env_file.clone(),
+            profiles: manager.profiles.clone(),
             service: manager.service.clone(),
         }
     }

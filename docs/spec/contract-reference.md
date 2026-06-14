@@ -2874,6 +2874,7 @@ Service manager fields:
 - `services.<name>.manager.name`: optional manager/project name; required today for `kind: compose`
 - `services.<name>.manager.file`: optional compose file path for `kind: compose`
 - `services.<name>.manager.env_file`: optional repo-relative compose env-file path for `kind: compose`
+- `services.<name>.manager.profiles`: optional compose profile list for `kind: compose`
 - `services.<name>.manager.service`: optional compose service name override; required today for `kind: compose`
 
 Workflow env adapter rules:
@@ -2948,6 +2949,9 @@ Current behavior:
   entries from an example file while Ota deterministically overlays the workflow-specific values
 - do not use `prepare.task` for service startup or runtime launch; that still belongs in `setup.task`, `services`, or `run.task`
 - use `services.<name>.manager.env_file` when one compose-managed service depends on a workflow/runtime-specific interpolation file and Ota should own that `docker compose --env-file ...` input instead of repeating it inside shell commands
+- use `services.<name>.manager.profiles` when one compose-managed service owns stable profile
+  selection and Ota should pass those `docker compose --profile ...` inputs declaratively instead
+  of repeating them inside shell commands
 - `doctor` diagnoses the default workflow by default when it declares workflow readiness probes,
   workflow readiness checks, or workflow services
 - selected-workflow `doctor`, `up`, and `proof runtime` paths apply `workflows.<name>.env.profile`

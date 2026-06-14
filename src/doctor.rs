@@ -19695,6 +19695,7 @@ tasks:
                 name: Some(String::from("local")),
                 file: Some(String::from("compose.yaml")),
                 env_file: None,
+                profiles: Vec::new(),
                 service: Some(String::from("postgres")),
             }),
             ..ServiceSpec::default()
@@ -19718,6 +19719,7 @@ tasks:
                 name: Some(String::from("local-postgres")),
                 file: None,
                 env_file: None,
+                profiles: Vec::new(),
                 service: None,
             }),
             ..ServiceSpec::default()

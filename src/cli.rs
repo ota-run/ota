@@ -21036,6 +21036,10 @@ services:
       kind: compose
       name: local
       file: compose.yaml
+      env_file: .env.compose
+      profiles:
+        - web
+        - worker
       service: postgres
     healthcheck: pg_isready -U qredex -d qredex
 "#,
@@ -21047,7 +21051,9 @@ services:
         assert_eq!(output.exit_code, 0);
         assert!(body.contains("manager: compose"));
         assert!(
-            body.contains("start docker compose -f 'compose.yaml' -p 'local' up -d 'postgres'")
+            body.contains(
+                "start docker compose -f 'compose.yaml' --env-file '.env.compose' --profile 'web' --profile 'worker' -p 'local' up -d 'postgres'"
+            )
         );
         assert!(body.contains("healthcheck: pg_isready -U qredex -d qredex"));
     }
@@ -21066,6 +21072,10 @@ services:
       kind: compose
       name: local
       file: compose.yaml
+      env_file: .env.compose
+      profiles:
+        - web
+        - worker
       service: postgres
     healthcheck: pg_isready -U qredex -d qredex
 "#,
@@ -21079,9 +21089,12 @@ services:
         assert_eq!(json["services"][0]["manager"]["kind"], "compose");
         assert_eq!(json["services"][0]["manager"]["name"], "local");
         assert_eq!(json["services"][0]["manager"]["file"], "compose.yaml");
+        assert_eq!(json["services"][0]["manager"]["env_file"], ".env.compose");
+        assert_eq!(json["services"][0]["manager"]["profiles"][0], "web");
+        assert_eq!(json["services"][0]["manager"]["profiles"][1], "worker");
         assert_eq!(
             json["services"][0]["start"],
-            "docker compose -f 'compose.yaml' -p 'local' up -d 'postgres'"
+            "docker compose -f 'compose.yaml' --env-file '.env.compose' --profile 'web' --profile 'worker' -p 'local' up -d 'postgres'"
         );
     }
 
