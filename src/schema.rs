@@ -305,6 +305,15 @@ impl Contract {
         self.task_dependency_closure_names(roots)
     }
 
+    pub fn selected_workflow_run_task_closure_names(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Vec<String> {
+        self.selected_run_task_name_for(workflow_name)
+            .map(|run| self.task_dependency_closure_names([run.to_string()]))
+            .unwrap_or_default()
+    }
+
     pub fn task_closure_required_env_names(
         &self,
         roots: impl IntoIterator<Item = String>,
@@ -6964,6 +6973,53 @@ workflows:
                 String::from("redis"),
                 String::from("postgres"),
             ]
+        );
+    }
+
+    #[test]
+    fn selected_workflow_run_task_closure_excludes_prepare_and_setup_roots() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-run-closure
+tasks:
+  prepare:
+    run: echo prepare
+  setup:
+    run: echo setup
+  dev:deps:
+    run: echo deps
+  dev:
+    run: echo dev
+    depends_on:
+      - dev:deps
+workflows:
+  default: app
+  app:
+    prepare:
+      task: prepare
+    setup:
+      task: setup
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.selected_workflow_task_closure_names(Some("app")),
+            vec![
+                String::from("prepare"),
+                String::from("setup"),
+                String::from("dev:deps"),
+                String::from("dev"),
+            ]
+        );
+        assert_eq!(
+            contract.selected_workflow_run_task_closure_names(Some("app")),
+            vec![String::from("dev:deps"), String::from("dev")]
         );
     }
 

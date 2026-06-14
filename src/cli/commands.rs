@@ -52461,6 +52461,92 @@ tasks:
     }
 
     #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_scopes_adapter_inputs_to_run_path() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-adapter-run-scope
+tasks:
+  infra:up:
+    execution:
+      default_mode: native
+    adapter_inputs:
+      compose:
+        env_files:
+          - docker/devenv/defaults.env
+        files:
+          - docker/devenv/docker-compose.infra.yml
+        project_name: penpotdev-infra
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+  devenv:up:
+    execution:
+      default_mode: native
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+        - main
+workflows:
+  default: devenv
+  devenv:
+    prepare:
+      task: infra:up
+    env:
+      adapter_inputs:
+        compose:
+          env_files:
+            - docker/devenv/defaults.env
+          files:
+            - docker/devenv/docker-compose.main.yml
+          project_name: penpotdev-ws0
+    run:
+      task: devenv:up
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(&contract, None)
+            .expect("workflow adapter inputs should adjust contract");
+        let prepare_task = adjusted
+            .tasks
+            .get("infra:up")
+            .expect("prepare task present");
+        let prepare_compose = prepare_task
+            .adapter_inputs
+            .compose
+            .as_ref()
+            .expect("prepare task compose inputs present");
+        assert_eq!(
+            prepare_compose.files,
+            vec![String::from("docker/devenv/docker-compose.infra.yml")]
+        );
+        assert_eq!(
+            prepare_compose.project_name.as_deref(),
+            Some("penpotdev-infra")
+        );
+        let run_task = adjusted.tasks.get("devenv:up").expect("run task present");
+        let run_compose = run_task
+            .adapter_inputs
+            .compose
+            .as_ref()
+            .expect("run task compose inputs present");
+        assert_eq!(
+            run_compose.files,
+            vec![String::from("docker/devenv/docker-compose.main.yml")]
+        );
+        assert_eq!(run_compose.project_name.as_deref(), Some("penpotdev-ws0"));
+    }
+
+    #[test]
     fn render_selected_workflow_env_profile_artifacts_writes_dotenv_from_profile_truth() {
         let _env_lock = crate::test_support::env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -81972,6 +82058,7 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         .cloned()
         .unwrap_or_default();
     let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let adapter_task_names = contract.selected_workflow_run_task_closure_names(workflow_name);
     let rendered_dotenv_path = profile
         .render
         .as_ref()
@@ -82010,7 +82097,9 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         let Some(task) = adjusted.tasks.get_mut(task_name.as_str()) else {
             continue;
         };
-        if !bind_workflow_adapter_overlays(task, &workflow_adapter_inputs) {
+        let adapter_bound = adapter_task_names.iter().any(|name| name == &task_name)
+            && bind_workflow_adapter_overlays(task, &workflow_adapter_inputs);
+        if !adapter_bound {
             if let Some(path) = rendered_dotenv_path.as_ref()
                 && !task.env_files.iter().any(|existing| existing == path)
             {

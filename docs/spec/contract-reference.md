@@ -2887,7 +2887,7 @@ Workflow env adapter rules:
   additions
 - this keeps compose adapter input ownership on the workflow env surface instead of duplicating
   the same `manager.env_file` path across services
-- when the selected workflow task closure includes a compose-running task, ota also projects that
+- when the selected workflow run path includes a compose-running task, ota also projects that
   rendered dotenv artifact into `tasks.<name>.adapter_inputs.compose.env_files` instead of
   misrouting it through process `env_files`
 - ota prepends `<name>.env.adapter_inputs.compose.files` ahead of task-local
@@ -2910,7 +2910,7 @@ Workflow env adapter rules:
   escape the repo
 - `<name>.env.adapter_inputs.compose.profiles[*]` must not be empty
 - `<name>.env.adapter_inputs.bake.files` must stay repo-relative and must not escape the repo
-- `<name>.env.adapter_inputs` requires the selected workflow task closure to include task paths
+- `<name>.env.adapter_inputs` requires the selected workflow run path to include task paths
   that support each declared adapter input family
 
 Compatibility:

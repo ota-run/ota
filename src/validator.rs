@@ -7905,7 +7905,7 @@ fn collect_duplicate_workflow_adapter_input_ownership_advisories(
             let workflow_location = field.workflow_location(workflow_name);
 
             for task_name in
-                contract.selected_workflow_task_closure_names(Some(workflow_name.as_str()))
+                contract.selected_workflow_run_task_closure_names(Some(workflow_name.as_str()))
             {
                 let Some(task) = contract.tasks.get(task_name.as_str()) else {
                     continue;
@@ -10904,7 +10904,7 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
         }
         if let Some(env) = workflow.env.as_ref() {
             let selected_workflow_tasks = contract
-                .selected_workflow_task_closure_names(Some(name.as_str()))
+                .selected_workflow_run_task_closure_names(Some(name.as_str()))
                 .iter()
                 .filter_map(|task_name| contract.tasks.get(task_name))
                 .collect::<Vec<_>>();
@@ -10951,7 +10951,7 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
             }
             if !env.adapter_inputs.is_empty() && !selected_workflow_supports_adapter_inputs {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.adapter_inputs` requires the selected workflow task closure to include task paths that support each declared adapter input family"
+                    "`workflows.{name}.env.adapter_inputs` requires the selected workflow run path to include task paths that support each declared adapter input family"
                 )));
             }
             if (workflow_declares_compose_file_alias(env)
@@ -10959,7 +10959,7 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 && !selected_workflow_supports_adapter_inputs
             {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.{name}.env.adapter_inputs.compose.*` and ensure the selected workflow task closure includes at least one compose-running task path or declared compose adapter input"
+                    "`workflows.{name}.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.{name}.env.adapter_inputs.compose.*` and ensure the selected workflow run path includes at least one compose-running task path or declared compose adapter input"
                 )));
             }
             if let Some(profile_name) = env
@@ -11043,10 +11043,11 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 if task.action.is_none()
                     && task.run.is_none()
                     && task.script.is_none()
+                    && task.command.is_none()
                     && task.prepare.is_none()
                 {
                     errors.push(ValidationError::new(format!(
-                        "`workflows.{name}.prepare.task` must reference one native finite task body (`run`, `script`, `prepare`, or `action`), not `{}`",
+                        "`workflows.{name}.prepare.task` must reference one native finite task body (`run`, `script`, `command`, `prepare`, or `action`), not `{}`",
                         prepare.task
                     )));
                 }
@@ -13463,6 +13464,35 @@ workflows:
         .expect("contract should parse");
 
         validate_contract(&contract).expect("native finite prepare task should validate");
+    }
+
+    #[test]
+    fn workflow_prepare_accepts_native_finite_command_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: valid-prepare-command
+tasks:
+  normalize-env:
+    execution:
+      default_mode: native
+    command:
+      exe: cp
+      args:
+        - .env.example
+        - .env.local
+workflows:
+  default: app
+  app:
+    prepare:
+      task: normalize-env
+"#,
+        )
+        .expect("contract should parse");
+
+        validate_contract(&contract).expect("native finite command prepare task should validate");
     }
 
     #[test]
@@ -28066,6 +28096,68 @@ workflows:
                     && value.field_value == "docker-bake.hcl"
                     && value.workflow_location == "workflows.image.env.adapter_inputs.bake.files"
                     && value.location == "tasks.image:build.execution.modes.container.adapter_inputs.bake.files"
+        )));
+    }
+
+    #[test]
+    fn workflow_adapter_ownership_advisories_ignore_prepare_only_task_paths() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-adapter-run-scope
+tasks:
+  infra:up:
+    execution:
+      default_mode: native
+    adapter_inputs:
+      compose:
+        env_files:
+          - docker/devenv/defaults.env
+        files:
+          - docker/devenv/docker-compose.infra.yml
+        project_name: penpotdev-infra
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+  devenv:up:
+    execution:
+      default_mode: native
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+        - main
+workflows:
+  default: devenv
+  devenv:
+    prepare:
+      task: infra:up
+    env:
+      adapter_inputs:
+        compose:
+          env_files:
+            - docker/devenv/defaults.env
+          files:
+            - docker/devenv/docker-compose.main.yml
+          project_name: penpotdev-ws0
+    run:
+      task: devenv:up
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(value)
+                if value.workflow_name == "devenv" && value.task_name == "infra:up"
         )));
     }
 

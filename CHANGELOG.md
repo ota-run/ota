@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- fixed workflow prepare validation drift: `workflows.<name>.prepare.task` now accepts finite
+  native `command` tasks, matching the published contract/reference surface instead of forcing
+  authors back to shell `run`
 - fixed workflow-owned adapter-overlay provenance during diagnosis: when Ota injects selected
   workflow Compose/Bake adapter inputs into runnable task paths for execution, doctor/validate no
   longer misclassify those synthetic bound values as task-authored duplicate ownership
