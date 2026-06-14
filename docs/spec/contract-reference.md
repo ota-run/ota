@@ -1929,6 +1929,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
     - `kind: ensure_env_file`
     - `kind: ensure_file`
     - `kind: ensure_directory`
+    - `kind: ensure_container_network`
   - each step uses the same fields and validation rules as the corresponding top-level action kind
 
 Use `action.kind: copy_if_missing` for setup steps like creating `.env.local` from
@@ -1964,9 +1965,10 @@ missing, and keeps Docker network bootstrap on a first-class declarative surface
 hard-coding `docker network inspect/create` logic into `run`, `script`, or `command`.
 
 Use `action.kind: ensure_bundle` when setup needs multiple deterministic bootstrap mutations in one
-task (for example env file seeding plus secret file creation plus cache directory creation) without
-shell orchestration. Ota executes steps in order, preserves the same idempotent semantics as each
-step kind, and keeps validation/error reporting inside the contract surface.
+task (for example env file seeding plus secret file creation plus cache directory creation, or one
+shared Docker network plus host file prep) without shell orchestration. Ota executes steps in
+order, preserves the same idempotent semantics as each step kind, and keeps validation/error
+reporting inside the contract surface.
 
 `requirements` fields:
 

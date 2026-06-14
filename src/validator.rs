@@ -4156,6 +4156,18 @@ fn validate_task_ensure_bundle_step(
                 errors,
             );
         }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureContainerNetwork(spec) => {
+            if spec.name.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_container_network`) must declare a non-empty `{prefix}.name`"
+                )));
+            }
+            if spec.name.contains('\n') || spec.name.contains('\r') {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_container_network`) `{prefix}.name` must not contain newline characters"
+                )));
+            }
+        }
     }
 }
 
@@ -14718,6 +14730,31 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("ensure_bundle action should validate");
+    }
+
+    #[test]
+    fn validates_ensure_bundle_action_shape_with_container_network_step() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:bootstrap:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_container_network
+          name: penpot_shared
+        - kind: ensure_directory
+          path: .cache/dev
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("ensure_bundle action with container network step should validate");
     }
 
     #[test]

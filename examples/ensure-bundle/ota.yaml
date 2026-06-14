@@ -34,10 +34,12 @@ execution:
 tasks:
   bootstrap:local:
     context: host
-    description: Prepare the local repo state through one ordered bundle of deterministic file mutations
+    description: Prepare the local repo state through one ordered bundle of deterministic host mutations
     action:
       kind: ensure_bundle
       steps:
+        - kind: ensure_container_network
+          name: local-dev
         - kind: copy_if_missing
           from: .env.example
           to: .env.local

@@ -8281,6 +8281,9 @@ fn execute_ensure_bundle_step(
         crate::schema::TaskEnsureBundleStepSpec::EnsureDirectory(spec) => {
             execute_ensure_directory_action(task_name, spec, working_dir)
         }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureContainerNetwork(spec) => {
+            execute_ensure_container_network_action(task_name, spec)
+        }
     }
 }
 
@@ -50101,6 +50104,103 @@ tasks:
             second
                 .stdout
                 .contains("ensured `.env.local`, appended 0 env key(s)"),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_bundle_action_runs_container_network_step_idempotently() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:bootstrap:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_container_network
+          name: penpot_shared
+        - kind: ensure_directory
+          path: .cache/dev
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            format!(
+                r#"#!/bin/sh
+state_dir="{state_dir}"
+mkdir -p "$state_dir"
+
+if [ "$1" = "network" ] && [ "$2" = "inspect" ]; then
+  if [ -f "$state_dir/$3" ]; then
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ "$1" = "network" ] && [ "$2" = "create" ]; then
+  : > "$state_dir/$3"
+  exit 0
+fi
+
+exit 1
+"#,
+                state_dir = state_dir.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:bootstrap")
+            .expect("ensure_bundle with container network step should run");
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:bootstrap")
+            .expect("ensure_bundle with container network step should stay idempotent");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert!(
+            first
+                .stdout
+                .contains("ensured docker container network `penpot_shared`"),
+            "{}",
+            first.stdout
+        );
+        assert!(fixture.dir.path().join(".cache/dev").is_dir());
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second.stdout.contains(
+                "docker container network `penpot_shared` already exists; no create needed"
+            ),
             "{}",
             second.stdout
         );

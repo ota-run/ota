@@ -4967,6 +4967,7 @@ pub enum TaskEnsureBundleStepSpec {
     EnsureEnvFile(TaskEnsureEnvFileActionSpec),
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
+    EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

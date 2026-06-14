@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- widened `action.kind: ensure_bundle` so bundled deterministic native setup can now include
+  `kind: ensure_container_network` steps, letting one setup owner compose shared Docker network
+  bootstrap with other governed bootstrap mutations without falling back to shell orchestration
 - added first-class container-network bootstrap through `action.kind: ensure_container_network`,
   so contracts can own external Docker network readiness without shell `docker network inspect ||
   docker network create` glue; validation, dry-run preview, contract schemas, capability
