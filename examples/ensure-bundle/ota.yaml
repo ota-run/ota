@@ -1,0 +1,67 @@
+# 
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#   You may not use this file except in compliance with that License.
+#   Unless required by applicable law or agreed to in writing, software distributed under the
+#   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#   either express or implied. See the License for the specific language governing permissions
+#   and limitations under the License.
+#
+#   If you need additional information or have any questions, please email: os@ota.run
+
+version: 1
+project:
+  name: ensure-bundle
+  description: Canonical bundled deterministic host bootstrap example using action.kind ensure_bundle
+  type: application
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  bootstrap:local:
+    context: host
+    description: Prepare the local repo state through one ordered bundle of deterministic file mutations
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: copy_if_missing
+          from: .env.example
+          to: .env.local
+        - kind: ensure_env_file
+          path: .env.local
+          vars:
+            APP_ENV:
+              value: local
+              mode: replace
+            API_TOKEN:
+              random:
+                bytes: 24
+                encoding: hex
+        - kind: ensure_directory
+          path: .cache/ota
+        - kind: ensure_file
+          path: .secrets/dev-token
+          random:
+            bytes: 24
+            encoding: hex
+workflows:
+  default: local-bootstrap
+  local-bootstrap:
+    intent: local_development
+    description: Use one finite workflow prepare lane when repo bootstrap needs more than one deterministic host mutation
+    prepare:
+      task: bootstrap:local

@@ -1,0 +1,96 @@
+# 
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#   You may not use this file except in compliance with that License.
+#   Unless required by applicable law or agreed to in writing, software distributed under the
+#   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#   either express or implied. See the License for the specific language governing permissions
+#   and limitations under the License.
+#
+#   If you need additional information or have any questions, please email: os@ota.run
+
+version: 1
+project:
+  name: bake-adapter-inputs
+  description: Canonical Bake adapter ownership example for task-owned and workflow-owned Bake file truth
+  type: application
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+tasks:
+  bake:image:
+    context: host
+    description: Build the default image through task-owned Bake file selection
+    adapter_inputs:
+      bake:
+        files:
+          - docker-bake.hcl
+    command:
+      exe: docker
+      args:
+        - buildx
+        - bake
+        - app
+    requirements:
+      tools:
+        docker: "*"
+  bake:ci:
+    context: host
+    description: Build the CI image through task-owned base Bake truth plus one task-local overlay
+    adapter_inputs:
+      bake:
+        files:
+          - docker-bake.hcl
+          - docker-bake.ci.hcl
+    command:
+      exe: docker
+      args:
+        - buildx
+        - bake
+        - app
+    requirements:
+      tools:
+        docker: "*"
+  bake:workflow:
+    context: host
+    description: Build the workflow-selected image with workflow-owned Bake file truth
+    command:
+      exe: docker
+      args:
+        - buildx
+        - bake
+        - app
+    requirements:
+      tools:
+        docker: "*"
+workflows:
+  default: release
+  release:
+    intent: release
+    description: Prepend workflow-owned Bake file truth into the selected task path instead of hard-coding shell `docker buildx bake -f` flags
+    env:
+      adapter_inputs:
+        bake:
+          files:
+            - docker-bake.hcl
+            - docker-bake.platform.hcl
+            - docker-bake.release.hcl
+    run:
+      task: bake:workflow

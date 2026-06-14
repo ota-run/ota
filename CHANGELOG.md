@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added three missing canonical example families across core and public examples: Bake
+  adapter-input ownership through `adapter_inputs.bake.files`, deterministic env bootstrap through
+  `action.kind: ensure_env_file`, and bundled host file preparation through
+  `action.kind: ensure_bundle`, so users, agents, and crawlers now have compact reference shapes
+  for those newer contract surfaces instead of only spec prose
 - tightened adapter-input governance in two connected ways: workflow-owned Compose/Bake overlays
   now recognize `launch.kind: command` task paths as real adapter consumers, and validate/doctor
   now warn when `adapter_inputs.compose` or `adapter_inputs.bake` is declared as an empty marker
