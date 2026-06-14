@@ -2846,9 +2846,6 @@ Fields:
   one
 - `<name>.env.adapter_inputs.bake.files`: optional ordered repo-relative adapter-owned Bake file
   overlays the workflow should project into selected `docker buildx bake` task paths
-- `<name>.env.compose_files`: compatibility alias for `<name>.env.adapter_inputs.compose.files`
-- `<name>.env.compose_project_name`: compatibility alias for
-  `<name>.env.adapter_inputs.compose.project_name`
 - `<name>.prepare.task`: optional native finite task ota should run first as explicit host preparation for that workflow
   - must reference a declared task with one finite body: `run`, `script`, `command`, `prepare`, or `action`
   - must not reference a `launch` task or a task with `runtime`
@@ -2914,8 +2911,15 @@ Workflow env adapter rules:
 - `<name>.env.adapter_inputs.bake.files` must stay repo-relative and must not escape the repo
 - `<name>.env.adapter_inputs` requires the selected workflow task closure to include task paths
   that support each declared adapter input family
-- `<name>.env.compose_files` / `compose_project_name` are compatibility aliases; do not declare
-  them together with the canonical `adapter_inputs.compose.files` / `.project_name` fields
+
+Compatibility:
+
+- `<name>.env.compose_files` and `<name>.env.compose_project_name` remain accepted as compatibility
+  aliases for existing contracts
+- new and updated contracts should use only `<name>.env.adapter_inputs.compose.files` and
+  `.project_name`
+- do not declare the compatibility aliases together with the canonical
+  `adapter_inputs.compose.files` / `.project_name` fields
 
 Prepare vs setup vs run:
 

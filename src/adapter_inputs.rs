@@ -60,16 +60,43 @@ pub(crate) fn effective_workflow_adapter_inputs(env: &WorkflowEnvSpec) -> TaskAd
     adapter_inputs
 }
 
+pub(crate) fn workflow_declares_compose_file_alias(env: &WorkflowEnvSpec) -> bool {
+    !env.compose_files.is_empty()
+}
+
+pub(crate) fn workflow_declares_compose_project_name_alias(env: &WorkflowEnvSpec) -> bool {
+    env.compose_project_name
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+}
+
+pub(crate) fn workflow_duplicates_canonical_compose_file_alias(env: &WorkflowEnvSpec) -> bool {
+    env.adapter_inputs
+        .compose
+        .as_ref()
+        .is_some_and(|compose| !compose.files.is_empty())
+        && workflow_declares_compose_file_alias(env)
+}
+
+pub(crate) fn workflow_duplicates_canonical_compose_project_name_alias(
+    env: &WorkflowEnvSpec,
+) -> bool {
+    env.adapter_inputs
+        .compose
+        .as_ref()
+        .and_then(|compose| compose.project_name.as_deref())
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+        && workflow_declares_compose_project_name_alias(env)
+}
+
 impl AdapterInputFamily {
     pub(crate) fn workflow_requires_support(self, env: &WorkflowEnvSpec) -> bool {
         match self {
             Self::Compose => {
-                !env.compose_files.is_empty()
-                    || env
-                        .compose_project_name
-                        .as_deref()
-                        .map(str::trim)
-                        .is_some_and(|value| !value.is_empty())
+                workflow_declares_compose_file_alias(env)
+                    || workflow_declares_compose_project_name_alias(env)
                     || env
                         .adapter_inputs
                         .compose

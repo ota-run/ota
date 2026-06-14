@@ -70,6 +70,10 @@
 - generalized the workflow adapter-overlay engine behind one shared adapter-family path for
   Compose and Bake, so support detection, selected-workflow validation, and overlay binding no
   longer depend on separate hand-wired branches in validator and runtime orchestration
+- narrowed the public workflow Compose authoring story to one canonical surface:
+  compatibility aliases (`compose_files`, `compose_project_name`) are still accepted, but shared
+  alias interpretation and duplicate checks now live under the adapter-input engine and
+  validation explicitly pushes authors toward `workflows.<name>.env.adapter_inputs.compose.*`
 - restored Python starter command provenance truth all the way through init JSON field paths, so
   generated structured `command` bodies now publish `tasks.<name>.command.exe` /
   `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy

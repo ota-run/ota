@@ -26,7 +26,11 @@ use std::path::{Component, Path};
 
 use semver::Version;
 
-use crate::adapter_inputs::ADAPTER_INPUT_FAMILIES;
+use crate::adapter_inputs::{
+    ADAPTER_INPUT_FAMILIES, workflow_declares_compose_file_alias,
+    workflow_declares_compose_project_name_alias, workflow_duplicates_canonical_compose_file_alias,
+    workflow_duplicates_canonical_compose_project_name_alias,
+};
 use crate::capabilities::{
     format_minimum_version_error, unsupported_declared_contract_capabilities_in_contract,
 };
@@ -10426,30 +10430,12 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 &env.adapter_inputs,
                 errors,
             );
-            if env
-                .adapter_inputs
-                .compose
-                .as_ref()
-                .is_some_and(|compose| !compose.files.is_empty())
-                && !env.compose_files.is_empty()
-            {
+            if workflow_duplicates_canonical_compose_file_alias(env) {
                 errors.push(ValidationError::new(format!(
                     "`workflows.{name}.env.compose_files` duplicates `workflows.{name}.env.adapter_inputs.compose.files`; keep workflow-owned compose file overlays on the canonical `adapter_inputs` surface"
                 )));
             }
-            if env
-                .adapter_inputs
-                .compose
-                .as_ref()
-                .and_then(|compose| compose.project_name.as_deref())
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty())
-                && env
-                    .compose_project_name
-                    .as_deref()
-                    .map(str::trim)
-                    .is_some_and(|value| !value.is_empty())
-            {
+            if workflow_duplicates_canonical_compose_project_name_alias(env) {
                 errors.push(ValidationError::new(format!(
                     "`workflows.{name}.env.compose_project_name` duplicates `workflows.{name}.env.adapter_inputs.compose.project_name`; keep workflow-owned compose project naming on the canonical `adapter_inputs` surface"
                 )));
@@ -10476,11 +10462,12 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     "`workflows.{name}.env.adapter_inputs` requires the selected workflow task closure to include task paths that support each declared adapter input family"
                 )));
             }
-            if (!env.compose_files.is_empty() || env.compose_project_name.is_some())
+            if (workflow_declares_compose_file_alias(env)
+                || workflow_declares_compose_project_name_alias(env))
                 && !selected_workflow_supports_adapter_inputs
             {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.compose_files` / `compose_project_name` require the selected workflow task closure to include at least one compose-running task path or declared compose adapter input"
+                    "`workflows.{name}.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.{name}.env.adapter_inputs.compose.*` and ensure the selected workflow task closure includes at least one compose-running task path or declared compose adapter input"
                 )));
             }
             if let Some(profile_name) = env
@@ -12541,7 +12528,7 @@ workflows:
         ));
         assert!(error.contains("`workflows.app.env.compose_project_name` must not be empty"));
         assert!(error.contains(
-            "`workflows.app.env.compose_files` / `compose_project_name` require the selected workflow task closure to include at least one compose-running task path or declared compose adapter input"
+            "`workflows.app.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.app.env.adapter_inputs.compose.*` and ensure the selected workflow task closure includes at least one compose-running task path or declared compose adapter input"
         ));
     }
 
