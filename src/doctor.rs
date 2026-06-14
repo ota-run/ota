@@ -2945,15 +2945,25 @@ impl Finding {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_MUTATION"
             }
             s if s.starts_with("task `")
-                && s.contains(" hard-codes compose env-file ownership in shell") =>
+                && s.contains(" hard-codes compose adapter input ownership in its task body") =>
             {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP"
+            }
+            s if s.starts_with("task `")
+                && s.contains(" hard-codes Bake file selection in its task body") =>
+            {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP"
             }
             s if s.starts_with("workflow `")
                 && s.contains(" profile `")
                 && s.contains(" duplicates rendered env artifact ownership in task `") =>
             {
                 "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP"
+            }
+            s if s.starts_with("workflow `")
+                && s.contains(" duplicates compose `project_name` ownership in task `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP"
             }
             s if s.starts_with("`agent.writable_paths` includes sensitive ") => {
                 "OTA_CONTRACT_ADVISORY_SENSITIVE_AGENT_WRITABLE_PATH"
@@ -4046,8 +4056,8 @@ fn diagnose_contract_advisories(
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => {
                 ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory)
             }
-            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory) => {
-                ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory)
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(advisory) => {
+                ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(advisory)
             }
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 ContractAdvisory::SensitiveAgentWritablePath(advisory)
@@ -4112,7 +4122,7 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
         | ContractAdvisory::ReplaceableBakeFileOwnership(_)
         | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
-        | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_) => advisory.summary(),
+        | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_) => advisory.summary(),
         ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
             "`agent.writable_paths` includes sensitive {} `{}`",
             advisory.category, advisory.path
@@ -19940,6 +19950,37 @@ tasks:
         );
         assert_eq!(finding.category(), "contract");
         assert_eq!(finding.owner(), "repo_contract");
+    }
+
+    #[test]
+    fn finding_code_classifies_adapter_ownership_contract_advisories() {
+        let bake = Finding {
+            identity: None,
+            severity: FindingSeverity::Warn,
+            summary: String::from("task `build` hard-codes Bake file selection in its task body"),
+            why: String::from("bake file selection is hidden in shell"),
+            next: String::from("move ownership under adapter_inputs.bake.files"),
+        };
+        let workflow = Finding {
+            identity: None,
+            severity: FindingSeverity::Warn,
+            summary: String::from(
+                "workflow `compose` duplicates compose `project_name` ownership in task `build`",
+            ),
+            why: String::from("workflow and task both own the same adapter input"),
+            next: String::from("keep adapter ownership in one declarative place"),
+        };
+
+        assert_eq!(
+            bake.code(),
+            "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP"
+        );
+        assert_eq!(
+            workflow.code(),
+            "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP"
+        );
+        assert_eq!(bake.category(), "contract");
+        assert_eq!(workflow.owner(), "repo_contract");
     }
 
     #[test]

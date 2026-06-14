@@ -92,6 +92,20 @@ pub(crate) fn workflow_duplicates_canonical_compose_project_name_alias(
 }
 
 impl AdapterInputFamily {
+    pub(crate) fn task_declares_inputs(self, task: &TaskSpec) -> bool {
+        match self {
+            Self::Compose => task.adapter_inputs.compose.is_some(),
+            Self::Bake => task.adapter_inputs.bake.is_some(),
+        }
+    }
+
+    pub(crate) fn branch_declares_inputs(self, branch: &TaskModeBranchSpec) -> bool {
+        match self {
+            Self::Compose => branch.adapter_inputs.compose.is_some(),
+            Self::Bake => branch.adapter_inputs.bake.is_some(),
+        }
+    }
+
     pub(crate) fn workflow_requires_support(self, env: &WorkflowEnvSpec) -> bool {
         match self {
             Self::Compose => {
@@ -216,13 +230,6 @@ impl AdapterInputFamily {
         }
     }
 
-    fn task_declares_inputs(self, task: &TaskSpec) -> bool {
-        match self {
-            Self::Compose => task.adapter_inputs.compose.is_some(),
-            Self::Bake => task.adapter_inputs.bake.is_some(),
-        }
-    }
-
     fn task_supports_direct_binding(self, task: &TaskSpec) -> bool {
         self.task_declares_inputs(task)
             || self.task_uses_adapter(task)
@@ -238,13 +245,6 @@ impl AdapterInputFamily {
             || self.shell_uses_adapter(branch.run.as_deref())
             || self.shell_uses_adapter(branch.script.as_deref())
             || self.command_uses_adapter(branch.command.as_ref())
-    }
-
-    fn branch_declares_inputs(self, branch: &TaskModeBranchSpec) -> bool {
-        match self {
-            Self::Compose => branch.adapter_inputs.compose.is_some(),
-            Self::Bake => branch.adapter_inputs.bake.is_some(),
-        }
     }
 
     fn task_uses_adapter(self, task: &TaskSpec) -> bool {

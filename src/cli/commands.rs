@@ -1408,7 +1408,7 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
-        ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(value) => format!(
+        ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(value) => format!(
             "{} workflow `{}` task `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
             value.workflow_name,

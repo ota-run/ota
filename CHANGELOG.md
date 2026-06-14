@@ -74,6 +74,13 @@
   compatibility aliases (`compose_files`, `compose_project_name`) are still accepted, but shared
   alias interpretation and duplicate checks now live under the adapter-input engine and
   validation explicitly pushes authors toward `workflows.<name>.env.adapter_inputs.compose.*`
+- completed the matching doctor/advisory parity for adapter-owned flags: Compose/Bake replaceable
+  ownership advisories are now family-specific, no longer get suppressed by unrelated adapter
+  inputs, and cover structured `command` bodies as well as shell `run`/`script` bodies
+- tightened advisory identity governance behind that same surface: the duplicate workflow
+  adapter-input advisory is now internally family-generic instead of Compose-hardcoded, while
+  doctor identity fallback coverage now matches the current Bake and workflow adapter-ownership
+  summary shapes
 - restored Python starter command provenance truth all the way through init JSON field paths, so
   generated structured `command` bodies now publish `tasks.<name>.command.exe` /
   `tasks.<name>.command.args.*` provenance instead of collapsing that ownership back to legacy

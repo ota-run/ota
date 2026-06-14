@@ -27,7 +27,7 @@ use std::path::{Component, Path};
 use semver::Version;
 
 use crate::adapter_inputs::{
-    ADAPTER_INPUT_FAMILIES, workflow_declares_compose_file_alias,
+    ADAPTER_INPUT_FAMILIES, AdapterInputFamily, workflow_declares_compose_file_alias,
     workflow_declares_compose_project_name_alias, workflow_duplicates_canonical_compose_file_alias,
     workflow_duplicates_canonical_compose_project_name_alias,
 };
@@ -42,11 +42,12 @@ use crate::schema::{
     AgentPosture, Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
     ExtensionKind, Lifecycle, OrchestratorKind, RuntimeRequirement, ServiceProducerSpec,
-    ServiceSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec,
-    TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec,
-    TaskTargetActivationMode, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
-    ToolRequirement, ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec,
-    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
+    ServiceSpec, TaskCommandSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode,
+    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
+    TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode,
+    ToolchainFulfillmentSource, ToolchainSpec, parse_memory_size_bytes,
+    parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
     declared_toolchain_contract, fulfillment_source_legacy_provider,
@@ -6424,9 +6425,7 @@ pub enum ContractAdvisory {
     ReplaceableComposeEnvFileOwnership(ReplaceableComposeEnvFileOwnershipAdvisory),
     ReplaceableBakeFileOwnership(ReplaceableBakeFileOwnershipAdvisory),
     DuplicateWorkflowRenderedEnvOwnership(DuplicateWorkflowRenderedEnvOwnershipAdvisory),
-    DuplicateWorkflowComposeProjectNameOwnership(
-        DuplicateWorkflowComposeProjectNameOwnershipAdvisory,
-    ),
+    DuplicateWorkflowAdapterInputOwnership(DuplicateWorkflowAdapterInputOwnershipAdvisory),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
     SensitiveWriteException(SensitiveWriteExceptionAdvisory),
     AgentBootstrapUnpinned(AgentBootstrapUnpinnedAdvisory),
@@ -6522,10 +6521,13 @@ pub struct DuplicateWorkflowRenderedEnvOwnershipAdvisory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DuplicateWorkflowComposeProjectNameOwnershipAdvisory {
+pub struct DuplicateWorkflowAdapterInputOwnershipAdvisory {
     pub workflow_name: String,
     pub task_name: String,
-    pub project_name: String,
+    pub adapter_family: String,
+    pub field_name: String,
+    pub field_value: String,
+    pub workflow_location: String,
     pub location: String,
 }
 
@@ -6615,7 +6617,7 @@ impl ContractAdvisory {
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP"
             }
-            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_) => {
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP"
             }
             ContractAdvisory::SensitiveAgentWritablePath(_) => {
@@ -6703,20 +6705,23 @@ impl ContractAdvisory {
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "task `{}` hard-codes compose adapter input ownership in shell",
+                "task `{}` hard-codes compose adapter input ownership in its task body",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
-                "task `{}` hard-codes Bake file selection in shell",
+                "task `{}` hard-codes Bake file selection in its task body",
                 advisory.task_name
             ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
                 "workflow `{}` profile `{}` duplicates rendered env artifact ownership in task `{}`",
                 advisory.workflow_name, advisory.profile_name, advisory.task_name
             ),
-            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory) => format!(
-                "workflow `{}` duplicates compose project-name ownership in task `{}`",
-                advisory.workflow_name, advisory.task_name
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(advisory) => format!(
+                "workflow `{}` duplicates {} `{}` ownership in task `{}`",
+                advisory.workflow_name,
+                advisory.adapter_family,
+                advisory.field_name,
+                advisory.task_name
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => format!(
                 "`agent.writable_paths` includes sensitive {} `{}`",
@@ -6797,11 +6802,11 @@ impl ContractAdvisory {
                 advisory.task_name, advisory.command
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "task `{}` hard-codes compose shell flags inside shell (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under `adapter_inputs.compose.*` or `services.<name>.manager.env_file`",
+                "task `{}` hard-codes compose adapter flags inside its task body (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under `adapter_inputs.compose.*` or `services.<name>.manager.env_file`",
                 advisory.task_name, advisory.command
             ),
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
-                "task `{}` hard-codes Bake file selection inside shell (`{}`), which hides `docker buildx bake` adapter input ownership from Ota instead of declaring it under `adapter_inputs.bake.files`",
+                "task `{}` hard-codes Bake file selection inside its task body (`{}`), which hides `docker buildx bake` adapter input ownership from Ota instead of declaring it under `adapter_inputs.bake.files`",
                 advisory.task_name, advisory.command
             ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
@@ -6812,10 +6817,12 @@ impl ContractAdvisory {
                 advisory.task_name,
                 advisory.location
             ),
-            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory) => format!(
-                "workflow `{}` owns compose project name `{}`, but task `{}` also declares its own value under `{}`; selected-path project naming should stay in one declarative place",
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(advisory) => format!(
+                "workflow `{}` owns {} `{}` at `{}`, but task `{}` also declares its own value under `{}`; selected-path adapter ownership should stay in one declarative place",
                 advisory.workflow_name,
-                advisory.project_name,
+                advisory.adapter_family,
+                advisory.field_value,
+                advisory.workflow_location,
                 advisory.task_name,
                 advisory.location
             ),
@@ -6852,7 +6859,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
-            | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_)
+            | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6877,7 +6884,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
-            | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_)
+            | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6903,7 +6910,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
-            | ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(_)
+            | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
@@ -6965,11 +6972,11 @@ impl ContractAdvisory {
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "move compose adapter input ownership out of task `{}` shell: use `tasks.{0}.adapter_inputs.compose.*` when the task owns interpolation, compose file selection, compose profiles, or project naming, or `services.<name>.manager.env_file` / `.profiles` when one managed compose service owns those inputs",
+                "move compose adapter input ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.compose.*` when the task owns interpolation, compose file selection, compose profiles, or project naming, or `services.<name>.manager.env_file` / `.profiles` when one managed compose service owns those inputs",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
-                "move Bake file selection out of task `{}` shell: use `tasks.{0}.adapter_inputs.bake.files` when the task owns `docker buildx bake` file selection truth",
+                "move Bake file selection out of task `{}` body: use `tasks.{0}.adapter_inputs.bake.files` when the task owns `docker buildx bake` file selection truth",
                 advisory.task_name
             ),
             ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(advisory) => format!(
@@ -6980,9 +6987,13 @@ impl ContractAdvisory {
                 advisory.profile_name,
                 advisory.path
             ),
-            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(advisory) => format!(
-                "remove `{}` from task `{}` or keep workflow-owned project naming on `workflows.{}.env.adapter_inputs.compose.project_name`; selected-path compose project naming should be owned by one declarative surface",
-                advisory.location, advisory.task_name, advisory.workflow_name
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(advisory) => format!(
+                "remove `{}` from task `{}` or keep workflow-owned {} `{}` on `{}`; selected-path adapter ownership should be owned by one declarative surface",
+                advisory.location,
+                advisory.task_name,
+                advisory.adapter_family,
+                advisory.field_name,
+                advisory.workflow_location
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => {
                 format!("{}", sensitive_agent_writable_path_next(advisory))
@@ -7088,8 +7099,7 @@ pub fn collect_contract_advisories_with_contract_path(
     ));
     advisories.extend(collect_replaceable_bake_file_ownership_advisories(contract));
     advisories.extend(collect_duplicate_workflow_rendered_env_ownership_advisories(contract));
-    advisories
-        .extend(collect_duplicate_workflow_compose_project_name_ownership_advisories(contract));
+    advisories.extend(collect_duplicate_workflow_adapter_input_ownership_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
     advisories.extend(collect_sensitive_write_exception_advisories(contract));
     advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
@@ -7386,119 +7396,87 @@ fn collect_replaceable_shell_env_mutation_advisories(contract: &Contract) -> Vec
 fn collect_replaceable_compose_env_file_ownership_advisories(
     contract: &Contract,
 ) -> Vec<ContractAdvisory> {
-    let mut advisories = Vec::new();
-    for (task_name, task) in &contract.tasks {
-        if task.action.is_some() || task.aggregate.is_some() {
-            continue;
-        }
-        let task_command = task
-            .run
-            .as_deref()
-            .or(task.script.as_deref())
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
-        if let Some(command) = task_command
-            && task.adapter_inputs.is_empty()
-            && obvious_compose_env_file_shell(command)
-        {
-            advisories.push(ContractAdvisory::ReplaceableComposeEnvFileOwnership(
-                ReplaceableComposeEnvFileOwnershipAdvisory {
-                    task_name: task_name.clone(),
-                    command: command.to_string(),
-                },
-            ));
-            continue;
-        }
-        if let Some(execution) = task.execution.as_ref() {
-            for (_, branch) in execution.modes.iter() {
-                let branch_command = branch
-                    .run
-                    .as_deref()
-                    .or(branch.script.as_deref())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty());
-                let Some(command) = branch_command else {
-                    continue;
-                };
-                if !task.adapter_inputs.is_empty()
-                    || !branch.adapter_inputs.is_empty()
-                    || !obvious_compose_env_file_shell(command)
-                {
-                    continue;
-                }
-                advisories.push(ContractAdvisory::ReplaceableComposeEnvFileOwnership(
-                    ReplaceableComposeEnvFileOwnershipAdvisory {
-                        task_name: task_name.clone(),
-                        command: command.to_string(),
-                    },
-                ));
-                break;
-            }
-        }
-    }
-    advisories
+    collect_replaceable_adapter_ownership_advisories(contract, AdapterInputFamily::Compose)
 }
 
 fn collect_replaceable_bake_file_ownership_advisories(
     contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    collect_replaceable_adapter_ownership_advisories(contract, AdapterInputFamily::Bake)
+}
+
+fn collect_replaceable_adapter_ownership_advisories(
+    contract: &Contract,
+    family: AdapterInputFamily,
 ) -> Vec<ContractAdvisory> {
     let mut advisories = Vec::new();
     for (task_name, task) in &contract.tasks {
         if task.action.is_some() || task.aggregate.is_some() {
             continue;
         }
-        let task_command = task
+        let task_shell_command = task
             .run
             .as_deref()
             .or(task.script.as_deref())
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        if let Some(command) = task_command
-            && task
-                .adapter_inputs
-                .bake
-                .as_ref()
-                .is_none_or(crate::schema::TaskBakeAdapterInputsSpec::is_empty)
-            && obvious_bake_file_shell(command)
+        if let Some(command) = task_shell_command
+            && !family.task_declares_inputs(task)
+            && obvious_replaceable_adapter_shell(family, command)
         {
-            advisories.push(ContractAdvisory::ReplaceableBakeFileOwnership(
-                ReplaceableBakeFileOwnershipAdvisory {
-                    task_name: task_name.clone(),
-                    command: command.to_string(),
-                },
+            advisories.push(replaceable_adapter_ownership_advisory(
+                family,
+                task_name,
+                command.to_string(),
+            ));
+            continue;
+        }
+        if let Some(command) = task.command.as_ref()
+            && !family.task_declares_inputs(task)
+            && obvious_replaceable_adapter_command(family, command)
+        {
+            advisories.push(replaceable_adapter_ownership_advisory(
+                family,
+                task_name,
+                render_task_command_preview(command),
             ));
             continue;
         }
         if let Some(execution) = task.execution.as_ref() {
             for (_, branch) in execution.modes.iter() {
-                let branch_command = branch
+                let branch_shell_command = branch
                     .run
                     .as_deref()
                     .or(branch.script.as_deref())
                     .map(str::trim)
                     .filter(|value| !value.is_empty());
-                let Some(command) = branch_command else {
+                if let Some(command) = branch_shell_command {
+                    if family.task_declares_inputs(task)
+                        || family.branch_declares_inputs(branch)
+                        || !obvious_replaceable_adapter_shell(family, command)
+                    {
+                        continue;
+                    }
+                    advisories.push(replaceable_adapter_ownership_advisory(
+                        family,
+                        task_name,
+                        command.to_string(),
+                    ));
+                    break;
+                }
+                let Some(command) = branch.command.as_ref() else {
                     continue;
                 };
-                if !task
-                    .adapter_inputs
-                    .bake
-                    .as_ref()
-                    .is_none_or(crate::schema::TaskBakeAdapterInputsSpec::is_empty)
-                    || !branch
-                        .adapter_inputs
-                        .bake
-                        .as_ref()
-                        .is_none_or(crate::schema::TaskBakeAdapterInputsSpec::is_empty)
-                    || !obvious_bake_file_shell(command)
+                if family.task_declares_inputs(task)
+                    || family.branch_declares_inputs(branch)
+                    || !obvious_replaceable_adapter_command(family, command)
                 {
                     continue;
                 }
-                advisories.push(ContractAdvisory::ReplaceableBakeFileOwnership(
-                    ReplaceableBakeFileOwnershipAdvisory {
-                        task_name: task_name.clone(),
-                        command: command.to_string(),
-                    },
+                advisories.push(replaceable_adapter_ownership_advisory(
+                    family,
+                    task_name,
+                    render_task_command_preview(command),
                 ));
                 break;
             }
@@ -7592,7 +7570,7 @@ fn collect_duplicate_workflow_rendered_env_ownership_advisories(
     advisories
 }
 
-fn collect_duplicate_workflow_compose_project_name_ownership_advisories(
+fn collect_duplicate_workflow_adapter_input_ownership_advisories(
     contract: &Contract,
 ) -> Vec<ContractAdvisory> {
     let Some(workflows) = contract.workflows.as_ref() else {
@@ -7613,6 +7591,8 @@ fn collect_duplicate_workflow_compose_project_name_ownership_advisories(
         else {
             continue;
         };
+        let workflow_location =
+            format!("workflows.{workflow_name}.env.adapter_inputs.compose.project_name");
 
         for task_name in contract.selected_workflow_task_closure_names(Some(workflow_name.as_str()))
         {
@@ -7629,16 +7609,17 @@ fn collect_duplicate_workflow_compose_project_name_ownership_advisories(
             {
                 let location = format!("tasks.{task_name}.adapter_inputs.compose.project_name");
                 if seen.insert((workflow_name.clone(), task_name.clone(), location.clone())) {
-                    advisories.push(
-                        ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(
-                            DuplicateWorkflowComposeProjectNameOwnershipAdvisory {
-                                workflow_name: workflow_name.clone(),
-                                task_name: task_name.clone(),
-                                project_name: project_name.to_string(),
-                                location,
-                            },
-                        ),
-                    );
+                    advisories.push(ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(
+                        DuplicateWorkflowAdapterInputOwnershipAdvisory {
+                            workflow_name: workflow_name.clone(),
+                            task_name: task_name.clone(),
+                            adapter_family: String::from("compose"),
+                            field_name: String::from("project_name"),
+                            field_value: project_name.to_string(),
+                            workflow_location: workflow_location.clone(),
+                            location,
+                        },
+                    ));
                 }
             }
             if let Some(execution) = task.execution.as_ref() {
@@ -7658,16 +7639,17 @@ fn collect_duplicate_workflow_compose_project_name_ownership_advisories(
                         format_backend(backend)
                     );
                     if seen.insert((workflow_name.clone(), task_name.clone(), location.clone())) {
-                        advisories.push(
-                            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(
-                                DuplicateWorkflowComposeProjectNameOwnershipAdvisory {
-                                    workflow_name: workflow_name.clone(),
-                                    task_name: task_name.clone(),
-                                    project_name: project_name.to_string(),
-                                    location,
-                                },
-                            ),
-                        );
+                        advisories.push(ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(
+                            DuplicateWorkflowAdapterInputOwnershipAdvisory {
+                                workflow_name: workflow_name.clone(),
+                                task_name: task_name.clone(),
+                                adapter_family: String::from("compose"),
+                                field_name: String::from("project_name"),
+                                field_value: project_name.to_string(),
+                                workflow_location: workflow_location.clone(),
+                                location,
+                            },
+                        ));
                     }
                 }
             }
@@ -7696,9 +7678,96 @@ fn obvious_compose_env_file_shell(command: &str) -> bool {
             || lower.contains(" --project-name "))
 }
 
+fn obvious_compose_env_file_command(command: &TaskCommandSpec) -> bool {
+    command.exe.trim().eq_ignore_ascii_case("docker")
+        && command
+            .args
+            .first()
+            .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose"))
+        && command.args.iter().any(|arg| {
+            matches!(
+                arg.trim(),
+                "--env-file" | "-f" | "--file" | "--profile" | "-p" | "--project-name"
+            )
+        })
+}
+
+fn obvious_replaceable_adapter_shell(family: AdapterInputFamily, command: &str) -> bool {
+    match family {
+        AdapterInputFamily::Compose => obvious_compose_env_file_shell(command),
+        AdapterInputFamily::Bake => obvious_bake_file_shell(command),
+    }
+}
+
 fn obvious_bake_file_shell(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     lower.contains("docker buildx bake") && (lower.contains(" -f ") || lower.contains(" --file "))
+}
+
+fn obvious_bake_file_command(command: &TaskCommandSpec) -> bool {
+    command.exe.trim().eq_ignore_ascii_case("docker")
+        && command
+            .args
+            .first()
+            .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
+        && command
+            .args
+            .get(1)
+            .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
+        && command
+            .args
+            .iter()
+            .any(|arg| matches!(arg.trim(), "-f" | "--file"))
+}
+
+fn obvious_replaceable_adapter_command(
+    family: AdapterInputFamily,
+    command: &TaskCommandSpec,
+) -> bool {
+    match family {
+        AdapterInputFamily::Compose => obvious_compose_env_file_command(command),
+        AdapterInputFamily::Bake => obvious_bake_file_command(command),
+    }
+}
+
+fn render_task_command_preview(command: &TaskCommandSpec) -> String {
+    std::iter::once(command.exe.as_str())
+        .chain(command.args.iter().map(String::as_str))
+        .map(render_command_token_preview)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn render_command_token_preview(token: &str) -> String {
+    if token
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':' | '='))
+    {
+        return token.to_string();
+    }
+    let escaped = token.replace('\'', "'\\''");
+    format!("'{escaped}'")
+}
+
+fn replaceable_adapter_ownership_advisory(
+    family: AdapterInputFamily,
+    task_name: &str,
+    command: String,
+) -> ContractAdvisory {
+    match family {
+        AdapterInputFamily::Compose => ContractAdvisory::ReplaceableComposeEnvFileOwnership(
+            ReplaceableComposeEnvFileOwnershipAdvisory {
+                task_name: task_name.to_string(),
+                command,
+            },
+        ),
+        AdapterInputFamily::Bake => {
+            ContractAdvisory::ReplaceableBakeFileOwnership(ReplaceableBakeFileOwnershipAdvisory {
+                task_name: task_name.to_string(),
+                command,
+            })
+        }
+    }
 }
 
 fn obvious_file_check_path(command: &str) -> Option<&str> {
@@ -27073,6 +27142,39 @@ tasks:
     }
 
     #[test]
+    fn collects_replaceable_compose_adapter_ownership_advisory_for_command_body() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    command:
+      exe: docker
+      args:
+        - compose
+        - --env-file
+        - .env.compose
+        - -f
+        - compose.yaml
+        - up
+        - -d
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(value)
+                if value.task_name == "docker-build"
+                    && value.command == "docker compose --env-file .env.compose -f compose.yaml up -d"
+        )));
+    }
+
+    #[test]
     fn collects_replaceable_bake_file_ownership_advisory() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -27092,6 +27194,37 @@ tasks:
             advisory,
             ContractAdvisory::ReplaceableBakeFileOwnership(value)
                 if value.task_name == "image:build"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_bake_file_ownership_advisory_for_command_body() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    command:
+      exe: docker
+      args:
+        - buildx
+        - bake
+        - -f
+        - docker-bake.hcl
+        - app
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableBakeFileOwnership(value)
+                if value.task_name == "image:build"
+                    && value.command == "docker buildx bake -f docker-bake.hcl app"
         )));
     }
 
@@ -27179,6 +27312,33 @@ tasks:
     }
 
     #[test]
+    fn compose_advisory_is_not_suppressed_by_unrelated_bake_adapter_inputs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    adapter_inputs:
+      bake:
+        files:
+          - docker-bake.hcl
+    run: docker compose --env-file .env.compose -f compose.yaml up -d
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(value)
+                if value.task_name == "docker-build"
+        )));
+    }
+
+    #[test]
     fn collects_duplicate_workflow_rendered_env_ownership_advisory() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -27252,10 +27412,13 @@ workflows:
         let advisories = collect_contract_advisories(&contract);
         assert!(advisories.iter().any(|advisory| matches!(
             advisory,
-            ContractAdvisory::DuplicateWorkflowComposeProjectNameOwnership(value)
+            ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(value)
                 if value.workflow_name == "compose"
                     && value.task_name == "build"
-                    && value.project_name == "workflow-local"
+                    && value.adapter_family == "compose"
+                    && value.field_name == "project_name"
+                    && value.field_value == "workflow-local"
+                    && value.workflow_location == "workflows.compose.env.adapter_inputs.compose.project_name"
         )));
     }
 
