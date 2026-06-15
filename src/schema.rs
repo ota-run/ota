@@ -3071,6 +3071,14 @@ impl ServiceSpec {
             .or_else(|| self.provider.clone())
     }
 
+    pub fn uses_host_lifecycle_owner(&self) -> bool {
+        match self.manager.as_ref().map(|manager| manager.kind) {
+            Some(ServiceManagerKind::Host) => true,
+            Some(ServiceManagerKind::Compose) => false,
+            None => self.provider.is_none() && (self.start.is_some() || self.stop.is_some()),
+        }
+    }
+
     pub fn start_command(&self, service_name: &str) -> Option<String> {
         self.start.clone().or_else(|| {
             self.manager

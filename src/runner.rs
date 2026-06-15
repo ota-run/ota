@@ -4137,7 +4137,7 @@ fn clean_execution_report_inner(
             .services
             .get(service_name.as_str())
             .expect("selected host-managed cleanup service should exist");
-        if service.stop_command_spec().is_none() {
+        if service.stop_command(service_name.as_str()).is_none() {
             continue;
         }
         match run_service_stop_command(
@@ -4772,8 +4772,7 @@ fn host_managed_services_for_cleanup(
         contract
             .services
             .get(service_name.as_str())
-            .and_then(|service| service.manager.as_ref())
-            .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Host)
+            .is_some_and(crate::schema::ServiceSpec::uses_host_lifecycle_owner)
     });
     names
 }
@@ -47286,6 +47285,79 @@ services:
         args:
           - -c
           - printf 'postgres\n' >> clean.log
+tasks:
+  dev:
+    requires_services:
+      - redis
+    run: echo app
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        );
+
+        let report = super::clean_execution_report_for_workflow(
+            &fixture.contract,
+            fixture.file_path(),
+            Some("app"),
+        )
+        .unwrap();
+
+        assert_eq!(report.stopped_host_services, 1);
+        assert_eq!(report.host_services, vec![String::from("redis")]);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("clean.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["redis"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_stops_legacy_host_owned_services() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    stop: printf 'redis\n' >> clean.log
+"#,
+        );
+
+        let report = clean_execution_report(&fixture.contract, fixture.file_path()).unwrap();
+
+        assert_eq!(report.stopped_host_services, 1);
+        assert_eq!(report.host_services, vec![String::from("redis")]);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("clean.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["redis"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_for_workflow_stops_only_selected_legacy_host_owned_services() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    stop: printf 'redis\n' >> clean.log
+  postgres:
+    stop: printf 'postgres\n' >> clean.log
 tasks:
   dev:
     requires_services:

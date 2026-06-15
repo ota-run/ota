@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- aligned `ota clean` host-service cleanup with the rest of the lifecycle surface: cleanup now
+  honors legacy host-owned `services.<name>.stop` commands in addition to structured
+  `services.<name>.manager.stop`, and workflow-scoped cleanup now includes those legacy host-owned
+  services instead of silently skipping them
 - widened typed host service ownership so `services.<name>.manager.kind: host` can now own
   lifecycle through structured `manager.start` / `manager.stop` commands; `ota up` and
   `requires_services` execution paths now run that first-class host-manager lifecycle truth
