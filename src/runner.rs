@@ -153,13 +153,25 @@ pub(crate) struct StreamPhaseLoader {
     handle: Option<thread::JoinHandle<()>>,
 }
 
-impl StreamPhaseLoader {
-    pub(crate) fn start(label: &str) -> Option<Self> {
-        Self::start_with_delay(label, Duration::from_millis(120))
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StreamPhaseLoaderPolicy {
+    Delayed,
+}
 
-    pub(crate) fn start_immediate(label: &str) -> Option<Self> {
-        Self::start_with_delay(label, Duration::ZERO)
+impl StreamPhaseLoaderPolicy {
+    fn delay(self) -> Duration {
+        match self {
+            Self::Delayed => Duration::from_millis(120),
+        }
+    }
+}
+
+impl StreamPhaseLoader {
+    pub(crate) fn start_with_policy(
+        label: &str,
+        policy: StreamPhaseLoaderPolicy,
+    ) -> Option<Self> {
+        Self::start_with_delay(label, policy.delay())
     }
 
     fn start_with_delay(label: &str, delay: Duration) -> Option<Self> {
@@ -250,9 +262,13 @@ fn should_show_stream_phase_loader() -> bool {
         && env::var_os("OTA_JSON_MODE").is_none()
 }
 
+fn stream_phase_clear_sequence() -> &'static str {
+    "\r\x1b[2K\x1b[1G"
+}
+
 fn clear_stream_phase_line() {
     let mut stderr = io::stderr();
-    let _ = write!(stderr, "\r\x1b[2K\r");
+    let _ = write!(stderr, "{}", stream_phase_clear_sequence());
     let _ = stderr.flush();
 }
 
@@ -530,11 +546,7 @@ where
     F: FnOnce(Option<StreamPhaseNotifier>) -> Option<RuntimeReadinessProbe>,
     G: FnMut(&mut Child),
 {
-    let loader = if capture_output {
-        StreamPhaseLoader::start_immediate(label)
-    } else {
-        StreamPhaseLoader::start(label)
-    };
+    let loader = StreamPhaseLoader::start_with_policy(label, StreamPhaseLoaderPolicy::Delayed);
     let notifier = loader.as_ref().map(|loader| loader.notifier());
     let readiness_probe = on_notifier_ready(notifier.clone());
     let mut child = command
@@ -5721,7 +5733,10 @@ fn execute_native_launch_command(
         } => {
             if emit_progress {
                 let interrupt_epoch = current_run_interrupt_epoch();
-                let loader = StreamPhaseLoader::start(&running_loader_label(task_name, backend));
+                let loader = StreamPhaseLoader::start_with_policy(
+                    &running_loader_label(task_name, backend),
+                    StreamPhaseLoaderPolicy::Delayed,
+                );
                 let notifier = loader.as_ref().map(|loader| loader.notifier());
                 let mut child = process
                     .stdin(Stdio::inherit())
@@ -11702,11 +11717,10 @@ fn ensure_target_producer_state(
         TaskExecutionMode::Stream {
             emit_progress: true,
             ..
-        } => StreamPhaseLoader::start(&activation_loader_label(
-            activation_mode,
-            producer_task_name,
-            &readiness_target,
-        )),
+        } => StreamPhaseLoader::start_with_policy(
+            &activation_loader_label(activation_mode, producer_task_name, &readiness_target),
+            StreamPhaseLoaderPolicy::Delayed,
+        ),
         _ => None,
     };
     let readiness_timing =
@@ -16600,10 +16614,10 @@ fn execute_backend_provider_task_command(
 
             let loader = emit_progress
                 .then(|| {
-                    StreamPhaseLoader::start(&running_loader_label_for_backend(
-                        task_name,
-                        Backend::Remote,
-                    ))
+                    StreamPhaseLoader::start_with_policy(
+                        &running_loader_label_for_backend(task_name, Backend::Remote),
+                        StreamPhaseLoaderPolicy::Delayed,
+                    )
                 })
                 .flatten();
             let notifier = loader.as_ref().map(|loader| loader.notifier());
@@ -16989,7 +17003,10 @@ fn execute_native_task_command(
         } => {
             if emit_progress {
                 let interrupt_epoch = current_run_interrupt_epoch();
-                let loader = StreamPhaseLoader::start(&running_loader_label(task_name, backend));
+                let loader = StreamPhaseLoader::start_with_policy(
+                    &running_loader_label(task_name, backend),
+                    StreamPhaseLoaderPolicy::Delayed,
+                );
                 let notifier = loader.as_ref().map(|loader| loader.notifier());
                 let mut child = process
                     .stdin(Stdio::inherit())
@@ -22734,10 +22751,10 @@ fn exec_persistent_container_task_command(
         } => {
             if capture_output {
                 let interrupt_epoch = current_run_interrupt_epoch();
-                let loader = StreamPhaseLoader::start_immediate(&running_loader_label_for_backend(
-                    task_name,
-                    Backend::Container,
-                ));
+                let loader = StreamPhaseLoader::start_with_policy(
+                    &running_loader_label_for_backend(task_name, Backend::Container),
+                    StreamPhaseLoaderPolicy::Delayed,
+                );
                 let notifier = loader.as_ref().map(|loader| loader.notifier());
                 let mut child = container
                     .stdin(Stdio::inherit())
@@ -22821,10 +22838,10 @@ fn exec_persistent_container_task_command(
                 })
             } else {
                 let interrupt_epoch = current_run_interrupt_epoch();
-                let loader = StreamPhaseLoader::start(&running_loader_label_for_backend(
-                    task_name,
-                    Backend::Container,
-                ));
+                let loader = StreamPhaseLoader::start_with_policy(
+                    &running_loader_label_for_backend(task_name, Backend::Container),
+                    StreamPhaseLoaderPolicy::Delayed,
+                );
                 let mut child = container
                     .stdin(Stdio::inherit())
                     .stdout(Stdio::inherit())
@@ -36842,6 +36859,11 @@ tasks:
         assert!(!super::buffer_contains_visible_output(b"\r\n\t"));
         assert!(!super::buffer_contains_visible_output(b"\x1b[2K\r"));
         assert!(super::buffer_contains_visible_output(b"$ cargo test\n"));
+    }
+
+    #[test]
+    fn stream_phase_clear_sequence_resets_column_after_erasing_line() {
+        assert_eq!(super::stream_phase_clear_sequence(), "\r\x1b[2K\x1b[1G");
     }
 
     #[test]

@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- made stream-phase loader timing explicit in the runner, so noisy task-output paths now use the
+  governed delayed loader policy instead of ad hoc immediate spinner behavior that could dirty
+  terminal output handoff before real task logs arrive
+- widened `native_prerequisites` from diagnose-only package guidance into a first-class host
+  preparation lane for `ota up` and `ota run`, so selected native prerequisite package-manager
+  bundles (`apt`, `brew`, `winget`, `choco`, `scoop`) can now be fulfilled by Ota before
+  rerunning preconditions instead of leaking that install burden into CI workflow glue
 - added first-class policy-backed `release-asset` provisioning for exact standalone tool binaries,
   so org policy can now approve platform-specific release URLs plus version probes, Ota can
   materialize those binaries into a source-managed workspace path for native/container execution,

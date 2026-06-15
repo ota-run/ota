@@ -36,8 +36,8 @@ use crate::policy_pack::{
     evaluate_actual_version_policy_match,
 };
 use crate::runner::{
-    ResolvedExecutionBackend, StreamPhaseLoader, join_stream_reader, persistent_container_name,
-    run_backend_command_captured, stream_reader_to_sink,
+    ResolvedExecutionBackend, StreamPhaseLoader, StreamPhaseLoaderPolicy, join_stream_reader,
+    persistent_container_name, run_backend_command_captured, stream_reader_to_sink,
 };
 use crate::schema::Lifecycle;
 
@@ -137,7 +137,14 @@ fn action_effective_version(action: &ProvisioningAction) -> &str {
     action.install_version()
 }
 
+fn action_is_unpinned_install(action: &ProvisioningAction) -> bool {
+    matches!(action.kind, ProvisioningActionKind::Install)
+}
+
 fn action_version_matches_output(action: &ProvisioningAction, value: &str) -> bool {
+    if action_is_unpinned_install(action) {
+        return true;
+    }
     text_output_contains_requested_version(value, &action.requested_version)
         || action.resolved_version.as_ref().is_some_and(|version| {
             version != &action.requested_version
@@ -963,11 +970,15 @@ impl AptProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!(
-                    "{}={}",
-                    action.install_name(),
-                    action_effective_version(action)
-                )
+                if action_is_unpinned_install(action) {
+                    action.install_name().to_string()
+                } else {
+                    format!(
+                        "{}={}",
+                        action.install_name(),
+                        action_effective_version(action)
+                    )
+                }
             }
         }
     }
@@ -1123,11 +1134,15 @@ impl DnfProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
         match action.target_kind {
             ProvisioningTargetKind::Runtime | ProvisioningTargetKind::Tool => {
-                format!(
-                    "{}-{}",
-                    action.install_name(),
-                    action_effective_version(action)
-                )
+                if action_is_unpinned_install(action) {
+                    action.install_name().to_string()
+                } else {
+                    format!(
+                        "{}-{}",
+                        action.install_name(),
+                        action_effective_version(action)
+                    )
+                }
             }
         }
     }
@@ -1302,7 +1317,16 @@ pub(crate) fn render_provisioning_action_command(action: &ProvisioningAction) ->
         "winget" => {
             let install_target = WingetProvisioningBackend::install_target(action);
             let source_args = WingetProvisioningBackend::source_args(action);
-            if source_args.is_empty() {
+            if action_is_unpinned_install(action) && source_args.is_empty() {
+                format!(
+                    "winget install --id {install_target} --exact --accept-source-agreements --accept-package-agreements"
+                )
+            } else if action_is_unpinned_install(action) {
+                format!(
+                    "winget install --id {install_target} --exact --accept-source-agreements --accept-package-agreements {}",
+                    source_args.join(" ")
+                )
+            } else if source_args.is_empty() {
                 format!(
                     "winget install --id {install_target} --version {} --exact --accept-source-agreements --accept-package-agreements",
                     version
@@ -1318,7 +1342,14 @@ pub(crate) fn render_provisioning_action_command(action: &ProvisioningAction) ->
         "choco" => {
             let install_target = ChocoProvisioningBackend::install_target(action);
             let source_args = ChocoProvisioningBackend::source_args(action);
-            if source_args.is_empty() {
+            if action_is_unpinned_install(action) && source_args.is_empty() {
+                format!("choco install {install_target} -y --no-progress")
+            } else if action_is_unpinned_install(action) {
+                format!(
+                    "choco install {install_target} -y --no-progress {}",
+                    source_args.join(" ")
+                )
+            } else if source_args.is_empty() {
                 format!(
                     "choco install {install_target} --version {} -y --no-progress",
                     version
@@ -2100,7 +2131,10 @@ impl ProvisioningBackend for WingetProvisioningBackend {
                 });
             }
 
-            if action.kind != ProvisioningActionKind::SelectSource {
+            if !matches!(
+                action.kind,
+                ProvisioningActionKind::SelectSource | ProvisioningActionKind::Install
+            ) {
                 return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
             }
 
@@ -2111,12 +2145,14 @@ impl ProvisioningBackend for WingetProvisioningBackend {
                 "install".to_string(),
                 "--id".to_string(),
                 install_target.clone(),
-                "--version".to_string(),
-                version.to_string(),
-                "--exact".to_string(),
-                "--accept-source-agreements".to_string(),
-                "--accept-package-agreements".to_string(),
             ];
+            if !action_is_unpinned_install(action) {
+                args.push("--version".to_string());
+                args.push(version.to_string());
+            }
+            args.push("--exact".to_string());
+            args.push("--accept-source-agreements".to_string());
+            args.push("--accept-package-agreements".to_string());
             args.extend(source_args.clone());
             let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
             let output =
@@ -2127,8 +2163,13 @@ impl ProvisioningBackend for WingetProvisioningBackend {
 
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
-                    command: if source_args.is_empty() {
+                    command: if source_args.is_empty() && action_is_unpinned_install(action) {
+                        format!("winget install --id {install_target}")
+                    } else if source_args.is_empty() {
                         format!("winget install --id {install_target} --version {}", version)
+                    } else if action_is_unpinned_install(action) {
+                        let source_arg = source_args.join(" ");
+                        format!("winget install --id {install_target} {source_arg}")
                     } else {
                         let source_arg = source_args.join(" ");
                         format!(
@@ -2169,7 +2210,10 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
                 });
             }
 
-            if action.kind != ProvisioningActionKind::SelectSource {
+            if !matches!(
+                action.kind,
+                ProvisioningActionKind::SelectSource | ProvisioningActionKind::Install
+            ) {
                 return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
             }
 
@@ -2179,11 +2223,13 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
             let mut args = vec![
                 "install".to_string(),
                 install_target.clone(),
-                "--version".to_string(),
-                version.to_string(),
-                "-y".to_string(),
-                "--no-progress".to_string(),
             ];
+            if !action_is_unpinned_install(action) {
+                args.push("--version".to_string());
+                args.push(version.to_string());
+            }
+            args.push("-y".to_string());
+            args.push("--no-progress".to_string());
             args.extend(source_args.clone());
             let arg_refs = args.iter().map(|value| value.as_str()).collect::<Vec<_>>();
             let output =
@@ -2195,8 +2241,11 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
             if output.exit_code != 0 {
                 return Err(ProvisioningBackendError::CommandFailed {
                     command: {
-                        let mut command =
-                            format!("choco install {install_target} --version {}", version);
+                        let mut command = if action_is_unpinned_install(action) {
+                            format!("choco install {install_target}")
+                        } else {
+                            format!("choco install {install_target} --version {}", version)
+                        };
                         if let Some(feed) = action
                             .source_config
                             .as_ref()
@@ -2241,7 +2290,10 @@ impl ProvisioningBackend for ScoopProvisioningBackend {
                 });
             }
 
-            if action.kind != ProvisioningActionKind::SelectSource {
+            if !matches!(
+                action.kind,
+                ProvisioningActionKind::SelectSource | ProvisioningActionKind::Install
+            ) {
                 return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
             }
 
@@ -2321,7 +2373,10 @@ impl ProvisioningBackend for BrewProvisioningBackend {
                 });
             }
 
-            if action.kind != ProvisioningActionKind::SelectSource {
+            if !matches!(
+                action.kind,
+                ProvisioningActionKind::SelectSource | ProvisioningActionKind::Install
+            ) {
                 return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
             }
 
@@ -2401,7 +2456,10 @@ impl ProvisioningBackend for PacmanProvisioningBackend {
                 });
             }
 
-            if action.kind != ProvisioningActionKind::SelectSource {
+            if !matches!(
+                action.kind,
+                ProvisioningActionKind::SelectSource | ProvisioningActionKind::Install
+            ) {
                 return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
             }
 
@@ -2453,7 +2511,10 @@ impl ProvisioningBackend for AptProvisioningBackend {
                 });
             }
 
-            if action.kind != ProvisioningActionKind::SelectSource {
+            if !matches!(
+                action.kind,
+                ProvisioningActionKind::SelectSource | ProvisioningActionKind::Install
+            ) {
                 return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
             }
 
@@ -2504,7 +2565,10 @@ impl ProvisioningBackend for DnfProvisioningBackend {
                 });
             }
 
-            if action.kind != ProvisioningActionKind::SelectSource {
+            if !matches!(
+                action.kind,
+                ProvisioningActionKind::SelectSource | ProvisioningActionKind::Install
+            ) {
                 return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
             }
 
@@ -4275,7 +4339,10 @@ fn command_output_from_child(
             })
         }
         ProvisioningOutputMode::StreamAndCapture => {
-            let loader = StreamPhaseLoader::start(loader_label.unwrap_or("Preparing environment"));
+            let loader = StreamPhaseLoader::start_with_policy(
+                loader_label.unwrap_or("Preparing environment"),
+                StreamPhaseLoaderPolicy::Delayed,
+            );
             let notifier = loader.as_ref().map(|loader| loader.notifier());
             let mut child = child
                 .stdout(Stdio::piped())
@@ -6861,6 +6928,53 @@ version_args:
         assert!(log_contents.contains("https://mirror.local/fedora/40/x86_64"));
         assert!(log_contents.contains("--enablerepo"));
         assert!(log_contents.contains("git-2.46.0"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_unpinned_package_install_with_dnf_shim() {
+        let _guard = env_mutex_lock();
+        let shim_dir = TempDir::new().unwrap();
+        let log = shim_dir.path().join("dnf.log");
+        make_shim(shim_dir.path(), "dnf", &log);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::Install,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "pkg-config".to_string(),
+                requested_version: "*".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
+                package: Some("pkg-config".to_string()),
+                source: "dnf".to_string(),
+                source_config: None,
+                approved_version: None,
+                policy_match: None,
+            }],
+        };
+
+        let result = apply_provisioning_request(&request, Path::new(".")).unwrap();
+        assert!(result.stderr.is_empty());
+        assert!(result.stdout.is_empty());
+        let log_contents = fs::read_to_string(log).unwrap();
+        assert!(log_contents.contains("install"));
+        assert!(log_contents.contains("-y"));
+        assert!(log_contents.contains("pkg-config"));
+        assert!(!log_contents.contains("pkg-config-*"));
 
         unsafe {
             env::set_var("PATH", original_path);

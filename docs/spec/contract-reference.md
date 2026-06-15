@@ -975,8 +975,11 @@ Optional.
 Use `native_prerequisites` for OS-native build-tool bundles that are not language runtimes or CLI
 tools. This is the right fit for prerequisites such as Linux compiler packages, macOS Xcode Command
 Line Tools, or Windows Visual Studio Build Tools. Ota diagnoses these through the selected
-platform precondition check or a structured platform probe and gives OS-specific install guidance;
-it does not silently install host build tools.
+platform precondition check or a structured platform probe and gives OS-specific install guidance.
+For selected native task paths, `ota up` and `ota run` may also fulfill declared package-manager
+guidance from this surface (`apt`, `brew`, `winget`, `choco`, `scoop`) before rerunning
+preconditions. Advisory host setup such as `xcode_clt`, `visual_studio`, `install`, and `note`
+remains explicit guidance rather than a silent host mutation path.
 
 Example:
 
@@ -1067,8 +1070,12 @@ Rules:
 - when one task references multiple native prerequisites for the same platform, any declared
   activation hints must agree; conflicting activation kinds or architectures are rejected
 - Ota only evaluates native prerequisites selected by `tasks.<name>.requirements.native`
-- native prerequisite diagnosis is non-mutating; use policy-backed provisioning for tools or
-  runtimes Ota is allowed to install
+- `ota doctor` remains non-mutating for native prerequisites
+- `ota up` and `ota run` may fulfill selected native prerequisite package-manager guidance from
+  `apt`, `brew`, `winget`, `choco`, and `scoop`, then rerun preconditions
+- native prerequisite package fulfillment is contract-owned today, not yet org-policy-approved per
+  package; use policy-backed provisioning for standalone tools or runtimes Ota is allowed to
+  install through approved source selection
 
 ## `env`
 

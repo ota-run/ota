@@ -53637,6 +53637,78 @@ workflows:
     }
 
     #[test]
+    fn selects_native_package_provisioning_actions_for_missing_native_prerequisite() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: native-packages
+native_prerequisites:
+  ruby-native-build-tools:
+    platforms:
+      linux:
+        check: ruby-native-build-tools-linux
+        apt:
+          - build-essential
+          - libpq-dev
+checks:
+  - name: ruby-native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version && pkg-config --version"
+tasks:
+  setup:
+    run: bundle install
+    requirements:
+      native:
+        - ruby-native-build-tools
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                identity: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Native prerequisite missing: ruby-native-build-tools"),
+                why: String::from("native packages are missing"),
+                next: String::from("install packages"),
+            }],
+        };
+
+        let actions = super::selected_up_native_package_provisioning_actions_for_os(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("app"),
+            &preflight,
+            "linux",
+        );
+
+        assert_eq!(actions.len(), 2);
+        assert!(actions.iter().all(|action| action.kind == ProvisioningActionKind::Install));
+        assert!(actions.iter().all(|action| action.source == "apt"));
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.install_name() == "build-essential")
+        );
+        assert!(
+            actions
+                .iter()
+                .any(|action| action.install_name() == "libpq-dev")
+        );
+    }
+
+    #[test]
     fn up_preview_explains_policy_provisioning_skips_corepack_activation() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -69049,7 +69121,7 @@ fn run_selected_precondition_failure(
     .ok()?;
     let preconditions_report =
         run_preview_preconditions_report(contract, contract_path, task_name.as_str(), overrides);
-    let summary = run_preview_summary(
+    let mut summary = run_preview_summary(
         contract,
         task_name.as_str(),
         member,
@@ -69058,6 +69130,43 @@ fn run_selected_precondition_failure(
     );
     if !doctor_verdict_blocks_preview(summary.verdict) {
         return None;
+    }
+    if has_native_prerequisite_blocker(&preconditions_report) {
+        let native_actions = selected_task_native_package_provisioning_actions_for_os(
+            contract,
+            task_name.as_str(),
+            overrides,
+            &preconditions_report,
+            current_requirement_platform(),
+        );
+        if !native_actions.is_empty() {
+            let request = crate::policy_pack::ProvisioningBackendRequest {
+                actions: native_actions,
+            };
+            if best_effort_apply_provisioning_request_with_adapter_bootstrap(
+                contract_path,
+                &request,
+                &ProvisioningExecutionTarget::Native,
+            ) {
+                let refreshed_report = run_preview_preconditions_report(
+                    contract,
+                    contract_path,
+                    task_name.as_str(),
+                    overrides,
+                );
+                let refreshed_summary = run_preview_summary(
+                    contract,
+                    task_name.as_str(),
+                    member,
+                    &env_report,
+                    &refreshed_report,
+                );
+                if !doctor_verdict_blocks_preview(refreshed_summary.verdict) {
+                    return None;
+                }
+                summary = refreshed_summary;
+            }
+        }
     }
     let primary_blocker = summary.primary_blocker?;
     if !run_precondition_blocker_should_stop_execution(&primary_blocker.summary) {
@@ -80897,7 +81006,7 @@ fn selected_up_provisioning_actions(
     preflight: &DoctorReport,
 ) -> Vec<crate::policy_pack::ProvisioningAction> {
     let requirement_surface = up_policy_requirement_surface(contract, overrides, workflow_name);
-    preflight
+    let mut actions: Vec<crate::policy_pack::ProvisioningAction> = preflight
         .provisioning
         .as_ref()
         .map(|provisioning| {
@@ -80915,7 +81024,14 @@ fn selected_up_provisioning_actions(
                 .cloned()
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    actions.extend(selected_up_native_package_provisioning_actions(
+        contract,
+        overrides,
+        workflow_name,
+        preflight,
+    ));
+    actions
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81283,6 +81399,227 @@ fn selected_up_native_preparation_actions(
         preflight,
         current_requirement_platform(),
     )
+}
+
+fn native_prerequisite_package_provisioning_actions(
+    platform: &crate::schema::NativePrerequisitePlatformSpec,
+) -> Vec<crate::policy_pack::ProvisioningAction> {
+    let mut actions = Vec::new();
+    for package in &platform.apt {
+        actions.push(crate::policy_pack::ProvisioningAction {
+            kind: crate::policy_pack::ProvisioningActionKind::Install,
+            target_kind: crate::policy_pack::ProvisioningTargetKind::Tool,
+            name: package.clone(),
+            requested_version: "*".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: Some(package.clone()),
+            source: "apt".to_string(),
+            source_config: None,
+            approved_version: None,
+            policy_match: None,
+        });
+    }
+    for package in &platform.brew {
+        actions.push(crate::policy_pack::ProvisioningAction {
+            kind: crate::policy_pack::ProvisioningActionKind::Install,
+            target_kind: crate::policy_pack::ProvisioningTargetKind::Tool,
+            name: package.clone(),
+            requested_version: "*".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: Some(package.clone()),
+            source: "brew".to_string(),
+            source_config: None,
+            approved_version: None,
+            policy_match: None,
+        });
+    }
+    for package in &platform.winget {
+        actions.push(crate::policy_pack::ProvisioningAction {
+            kind: crate::policy_pack::ProvisioningActionKind::Install,
+            target_kind: crate::policy_pack::ProvisioningTargetKind::Tool,
+            name: package.clone(),
+            requested_version: "*".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: Some(package.clone()),
+            source: "winget".to_string(),
+            source_config: None,
+            approved_version: None,
+            policy_match: None,
+        });
+    }
+    for package in &platform.choco {
+        actions.push(crate::policy_pack::ProvisioningAction {
+            kind: crate::policy_pack::ProvisioningActionKind::Install,
+            target_kind: crate::policy_pack::ProvisioningTargetKind::Tool,
+            name: package.clone(),
+            requested_version: "*".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: Some(package.clone()),
+            source: "choco".to_string(),
+            source_config: None,
+            approved_version: None,
+            policy_match: None,
+        });
+    }
+    for package in &platform.scoop {
+        actions.push(crate::policy_pack::ProvisioningAction {
+            kind: crate::policy_pack::ProvisioningActionKind::Install,
+            target_kind: crate::policy_pack::ProvisioningTargetKind::Tool,
+            name: package.clone(),
+            requested_version: "*".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: Some(package.clone()),
+            source: "scoop".to_string(),
+            source_config: None,
+            approved_version: None,
+            policy_match: None,
+        });
+    }
+    actions
+}
+
+fn selected_up_native_package_provisioning_actions(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    preflight: &DoctorReport,
+) -> Vec<crate::policy_pack::ProvisioningAction> {
+    selected_up_native_package_provisioning_actions_for_os(
+        contract,
+        overrides,
+        workflow_name,
+        preflight,
+        current_requirement_platform(),
+    )
+}
+
+fn selected_up_native_package_provisioning_actions_for_os(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    preflight: &DoctorReport,
+    current_os: &str,
+) -> Vec<crate::policy_pack::ProvisioningAction> {
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        if !matches!(effective.backend, Backend::Native) {
+            continue;
+        }
+        for native_name in
+            task.scoped_native_requirements_for_execution(effective.backend, effective.context_name)
+        {
+            if !native_requirement_targets_missing_finding(native_name.as_str(), &preflight.findings)
+            {
+                continue;
+            }
+            let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
+                continue;
+            };
+            let Some(platform) = prerequisite.platform_for_os(current_os) else {
+                continue;
+            };
+            for action in native_prerequisite_package_provisioning_actions(platform) {
+                let key = format!("{}:{}", action.source, action.install_name());
+                if seen.insert(key) {
+                    actions.push(action);
+                }
+            }
+        }
+    }
+    actions
+}
+
+fn selected_task_native_package_provisioning_actions_for_os(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+    preflight: &DoctorReport,
+    current_os: &str,
+) -> Vec<crate::policy_pack::ProvisioningAction> {
+    let Some(task) = contract.tasks.get(task_name) else {
+        return Vec::new();
+    };
+    let effective = effective_task_execution(contract, task_name, overrides);
+    if !matches!(effective.backend, Backend::Native) {
+        return Vec::new();
+    }
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+    for native_name in
+        task.scoped_native_requirements_for_execution(effective.backend, effective.context_name)
+    {
+        if !native_requirement_targets_missing_finding(native_name.as_str(), &preflight.findings) {
+            continue;
+        }
+        let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
+            continue;
+        };
+        let Some(platform) = prerequisite.platform_for_os(current_os) else {
+            continue;
+        };
+        for action in native_prerequisite_package_provisioning_actions(platform) {
+            let key = format!("{}:{}", action.source, action.install_name());
+            if seen.insert(key) {
+                actions.push(action);
+            }
+        }
+    }
+    actions
+}
+
+fn best_effort_apply_provisioning_request_with_adapter_bootstrap(
+    contract_path: &Path,
+    request: &crate::policy_pack::ProvisioningBackendRequest,
+    target: &ProvisioningExecutionTarget,
+) -> bool {
+    let working_dir = contract_working_dir(contract_path);
+    if apply_provisioning_request_with_target(
+        request,
+        working_dir,
+        target,
+        ProvisioningOutputMode::Capture,
+    )
+    .is_ok()
+    {
+        return true;
+    }
+
+    let Ok(Some((policy_pack, _))) = load_org_policy_pack_auto(contract_path) else {
+        return false;
+    };
+    let mut adapters = request
+        .actions
+        .iter()
+        .map(|action| action.source.trim())
+        .filter(|source| !source.is_empty() && !source.ends_with("-bootstrap"))
+        .collect::<Vec<_>>();
+    adapters.sort_unstable();
+    adapters.dedup();
+    let bootstrap_request = policy_pack.adapter_bootstrap_backend_request(&adapters);
+    if bootstrap_request.actions.is_empty()
+        || apply_provisioning_request_with_target(
+            &bootstrap_request,
+            working_dir,
+            target,
+            ProvisioningOutputMode::Capture,
+        )
+        .is_err()
+    {
+        return false;
+    }
+
+    apply_provisioning_request_with_target(request, working_dir, target, ProvisioningOutputMode::Capture)
+        .is_ok()
 }
 
 fn selected_up_native_preparation_actions_for_os(
