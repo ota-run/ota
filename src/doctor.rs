@@ -11935,6 +11935,87 @@ mod tests {
         })
     }
 
+    fn current_native_package_test_case() -> (&'static str, &'static str, &'static str, &'static str)
+    {
+        match super::current_os() {
+            "macos" => (
+                "macos",
+                "brew",
+                "pkg-config",
+                "ruby-native-build-tools-macos",
+            ),
+            "windows" => (
+                "windows",
+                "winget",
+                "Microsoft.VisualStudio.2022.BuildTools",
+                "ruby-native-build-tools-windows",
+            ),
+            _ => (
+                "linux",
+                "apt",
+                "build-essential",
+                "ruby-native-build-tools-linux",
+            ),
+        }
+    }
+
+    fn write_native_package_policy_fixture(
+        fixture: &TempDir,
+        approved_package: &str,
+    ) -> (&'static str, &'static str, &'static str, &'static str) {
+        let (platform_name, package_source, package_name, check_name) =
+            current_native_package_test_case();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  ruby-native-build-tools:
+    platforms:
+      {platform_name}:
+        check: {check_name}
+        {package_source}:
+          - {package_name}
+checks:
+  - name: {check_name}
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version && pkg-config --version"
+tasks:
+  setup:
+    run: bundle install
+    requirements:
+      native:
+        - ruby-native-build-tools
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            format!(
+                r#"
+policies:
+  native_packages:
+    {package_source}:
+      approved:
+        - {approved_package}
+"#,
+            ),
+        )
+        .unwrap();
+        (platform_name, package_source, package_name, check_name)
+    }
+
     fn drain_probe_request_if_available(stream: &mut TcpStream) {
         // Let the client start the request before responding so the fake server does
         // not race the probe, but bound the wait to keep the tests deterministic.
@@ -20427,6 +20508,33 @@ tasks:
             .expect("env source finding should be present");
         findings.push(finding_contract_projection("env", env_finding));
 
+        let native_package_policy_fixture = TempDir::new().unwrap();
+        let (_, native_package_source, native_package_name, _) =
+            write_native_package_policy_fixture(&native_package_policy_fixture, "libpq-dev");
+        let native_package_policy_contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(native_package_policy_fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+        let native_package_policy_report = diagnose_preconditions(
+            &native_package_policy_contract,
+            &native_package_policy_fixture.path().join("ota.yaml"),
+        );
+        let native_package_policy_finding = native_package_policy_report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary
+                    == format!(
+                        "Org policy does not approve native package: {native_package_source}:{native_package_name}"
+                    )
+            })
+            .expect("native package policy finding should be present");
+        findings.push(finding_contract_projection(
+            "native_package_policy",
+            native_package_policy_finding,
+        ));
+
         let contract_bake_advisory = parse_contract_str(
             synthetic_contract_path(),
             r#"
@@ -20493,6 +20601,82 @@ workflows:
         findings.push(finding_contract_projection(
             "contract_workflow",
             contract_workflow_finding,
+        ));
+
+        let contract_native_manager_advisory = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  native-build-tools:
+    platforms:
+      linux:
+        check: native-build-tools-linux
+        winget:
+          - Microsoft.VisualStudio.2022.BuildTools
+checks:
+  - name: native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version"
+"#,
+        )
+        .unwrap();
+        let contract_native_manager_report =
+            diagnose_contract(&contract_native_manager_advisory, synthetic_contract_path());
+        let contract_native_manager_finding = contract_native_manager_report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary
+                    == "native prerequisite `native-build-tools` platform `linux` declares likely wrong-OS package manager `winget`"
+            })
+            .expect("wrong-platform native package manager advisory should be present");
+        findings.push(finding_contract_projection(
+            "contract_native_manager",
+            contract_native_manager_finding,
+        ));
+
+        let contract_mixed_native_ownership_advisory = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  native-build-tools:
+    platforms:
+      linux:
+        check: native-build-tools-linux
+        install: ./scripts/bootstrap-native.sh
+        apt:
+          - build-essential
+checks:
+  - name: native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version"
+"#,
+        )
+        .unwrap();
+        let contract_mixed_native_ownership_report = diagnose_contract(
+            &contract_mixed_native_ownership_advisory,
+            synthetic_contract_path(),
+        );
+        let contract_mixed_native_ownership_finding =
+            contract_mixed_native_ownership_report
+                .findings
+                .iter()
+                .find(|finding| {
+                    finding.summary
+                        == "native prerequisite `native-build-tools` platform `linux` mixes manual install glue with manager-owned package truth"
+                })
+                .expect("mixed native package ownership advisory should be present");
+        findings.push(finding_contract_projection(
+            "contract_mixed_native_ownership",
+            contract_mixed_native_ownership_finding,
         ));
 
         let provisioning_finding = super::provisioning_installability_finding(
@@ -20585,6 +20769,19 @@ tasks:
                     "policy_reason": serde_json::Value::Null,
                 }),
                 serde_json::json!({
+                    "lane": "native_package_policy",
+                    "code": "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED",
+                    "category": "policy",
+                    "owner": "org_policy",
+                    "severity": "error",
+                    "summary": format!(
+                        "Org policy does not approve native package: {native_package_source}:{native_package_name}"
+                    ),
+                    "evidence_source": "org_policy",
+                    "provenance_key": "org_policy",
+                    "policy_reason": "native_package_not_approved",
+                }),
+                serde_json::json!({
                     "lane": "contract_bake",
                     "code": "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP",
                     "category": "contract",
@@ -20602,6 +20799,28 @@ tasks:
                     "owner": "repo_contract",
                     "severity": "warn",
                     "summary": "workflow `compose` duplicates compose `files` ownership in task `dev`",
+                    "evidence_source": "doctor",
+                    "provenance_key": "repo_contract",
+                    "policy_reason": serde_json::Value::Null,
+                }),
+                serde_json::json!({
+                    "lane": "contract_native_manager",
+                    "code": "OTA_CONTRACT_ADVISORY_NATIVE_PACKAGE_MANAGER_LIKELY_WRONG_PLATFORM",
+                    "category": "contract",
+                    "owner": "repo_contract",
+                    "severity": "warn",
+                    "summary": "native prerequisite `native-build-tools` platform `linux` declares likely wrong-OS package manager `winget`",
+                    "evidence_source": "doctor",
+                    "provenance_key": "repo_contract",
+                    "policy_reason": serde_json::Value::Null,
+                }),
+                serde_json::json!({
+                    "lane": "contract_mixed_native_ownership",
+                    "code": "OTA_CONTRACT_ADVISORY_MIXED_NATIVE_PACKAGE_OWNERSHIP",
+                    "category": "contract",
+                    "owner": "repo_contract",
+                    "severity": "warn",
+                    "summary": "native prerequisite `native-build-tools` platform `linux` mixes manual install glue with manager-owned package truth",
                     "evidence_source": "doctor",
                     "provenance_key": "repo_contract",
                     "policy_reason": serde_json::Value::Null,
@@ -20734,6 +20953,18 @@ tasks:
             },
             DoctorFindingReferenceEntry {
                 code: "OTA_CONTRACT_ADVISORY_LIKELY_UNUSED_ATTACHMENT",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_MIXED_NATIVE_PACKAGE_OWNERSHIP",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_NATIVE_PACKAGE_MANAGER_LIKELY_WRONG_PLATFORM",
                 category: "contract",
                 owner_surface: "repo_contract",
                 provenance_key_surface: "repo_contract",
@@ -22823,74 +23054,8 @@ policies:
     fn reports_policy_native_package_violations() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
-        let (platform_name, package_source, package_name, check_name) = match super::current_os() {
-            "macos" => (
-                "macos",
-                "brew",
-                "pkg-config",
-                "ruby-native-build-tools-macos",
-            ),
-            "windows" => (
-                "windows",
-                "winget",
-                "Microsoft.VisualStudio.2022.BuildTools",
-                "ruby-native-build-tools-windows",
-            ),
-            _ => (
-                "linux",
-                "apt",
-                "build-essential",
-                "ruby-native-build-tools-linux",
-            ),
-        };
-        fs::write(
-            fixture.path().join("ota.yaml"),
-            format!(
-                r#"
-version: 1
-project:
-  name: ota
-native_prerequisites:
-  ruby-native-build-tools:
-    platforms:
-      {platform_name}:
-        check: {check_name}
-        {package_source}:
-          - {package_name}
-checks:
-  - name: {check_name}
-    kind: precondition
-    severity: error
-    run: sh -c "cc --version && pkg-config --version"
-tasks:
-  setup:
-    run: bundle install
-    requirements:
-      native:
-        - ruby-native-build-tools
-workflows:
-  default: app
-  app:
-    setup:
-      task: setup
-"#,
-            ),
-        )
-        .unwrap();
-        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
-        fs::write(
-            fixture.path().join(".ota").join("org-policy.yaml"),
-            format!(
-                r#"
-policies:
-  native_packages:
-    {package_source}:
-      approved:
-        - libpq-dev
-"#,
-            ),
-        )
-        .unwrap();
+        let (_, package_source, package_name, _) =
+            write_native_package_policy_fixture(&fixture, "libpq-dev");
 
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -22940,74 +23105,8 @@ policies:
     fn policy_approved_native_packages_flow_into_precondition_provisioning_request() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
-        let (platform_name, package_source, package_name, check_name) = match super::current_os() {
-            "macos" => (
-                "macos",
-                "brew",
-                "pkg-config",
-                "ruby-native-build-tools-macos",
-            ),
-            "windows" => (
-                "windows",
-                "winget",
-                "Microsoft.VisualStudio.2022.BuildTools",
-                "ruby-native-build-tools-windows",
-            ),
-            _ => (
-                "linux",
-                "apt",
-                "build-essential",
-                "ruby-native-build-tools-linux",
-            ),
-        };
-        fs::write(
-            fixture.path().join("ota.yaml"),
-            format!(
-                r#"
-version: 1
-project:
-  name: ota
-native_prerequisites:
-  ruby-native-build-tools:
-    platforms:
-      {platform_name}:
-        check: {check_name}
-        {package_source}:
-          - {package_name}
-checks:
-  - name: {check_name}
-    kind: precondition
-    severity: error
-    run: sh -c "cc --version && pkg-config --version"
-tasks:
-  setup:
-    run: bundle install
-    requirements:
-      native:
-        - ruby-native-build-tools
-workflows:
-  default: app
-  app:
-    setup:
-      task: setup
-"#,
-            ),
-        )
-        .unwrap();
-        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
-        fs::write(
-            fixture.path().join(".ota").join("org-policy.yaml"),
-            format!(
-                r#"
-policies:
-  native_packages:
-    {package_source}:
-      approved:
-        - {package_name}
-"#,
-            ),
-        )
-        .unwrap();
+        let (_, package_source, package_name, _) =
+            write_native_package_policy_fixture(&fixture, current_native_package_test_case().2);
 
         let contract = parse_contract_str(
             synthetic_contract_path(),

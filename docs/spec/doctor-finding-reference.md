@@ -54,6 +54,8 @@ field is not emitted for that finding family.
 | `OTA_CONTRACT_ADVISORY_LEGACY_NODE_RUNTIME_TOOL_SPLIT` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_LEGACY_STANDALONE_POETRY` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_LIKELY_UNUSED_ATTACHMENT` | `contract` | `repo_contract` | `repo_contract` |
+| `OTA_CONTRACT_ADVISORY_MIXED_NATIVE_PACKAGE_OWNERSHIP` | `contract` | `repo_contract` | `repo_contract` |
+| `OTA_CONTRACT_ADVISORY_NATIVE_PACKAGE_MANAGER_LIKELY_WRONG_PLATFORM` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_CHECK` | `contract` | `repo_contract` | `repo_contract` |
@@ -192,6 +194,7 @@ field is not emitted for that finding family.
 | `OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT` | `policy` | `org_policy` | `org_policy` |
 | `OTA_POLICY_PACK_INVALID` | `policy` | `org_policy` | `org_policy` |
 | `OTA_POLICY_PACK_VIOLATION` | `policy` | `org_policy` | `org_policy` |
+| `OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED` | `policy` | `org_policy` | `org_policy` |
 | `OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING` | `policy` | `org_policy` | `org_policy` |
 
 ## Workspace
