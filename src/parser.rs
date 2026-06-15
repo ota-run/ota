@@ -610,6 +610,33 @@ unexpected: true
     }
 
     #[test]
+    fn rejects_generic_native_prerequisite_packages_field() {
+        let error = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  native-build-tools:
+    platforms:
+      linux:
+        check: native-build-tools-linux
+        packages:
+          - build-essential
+checks:
+  - name: native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version"
+"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field `packages`"));
+    }
+
+    #[test]
     fn resolves_named_execution_context_extends_inheritance() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),

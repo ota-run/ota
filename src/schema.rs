@@ -2327,8 +2327,6 @@ pub struct NativePrerequisitePlatformSpec {
     #[serde(default)]
     pub check: Option<String>,
     #[serde(default)]
-    pub packages: Vec<String>,
-    #[serde(default)]
     pub apt: Vec<String>,
     #[serde(default)]
     pub brew: Vec<String>,
@@ -2383,7 +2381,6 @@ impl NativePrerequisitePlatformSpec {
                 .note
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty())
-            || !self.packages.is_empty()
             || !self.apt.is_empty()
             || !self.brew.is_empty()
             || !self.winget.is_empty()
@@ -5603,10 +5600,7 @@ pub struct TaskComposeAdapterInputsSpec {
 
 impl TaskComposeAdapterInputsSpec {
     pub fn is_empty(&self) -> bool {
-        self.cwd
-            .as_deref()
-            .map(str::trim)
-            .is_none_or(str::is_empty)
+        self.cwd.as_deref().map(str::trim).is_none_or(str::is_empty)
             && self.env_files.is_empty()
             && self.files.is_empty()
             && self.profiles.is_empty()
@@ -5631,11 +5625,7 @@ pub struct TaskBakeAdapterInputsSpec {
 
 impl TaskBakeAdapterInputsSpec {
     pub fn is_empty(&self) -> bool {
-        self.cwd
-            .as_deref()
-            .map(str::trim)
-            .is_none_or(str::is_empty)
-            && self.files.is_empty()
+        self.cwd.as_deref().map(str::trim).is_none_or(str::is_empty) && self.files.is_empty()
     }
 }
 

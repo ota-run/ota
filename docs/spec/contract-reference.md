@@ -1047,8 +1047,8 @@ Rules:
   `platforms.<os>.check` must reference a declared `kind: precondition` check, unless the
   selected platform entry declares a structured Ota-owned probe such as `windows.visual_studio`
 - `platforms` may use `linux`, `macos`, and `windows`
-- platform entries may declare `apt`, `brew`, `winget`, `choco`, `scoop`, generic `packages`,
-  `xcode_clt`, `visual_studio`, `activation`, `install`, or `note` guidance
+- platform entries may declare `apt`, `brew`, `winget`, `choco`, `scoop`, `xcode_clt`,
+  `visual_studio`, `activation`, `install`, or `note` guidance
 - `platforms.windows.visual_studio.components` lists Visual Studio Installer component IDs that
   Ota checks with `vswhere`; this is preferred over embedding a raw PowerShell `vswhere` command
   in `checks.run`
@@ -1073,9 +1073,12 @@ Rules:
 - `ota doctor` remains non-mutating for native prerequisites
 - `ota up` and `ota run` may fulfill selected native prerequisite package-manager guidance from
   `apt`, `brew`, `winget`, `choco`, and `scoop`, then rerun preconditions
-- native prerequisite package fulfillment is contract-owned today, not yet org-policy-approved per
-  package; use policy-backed provisioning for standalone tools or runtimes Ota is allowed to
-  install through approved source selection
+- when an org policy pack is active, native prerequisite package fulfillment must also be approved
+  under `policies.native_packages.<manager>.approved`; Ota does not silently bypass that policy
+  gate
+- use policy-backed provisioning for standalone tools or runtimes Ota is allowed to install
+  through approved source selection; use `policies.native_packages` for host package-manager
+  bundles owned by `native_prerequisites`
 
 ## `env`
 

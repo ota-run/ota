@@ -25,9 +25,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 
+use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use serde_yaml::Value;
-use serde::Deserialize;
 use thiserror::Error;
 
 use crate::execution::{container_backend_probe_failure, container_engine_command};
@@ -218,11 +218,12 @@ fn release_asset_url(
     config: &ReleaseAssetSourceConfig,
 ) -> Result<String, ProvisioningBackendError> {
     let platform = release_asset_platform_key(target);
-    let template = config.asset_by_platform.get(platform.as_str()).ok_or_else(|| {
-        ProvisioningBackendError::UnsupportedSource {
+    let template = config
+        .asset_by_platform
+        .get(platform.as_str())
+        .ok_or_else(|| ProvisioningBackendError::UnsupportedSource {
             provisioning_source: format!("{} (unsupported platform `{platform}`)", action.source),
-        }
-    })?;
+        })?;
 
     Ok(template
         .replace("{version}", action_effective_version(action))
@@ -2220,10 +2221,7 @@ impl ProvisioningBackend for ChocoProvisioningBackend {
             let install_target = Self::install_target(action);
             let version = action_effective_version(action);
             let source_args = Self::source_args(action);
-            let mut args = vec![
-                "install".to_string(),
-                install_target.clone(),
-            ];
+            let mut args = vec!["install".to_string(), install_target.clone()];
             if !action_is_unpinned_install(action) {
                 args.push("--version".to_string());
                 args.push(version.to_string());
@@ -3505,7 +3503,9 @@ pub(crate) fn probe_provisioning_installability_with_target(
         "winget" => probe_winget_installability_with_target(action, working_dir, target),
         "choco" => probe_choco_installability_with_target(action, working_dir, target),
         "scoop" => probe_scoop_installability_with_target(action, working_dir, target),
-        "release-asset" => probe_release_asset_installability_with_target(action, working_dir, target),
+        "release-asset" => {
+            probe_release_asset_installability_with_target(action, working_dir, target)
+        }
         _ => {
             return Err(ProvisioningBackendError::UnsupportedSource {
                 provisioning_source: action.source.clone(),
@@ -4252,14 +4252,12 @@ fn version_matches_request(candidate: &str, request: &str) -> bool {
         return true;
     }
 
-    [".", "-", "+", "_", " "]
-        .iter()
-        .any(|delimiter| {
-            candidate.starts_with(&format!("{request}{delimiter}"))
-                || candidate
-                    .trim_start_matches('v')
-                    .starts_with(&format!("{request}{delimiter}"))
-        })
+    [".", "-", "+", "_", " "].iter().any(|delimiter| {
+        candidate.starts_with(&format!("{request}{delimiter}"))
+            || candidate
+                .trim_start_matches('v')
+                .starts_with(&format!("{request}{delimiter}"))
+    })
 }
 
 fn text_output_contains_requested_version(value: &str, request: &str) -> bool {

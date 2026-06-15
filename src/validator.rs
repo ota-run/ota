@@ -28,8 +28,8 @@ use semver::Version;
 
 use crate::adapter_inputs::{
     ADAPTER_INPUT_FAMILIES, ADAPTER_INPUT_FIELDS, AdapterInputFamily, AdapterInputField,
-    workflow_declares_compose_file_alias,
-    workflow_declares_compose_project_name_alias, workflow_duplicates_canonical_compose_file_alias,
+    workflow_declares_compose_file_alias, workflow_declares_compose_project_name_alias,
+    workflow_duplicates_canonical_compose_file_alias,
     workflow_duplicates_canonical_compose_project_name_alias,
 };
 use crate::capabilities::{
@@ -1287,13 +1287,6 @@ fn validate_native_prerequisites(contract: &Contract, errors: &mut Vec<Validatio
                     )));
                 }
             }
-            validate_native_prerequisite_values(
-                name,
-                platform,
-                "packages",
-                &platform_detail.packages,
-                errors,
-            );
             validate_native_prerequisite_values(
                 name,
                 platform,
@@ -3517,7 +3510,11 @@ fn validate_task_adapter_inputs(
     errors: &mut Vec<ValidationError>,
 ) {
     if let Some(compose) = adapter_inputs.compose.as_ref() {
-        if let Some(cwd) = compose.cwd.as_deref().map(str::trim).filter(|cwd| !cwd.is_empty())
+        if let Some(cwd) = compose
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|cwd| !cwd.is_empty())
             && !is_safe_repo_relative_file_path(cwd)
         {
             errors.push(ValidationError::new(format!(
@@ -3555,7 +3552,11 @@ fn validate_task_adapter_inputs(
         }
     }
     if let Some(bake) = adapter_inputs.bake.as_ref() {
-        if let Some(cwd) = bake.cwd.as_deref().map(str::trim).filter(|cwd| !cwd.is_empty())
+        if let Some(cwd) = bake
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|cwd| !cwd.is_empty())
             && !is_safe_repo_relative_file_path(cwd)
         {
             errors.push(ValidationError::new(format!(
@@ -3578,7 +3579,11 @@ fn validate_workflow_adapter_inputs(
     errors: &mut Vec<ValidationError>,
 ) {
     if let Some(compose) = adapter_inputs.compose.as_ref() {
-        if let Some(cwd) = compose.cwd.as_deref().map(str::trim).filter(|cwd| !cwd.is_empty())
+        if let Some(cwd) = compose
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|cwd| !cwd.is_empty())
             && !is_safe_repo_relative_file_path(cwd)
         {
             errors.push(ValidationError::new(format!(
@@ -3619,7 +3624,11 @@ fn validate_workflow_adapter_inputs(
         }
     }
     if let Some(bake) = adapter_inputs.bake.as_ref() {
-        if let Some(cwd) = bake.cwd.as_deref().map(str::trim).filter(|cwd| !cwd.is_empty())
+        if let Some(cwd) = bake
+            .cwd
+            .as_deref()
+            .map(str::trim)
+            .filter(|cwd| !cwd.is_empty())
             && !is_safe_repo_relative_file_path(cwd)
         {
             errors.push(ValidationError::new(format!(
@@ -8001,8 +8010,7 @@ fn obvious_bake_file_shell(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     (lower.contains("docker buildx bake") && (lower.contains(" -f ") || lower.contains(" --file ")))
         || (lower.trim_start().starts_with("cd ")
-            && (lower.contains("&& docker buildx bake")
-                || lower.contains("; docker buildx bake")))
+            && (lower.contains("&& docker buildx bake") || lower.contains("; docker buildx bake")))
 }
 
 fn obvious_bake_file_command(command: &TaskCommandSpec) -> bool {
@@ -13525,9 +13533,11 @@ workflows:
         .expect("contract should parse");
 
         let error = validate_contract(&contract).expect_err("prepare should reject duplicates");
-        assert!(error.to_string().contains(
-            "`workflows.app.prepare` must declare exactly one of `task` or `action`"
-        ));
+        assert!(
+            error
+                .to_string()
+                .contains("`workflows.app.prepare` must declare exactly one of `task` or `action`")
+        );
     }
 
     #[test]
@@ -27829,7 +27839,8 @@ tasks:
     }
 
     #[test]
-    fn collects_replaceable_compose_adapter_ownership_advisory_for_project_directory_command_body() {
+    fn collects_replaceable_compose_adapter_ownership_advisory_for_project_directory_command_body()
+    {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"

@@ -35318,9 +35318,7 @@ fn render_task_command_preview(task: &TaskSummary<'_>) -> String {
         .unwrap_or_else(|| String::from("-"))
 }
 
-fn render_workflow_prepare_action_preview(
-    action: &crate::output::TaskActionSummary<'_>,
-) -> String {
+fn render_workflow_prepare_action_preview(action: &crate::output::TaskActionSummary<'_>) -> String {
     match action.kind {
         "copy_if_missing" => format!(
             "copy_if_missing {} -> {}",
@@ -35742,7 +35740,10 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
         output.push_str(&format!(
             "\n  {} `{}`",
             paint_key("Prepare:"),
-            paint_code(&format!("workflow action {}", render_workflow_prepare_action_preview(prepare_action)))
+            paint_code(&format!(
+                "workflow action {}",
+                render_workflow_prepare_action_preview(prepare_action)
+            ))
         ));
     }
     if let Some(setup_task) = workflow.setup_task {
@@ -44103,15 +44104,14 @@ workflows:
                 provenance_key: None,
             }),
         };
-        let class =
-            super::proof_runtime_failure_class(
-                &summary,
-                "run",
-                None,
-                Some("run failed"),
-                None,
-                &up_log,
-            );
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "run",
+            None,
+            Some("run failed"),
+            None,
+            &up_log,
+        );
         assert_eq!(class.as_deref(), Some("install_or_toolchain_failure"));
     }
 
@@ -53694,7 +53694,11 @@ workflows:
         );
 
         assert_eq!(actions.len(), 2);
-        assert!(actions.iter().all(|action| action.kind == ProvisioningActionKind::Install));
+        assert!(
+            actions
+                .iter()
+                .all(|action| action.kind == ProvisioningActionKind::Install)
+        );
         assert!(actions.iter().all(|action| action.source == "apt"));
         assert!(
             actions
@@ -53705,6 +53709,175 @@ workflows:
             actions
                 .iter()
                 .any(|action| action.install_name() == "libpq-dev")
+        );
+    }
+
+    #[test]
+    fn selects_policy_approved_native_package_provisioning_actions_from_preflight_request() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: native-packages
+native_prerequisites:
+  ruby-native-build-tools:
+    platforms:
+      linux:
+        check: ruby-native-build-tools-linux
+        apt:
+          - build-essential
+checks:
+  - name: ruby-native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version && pkg-config --version"
+tasks:
+  setup:
+    run: bundle install
+    requirements:
+      native:
+        - ruby-native-build-tools
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(ProvisioningDiagnostics {
+                plan: ProvisioningPlan::default(),
+                request: ProvisioningBackendRequest {
+                    actions: vec![ProvisioningAction {
+                        kind: ProvisioningActionKind::Install,
+                        target_kind: ProvisioningTargetKind::Tool,
+                        name: String::from("build-essential"),
+                        requested_version: String::from("*"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: Some(String::from("build-essential")),
+                        source: String::from("apt"),
+                        source_config: None,
+                        approved_version: None,
+                        policy_match: Some(String::from("native_packages.apt")),
+                    }],
+                },
+            }),
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                identity: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Native prerequisite missing: ruby-native-build-tools"),
+                why: String::from("native packages are missing"),
+                next: String::from("install packages"),
+            }],
+        };
+
+        let actions = super::selected_up_native_package_provisioning_actions_for_os(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("app"),
+            &preflight,
+            "linux",
+        );
+        let preparation = super::selected_up_native_preparation_actions_for_os(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("app"),
+            &preflight,
+            "linux",
+        );
+
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(actions[0].install_name(), "build-essential");
+        assert!(preparation.is_empty(), "{preparation:?}");
+    }
+
+    #[test]
+    fn up_preview_keeps_manual_native_preparation_when_package_installs_are_policy_backed() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: native-packages
+native_prerequisites:
+  ruby-native-build-tools:
+    platforms:
+      linux:
+        check: ruby-native-build-tools-linux
+        install: ./scripts/bootstrap-native.sh
+        apt:
+          - build-essential
+checks:
+  - name: ruby-native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version && pkg-config --version"
+tasks:
+  setup:
+    run: bundle install
+    requirements:
+      native:
+        - ruby-native-build-tools
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(ProvisioningDiagnostics {
+                plan: ProvisioningPlan::default(),
+                request: ProvisioningBackendRequest {
+                    actions: vec![ProvisioningAction {
+                        kind: ProvisioningActionKind::Install,
+                        target_kind: ProvisioningTargetKind::Tool,
+                        name: String::from("build-essential"),
+                        requested_version: String::from("*"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: Some(String::from("build-essential")),
+                        source: String::from("apt"),
+                        source_config: None,
+                        approved_version: None,
+                        policy_match: Some(String::from("native_packages.apt")),
+                    }],
+                },
+            }),
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                identity: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Native prerequisite missing: ruby-native-build-tools"),
+                why: String::from("native packages are missing"),
+                next: String::from("install packages"),
+            }],
+        };
+
+        let preparation = super::selected_up_native_preparation_actions_for_os(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("app"),
+            &preflight,
+            "linux",
+        );
+
+        assert_eq!(preparation.len(), 1, "{preparation:?}");
+        assert_eq!(
+            preparation[0],
+            super::NativeRequirementPreparationAction {
+                prerequisite_name: String::from("ruby-native-build-tools"),
+                summary: String::from("run `./scripts/bootstrap-native.sh`"),
+            }
         );
     }
 
@@ -66577,7 +66750,11 @@ workflows:
         assert_eq!(result.status, "READY");
         assert!(repo.path().join(".env.local").exists());
         assert!(repo.path().join("docker-state").join("local-dev").exists());
-        assert!(result.stdout.contains("ensured docker container network `local-dev`"));
+        assert!(
+            result
+                .stdout
+                .contains("ensured docker container network `local-dev`")
+        );
         assert_eq!(
             fs::read_to_string(repo.path().join("run.log"))
                 .unwrap()
@@ -75978,8 +76155,11 @@ fn proof_runtime_failure_class(
     likely_cause: Option<&str>,
     up_log_artifact_path: &Path,
 ) -> Option<String> {
-    let likely_config_drift = likely_cause
-        .is_some_and(|cause| cause.to_ascii_lowercase().starts_with("likely config drift:"));
+    let likely_config_drift = likely_cause.is_some_and(|cause| {
+        cause
+            .to_ascii_lowercase()
+            .starts_with("likely config drift:")
+    });
     if cleanup_error.is_some() {
         return Some(String::from("cleanup_failure"));
     }
@@ -78878,6 +79058,15 @@ fn native_prerequisite_provisioning_lines(
     platform: &crate::schema::NativePrerequisitePlatformSpec,
 ) -> Vec<String> {
     let mut lines = Vec::new();
+    lines.extend(native_prerequisite_manual_preparation_lines(platform));
+    lines.extend(native_prerequisite_package_preparation_lines(platform));
+    lines
+}
+
+fn native_prerequisite_manual_preparation_lines(
+    platform: &crate::schema::NativePrerequisitePlatformSpec,
+) -> Vec<String> {
+    let mut lines = Vec::new();
     if let Some(command) = platform
         .install
         .as_deref()
@@ -78901,6 +79090,13 @@ fn native_prerequisite_provisioning_lines(
     } else if platform.visual_studio_build_tools {
         lines.push(String::from("install Visual Studio Build Tools"));
     }
+    lines
+}
+
+fn native_prerequisite_package_preparation_lines(
+    platform: &crate::schema::NativePrerequisitePlatformSpec,
+) -> Vec<String> {
+    let mut lines = Vec::new();
     if !platform.apt.is_empty() {
         lines.push(format!(
             "install apt packages: `{}`",
@@ -78929,12 +79125,6 @@ fn native_prerequisite_provisioning_lines(
         lines.push(format!(
             "install Scoop packages: `{}`",
             platform.scoop.join(" ")
-        ));
-    }
-    if !platform.packages.is_empty() {
-        lines.push(format!(
-            "install packages: `{}`",
-            platform.packages.join(" ")
         ));
     }
     lines
@@ -81518,8 +81708,10 @@ fn selected_up_native_package_provisioning_actions_for_os(
         for native_name in
             task.scoped_native_requirements_for_execution(effective.backend, effective.context_name)
         {
-            if !native_requirement_targets_missing_finding(native_name.as_str(), &preflight.findings)
-            {
+            if !native_requirement_targets_missing_finding(
+                native_name.as_str(),
+                &preflight.findings,
+            ) {
                 continue;
             }
             let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
@@ -81528,7 +81720,24 @@ fn selected_up_native_package_provisioning_actions_for_os(
             let Some(platform) = prerequisite.platform_for_os(current_os) else {
                 continue;
             };
-            for action in native_prerequisite_package_provisioning_actions(platform) {
+            let expected = native_prerequisite_package_provisioning_actions(platform);
+            if let Some(provisioning) = preflight.provisioning.as_ref() {
+                for action in provisioning.request.actions.iter().filter(|action| {
+                    action.kind == crate::policy_pack::ProvisioningActionKind::Install
+                }) {
+                    if expected.iter().any(|candidate| {
+                        candidate.source == action.source
+                            && candidate.install_name() == action.install_name()
+                    }) {
+                        let key = format!("{}:{}", action.source, action.install_name());
+                        if seen.insert(key) {
+                            actions.push(action.clone());
+                        }
+                    }
+                }
+                continue;
+            }
+            for action in expected {
                 let key = format!("{}:{}", action.source, action.install_name());
                 if seen.insert(key) {
                     actions.push(action);
@@ -81567,7 +81776,26 @@ fn selected_task_native_package_provisioning_actions_for_os(
         let Some(platform) = prerequisite.platform_for_os(current_os) else {
             continue;
         };
-        for action in native_prerequisite_package_provisioning_actions(platform) {
+        let expected = native_prerequisite_package_provisioning_actions(platform);
+        if let Some(provisioning) = preflight.provisioning.as_ref() {
+            for action in
+                provisioning.request.actions.iter().filter(|action| {
+                    action.kind == crate::policy_pack::ProvisioningActionKind::Install
+                })
+            {
+                if expected.iter().any(|candidate| {
+                    candidate.source == action.source
+                        && candidate.install_name() == action.install_name()
+                }) {
+                    let key = format!("{}:{}", action.source, action.install_name());
+                    if seen.insert(key) {
+                        actions.push(action.clone());
+                    }
+                }
+            }
+            continue;
+        }
+        for action in expected {
             let key = format!("{}:{}", action.source, action.install_name());
             if seen.insert(key) {
                 actions.push(action);
@@ -81618,8 +81846,13 @@ fn best_effort_apply_provisioning_request_with_adapter_bootstrap(
         return false;
     }
 
-    apply_provisioning_request_with_target(request, working_dir, target, ProvisioningOutputMode::Capture)
-        .is_ok()
+    apply_provisioning_request_with_target(
+        request,
+        working_dir,
+        target,
+        ProvisioningOutputMode::Capture,
+    )
+    .is_ok()
 }
 
 fn selected_up_native_preparation_actions_for_os(
@@ -81656,11 +81889,19 @@ fn selected_up_native_preparation_actions_for_os(
             let Some(platform) = prerequisite.platform_for_os(current_os) else {
                 continue;
             };
-            for summary in native_prerequisite_provisioning_lines(platform) {
+            for summary in native_prerequisite_manual_preparation_lines(platform) {
                 actions.push(NativeRequirementPreparationAction {
                     prerequisite_name: native_name.clone(),
                     summary,
                 });
+            }
+            if preflight.provisioning.is_none() {
+                for summary in native_prerequisite_package_preparation_lines(platform) {
+                    actions.push(NativeRequirementPreparationAction {
+                        prerequisite_name: native_name.clone(),
+                        summary,
+                    });
+                }
             }
         }
     }
@@ -81717,8 +81958,11 @@ fn selected_up_policy_provisioned_tool_names(
         .into_iter()
         .filter(|action| {
             matches!(
-                action.target_kind,
-                crate::policy_pack::ProvisioningTargetKind::Tool
+                (action.kind, action.target_kind),
+                (
+                    crate::policy_pack::ProvisioningActionKind::SelectSource,
+                    crate::policy_pack::ProvisioningTargetKind::Tool
+                )
             )
         })
         .map(|action| action.name)
@@ -84310,8 +84554,7 @@ fn execute_repo_up_with_behavior(
         });
     }
 
-    if !preflight.ok && setup_task.is_none() && prepare_task.is_none() && prepare_action.is_none()
-    {
+    if !preflight.ok && setup_task.is_none() && prepare_task.is_none() && prepare_action.is_none() {
         return Ok(RepoUpResult {
             ok: false,
             status: "NOT READY",

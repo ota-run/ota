@@ -273,7 +273,6 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "additionalProperties": false,
       "properties": {
         "check": { "type": "string" },
-        "packages": { "$ref": "#/$defs/stringArray" },
         "apt": { "$ref": "#/$defs/stringArray" },
         "brew": { "$ref": "#/$defs/stringArray" },
         "winget": { "$ref": "#/$defs/stringArray" },

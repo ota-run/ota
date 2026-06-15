@@ -33,6 +33,14 @@
   preparation lane for `ota up` and `ota run`, so selected native prerequisite package-manager
   bundles (`apt`, `brew`, `winget`, `choco`, `scoop`) can now be fulfilled by Ota before
   rerunning preconditions instead of leaking that install burden into CI workflow glue
+- tightened that native prerequisite fulfillment lane under org policy: when `.ota/org-policy.yaml`
+  is active, selected host package installs now require explicit approval under
+  `policies.native_packages.<manager>.approved`, `ota doctor` reports unapproved package bundles
+  as policy violations, and policy-approved native package actions now flow through the same
+  governed `ota up` / selected `ota run` provisioning path instead of bypassing policy
+- removed generic `native_prerequisites.platforms.<os>.packages`; native prerequisite host package
+  guidance is now manager-scoped only (`apt`, `brew`, `winget`, `choco`, `scoop`) so fulfillment,
+  policy approval, and contract truth stay deterministic
 - added first-class policy-backed `release-asset` provisioning for exact standalone tool binaries,
   so org policy can now approve platform-specific release URLs plus version probes, Ota can
   materialize those binaries into a source-managed workspace path for native/container execution,

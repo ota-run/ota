@@ -167,10 +167,7 @@ impl StreamPhaseLoaderPolicy {
 }
 
 impl StreamPhaseLoader {
-    pub(crate) fn start_with_policy(
-        label: &str,
-        policy: StreamPhaseLoaderPolicy,
-    ) -> Option<Self> {
+    pub(crate) fn start_with_policy(label: &str, policy: StreamPhaseLoaderPolicy) -> Option<Self> {
         Self::start_with_delay(label, policy.delay())
     }
 
@@ -8270,10 +8267,11 @@ pub(crate) fn execute_workflow_prepare_action(
     action: &crate::schema::TaskActionSpec,
     policy_env: Option<&BTreeMap<String, String>>,
 ) -> Result<TaskCommandOutput, RunError> {
-    let resolved_env = resolve_task_env_details_with_policy(contract, contract_path, None, policy_env)?
-        .into_iter()
-        .map(|(name, value)| (name, value.value))
-        .collect::<BTreeMap<_, _>>();
+    let resolved_env =
+        resolve_task_env_details_with_policy(contract, contract_path, None, policy_env)?
+            .into_iter()
+            .map(|(name, value)| (name, value.value))
+            .collect::<BTreeMap<_, _>>();
     execute_native_file_action_task(
         Some(contract),
         workflow_label,
@@ -20064,15 +20062,10 @@ fn execute_fulfilled_ephemeral_container_task_command(
         });
     }
 
-    let deferred_path_export =
-        source_managed_tool_path_export_required(&deferred_backend_fulfillment.actions).then(
-            || {
-                source_managed_tool_path_export(
-                    &deferred_backend_fulfillment.actions,
-                    path_export,
-                )
-            },
-        );
+    let deferred_path_export = source_managed_tool_path_export_required(
+        &deferred_backend_fulfillment.actions,
+    )
+    .then(|| source_managed_tool_path_export(&deferred_backend_fulfillment.actions, path_export));
     let wrapped_command =
         wrap_command_for_source_managed_actions(command, &deferred_backend_fulfillment.actions);
     let output_result = exec_persistent_container_task_command(

@@ -294,7 +294,9 @@ impl AdapterInputField {
                 .adapter_inputs
                 .compose
                 .as_ref()
-                .is_some_and(|compose| !compose.workflow_overlay_bound && !compose.files.is_empty()),
+                .is_some_and(|compose| {
+                    !compose.workflow_overlay_bound && !compose.files.is_empty()
+                }),
             Self::ComposeProfiles => {
                 branch
                     .adapter_inputs
@@ -333,10 +335,9 @@ impl AdapterInputField {
             Self::ComposeEnvFiles => Some("compose_adapter_env_file"),
             Self::ComposeFiles => Some("compose_adapter_file"),
             Self::BakeFiles => Some("bake_adapter_file"),
-            Self::ComposeCwd
-            | Self::ComposeProfiles
-            | Self::ComposeProjectName
-            | Self::BakeCwd => None,
+            Self::ComposeCwd | Self::ComposeProfiles | Self::ComposeProjectName | Self::BakeCwd => {
+                None
+            }
         }
     }
 
@@ -345,10 +346,9 @@ impl AdapterInputField {
             Self::ComposeEnvFiles => Some("compose adapter env file"),
             Self::ComposeFiles => Some("compose file"),
             Self::BakeFiles => Some("bake file"),
-            Self::ComposeCwd
-            | Self::ComposeProfiles
-            | Self::ComposeProjectName
-            | Self::BakeCwd => None,
+            Self::ComposeCwd | Self::ComposeProfiles | Self::ComposeProjectName | Self::BakeCwd => {
+                None
+            }
         }
     }
 
@@ -357,10 +357,9 @@ impl AdapterInputField {
             Self::ComposeEnvFiles => task.compose_adapter_env_files_for_backend(backend),
             Self::ComposeFiles => task.compose_adapter_files_for_backend(backend),
             Self::BakeFiles => task.bake_adapter_files_for_backend(backend),
-            Self::ComposeCwd
-            | Self::ComposeProfiles
-            | Self::ComposeProjectName
-            | Self::BakeCwd => Vec::new(),
+            Self::ComposeCwd | Self::ComposeProfiles | Self::ComposeProjectName | Self::BakeCwd => {
+                Vec::new()
+            }
         }
     }
 }
@@ -705,7 +704,8 @@ pub(crate) fn rebase_repo_relative_adapter_paths(
     paths: &[String],
     adapter_cwd: Option<&str>,
 ) -> Vec<String> {
-    paths.iter()
+    paths
+        .iter()
         .map(|path| rebase_repo_relative_adapter_path(path, adapter_cwd))
         .collect()
 }
@@ -715,7 +715,10 @@ fn rebase_repo_relative_adapter_path(path: &str, adapter_cwd: Option<&str>) -> S
     let Some(adapter_cwd) = adapter_cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
         return path.to_string();
     };
-    let target = path.split('/').filter(|segment| !segment.is_empty()).collect::<Vec<_>>();
+    let target = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
     let base = adapter_cwd
         .split('/')
         .filter(|segment| !segment.is_empty())
@@ -780,7 +783,11 @@ mod tests {
                 ),
                 Some(field)
             );
-            assert!(field.code().starts_with("OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_"));
+            assert!(
+                field
+                    .code()
+                    .starts_with("OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_")
+            );
         }
     }
 

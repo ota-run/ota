@@ -89,6 +89,8 @@ pub struct PolicyRules {
     #[serde(default)]
     pub provisioning: BTreeMap<String, PolicyProvisioningRule>,
     #[serde(default)]
+    pub native_packages: BTreeMap<String, PolicyNativePackageRule>,
+    #[serde(default)]
     pub adapter_bootstrap: BTreeMap<String, PolicyAdapterBootstrapRule>,
     #[serde(default)]
     pub backend_environment: PolicyBackendEnvironmentRules,
@@ -232,6 +234,13 @@ pub struct PolicyPlatformProvisioningRule {
     pub package: Option<String>,
     #[serde(default)]
     pub approved_versions: Vec<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyNativePackageRule {
+    #[serde(default)]
+    pub approved: Vec<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -534,6 +543,7 @@ impl OrgPolicyPack {
             &self.policies.provisioning,
             "policy-backed provisioning platform source",
         )?;
+        validate_native_package_rules(&self.policies.native_packages)?;
         validate_source_rules(
             &self.policies.adapter_bootstrap,
             "policy-backed adapter bootstrap source",
@@ -1006,6 +1016,96 @@ impl OrgPolicyPack {
         }
     }
 
+    pub fn native_package_provisioning_plan_for_os(
+        &self,
+        os: &str,
+        contract: &crate::schema::Contract,
+        native_names: &BTreeSet<String>,
+    ) -> ProvisioningPlan {
+        let mut plan = ProvisioningPlan::default();
+        let mut seen = BTreeSet::new();
+
+        for native_name in native_names {
+            let Some(prerequisite) = contract.native_prerequisites.get(native_name.as_str()) else {
+                continue;
+            };
+            let Some(platform) = prerequisite.platform_for_os(os) else {
+                continue;
+            };
+            for (source, package) in native_prerequisite_package_entries(platform) {
+                let key = format!("{source}:{package}");
+                if !seen.insert(key) {
+                    continue;
+                }
+
+                let allowed = self
+                    .policies
+                    .native_packages
+                    .get(source)
+                    .map(|rule| {
+                        rule.approved
+                            .iter()
+                            .any(|approved| approved.trim() == package)
+                    })
+                    .unwrap_or(false);
+
+                if allowed {
+                    plan.allowed.push(ProvisioningPlanEntry {
+                        kind: ProvisioningTargetKind::Tool,
+                        name: package.to_string(),
+                        requested_version: String::from("*"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: Some(package.to_string()),
+                        source: Some(source.to_string()),
+                        source_config: None,
+                        approved_version: None,
+                        policy_match: Some(format!("native_packages.{source}")),
+                        blocked_reason: None,
+                    });
+                } else {
+                    plan.blocked.push(ProvisioningPlanEntry {
+                        kind: ProvisioningTargetKind::Tool,
+                        name: package.to_string(),
+                        requested_version: String::from("*"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: Some(package.to_string()),
+                        source: Some(source.to_string()),
+                        source_config: None,
+                        approved_version: None,
+                        policy_match: None,
+                        blocked_reason: Some(format!(
+                            "native prerequisite `{native_name}` requires {source} package `{package}`, but `policies.native_packages.{source}.approved` does not approve it"
+                        )),
+                    });
+                }
+            }
+        }
+
+        plan.actions = plan
+            .allowed
+            .iter()
+            .filter_map(|entry| {
+                entry.source.as_ref().map(|source| ProvisioningAction {
+                    kind: ProvisioningActionKind::Install,
+                    target_kind: entry.kind,
+                    name: entry.name.clone(),
+                    requested_version: entry.requested_version.clone(),
+                    normalized_requirement: None,
+                    resolved_version: None,
+                    package: entry.package.clone(),
+                    source: source.clone(),
+                    source_config: None,
+                    approved_version: None,
+                    policy_match: entry.policy_match.clone(),
+                })
+            })
+            .collect();
+
+        plan
+    }
+
     fn push_plan_entry(
         plan: &mut ProvisioningPlan,
         kind: ProvisioningTargetKind,
@@ -1094,6 +1194,42 @@ fn provisioning_source_requires_package(source: &str) -> bool {
         source,
         "apt" | "dnf" | "pacman" | "winget" | "choco" | "scoop"
     )
+}
+
+fn supported_native_package_policy_source(source: &str) -> bool {
+    matches!(source, "apt" | "brew" | "winget" | "choco" | "scoop")
+}
+
+fn native_prerequisite_package_entries(
+    platform: &crate::schema::NativePrerequisitePlatformSpec,
+) -> Vec<(&'static str, &str)> {
+    let mut entries = Vec::new();
+    entries.extend(platform.apt.iter().map(|package| ("apt", package.as_str())));
+    entries.extend(
+        platform
+            .brew
+            .iter()
+            .map(|package| ("brew", package.as_str())),
+    );
+    entries.extend(
+        platform
+            .winget
+            .iter()
+            .map(|package| ("winget", package.as_str())),
+    );
+    entries.extend(
+        platform
+            .choco
+            .iter()
+            .map(|package| ("choco", package.as_str())),
+    );
+    entries.extend(
+        platform
+            .scoop
+            .iter()
+            .map(|package| ("scoop", package.as_str())),
+    );
+    entries
 }
 
 fn parse_release_asset_source_config(
@@ -1559,6 +1695,32 @@ fn validate_provisioning_source_rules(
             validate_release_asset_source_rule(name, label, rule.source_config.as_ref())?;
         }
     }
+    Ok(())
+}
+
+fn validate_native_package_rules(
+    rules: &BTreeMap<String, PolicyNativePackageRule>,
+) -> Result<(), String> {
+    for (source, rule) in rules {
+        if !supported_native_package_policy_source(source) {
+            return Err(format!(
+                "policy-backed native package source `{source}` is not supported; expected one of: apt, brew, winget, choco, scoop"
+            ));
+        }
+        if rule.approved.is_empty() {
+            return Err(format!(
+                "policy-backed native package source `{source}` must declare at least one approved package"
+            ));
+        }
+        for package in &rule.approved {
+            if package.trim().is_empty() {
+                return Err(format!(
+                    "policy-backed native package source `{source}` must not contain empty approved package entries"
+                ));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -3046,6 +3208,72 @@ policies:
         assert_eq!(macos.source, "brew");
         assert_eq!(linux.source, "apt");
         assert_eq!(windows.source, "choco");
+    }
+
+    #[test]
+    fn selects_policy_approved_native_package_provisioning_actions() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  native_packages:
+    apt:
+      approved:
+        - build-essential
+        - libpq-dev
+"#,
+        )
+        .unwrap();
+        let contract: crate::schema::Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: native-packages
+native_prerequisites:
+  ruby-native-build-tools:
+    platforms:
+      linux:
+        check: ruby-native-build-tools-linux
+        apt:
+          - build-essential
+          - libpq-dev
+checks:
+  - name: ruby-native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version && pkg-config --version"
+"#,
+        )
+        .unwrap();
+        let native_names = BTreeSet::from([String::from("ruby-native-build-tools")]);
+
+        let plan =
+            policy.native_package_provisioning_plan_for_os("linux", &contract, &native_names);
+
+        assert_eq!(plan.blocked.len(), 0, "{plan:?}");
+        assert_eq!(plan.actions.len(), 2, "{plan:?}");
+        assert!(
+            plan.actions
+                .iter()
+                .all(|action| action.kind == ProvisioningActionKind::Install)
+        );
+        assert!(plan.actions.iter().all(|action| action.source == "apt"));
+    }
+
+    #[test]
+    fn rejects_unsupported_native_package_policy_source() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  native_packages:
+    apk:
+      approved:
+        - build-base
+"#,
+        )
+        .unwrap();
+
+        let error = policy.validate().unwrap_err();
+        assert!(error.contains("native package source `apk` is not supported"));
     }
 
     #[test]

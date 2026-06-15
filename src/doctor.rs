@@ -3341,6 +3341,7 @@ pub fn diagnose_policy_review(contract: &Contract, contract_path: &Path) -> Poli
             current_os(),
             &requirement_surface,
             &toolchain_names,
+            &BTreeSet::new(),
             &mut findings,
         );
         diagnose_adapter_bootstrap(Some(loaded_policy_ref), &mut findings);
@@ -3931,6 +3932,7 @@ fn diagnose_contract_with_scope(
                 policy_target_os_for_mode(mode),
                 &requirement_surface,
                 &precondition_selection.toolchain_names,
+                &precondition_selection.native_names,
                 &mut findings,
             );
         }
@@ -6713,12 +6715,6 @@ fn native_prerequisite_next(
             platform.scoop.join(" ")
         ));
     }
-    if !platform.packages.is_empty() {
-        suggestions.push(format!(
-            "install packages: `{}`",
-            platform.packages.join(" ")
-        ));
-    }
     if let Some(note) = platform
         .note
         .as_deref()
@@ -6768,6 +6764,7 @@ fn diagnose_org_policy(
     policy_os: &str,
     requirement_surface: &RequirementSurface,
     toolchain_names: &BTreeSet<String>,
+    native_names: &BTreeSet<String>,
     findings: &mut Vec<Finding>,
 ) -> Option<ProvisioningDiagnostics> {
     let Some(loaded_policy) = loaded_policy else {
@@ -6790,7 +6787,18 @@ fn diagnose_org_policy(
         policy_os,
         &policy_requirement_surface,
     );
-    if missing_sections.is_empty() && missing_files.is_empty() && version_violations.is_empty() {
+    let native_package_plan =
+        policy_pack.native_package_provisioning_plan_for_os(policy_os, contract, native_names);
+    let native_package_violations: Vec<String> = native_package_plan
+        .blocked
+        .iter()
+        .filter_map(|entry| entry.blocked_reason.clone())
+        .collect();
+    if missing_sections.is_empty()
+        && missing_files.is_empty()
+        && version_violations.is_empty()
+        && native_package_violations.is_empty()
+    {
         if !policy_pack.policies.version_policy.runtimes.is_empty()
             || !policy_pack.policies.version_policy.tools.is_empty()
         {
@@ -6839,13 +6847,19 @@ fn diagnose_org_policy(
             ));
         }
 
-        let provisioning_plan = policy_pack
+        let mut provisioning_plan = policy_pack
             .provisioning_plan_for_requirement_surface_os(policy_os, &policy_requirement_surface);
+        provisioning_plan
+            .allowed
+            .extend(native_package_plan.allowed.clone());
+        provisioning_plan
+            .blocked
+            .extend(native_package_plan.blocked.clone());
+        provisioning_plan
+            .actions
+            .extend(native_package_plan.actions.clone());
         let provisioning_request = ProvisioningBackendRequest {
-            actions: policy_pack.selected_provisioning_actions_for_requirement_surface_os(
-                policy_os,
-                &policy_requirement_surface,
-            ),
+            actions: provisioning_plan.actions.clone(),
         };
 
         let missing_packages: Vec<String> = provisioning_plan
@@ -6955,6 +6969,12 @@ fn diagnose_org_policy(
             version_violations.join("; ")
         ));
     }
+    if !native_package_violations.is_empty() {
+        why_parts.push(format!(
+            "native package policy violations: {}",
+            native_package_violations.join("; ")
+        ));
+    }
 
     findings.push(policy_finding(
         "OTA_POLICY_PACK_VIOLATION",
@@ -6965,14 +6985,14 @@ fn diagnose_org_policy(
             compact_display_path(&policy_path),
             why_parts.join(" and ")
         ),
-        if version_violations.is_empty() {
+        if version_violations.is_empty() && native_package_violations.is_empty() {
             format!(
                 "add the missing items or update `{}`",
                 compact_display_path(&policy_path)
             )
         } else if missing_sections.is_empty() && missing_files.is_empty() {
             format!(
-                "update the repo contract versions or widen `{}`",
+                "update the repo contract to match policy, or widen `{}`",
                 compact_display_path(&policy_path)
             )
         } else {
@@ -8699,8 +8719,12 @@ fn provisionable_missing_command_is_covered(
         }
     };
 
-    probe_provisioning_installability_with_target(action, contract_working_dir(contract_path), &target)
-        .is_ok()
+    probe_provisioning_installability_with_target(
+        action,
+        contract_working_dir(contract_path),
+        &target,
+    )
+    .is_ok()
 }
 
 fn remote_provisioning_target(
@@ -11804,7 +11828,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crate::parser::parse_contract_str;
-    use crate::policy_pack::ProvisioningTargetKind;
+    use crate::policy_pack::{ProvisioningActionKind, ProvisioningTargetKind};
     use crate::provisioning::{
         ProvisioningExecutionTarget, ProvisioningFailureDiagnosis, ProvisioningFailureKind,
     };
@@ -22705,6 +22729,196 @@ policies:
                 .starts_with("update the repo contract versions or widen `")
         );
         assert!(finding.next.ends_with("org-policy.yaml`"));
+    }
+
+    #[test]
+    fn reports_policy_native_package_violations() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let (platform_name, package_source, package_name, check_name) = match super::current_os() {
+            "macos" => (
+                "macos",
+                "brew",
+                "pkg-config",
+                "ruby-native-build-tools-macos",
+            ),
+            "windows" => (
+                "windows",
+                "winget",
+                "Microsoft.VisualStudio.2022.BuildTools",
+                "ruby-native-build-tools-windows",
+            ),
+            _ => (
+                "linux",
+                "apt",
+                "build-essential",
+                "ruby-native-build-tools-linux",
+            ),
+        };
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  ruby-native-build-tools:
+    platforms:
+      {platform_name}:
+        check: {check_name}
+        {package_source}:
+          - {package_name}
+checks:
+  - name: {check_name}
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version && pkg-config --version"
+tasks:
+  setup:
+    run: bundle install
+    requirements:
+      native:
+        - ruby-native-build-tools
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            format!(
+                r#"
+policies:
+  native_packages:
+    {package_source}:
+      approved:
+        - libpq-dev
+"#,
+            ),
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        let finding = report
+            .findings
+            .iter()
+            .find(|finding| finding.summary == "Repo does not satisfy org policy pack")
+            .expect("policy violation should be present");
+        assert!(
+            finding
+                .why
+                .contains(&format!(
+                    "native prerequisite `ruby-native-build-tools` requires {package_source} package `{package_name}`"
+                ))
+        );
+        assert!(
+            finding
+                .next
+                .starts_with("update the repo contract to match policy, or widen `")
+        );
+    }
+
+    #[test]
+    fn policy_approved_native_packages_flow_into_precondition_provisioning_request() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let (platform_name, package_source, package_name, check_name) = match super::current_os() {
+            "macos" => (
+                "macos",
+                "brew",
+                "pkg-config",
+                "ruby-native-build-tools-macos",
+            ),
+            "windows" => (
+                "windows",
+                "winget",
+                "Microsoft.VisualStudio.2022.BuildTools",
+                "ruby-native-build-tools-windows",
+            ),
+            _ => (
+                "linux",
+                "apt",
+                "build-essential",
+                "ruby-native-build-tools-linux",
+            ),
+        };
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  ruby-native-build-tools:
+    platforms:
+      {platform_name}:
+        check: {check_name}
+        {package_source}:
+          - {package_name}
+checks:
+  - name: {check_name}
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version && pkg-config --version"
+tasks:
+  setup:
+    run: bundle install
+    requirements:
+      native:
+        - ruby-native-build-tools
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+"#,
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".ota")).unwrap();
+        fs::write(
+            fixture.path().join(".ota").join("org-policy.yaml"),
+            format!(
+                r#"
+policies:
+  native_packages:
+    {package_source}:
+      approved:
+        - {package_name}
+"#,
+            ),
+        )
+        .unwrap();
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            &fs::read_to_string(fixture.path().join("ota.yaml")).unwrap(),
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        let provisioning = report
+            .provisioning
+            .as_ref()
+            .expect("policy-approved native package request should be present");
+        assert!(provisioning.request.actions.iter().any(|action| {
+            action.kind == ProvisioningActionKind::Install
+                && action.source == package_source
+                && action.install_name() == package_name
+        }));
     }
 
     #[test]

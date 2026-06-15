@@ -3304,7 +3304,11 @@ pub fn summarize_task_adapter_inputs<'a>(
             .compose
             .as_ref()
             .map(|compose| TaskComposeAdapterInputsSummary {
-                cwd: compose.cwd.as_deref().map(str::trim).filter(|value| !value.is_empty()),
+                cwd: compose
+                    .cwd
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty()),
                 env_files: compose.env_files.iter().map(String::as_str).collect(),
                 files: compose.files.iter().map(String::as_str).collect(),
                 profiles: compose.profiles.iter().map(String::as_str).collect(),
@@ -3319,7 +3323,11 @@ pub fn summarize_task_adapter_inputs<'a>(
             .bake
             .as_ref()
             .map(|bake| TaskBakeAdapterInputsSummary {
-                cwd: bake.cwd.as_deref().map(str::trim).filter(|value| !value.is_empty()),
+                cwd: bake
+                    .cwd
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty()),
                 files: bake.files.iter().map(String::as_str).collect(),
             })
             .filter(|bake| !bake.is_empty()),
