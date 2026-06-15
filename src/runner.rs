@@ -6812,10 +6812,11 @@ fn execute_task_with_hooks(
             .source_managed_actions
             .is_empty()
     {
-        if source_managed_tool_wrappers_required(
+        if source_managed_tool_path_export_required(
             &backend_fulfillment_preparation.source_managed_actions,
         ) {
-            path_export = Some(source_managed_tool_wrapper_path_export(
+            path_export = Some(source_managed_tool_path_export(
+                &backend_fulfillment_preparation.source_managed_actions,
                 path_export.as_deref(),
             ));
         }
@@ -11086,29 +11087,61 @@ fn apply_run_path_provisioning_request_with_bootstrap(
     }
 }
 
-fn source_managed_tool_wrapper_dir() -> &'static str {
+fn mise_tool_wrapper_dir() -> &'static str {
     "/tmp/ota-managed-tools/bin"
 }
 
-fn source_managed_tool_wrappers_required(actions: &[ProvisioningAction]) -> bool {
-    actions
+fn source_managed_binary_dir() -> &'static str {
+    ".ota/state/source-managed/bin"
+}
+
+fn source_managed_path_export_segments(actions: &[ProvisioningAction]) -> Vec<String> {
+    let mut segments = Vec::new();
+    if actions.iter().any(|action| {
+        action.source == "release-asset" && action.target_kind == ProvisioningTargetKind::Tool
+    }) {
+        segments.push(source_managed_binary_dir().to_string());
+    }
+    if actions
         .iter()
         .any(|action| action.source == "mise" && action.target_kind == ProvisioningTargetKind::Tool)
+    {
+        segments.push(mise_tool_wrapper_dir().to_string());
+    }
+    segments
+}
+
+fn source_managed_tool_path_export_required(actions: &[ProvisioningAction]) -> bool {
+    !source_managed_path_export_segments(actions).is_empty()
 }
 
 fn source_managed_actions(actions: &[ProvisioningAction]) -> Vec<ProvisioningAction> {
     actions
         .iter()
-        .filter(|action| action.source == "mise")
+        .filter(|action| action.source == "mise" || action.source == "release-asset")
         .cloned()
         .collect()
 }
 
+#[cfg(test)]
 fn source_managed_tool_wrapper_path_export(path_export: Option<&str>) -> String {
     match path_export {
-        Some(path) => format!("{}:{path}", source_managed_tool_wrapper_dir()),
-        None => format!("{}:$PATH", source_managed_tool_wrapper_dir()),
+        Some(path) => format!("{}:{path}", mise_tool_wrapper_dir()),
+        None => format!("{}:$PATH", mise_tool_wrapper_dir()),
     }
+}
+
+fn source_managed_tool_path_export(
+    actions: &[ProvisioningAction],
+    path_export: Option<&str>,
+) -> String {
+    let mut segments = source_managed_path_export_segments(actions);
+    if let Some(path) = path_export {
+        segments.push(path.to_string());
+        return segments.join(":");
+    }
+    segments.push(String::from("$PATH"));
+    segments.join(":")
 }
 
 fn source_managed_remaining_gap_covered(
@@ -11116,7 +11149,7 @@ fn source_managed_remaining_gap_covered(
     actions: &[ProvisioningAction],
 ) -> bool {
     actions.iter().any(|action| {
-        action.source == "mise"
+        (action.source == "mise" || action.source == "release-asset")
             && action.name == gap.name
             && matches!(
                 (&gap.kind, action.target_kind),
@@ -11210,7 +11243,7 @@ fn install_source_managed_tool_wrappers(
         let wrapper = format!(
             "mkdir -p {wrapper_dir}\ncat > {wrapper_dir}/{tool} <<'EOF'\n#!/bin/sh\nif command -v mise >/dev/null 2>&1; then __ota_mise=\"$(command -v mise)\"; elif [ -x \"$HOME/.local/bin/mise\" ]; then __ota_mise=\"$HOME/.local/bin/mise\"; else __ota_mise=\"mise\"; fi\nexec \"$__ota_mise\" exec {target} -- {tool} \"$@\"\nEOF\nchmod +x {wrapper_dir}/{tool}",
             tool = tool,
-            wrapper_dir = source_managed_tool_wrapper_dir(),
+            wrapper_dir = mise_tool_wrapper_dir(),
             target = shell_quote(&format!("{tool}@{version}")),
         );
         let output = container_command_output(
@@ -20015,8 +20048,14 @@ fn execute_fulfilled_ephemeral_container_task_command(
     }
 
     let deferred_path_export =
-        source_managed_tool_wrappers_required(&deferred_backend_fulfillment.actions)
-            .then(|| source_managed_tool_wrapper_path_export(path_export));
+        source_managed_tool_path_export_required(&deferred_backend_fulfillment.actions).then(
+            || {
+                source_managed_tool_path_export(
+                    &deferred_backend_fulfillment.actions,
+                    path_export,
+                )
+            },
+        );
     let wrapped_command =
         wrap_command_for_source_managed_actions(command, &deferred_backend_fulfillment.actions);
     let output_result = exec_persistent_container_task_command(
@@ -48372,6 +48411,31 @@ tasks:
         assert_eq!(
             super::source_managed_tool_wrapper_path_export(None),
             "/tmp/ota-managed-tools/bin:$PATH"
+        );
+    }
+
+    #[test]
+    fn source_managed_tool_path_export_prepends_release_asset_dir() {
+        let actions = vec![ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: String::from("yq"),
+            requested_version: String::from("4.52.5"),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: None,
+            source: String::from("release-asset"),
+            approved_version: Some(String::from("4.52.5")),
+            source_config: None,
+            policy_match: Some(String::from("4.52.5")),
+        }];
+        assert_eq!(
+            super::source_managed_tool_path_export(&actions, Some("/custom/bin:/usr/bin")),
+            ".ota/state/source-managed/bin:/custom/bin:/usr/bin"
+        );
+        assert_eq!(
+            super::source_managed_tool_path_export(&actions, None),
+            ".ota/state/source-managed/bin:$PATH"
         );
     }
 

@@ -27,6 +27,7 @@ use std::thread;
 
 use serde_json::Value as JsonValue;
 use serde_yaml::Value;
+use serde::Deserialize;
 use thiserror::Error;
 
 use crate::execution::{container_backend_probe_failure, container_engine_command};
@@ -144,6 +145,110 @@ fn action_version_matches_output(action: &ProvisioningAction, value: &str) -> bo
         })
 }
 
+fn parse_release_asset_source_config(
+    action: &ProvisioningAction,
+) -> Result<ReleaseAssetSourceConfig, ProvisioningBackendError> {
+    let source_config = action.source_config.clone().ok_or_else(|| {
+        ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: format!("{} (missing source_config)", action.source),
+        }
+    })?;
+    serde_yaml::from_value(serde_yaml::Value::Mapping(
+        source_config
+            .into_iter()
+            .map(|(key, value)| (serde_yaml::Value::String(key), value))
+            .collect(),
+    ))
+    .map_err(|_| ProvisioningBackendError::UnsupportedSource {
+        provisioning_source: format!("{} (invalid source_config)", action.source),
+    })
+}
+
+fn release_asset_target_os(target: &ProvisioningExecutionTarget) -> &'static str {
+    match target {
+        ProvisioningExecutionTarget::Native => {
+            if cfg!(target_os = "windows") {
+                "windows"
+            } else if cfg!(target_os = "macos") {
+                "macos"
+            } else {
+                "linux"
+            }
+        }
+        ProvisioningExecutionTarget::Container { .. } => "linux",
+        ProvisioningExecutionTarget::Remote { .. } => {
+            if cfg!(target_os = "windows") {
+                "windows"
+            } else if cfg!(target_os = "macos") {
+                "macos"
+            } else {
+                "linux"
+            }
+        }
+    }
+}
+
+fn release_asset_target_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "aarch64" => "aarch64",
+        "arm64" => "aarch64",
+        other => other,
+    }
+}
+
+fn release_asset_platform_key(target: &ProvisioningExecutionTarget) -> String {
+    format!(
+        "{}_{}",
+        release_asset_target_os(target),
+        release_asset_target_arch()
+    )
+}
+
+fn release_asset_url(
+    action: &ProvisioningAction,
+    target: &ProvisioningExecutionTarget,
+    config: &ReleaseAssetSourceConfig,
+) -> Result<String, ProvisioningBackendError> {
+    let platform = release_asset_platform_key(target);
+    let template = config.asset_by_platform.get(platform.as_str()).ok_or_else(|| {
+        ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: format!("{} (unsupported platform `{platform}`)", action.source),
+        }
+    })?;
+
+    Ok(template
+        .replace("{version}", action_effective_version(action))
+        .replace("{name}", action.install_name()))
+}
+
+fn release_asset_relative_destination(
+    action: &ProvisioningAction,
+    target: &ProvisioningExecutionTarget,
+) -> String {
+    release_asset_relative_destination_for_os(action, release_asset_target_os(target))
+}
+
+fn release_asset_relative_destination_for_os(
+    action: &ProvisioningAction,
+    target_os: &str,
+) -> String {
+    let executable = action.install_name();
+    if target_os == "windows" && !executable.to_ascii_lowercase().ends_with(".exe") {
+        format!(".ota/state/source-managed/bin/{executable}.exe")
+    } else {
+        format!(".ota/state/source-managed/bin/{executable}")
+    }
+}
+
+fn release_asset_version_args(config: &ReleaseAssetSourceConfig) -> Vec<String> {
+    if config.version_args.is_empty() {
+        vec![String::from("--version")]
+    } else {
+        config.version_args.clone()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MiseProvisioningBackend;
 
@@ -176,6 +281,9 @@ pub struct AptProvisioningBackend;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DnfProvisioningBackend;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReleaseAssetProvisioningBackend;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BrewBootstrapProvisioningBackend;
@@ -212,6 +320,7 @@ static BREW_BACKEND: BrewProvisioningBackend = BrewProvisioningBackend;
 static PACMAN_BACKEND: PacmanProvisioningBackend = PacmanProvisioningBackend;
 static APT_BACKEND: AptProvisioningBackend = AptProvisioningBackend;
 static DNF_BACKEND: DnfProvisioningBackend = DnfProvisioningBackend;
+static RELEASE_ASSET_BACKEND: ReleaseAssetProvisioningBackend = ReleaseAssetProvisioningBackend;
 static BREW_BOOTSTRAP_BACKEND: BrewBootstrapProvisioningBackend = BrewBootstrapProvisioningBackend;
 static ASDF_BOOTSTRAP_BACKEND: AsdfBootstrapProvisioningBackend = AsdfBootstrapProvisioningBackend;
 static MISE_BOOTSTRAP_BACKEND: MiseBootstrapProvisioningBackend = MiseBootstrapProvisioningBackend;
@@ -224,6 +333,14 @@ static CHOCO_BOOTSTRAP_BACKEND: ChocoBootstrapProvisioningBackend =
     ChocoBootstrapProvisioningBackend;
 static SCOOP_BOOTSTRAP_BACKEND: ScoopBootstrapProvisioningBackend =
     ScoopBootstrapProvisioningBackend;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseAssetSourceConfig {
+    asset_by_platform: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    version_args: Vec<String>,
+}
 
 impl MiseProvisioningBackend {
     fn install_target(action: &ProvisioningAction) -> String {
@@ -1086,6 +1203,84 @@ impl DnfProvisioningBackend {
     }
 }
 
+impl ReleaseAssetProvisioningBackend {
+    fn download_script(
+        action: &ProvisioningAction,
+        target: &ProvisioningExecutionTarget,
+        config: &ReleaseAssetSourceConfig,
+    ) -> Result<String, ProvisioningBackendError> {
+        let url = release_asset_url(action, target, config)?;
+        let destination = release_asset_relative_destination(action, target);
+        let temp_path = format!("{destination}.tmp");
+
+        Ok(if release_asset_target_os(target) == "windows" {
+            format!(
+                r#"$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$dest = '{destination}'
+$tmp = '{temp_path}'
+$dir = Split-Path -Parent $dest
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+Invoke-WebRequest -UseBasicParsing -Uri '{url}' -OutFile $tmp
+Move-Item -Force $tmp $dest"#,
+                destination = destination.replace('\'', "''"),
+                temp_path = temp_path.replace('\'', "''"),
+                url = url.replace('\'', "''"),
+            )
+        } else {
+            format!(
+                r#"set -eu
+dest={destination}
+tmp={temp_path}
+mkdir -p "$(dirname "$dest")"
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL -o "$tmp" {url}
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "$tmp" {url}
+else
+  echo "curl or wget is required to provision release assets" >&2
+  exit 127
+fi
+chmod +x "$tmp"
+mv "$tmp" "$dest""#,
+                destination = shell_quote(&destination),
+                temp_path = shell_quote(&temp_path),
+                url = shell_quote(&url),
+            )
+        })
+    }
+
+    fn verify_downloaded_asset(
+        action: &ProvisioningAction,
+        target: &ProvisioningExecutionTarget,
+        working_dir: &Path,
+        config: &ReleaseAssetSourceConfig,
+        mode: ProvisioningOutputMode,
+    ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
+        let destination = release_asset_relative_destination(action, target);
+        let version_args = release_asset_version_args(config);
+        let arg_refs = version_args.iter().map(String::as_str).collect::<Vec<_>>();
+        execute_provisioning_command(target, working_dir, &destination, &arg_refs, mode)
+    }
+
+    fn probe_script(
+        action: &ProvisioningAction,
+        target: &ProvisioningExecutionTarget,
+        config: &ReleaseAssetSourceConfig,
+    ) -> Result<String, ProvisioningBackendError> {
+        let _ = release_asset_url(action, target, config)?;
+        Ok(if release_asset_target_os(target) == "windows" {
+            String::from(
+                "if (Get-Command powershell -ErrorAction SilentlyContinue) { exit 0 } else { exit 127 }",
+            )
+        } else {
+            String::from(
+                "if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then exit 0; else echo \"curl or wget is required to provision release assets\" >&2; exit 127; fi",
+            )
+        })
+    }
+}
+
 pub(crate) fn render_provisioning_action_command(action: &ProvisioningAction) -> Option<String> {
     let version = action_effective_version(action);
     let command = match action.source.as_str() {
@@ -1168,6 +1363,11 @@ pub(crate) fn render_provisioning_action_command(action: &ProvisioningAction) ->
         "dnf" => format!(
             "dnf install -y {}",
             DnfProvisioningBackend::install_target(action)
+        ),
+        "release-asset" => format!(
+            "download release asset {} {}",
+            action.display_name(),
+            action.version_display()
         ),
         _ => return None,
     };
@@ -2339,6 +2539,116 @@ impl ProvisioningBackend for DnfProvisioningBackend {
     }
 }
 
+impl ProvisioningBackend for ReleaseAssetProvisioningBackend {
+    fn source(&self) -> &'static str {
+        "release-asset"
+    }
+
+    fn apply(
+        &self,
+        request: &ProvisioningBackendRequest,
+        working_dir: &Path,
+        target: &ProvisioningExecutionTarget,
+        mode: ProvisioningOutputMode,
+    ) -> Result<ProvisioningBackendOutput, ProvisioningBackendError> {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+
+        for action in &request.actions {
+            if action.source != self.source() {
+                return Err(ProvisioningBackendError::UnsupportedSource {
+                    provisioning_source: action.source.clone(),
+                });
+            }
+
+            if action.kind != ProvisioningActionKind::SelectSource {
+                return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+            }
+
+            if action.target_kind != ProvisioningTargetKind::Tool {
+                return Err(ProvisioningBackendError::UnsupportedTargetKind {
+                    backend: self.source(),
+                    target_kind: action.target_kind,
+                });
+            }
+
+            let config = parse_release_asset_source_config(action)?;
+            let script = Self::download_script(action, target, &config)?;
+            let output = if release_asset_target_os(target) == "windows" {
+                execute_provisioning_command(
+                    target,
+                    working_dir,
+                    "powershell",
+                    &["-NoLogo", "-NoProfile", "-Command", &script],
+                    mode,
+                )?
+            } else {
+                execute_provisioning_command(target, working_dir, "sh", &["-lc", &script], mode)?
+            };
+
+            stdout.push_str(&output.stdout);
+            stderr.push_str(&output.stderr);
+
+            if output.exit_code != 0 {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: format!(
+                        "download release asset {} {}",
+                        action.display_name(),
+                        action.version_display()
+                    ),
+                    exit_code: output.exit_code,
+                    stdout,
+                    stderr,
+                });
+            }
+
+            let verify_output =
+                Self::verify_downloaded_asset(action, target, working_dir, &config, mode)?;
+            stdout.push_str(&verify_output.stdout);
+            stderr.push_str(&verify_output.stderr);
+
+            if verify_output.exit_code != 0 {
+                return Err(ProvisioningBackendError::CommandFailed {
+                    command: format!(
+                        "{} {}",
+                        release_asset_relative_destination(action, target),
+                        release_asset_version_args(&config).join(" ")
+                    ),
+                    exit_code: verify_output.exit_code,
+                    stdout,
+                    stderr,
+                });
+            }
+
+            if !action_version_matches_output(action, &verify_output.stdout)
+                && !action_version_matches_output(action, &verify_output.stderr)
+            {
+                return Err(ProvisioningBackendError::DiagnosedCommandFailed {
+                    command: format!(
+                        "{} {}",
+                        release_asset_relative_destination(action, target),
+                        release_asset_version_args(&config).join(" ")
+                    ),
+                    exit_code: 1,
+                    stdout,
+                    stderr,
+                    diagnosis: ProvisioningFailureDiagnosis {
+                        backend: action.source.clone(),
+                        target_kind: action.target_kind,
+                        name: action.name.clone(),
+                        requested_version: action.requested_version.clone(),
+                        resolved_version: action.resolved_version.clone(),
+                        policy_match: action.policy_match.clone(),
+                        kind: ProvisioningFailureKind::VersionUnavailable,
+                    },
+                });
+            }
+        }
+
+        Ok(ProvisioningBackendOutput { stdout, stderr })
+    }
+}
+
 impl ProvisioningBackend for BrewBootstrapProvisioningBackend {
     fn source(&self) -> &'static str {
         "brew-bootstrap"
@@ -2979,6 +3289,7 @@ fn backend_for_source(source: &str) -> Option<&'static dyn ProvisioningBackend> 
         "pacman" => Some(&PACMAN_BACKEND),
         "apt" => Some(&APT_BACKEND),
         "dnf" => Some(&DNF_BACKEND),
+        "release-asset" => Some(&RELEASE_ASSET_BACKEND),
         "brew-bootstrap" => Some(&BREW_BOOTSTRAP_BACKEND),
         "asdf-bootstrap" => Some(&ASDF_BOOTSTRAP_BACKEND),
         "mise-bootstrap" => Some(&MISE_BOOTSTRAP_BACKEND),
@@ -3130,6 +3441,7 @@ pub(crate) fn probe_provisioning_installability_with_target(
         "winget" => probe_winget_installability_with_target(action, working_dir, target),
         "choco" => probe_choco_installability_with_target(action, working_dir, target),
         "scoop" => probe_scoop_installability_with_target(action, working_dir, target),
+        "release-asset" => probe_release_asset_installability_with_target(action, working_dir, target),
         _ => {
             return Err(ProvisioningBackendError::UnsupportedSource {
                 provisioning_source: action.source.clone(),
@@ -3303,6 +3615,64 @@ pub(crate) fn probe_asdf_installability_with_target(
             policy_match: action.policy_match.clone(),
             kind: ProvisioningFailureKind::VersionUnavailable,
         },
+    })
+}
+
+pub(crate) fn probe_release_asset_installability_with_target(
+    action: &ProvisioningAction,
+    working_dir: &Path,
+    target: &ProvisioningExecutionTarget,
+) -> Result<(), ProvisioningBackendError> {
+    if action.source != "release-asset" {
+        return Err(ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: action.source.clone(),
+        });
+    }
+
+    if action.kind != ProvisioningActionKind::SelectSource {
+        return Err(ProvisioningBackendError::UnsupportedActionKind { kind: action.kind });
+    }
+
+    if action.target_kind != ProvisioningTargetKind::Tool {
+        return Err(ProvisioningBackendError::UnsupportedTargetKind {
+            backend: "release-asset",
+            target_kind: action.target_kind,
+        });
+    }
+
+    let config = parse_release_asset_source_config(action)?;
+    let script = ReleaseAssetProvisioningBackend::probe_script(action, target, &config)?;
+    let output = if release_asset_target_os(target) == "windows" {
+        execute_provisioning_command(
+            target,
+            working_dir,
+            "powershell",
+            &["-NoLogo", "-NoProfile", "-Command", &script],
+            ProvisioningOutputMode::Capture,
+        )?
+    } else {
+        execute_provisioning_command(
+            target,
+            working_dir,
+            "sh",
+            &["-lc", &script],
+            ProvisioningOutputMode::Capture,
+        )?
+    };
+
+    if output.exit_code == 0 {
+        return Ok(());
+    }
+
+    Err(ProvisioningBackendError::CommandFailed {
+        command: format!(
+            "probe release asset {} {}",
+            action.display_name(),
+            action.version_display()
+        ),
+        exit_code: output.exit_code,
+        stdout: output.stdout,
+        stderr: output.stderr,
     })
 }
 
@@ -3814,10 +4184,18 @@ fn version_matches_request(candidate: &str, request: &str) -> bool {
     if candidate == request {
         return true;
     }
+    if candidate.trim_start_matches('v') == request {
+        return true;
+    }
 
     [".", "-", "+", "_", " "]
         .iter()
-        .any(|delimiter| candidate.starts_with(&format!("{request}{delimiter}")))
+        .any(|delimiter| {
+            candidate.starts_with(&format!("{request}{delimiter}"))
+                || candidate
+                    .trim_start_matches('v')
+                    .starts_with(&format!("{request}{delimiter}"))
+        })
 }
 
 fn text_output_contains_requested_version(value: &str, request: &str) -> bool {
@@ -5557,6 +5935,131 @@ mod tests {
         unsafe {
             env::set_var("PATH", original_path);
         }
+    }
+
+    #[test]
+    fn applies_container_release_asset_request() {
+        let _guard = env_mutex_lock();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        let script = r#"#!/bin/sh
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  case "$*" in
+    *"curl -fsSL -o"*)
+      /bin/mkdir -p ./.ota/state/source-managed/bin
+      cat > ./.ota/state/source-managed/bin/yq <<'EOF'
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo 'yq (https://github.com/mikefarah/yq/) version v4.52.5'
+  exit 0
+fi
+exit 1
+EOF
+      /bin/chmod +x ./.ota/state/source-managed/bin/yq
+      exit 0
+      ;;
+    *".ota/state/source-managed/bin/yq"*)
+      echo 'yq (https://github.com/mikefarah/yq/) version v4.52.5'
+      exit 0
+      ;;
+  esac
+fi
+exit 1
+"#;
+        fs::write(&docker, script).unwrap();
+        make_executable(&docker);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "yq".to_string(),
+                requested_version: "4.52.5".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
+                package: None,
+                source: "release-asset".to_string(),
+                source_config: Some(
+                    serde_yaml::from_str::<std::collections::BTreeMap<String, Value>>(
+                        r#"
+asset_by_platform:
+  linux_x86_64: https://example.com/releases/v{version}/yq_linux_amd64
+  linux_aarch64: https://example.com/releases/v{version}/yq_linux_arm64
+version_args:
+  - --version
+"#,
+                    )
+                    .unwrap(),
+                ),
+                approved_version: Some("4.52.5".to_string()),
+                policy_match: Some("4.52.5".to_string()),
+            }],
+        };
+
+        let workdir = TempDir::new().unwrap();
+        let output = apply_provisioning_request_with_target(
+            &request,
+            workdir.path(),
+            &ProvisioningExecutionTarget::Container {
+                image: "premium/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
+            },
+            ProvisioningOutputMode::Capture,
+        )
+        .unwrap();
+
+        assert!(
+            workdir
+                .path()
+                .join(".ota/state/source-managed/bin/yq")
+                .exists()
+        );
+        assert!(output.stdout.contains("v4.52.5") || output.stderr.contains("v4.52.5"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn release_asset_destination_adds_windows_suffix_when_needed() {
+        let action = ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: "yq".to_string(),
+            requested_version: "4.52.5".to_string(),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: None,
+            source: "release-asset".to_string(),
+            source_config: None,
+            approved_version: Some("4.52.5".to_string()),
+            policy_match: Some("4.52.5".to_string()),
+        };
+
+        assert_eq!(
+            release_asset_relative_destination_for_os(&action, "windows"),
+            ".ota/state/source-managed/bin/yq.exe"
+        );
+        assert_eq!(
+            release_asset_relative_destination_for_os(&action, "linux"),
+            ".ota/state/source-managed/bin/yq"
+        );
     }
 
     #[test]

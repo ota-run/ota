@@ -58,9 +58,10 @@ The point is to keep provisioning explicit, reviewable, and policy-controlled wi
 into a general-purpose package manager.
 
 The shipped mutating backends currently use `mise`, `asdf`, `sdkman`, `uv`, `winget`, `choco`,
-`scoop`, `brew`, `apt`, `dnf`, and `pacman` as approved source/managers. `sdkman` and `uv` are the runtime-oriented
+`scoop`, `brew`, `apt`, `dnf`, `pacman`, and `release-asset` as approved source/managers. `sdkman` and `uv` are the runtime-oriented
 backends in that set; `mise`, `asdf`, `winget`, `choco`, `scoop`, `brew`, `apt`, `dnf`, and `pacman` can flow through
-declared runtime and tool entries where the adapter supports them.
+declared runtime and tool entries where the adapter supports them. `release-asset` is the
+standalone-binary lane for exact tool executables delivered as direct release artifacts.
 A custom feed or mirror for an existing package manager, for example, Chocolatey, remains within
 the same adapter family and does not create a new ota source.
 
@@ -85,6 +86,7 @@ The built-in mutating adapters currently support:
 - `apt` for Debian and Ubuntu package installs
 - `dnf` for Fedora and RHEL-style package installs
 - `pacman` for Arch package installs, with package-name installs in the current backend
+- `release-asset` for exact standalone tool binaries downloaded from approved release URLs
 
 For container-backed execution, policy pins must still be installable in the selected image.
 Ota now surfaces backend-aware provisioning failures across the shipped adapters, and container
@@ -96,7 +98,7 @@ When a mutating provisioning command fails with only generic backend stderr, `ot
 same read-only probe path to refine the failure class while preserving the original backend output.
 
 Policy entries should use `source: mise`, `source: asdf`, `source: sdkman`, `source: uv`,
-`source: winget`, `source: choco`, `source: scoop`, `source: brew`, `source: apt`, `source: dnf`, or `source: pacman` when they are
+`source: winget`, `source: choco`, `source: scoop`, `source: brew`, `source: apt`, `source: dnf`, `source: pacman`, or `source: release-asset` when they are
 meant to flow through the shipped backends.
 `sdkman` and `uv` are best suited to runtime entries.
 All other sources remain policy-visible and read-only until a matching adapter is added.
@@ -178,6 +180,47 @@ name. Policy-backed provisioning handles this through an optional `package` fiel
 - `package` may override the install identifier while keeping the contract key stable
 - `package` is required for OS package managers (`apt`, `dnf`, `pacman`, `winget`, `choco`, `scoop`)
 - `package` is optional for runtime managers (`brew`, `mise`, `asdf`, `sdkman`, `uv`)
+- `package` is not required for `release-asset`; the contract key remains the executable name
+
+## Release Asset Provisioning
+
+Use `source: release-asset` when policy needs to own one exact standalone binary rather than one
+package-manager lane.
+
+Current behavior:
+
+- `release-asset` is supported for `tools`, not runtime installation
+- policy must provide `source_config.asset_by_platform`
+- asset URLs may interpolate `{version}` and `{name}`
+- supported platform keys are:
+  - `linux_x86_64`
+  - `linux_aarch64`
+  - `macos_x86_64`
+  - `macos_aarch64`
+  - `windows_x86_64`
+  - `windows_aarch64`
+- `source_config.version_args` is optional and defaults to `["--version"]`
+- ota materializes the downloaded executable into a source-managed workspace path so later task
+  execution can use it without repo-local bootstrap glue
+
+Example:
+
+```yaml
+policies:
+  provisioning:
+    yq:
+      source: release-asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_linux_amd64
+          linux_aarch64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_linux_arm64
+          macos_x86_64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_darwin_amd64
+          macos_aarch64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_darwin_arm64
+        version_args:
+          - --version
+      approved_versions:
+        - "4.52.5"
+```
 
 Example:
 

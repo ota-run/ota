@@ -139,6 +139,18 @@ policies:
           source: choco
           approved_versions:
             - "1.7.1"
+    yq:
+      source: release-asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_linux_amd64
+          linux_aarch64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_linux_arm64
+          macos_x86_64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_darwin_amd64
+          macos_aarch64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_darwin_arm64
+        version_args:
+          - --version
+      approved_versions:
+        - "4.52.5"
     java:
       source: sdkman
       approved_versions:

@@ -8206,6 +8206,19 @@ fn diagnose_command_version(
             ));
             return probe_started;
         }
+        if provisionable_missing_command_is_covered(
+            target_kind,
+            display_name,
+            requirement,
+            mode,
+            container_probe,
+            remote_probe,
+            remote_context_name,
+            contract_path,
+            provisioning_actions,
+        ) {
+            return probe_started;
+        }
         let container_image = container_probe.map(|probe| probe.image.as_str());
         findings.push(Finding::identified(
             command_version_code(kind, "missing"),
@@ -8633,6 +8646,61 @@ fn container_installability_failure(
         Err(ProvisioningBackendError::DiagnosedCommandFailed { diagnosis, .. }) => Some(diagnosis),
         _ => None,
     }
+}
+
+fn selected_provisioning_action<'a>(
+    target_kind: ProvisioningTargetKind,
+    display_name: &str,
+    requirement: &str,
+    provisioning_actions: &'a [ProvisioningAction],
+) -> Option<&'a ProvisioningAction> {
+    provisioning_actions.iter().find(|action| {
+        action.target_kind == target_kind
+            && action.name == display_name
+            && action.requested_version == requirement
+    })
+}
+
+fn provisionable_missing_command_is_covered(
+    target_kind: ProvisioningTargetKind,
+    display_name: &str,
+    requirement: &str,
+    mode: DoctorMode,
+    container_probe: Option<&ContainerProbeContext>,
+    remote_probe: Option<&ResolvedExecutionBackend>,
+    remote_context_name: Option<&str>,
+    contract_path: &Path,
+    provisioning_actions: &[ProvisioningAction],
+) -> bool {
+    let Some(action) =
+        selected_provisioning_action(target_kind, display_name, requirement, provisioning_actions)
+    else {
+        return false;
+    };
+
+    let target = match mode {
+        DoctorMode::Native => ProvisioningExecutionTarget::Native,
+        DoctorMode::Container => {
+            let Some(container_probe) = container_probe else {
+                return false;
+            };
+            ProvisioningExecutionTarget::Container {
+                image: container_probe.image.clone(),
+                engine: container_probe.engine.clone(),
+                lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
+            }
+        }
+        DoctorMode::Remote => {
+            let Some(target) = remote_provisioning_target(remote_probe, remote_context_name) else {
+                return false;
+            };
+            target
+        }
+    };
+
+    probe_provisioning_installability_with_target(action, contract_working_dir(contract_path), &target)
+        .is_ok()
 }
 
 fn remote_provisioning_target(

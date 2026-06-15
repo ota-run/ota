@@ -244,6 +244,14 @@ pub struct PolicyAdapterBootstrapRule {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ReleaseAssetSourceConfig {
+    pub asset_by_platform: BTreeMap<String, String>,
+    #[serde(default)]
+    pub version_args: Vec<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyBackendEnvironmentRules {
     #[serde(default)]
     pub profiles: BTreeMap<String, PolicyBackendEnvironmentProfile>,
@@ -518,7 +526,7 @@ impl OrgPolicyPack {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        validate_source_rules(
+        validate_provisioning_source_rules(
             &self.policies.provisioning,
             "policy-backed provisioning source",
         )?;
@@ -1088,6 +1096,69 @@ fn provisioning_source_requires_package(source: &str) -> bool {
     )
 }
 
+fn parse_release_asset_source_config(
+    source_config: Option<&BTreeMap<String, serde_yaml::Value>>,
+) -> Result<ReleaseAssetSourceConfig, String> {
+    let Some(source_config) = source_config else {
+        return Err(String::from("requires `source_config`"));
+    };
+    serde_yaml::from_value(serde_yaml::Value::Mapping(
+        source_config
+            .iter()
+            .map(|(key, value)| (serde_yaml::Value::String(key.clone()), value.clone()))
+            .collect(),
+    ))
+    .map_err(|error| format!("has invalid `source_config`: {error}"))
+}
+
+fn validate_release_asset_source_rule(
+    name: &str,
+    label: &str,
+    source_config: Option<&BTreeMap<String, serde_yaml::Value>>,
+) -> Result<(), String> {
+    let config = parse_release_asset_source_config(source_config)
+        .map_err(|message| format!("{label} `{name}` {message}"))?;
+
+    if config.asset_by_platform.is_empty() {
+        return Err(format!(
+            "{label} `{name}` must declare at least one `source_config.asset_by_platform` entry"
+        ));
+    }
+
+    for (platform, asset) in &config.asset_by_platform {
+        if !matches!(
+            platform.as_str(),
+            "linux_x86_64"
+                | "linux_aarch64"
+                | "macos_x86_64"
+                | "macos_aarch64"
+                | "windows_x86_64"
+                | "windows_aarch64"
+        ) {
+            return Err(format!(
+                "{label} `{name}` has unsupported release-asset platform `{platform}`; expected one of: linux_x86_64, linux_aarch64, macos_x86_64, macos_aarch64, windows_x86_64, windows_aarch64"
+            ));
+        }
+        if asset.trim().is_empty() {
+            return Err(format!(
+                "{label} `{name}` release-asset platform `{platform}` must not be empty"
+            ));
+        }
+    }
+
+    if config
+        .version_args
+        .iter()
+        .any(|value| value.trim().is_empty())
+    {
+        return Err(format!(
+            "{label} `{name}` must not contain empty `source_config.version_args` entries"
+        ));
+    }
+
+    Ok(())
+}
+
 fn evaluate_provisioning_version_match(
     kind: ProvisioningTargetKind,
     name: &str,
@@ -1478,6 +1549,19 @@ where
     Ok(())
 }
 
+fn validate_provisioning_source_rules(
+    rules: &BTreeMap<String, PolicyProvisioningRule>,
+    label: &str,
+) -> Result<(), String> {
+    validate_source_rules(rules, label)?;
+    for (name, rule) in rules {
+        if rule.source == "release-asset" {
+            validate_release_asset_source_rule(name, label, rule.source_config.as_ref())?;
+        }
+    }
+    Ok(())
+}
+
 fn validate_platform_rules(
     rules: &BTreeMap<String, PolicyProvisioningRule>,
     label: &str,
@@ -1502,6 +1586,13 @@ fn validate_platform_rules(
                 return Err(format!(
                     "{label} `{name}` platform `{platform}` must not contain empty approved versions"
                 ));
+            }
+            if platform_rule.source == "release-asset" {
+                validate_release_asset_source_rule(
+                    &format!("{name}` platform `{platform}"),
+                    label,
+                    platform_rule.source_config.as_ref(),
+                )?;
             }
         }
     }
@@ -3052,6 +3143,60 @@ policies:
                 .and_then(|value| value.as_str()),
             Some("internal-brew")
         );
+    }
+
+    #[test]
+    fn validates_release_asset_policy_provisioning_source_config() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    yq:
+      source: release-asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/yq_linux_amd64
+          linux_aarch64: https://example.com/releases/v{version}/yq_linux_arm64
+        version_args:
+          - --version
+      approved_versions:
+        - "4.52.5"
+"#,
+        )
+        .unwrap();
+
+        policy.validate().unwrap();
+        let decision = policy
+            .resolve_provisioning(ProvisioningTargetKind::Tool, "yq", "4.52.5")
+            .unwrap()
+            .unwrap();
+        assert_eq!(decision.source, "release-asset");
+        assert_eq!(
+            decision
+                .source_config
+                .as_ref()
+                .and_then(|config| config.get("asset_by_platform"))
+                .is_some(),
+            true
+        );
+    }
+
+    #[test]
+    fn rejects_release_asset_policy_without_source_config() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    yq:
+      source: release-asset
+      approved_versions:
+        - "4.52.5"
+"#,
+        )
+        .unwrap();
+
+        let error = policy.validate().unwrap_err();
+        assert!(error.contains("requires `source_config`"), "{error}");
     }
 
     #[test]

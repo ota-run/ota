@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added first-class policy-backed `release-asset` provisioning for exact standalone tool binaries,
+  so org policy can now approve platform-specific release URLs plus version probes, Ota can
+  materialize those binaries into a source-managed workspace path for native/container execution,
+  and repos no longer need local download helpers just to own exact tools like Mike Farah `yq`
 - generalized adapter-overlay internals behind a shared adapter-input field registry, so
   workflow-overlay binding, duplicate-ownership governance, and runtime file-readiness checks now
   consume one canonical metadata surface instead of carrying separate Compose/Bake match ladders

@@ -44,6 +44,7 @@ The built-in mutating provisioning adapters currently support:
 - `apt` for Debian and Ubuntu package installs
 - `dnf` for Fedora and RHEL-style package installs
 - `pacman` for Arch package installs, with package-name installs in the current backend
+- `release-asset` for exact standalone tool binaries
 
 Use these when a policy entry should flow through the shipped installer path.
 
@@ -167,6 +168,28 @@ policies:
         tap_url: https://mirror.local/homebrew
       approved_versions:
         - "2.46.0"
+```
+
+### Release asset
+
+Use `source: release-asset` when one tool should come from an approved direct binary artifact
+instead of a package manager.
+
+```yaml
+policies:
+  provisioning:
+    yq:
+      source: release-asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_linux_amd64
+          linux_aarch64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_linux_arm64
+          macos_x86_64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_darwin_amd64
+          macos_aarch64: https://github.com/mikefarah/yq/releases/download/v{version}/yq_darwin_arm64
+        version_args:
+          - --version
+      approved_versions:
+        - "4.52.5"
 ```
 
 ## Platform-specific provisioning
