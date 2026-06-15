@@ -10022,6 +10022,16 @@ fn validate_services(
                             )));
                         }
                     }
+                    if manager.start.is_some() {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` compose manager must not declare `manager.start`; compose lifecycle is derived from manager metadata"
+                        )));
+                    }
+                    if manager.stop.is_some() {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` compose manager must not declare `manager.stop`; compose lifecycle is derived from manager metadata"
+                        )));
+                    }
                 }
                 crate::schema::ServiceManagerKind::Host => {
                     if manager
@@ -10051,6 +10061,30 @@ fn validate_services(
                     if manager.service.is_some() {
                         errors.push(ValidationError::new(format!(
                             "service `{name}` host manager must not declare `manager.service`"
+                        )));
+                    }
+                    if service.start.is_some() && manager.start.is_some() {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` must not declare both top-level `start` and `manager.start`; keep one owner for host service startup"
+                        )));
+                    }
+                    if service.stop.is_some() && manager.stop.is_some() {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` must not declare both top-level `stop` and `manager.stop`; keep one owner for host service shutdown"
+                        )));
+                    }
+                    if let Some(start) = manager.start.as_ref()
+                        && start.exe.trim().is_empty()
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` host manager must declare a non-empty `manager.start.exe`"
+                        )));
+                    }
+                    if let Some(stop) = manager.stop.as_ref()
+                        && stop.exe.trim().is_empty()
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` host manager must declare a non-empty `manager.stop.exe`"
                         )));
                     }
                 }
@@ -17690,6 +17724,53 @@ tasks:
     }
 
     #[test]
+    fn validates_host_service_manager_structured_lifecycle_commands() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    manager:
+      kind: host
+      name: local-postgres
+      start:
+        exe: brew
+        args:
+          - services
+          - start
+          - postgresql@17
+      stop:
+        exe: brew
+        args:
+          - services
+          - stop
+          - postgresql@17
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+    readiness:
+      from: host
+      kind: tcp
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
     fn rejects_invalid_service_manager_env_file() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -17775,6 +17856,113 @@ tasks:
                 .to_string()
                 .contains("service `postgres` host manager must not declare `manager.profiles`")
         }));
+    }
+
+    #[test]
+    fn rejects_invalid_host_service_manager_lifecycle_duplication() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    start: brew services start postgresql@17
+    stop: brew services stop postgresql@17
+    manager:
+      kind: host
+      start:
+        exe: brew
+        args:
+          - services
+          - start
+          - postgresql@17
+      stop:
+        exe: brew
+        args:
+          - services
+          - stop
+          - postgresql@17
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err().to_string();
+        assert!(errors.contains(
+            "service `postgres` must not declare both top-level `start` and `manager.start`"
+        ));
+        assert!(errors.contains(
+            "service `postgres` must not declare both top-level `stop` and `manager.stop`"
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_service_manager_structured_lifecycle_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    manager:
+      kind: compose
+      start:
+        exe: docker
+        args:
+          - compose
+          - up
+          - -d
+          - postgres
+      stop:
+        exe: docker
+        args:
+          - compose
+          - stop
+          - postgres
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err().to_string();
+        assert!(
+            errors.contains("service `postgres` compose manager must not declare `manager.start`")
+        );
+        assert!(
+            errors.contains("service `postgres` compose manager must not declare `manager.stop`")
+        );
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    manager:
+      kind: host
+      start:
+        exe: "   "
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err().to_string();
+        assert!(errors.contains(
+            "service `postgres` host manager must declare a non-empty `manager.start.exe`"
+        ));
     }
 
     #[test]

@@ -3087,6 +3087,22 @@ impl ServiceSpec {
         })
     }
 
+    pub fn start_command_spec(&self) -> Option<&TaskCommandSpec> {
+        self.manager.as_ref().and_then(|manager| {
+            (manager.kind == ServiceManagerKind::Host)
+                .then_some(manager.start.as_ref())
+                .flatten()
+        })
+    }
+
+    pub fn stop_command_spec(&self) -> Option<&TaskCommandSpec> {
+        self.manager.as_ref().and_then(|manager| {
+            (manager.kind == ServiceManagerKind::Host)
+                .then_some(manager.stop.as_ref())
+                .flatten()
+        })
+    }
+
     pub fn healthcheck_command(&self, service_name: &str, healthcheck: &str) -> String {
         if let Some(manager) = &self.manager {
             manager.healthcheck_command(service_name, healthcheck)
@@ -3281,6 +3297,10 @@ pub struct ServiceManagerSpec {
     pub profiles: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<TaskCommandSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<TaskCommandSpec>,
 }
 
 impl ServiceManagerSpec {
@@ -3304,7 +3324,7 @@ impl ServiceManagerSpec {
                 self.compose_command_prefix(),
                 shell_single_quote(self.compose_service(service_name))
             )),
-            ServiceManagerKind::Host => None,
+            ServiceManagerKind::Host => self.start.as_ref().map(TaskCommandSpec::preview),
         }
     }
 
@@ -3315,7 +3335,7 @@ impl ServiceManagerSpec {
                 self.compose_command_prefix(),
                 shell_single_quote(self.compose_service(service_name))
             )),
-            ServiceManagerKind::Host => None,
+            ServiceManagerKind::Host => self.stop.as_ref().map(TaskCommandSpec::preview),
         }
     }
 
@@ -6066,7 +6086,10 @@ mod tests {
     use crate::parser::parse_contract_str;
     use crate::validator::validate_contract;
 
-    use super::{Backend, TaskRuntimeHostPortMode, TaskRuntimePortMode, TaskRuntimeProtocol};
+    use super::{
+        Backend, ServiceManagerKind, ServiceManagerSpec, ServiceSpec, TaskCommandSpec,
+        TaskRuntimeHostPortMode, TaskRuntimePortMode, TaskRuntimeProtocol,
+    };
 
     #[test]
     fn task_env_for_backend_merges_context_task_and_mode_env_in_order() {
@@ -6163,6 +6186,60 @@ services:
                 String::from("-q"),
                 String::from("redis"),
             ]
+        );
+    }
+
+    #[test]
+    fn host_service_manager_exposes_structured_lifecycle_commands() {
+        let service = ServiceSpec {
+            manager: Some(ServiceManagerSpec {
+                kind: ServiceManagerKind::Host,
+                name: Some(String::from("local-postgres")),
+                file: None,
+                env_file: None,
+                profiles: Vec::new(),
+                service: None,
+                start: Some(TaskCommandSpec {
+                    exe: String::from("brew"),
+                    args: vec![
+                        String::from("services"),
+                        String::from("start"),
+                        String::from("postgresql@17"),
+                    ],
+                }),
+                stop: Some(TaskCommandSpec {
+                    exe: String::from("brew"),
+                    args: vec![
+                        String::from("services"),
+                        String::from("stop"),
+                        String::from("postgresql@17"),
+                    ],
+                }),
+            }),
+            ..ServiceSpec::default()
+        };
+
+        assert_eq!(
+            service.start_command("postgres").as_deref(),
+            Some("brew services start postgresql@17")
+        );
+        assert_eq!(
+            service.stop_command("postgres").as_deref(),
+            Some("brew services stop postgresql@17")
+        );
+        assert_eq!(
+            service
+                .start_command_spec()
+                .map(TaskCommandSpec::preview)
+                .as_deref(),
+            Some("brew services start postgresql@17")
+        );
+        assert_eq!(
+            service
+                .stop_command_spec()
+                .map(TaskCommandSpec::preview)
+                .as_deref(),
+            Some("brew services stop postgresql@17")
         );
     }
 

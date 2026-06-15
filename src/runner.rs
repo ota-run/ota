@@ -4785,7 +4785,7 @@ fn container_names_for_label(
 }
 
 #[derive(Debug, Clone)]
-enum TaskExecutionMode {
+pub(crate) enum TaskExecutionMode {
     Stream {
         emit_progress: bool,
         capture_output: bool,
@@ -5634,6 +5634,48 @@ fn run_host_shell_command(
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),
     }
+}
+
+fn run_host_structured_command(
+    task_name: &str,
+    command: &crate::schema::TaskCommandSpec,
+    working_dir: &Path,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, String> {
+    execute_native_launch_command(
+        task_name,
+        None,
+        command.exe.as_str(),
+        &command.args,
+        working_dir,
+        &BTreeMap::new(),
+        mode,
+        &ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        },
+    )
+    .map_err(|error| error.to_string())
+}
+
+pub(crate) fn run_service_start_command(
+    service_name: &str,
+    service: &crate::schema::ServiceSpec,
+    working_dir: &Path,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, String> {
+    if let Some(command) = service.start_command_spec() {
+        return run_host_structured_command(
+            &format!("service:{service_name}:start"),
+            command,
+            working_dir,
+            mode,
+        );
+    }
+
+    let start = service
+        .start_command(service_name)
+        .ok_or_else(|| format!("service `{service_name}` has no start command"))?;
+    run_host_shell_command(start.as_str(), working_dir, mode)
 }
 
 #[derive(Clone, Copy)]
@@ -7400,8 +7442,13 @@ fn ensure_task_required_services(
         }
 
         if state.started_services.insert(service_name.clone()) {
-            if let Some(start) = service.start_command(service_name.as_str()) {
-                match run_host_shell_command(start.as_str(), working_dir, mode.clone()) {
+            if service.start_command(service_name.as_str()).is_some() {
+                match run_service_start_command(
+                    service_name.as_str(),
+                    service,
+                    working_dir,
+                    mode.clone(),
+                ) {
                     Ok(output) => {
                         state.stdout.push_str(&output.stdout);
                         state.stderr.push_str(&output.stderr);
@@ -33203,6 +33250,45 @@ project:
 services:
   postgres:
     start: echo service >> run.log
+    healthcheck: test -f run.log
+tasks:
+  build:
+    requires_services:
+      - postgres
+    script: |
+      echo task >> run.log
+"#,
+        );
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "build").unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["service", "task"]
+        );
+    }
+
+    #[test]
+    fn run_task_requires_services_starts_host_manager_structured_services_before_task() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    manager:
+      kind: host
+      start:
+        exe: sh
+        args:
+          - -c
+          - echo service >> run.log
     healthcheck: test -f run.log
 tasks:
   build:

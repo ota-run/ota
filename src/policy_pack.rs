@@ -668,7 +668,8 @@ impl OrgPolicyPack {
                 continue;
             }
 
-            let Some(rule) = self.policies.version_policy.tools.get(name) else {
+            let Some(rule) = resolve_tool_policy_rule(&self.policies.version_policy.tools, name)
+            else {
                 continue;
             };
 
@@ -698,7 +699,9 @@ impl OrgPolicyPack {
 
         let rule = match kind {
             ProvisioningTargetKind::Runtime => self.policies.version_policy.runtimes.get(name)?,
-            ProvisioningTargetKind::Tool => self.policies.version_policy.tools.get(name)?,
+            ProvisioningTargetKind::Tool => {
+                resolve_tool_policy_rule(&self.policies.version_policy.tools, name)?
+            }
         };
 
         evaluate_actual_version_policy_match(
@@ -718,7 +721,9 @@ impl OrgPolicyPack {
     ) -> Option<Vec<String>> {
         let rule = match kind {
             ProvisioningTargetKind::Runtime => self.policies.version_policy.runtimes.get(name)?,
-            ProvisioningTargetKind::Tool => self.policies.version_policy.tools.get(name)?,
+            ProvisioningTargetKind::Tool => {
+                resolve_tool_policy_rule(&self.policies.version_policy.tools, name)?
+            }
         };
 
         Some(
@@ -744,7 +749,12 @@ impl OrgPolicyPack {
         name: &str,
         requested_version: &str,
     ) -> Result<Option<ProvisioningDecision>, String> {
-        let Some(rule) = self.policies.provisioning.get(name) else {
+        let Some(rule) = (match kind {
+            ProvisioningTargetKind::Runtime => self.policies.provisioning.get(name),
+            ProvisioningTargetKind::Tool => {
+                resolve_tool_policy_rule(&self.policies.provisioning, name)
+            }
+        }) else {
             return Ok(None);
         };
 
@@ -1691,6 +1701,12 @@ fn validate_provisioning_source_rules(
 ) -> Result<(), String> {
     validate_source_rules(rules, label)?;
     for (name, rule) in rules {
+        if !supported_provisioning_policy_source(&rule.source) {
+            return Err(format!(
+                "{label} `{name}` uses unsupported source `{}`; expected one of: mise, asdf, sdkman, uv, winget, choco, scoop, brew, apt, dnf, pacman, release-asset",
+                rule.source
+            ));
+        }
         if rule.source == "release-asset" {
             validate_release_asset_source_rule(name, label, rule.source_config.as_ref())?;
         }
@@ -1738,6 +1754,12 @@ fn validate_platform_rules(
             if platform_rule.source.trim().is_empty() {
                 return Err(format!(
                     "{label} `{name}` platform `{platform}` must not be empty"
+                ));
+            }
+            if !supported_provisioning_policy_source(&platform_rule.source) {
+                return Err(format!(
+                    "{label} `{name}` platform `{platform}` uses unsupported source `{}`; expected one of: mise, asdf, sdkman, uv, winget, choco, scoop, brew, apt, dnf, pacman, release-asset",
+                    platform_rule.source
                 ));
             }
             if platform_rule
@@ -1824,6 +1846,42 @@ fn validate_policy_effect_external_state_tokens(
         }
     }
     Ok(())
+}
+
+fn supported_provisioning_policy_source(source: &str) -> bool {
+    matches!(
+        source,
+        "mise"
+            | "asdf"
+            | "sdkman"
+            | "uv"
+            | "winget"
+            | "choco"
+            | "scoop"
+            | "brew"
+            | "apt"
+            | "dnf"
+            | "pacman"
+            | "release-asset"
+    )
+}
+
+fn tool_policy_rule_aliases(name: &str) -> &'static [&'static str] {
+    match name {
+        "bundler" => &["bundle"],
+        "bundle" => &["bundler"],
+        "maven" => &["mvn"],
+        "mvn" => &["maven"],
+        _ => &[],
+    }
+}
+
+fn resolve_tool_policy_rule<'a, T>(rules: &'a BTreeMap<String, T>, name: &str) -> Option<&'a T> {
+    rules.get(name).or_else(|| {
+        tool_policy_rule_aliases(name)
+            .iter()
+            .find_map(|alias| rules.get(*alias))
+    })
 }
 
 fn scope_display(scope: EffectGovernanceScope) -> &'static str {
@@ -3208,6 +3266,85 @@ policies:
         assert_eq!(macos.source, "brew");
         assert_eq!(linux.source, "apt");
         assert_eq!(windows.source, "choco");
+    }
+
+    #[test]
+    fn resolves_tool_provisioning_via_bundler_policy_alias() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    bundler:
+      source: brew
+      approved_versions:
+        - "2.5.3"
+"#,
+        )
+        .unwrap();
+
+        let decision = policy
+            .resolve_provisioning_for_os("macos", ProvisioningTargetKind::Tool, "bundle", "2.5.3")
+            .unwrap()
+            .expect("bundle should resolve through bundler policy alias");
+
+        assert_eq!(decision.name, "bundle");
+        assert_eq!(decision.source, "brew");
+        assert_eq!(decision.approved_version.as_deref(), Some("2.5.3"));
+        assert_eq!(decision.policy_match.as_deref(), Some("2.5.3"));
+    }
+
+    #[test]
+    fn strict_version_policy_applies_through_bundler_alias() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  strict_versions: true
+  version_policy:
+    tools:
+      bundler:
+        approved_versions:
+          - "2.5.3"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            policy.strict_version_compliance_violation_for_actual_version_os(
+                "macos",
+                ProvisioningTargetKind::Tool,
+                "bundle",
+                "2.5.3",
+            ),
+            None
+        );
+        assert!(
+            policy
+                .strict_version_compliance_violation_for_actual_version_os(
+                    "macos",
+                    ProvisioningTargetKind::Tool,
+                    "bundle",
+                    "2.5.2",
+                )
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_policy_provisioning_source() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  provisioning:
+    ruby:
+      source: rbenv
+      approved_versions:
+        - "3.3.11"
+"#,
+        )
+        .unwrap();
+
+        let error = policy.validate().unwrap_err();
+        assert!(error.contains("unsupported source `rbenv`"));
     }
 
     #[test]

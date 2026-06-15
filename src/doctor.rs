@@ -8014,31 +8014,6 @@ fn diagnose_command_version(
             return probe_started;
         }
 
-        if run_path_fulfillment_allowed && provider_hint.is_some_and(|provider| provider == "ruby")
-        {
-            probe_started |= diagnose_command_version(
-                "runtime",
-                "ruby",
-                &[String::from("ruby")],
-                "*",
-                required,
-                None,
-                None,
-                mode,
-                selected_lifecycle,
-                container_probe,
-                remote_probe,
-                remote_context_name,
-                contract_path,
-                loaded_policy,
-                target_os,
-                false,
-                provisioning_actions,
-                findings,
-            );
-            return probe_started;
-        }
-
         if run_path_fulfillment_allowed
             && tool_acquisition.is_some_and(|acquisition| {
                 acquisition.provider == ToolAcquisitionProvider::Corepack
@@ -8464,34 +8439,6 @@ fn diagnose_command_version(
             "tool",
             "mise",
             &[String::from("mise")],
-            "*",
-            required,
-            None,
-            None,
-            mode,
-            selected_lifecycle,
-            container_probe,
-            remote_probe,
-            remote_context_name,
-            contract_path,
-            loaded_policy,
-            target_os,
-            false,
-            provisioning_actions,
-            findings,
-        );
-        if findings.len() == finding_count {
-            return probe_started;
-        }
-        return probe_started;
-    }
-
-    if run_path_fulfillment_allowed && provider_hint.is_some_and(|provider| provider == "ruby") {
-        let finding_count = findings.len();
-        probe_started |= diagnose_command_version(
-            "runtime",
-            "ruby",
-            &[String::from("ruby")],
             "*",
             required,
             None,
@@ -19964,6 +19911,8 @@ tasks:
                 env_file: None,
                 profiles: Vec::new(),
                 service: Some(String::from("postgres")),
+                start: None,
+                stop: None,
             }),
             ..ServiceSpec::default()
         };
@@ -19988,6 +19937,8 @@ tasks:
                 env_file: None,
                 profiles: Vec::new(),
                 service: None,
+                start: None,
+                stop: None,
             }),
             ..ServiceSpec::default()
         };
@@ -22920,6 +22871,85 @@ workflows:
                     && finding.summary != "Version mismatch for tool: bundle"),
             "{report:?}"
         );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn doctor_selected_workflow_reports_run_fulfilled_ruby_probe_failure_once() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(&bin_dir, "ruby", "#!/bin/sh\nexit 1\n");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", bin_dir.as_os_str().to_os_string());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: athena-api
+toolchains:
+  ruby:
+    version: "3.3.11"
+    package_managers:
+      bundler: "2.5.3"
+    fulfillment:
+      source: ruby
+      mode: run
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+    requirements:
+      toolchains:
+        - ruby
+    effects:
+      writes:
+        - .bundle
+        - vendor/bundle
+      network: true
+      network_kind: dependency_hydration
+workflows:
+  default: verify
+  verify:
+    setup:
+      task: install
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("verify"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let runtime_probe_failures = report
+            .findings
+            .iter()
+            .filter(|finding| finding.summary == "Runtime probe failed: ruby")
+            .count();
+        assert_eq!(runtime_probe_failures, 1, "{report:?}");
     }
 
     #[cfg(not(windows))]

@@ -565,6 +565,28 @@ services:
       service: redis
     readiness:
       kind: compose_health
+  postgres-host:
+    manager:
+      kind: host
+      start:
+        exe: brew
+        args:
+          - services
+          - start
+          - postgresql@17
+      stop:
+        exe: brew
+        args:
+          - services
+          - stop
+          - postgresql@17
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+    readiness:
+      from: host
+      kind: tcp
 ```
 
 Fields:
@@ -580,6 +602,10 @@ Fields:
   - `name`: compose project name (`compose` required)
   - `service`: compose service name when `kind: compose`
   - `file`: optional compose file path when `kind: compose`
+  - `env_file`: optional Compose interpolation file when `kind: compose`
+  - `profiles`: optional Compose profile list when `kind: compose`
+  - `start`: optional structured host start command when `kind: host`
+  - `stop`: optional structured host stop command when `kind: host`
 - `endpoints`: optional named projections of reachable service address/port
 - `depends_on`: optional list of service names
 - `readiness`: optional explicit readiness check that runs in a named execution context
@@ -616,6 +642,7 @@ Current behavior:
 - `readiness_gate` is a later-spec draft field and is not accepted by the current shipped parser
 - `ota doctor` evaluates manager-owned service readiness through the declared control plane and endpoint topology
 - for `manager.kind: compose`, `ota doctor` derives compose lifecycle commands from manager metadata
+- for `manager.kind: host`, canonical lifecycle ownership lives on `manager.start` / `manager.stop`; legacy top-level `start` / `stop` still parse for compatibility, but new authoring should keep host service lifecycle under the manager block
 - for `manager.kind: host`, `ota doctor` runs readiness checks in the resolved host command context
 - `services.<name>.readiness.from` selects the execution context for service readiness
 - `services.<name>.readiness.endpoint` selects one named endpoint projection when `from` alone is ambiguous

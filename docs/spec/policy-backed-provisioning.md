@@ -101,7 +101,8 @@ Policy entries should use `source: mise`, `source: asdf`, `source: sdkman`, `sou
 `source: winget`, `source: choco`, `source: scoop`, `source: brew`, `source: apt`, `source: dnf`, `source: pacman`, or `source: release-asset` when they are
 meant to flow through the shipped backends.
 `sdkman` and `uv` are best suited to runtime entries.
-All other sources remain policy-visible and read-only until a matching adapter is added.
+Unsupported provisioning sources are rejected at policy validation time; Ota does not accept
+policy entries for unimplemented mutating backends and then pretend they are executable later.
 
 ## Platform-Specific Provisioning
 
@@ -181,6 +182,9 @@ name. Policy-backed provisioning handles this through an optional `package` fiel
 - `package` is required for OS package managers (`apt`, `dnf`, `pacman`, `winget`, `choco`, `scoop`)
 - `package` is optional for runtime managers (`brew`, `mise`, `asdf`, `sdkman`, `uv`)
 - `package` is not required for `release-asset`; the contract key remains the executable name
+- tool policy lookup recognizes the common executable aliases Ota already projects at runtime, so
+  canonical tool names such as `bundler` and `maven` can still govern executable-facing
+  requirements like `bundle` and `mvn`
 
 ## Release Asset Provisioning
 

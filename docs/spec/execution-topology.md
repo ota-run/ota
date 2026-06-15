@@ -663,6 +663,12 @@ services:
   postgres:
     manager:
       kind: host
+      start:
+        exe: brew
+        args:
+          - services
+          - start
+          - postgresql@17
     endpoints:
       host:
         address: 127.0.0.1

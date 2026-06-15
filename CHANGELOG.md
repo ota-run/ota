@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- widened typed host service ownership so `services.<name>.manager.kind: host` can now own
+  lifecycle through structured `manager.start` / `manager.stop` commands; `ota up` and
+  `requires_services` execution paths now run that first-class host-manager lifecycle truth
+  directly instead of forcing authors back to legacy top-level shell `start` / `stop` strings
+- policy-backed tool governance now resolves common executable aliases across provisioning and
+  strict version policy lanes, so canonical tool names like `bundler` and `maven` can govern the
+  executable-facing requirements `bundle` and `mvn` without forcing org policy authors onto
+  shell-name quirks
+- org policy validation now rejects unsupported provisioning sources instead of letting doctor/up
+  plan unimplemented backends as if they were actionable, so provisioning truth stays aligned to
+  the shipped mutating adapter set
 - made stream-phase loader timing explicit in the runner, so noisy task-output paths now use the
   governed delayed loader policy instead of ad hoc immediate spinner behavior that could dirty
   terminal output handoff before real task logs arrive

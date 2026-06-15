@@ -301,7 +301,15 @@ pub struct DetectServiceManagerSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub env_file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start: Option<TaskCommandSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<TaskCommandSpec>,
 }
 
 impl Default for DetectServiceManagerSpec {
@@ -310,7 +318,11 @@ impl Default for DetectServiceManagerSpec {
             kind: ServiceManagerKind::Compose,
             name: None,
             file: None,
+            env_file: None,
+            profiles: Vec::new(),
             service: None,
+            start: None,
+            stop: None,
         }
     }
 }

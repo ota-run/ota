@@ -10805,6 +10805,8 @@ fn build_assist_service_proposal(
         env_file: None,
         profiles: Vec::new(),
         service: compose_service_value.clone(),
+        start: None,
+        stop: None,
     });
     if let (Some(endpoint_name), Some(address), Some(port)) = (
         endpoint_name.as_ref(),
@@ -34164,8 +34166,32 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
             if manager.file.is_some() {
                 fields.push(format!("services.{name}.manager.file"));
             }
+            if manager.env_file.is_some() {
+                fields.push(format!("services.{name}.manager.env_file"));
+            }
+            for (index, profile) in manager.profiles.iter().enumerate() {
+                if !profile.trim().is_empty() {
+                    fields.push(format!("services.{name}.manager.profiles.{index}"));
+                }
+            }
             if manager.service.is_some() {
                 fields.push(format!("services.{name}.manager.service"));
+            }
+            if let Some(start) = manager.start.as_ref() {
+                fields.push(format!("services.{name}.manager.start.exe"));
+                for (index, arg) in start.args.iter().enumerate() {
+                    if !arg.trim().is_empty() {
+                        fields.push(format!("services.{name}.manager.start.args.{index}"));
+                    }
+                }
+            }
+            if let Some(stop) = manager.stop.as_ref() {
+                fields.push(format!("services.{name}.manager.stop.exe"));
+                for (index, arg) in stop.args.iter().enumerate() {
+                    if !arg.trim().is_empty() {
+                        fields.push(format!("services.{name}.manager.stop.args.{index}"));
+                    }
+                }
             }
         }
         if service.provider.is_some() {
@@ -34540,6 +34566,26 @@ fn init_contract_provenance(
                     starter_contract_source,
                 );
             }
+            if manager.env_file.is_some() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("services.{name}.manager.env_file"),
+                    starter_contract_source,
+                );
+            }
+            for (index, profile) in manager.profiles.iter().enumerate() {
+                if !profile.trim().is_empty() {
+                    push_init_field_provenance(
+                        &mut provenance,
+                        &inference_map,
+                        &detected_fields,
+                        format!("services.{name}.manager.profiles.{index}"),
+                        starter_contract_source,
+                    );
+                }
+            }
             if manager.service.is_some() {
                 push_init_field_provenance(
                     &mut provenance,
@@ -34548,6 +34594,46 @@ fn init_contract_provenance(
                     format!("services.{name}.manager.service"),
                     starter_contract_source,
                 );
+            }
+            if let Some(start) = manager.start.as_ref() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("services.{name}.manager.start.exe"),
+                    starter_contract_source,
+                );
+                for (index, arg) in start.args.iter().enumerate() {
+                    if !arg.trim().is_empty() {
+                        push_init_field_provenance(
+                            &mut provenance,
+                            &inference_map,
+                            &detected_fields,
+                            format!("services.{name}.manager.start.args.{index}"),
+                            starter_contract_source,
+                        );
+                    }
+                }
+            }
+            if let Some(stop) = manager.stop.as_ref() {
+                push_init_field_provenance(
+                    &mut provenance,
+                    &inference_map,
+                    &detected_fields,
+                    format!("services.{name}.manager.stop.exe"),
+                    starter_contract_source,
+                );
+                for (index, arg) in stop.args.iter().enumerate() {
+                    if !arg.trim().is_empty() {
+                        push_init_field_provenance(
+                            &mut provenance,
+                            &inference_map,
+                            &detected_fields,
+                            format!("services.{name}.manager.stop.args.{index}"),
+                            starter_contract_source,
+                        );
+                    }
+                }
             }
         }
         if service.provider.is_some() {
@@ -67061,6 +67147,106 @@ tasks:
     }
 
     #[test]
+    fn up_runs_host_manager_structured_service_start_commands() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let contract_path = repo.path().join("ota.yaml");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        if cfg!(windows) {
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-service-structured"),
+                "@echo off\r\necho service>>run.log\r\necho ready>service.ready\r\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-service-ready"),
+                "@echo off\r\nif not exist service.ready exit /b 1\r\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-setup-structured"),
+                "@echo off\r\nif not exist service.ready exit /b 1\r\necho setup>>run.log\r\n",
+            );
+        } else {
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-service-structured"),
+                "#!/bin/sh\necho service >> run.log\ntouch service.ready\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-service-ready"),
+                "#!/bin/sh\ntest -f service.ready\n",
+            );
+            write_executable_script(
+                &fake_command_path(&bin_dir, "phase-setup-structured"),
+                "#!/bin/sh\ntest -f service.ready\necho setup >> run.log\n",
+            );
+        }
+
+        let service_command = fake_command_path(&bin_dir, "phase-service-structured")
+            .display()
+            .to_string();
+        let readiness_command = fake_command_path(&bin_dir, "phase-service-ready")
+            .display()
+            .to_string();
+        let setup_command = fake_command_path(&bin_dir, "phase-setup-structured")
+            .display()
+            .to_string();
+
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            &format!(
+                r#"
+version: 1
+project:
+  name: structured-host-service-up
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+services:
+  app:
+    required: true
+    manager:
+      kind: host
+      start:
+        exe: '{service_command}'
+    healthcheck: '{readiness_command}'
+tasks:
+  setup:
+    requires_services:
+      - app
+    run: '{setup_command}'
+"#,
+            ),
+        )
+        .unwrap();
+
+        let result = execute_repo_up(
+            &contract,
+            contract_path.as_path(),
+            ExecutionOverrides::default(),
+            None,
+            None,
+            false,
+            RepoExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert!(
+            result.ok,
+            "status={} phase={} stdout=\n{}\nstderr=\n{}",
+            result.status, result.phase, result.stdout, result.stderr
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path().join("run.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["service", "setup"]
+        );
+    }
+
+    #[test]
     fn up_uses_default_workflow_services_after_setup() {
         let _guard = env_mutex_lock();
         let repo = TempDir::new().unwrap();
@@ -83324,7 +83510,19 @@ fn run_up_required_services_phase(
             .expect("validated service should exist");
 
         if let Some(start) = service.start_command(name.as_str()) {
-            match run_shell_command(&start, working_dir, mode, "Starting service") {
+            match crate::runner::run_service_start_command(
+                name.as_str(),
+                service,
+                working_dir,
+                match mode {
+                    RepoExecutionMode::Stream => crate::runner::TaskExecutionMode::Stream {
+                        emit_progress: false,
+                        capture_output: true,
+                        live_log: None,
+                    },
+                    RepoExecutionMode::Capture => crate::runner::TaskExecutionMode::Capture,
+                },
+            ) {
                 Ok(command) if command.exit_code == 0 => {
                     stdout.push_str(&command.stdout);
                     stderr.push_str(&command.stderr);
