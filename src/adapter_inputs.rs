@@ -25,6 +25,96 @@ use crate::schema::{
     TaskComposeAdapterInputsSpec, TaskLaunchSpec, TaskModeBranchSpec, TaskSpec, WorkflowEnvSpec,
 };
 
+trait WorkflowOverlaySpec: Clone {
+    fn workflow_slot(adapter_inputs: &TaskAdapterInputsSpec) -> Option<&Self>;
+    fn task_slot(task: &TaskSpec) -> Option<&Self>;
+    fn task_slot_mut(task: &mut TaskSpec) -> &mut Option<Self>;
+    fn branch_slot(branch: &TaskModeBranchSpec) -> Option<&Self>;
+    fn branch_slot_mut(branch: &mut TaskModeBranchSpec) -> &mut Option<Self>;
+    fn workflow_overlay_bound(&self) -> bool;
+    fn set_workflow_overlay_bound(&mut self, bound: bool);
+    fn merge_workflow_overlay(&mut self, overlay: &Self);
+}
+
+impl WorkflowOverlaySpec for TaskComposeAdapterInputsSpec {
+    fn workflow_slot(adapter_inputs: &TaskAdapterInputsSpec) -> Option<&Self> {
+        adapter_inputs.compose.as_ref()
+    }
+
+    fn task_slot(task: &TaskSpec) -> Option<&Self> {
+        task.adapter_inputs.compose.as_ref()
+    }
+
+    fn task_slot_mut(task: &mut TaskSpec) -> &mut Option<Self> {
+        &mut task.adapter_inputs.compose
+    }
+
+    fn branch_slot(branch: &TaskModeBranchSpec) -> Option<&Self> {
+        branch.adapter_inputs.compose.as_ref()
+    }
+
+    fn branch_slot_mut(branch: &mut TaskModeBranchSpec) -> &mut Option<Self> {
+        &mut branch.adapter_inputs.compose
+    }
+
+    fn workflow_overlay_bound(&self) -> bool {
+        self.workflow_overlay_bound
+    }
+
+    fn set_workflow_overlay_bound(&mut self, bound: bool) {
+        self.workflow_overlay_bound = bound;
+    }
+
+    fn merge_workflow_overlay(&mut self, overlay: &Self) {
+        if self.cwd.is_none() {
+            self.cwd = overlay.cwd.clone();
+        }
+        prepend_unique_strings(&mut self.env_files, &overlay.env_files);
+        prepend_unique_strings(&mut self.files, &overlay.files);
+        prepend_unique_strings(&mut self.profiles, &overlay.profiles);
+        if self.project_name.is_none() {
+            self.project_name = overlay.project_name.clone();
+        }
+    }
+}
+
+impl WorkflowOverlaySpec for TaskBakeAdapterInputsSpec {
+    fn workflow_slot(adapter_inputs: &TaskAdapterInputsSpec) -> Option<&Self> {
+        adapter_inputs.bake.as_ref()
+    }
+
+    fn task_slot(task: &TaskSpec) -> Option<&Self> {
+        task.adapter_inputs.bake.as_ref()
+    }
+
+    fn task_slot_mut(task: &mut TaskSpec) -> &mut Option<Self> {
+        &mut task.adapter_inputs.bake
+    }
+
+    fn branch_slot(branch: &TaskModeBranchSpec) -> Option<&Self> {
+        branch.adapter_inputs.bake.as_ref()
+    }
+
+    fn branch_slot_mut(branch: &mut TaskModeBranchSpec) -> &mut Option<Self> {
+        &mut branch.adapter_inputs.bake
+    }
+
+    fn workflow_overlay_bound(&self) -> bool {
+        self.workflow_overlay_bound
+    }
+
+    fn set_workflow_overlay_bound(&mut self, bound: bool) {
+        self.workflow_overlay_bound = bound;
+    }
+
+    fn merge_workflow_overlay(&mut self, overlay: &Self) {
+        if self.cwd.is_none() {
+            self.cwd = overlay.cwd.clone();
+        }
+        prepend_unique_strings(&mut self.files, &overlay.files);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AdapterInputFamily {
     Compose,
@@ -34,6 +124,7 @@ pub(crate) enum AdapterInputFamily {
 pub(crate) const ADAPTER_INPUT_FAMILIES: [AdapterInputFamily; 2] =
     [AdapterInputFamily::Compose, AdapterInputFamily::Bake];
 
+#[repr(usize)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AdapterInputField {
     ComposeCwd,
@@ -55,96 +146,118 @@ pub(crate) const ADAPTER_INPUT_FIELDS: [AdapterInputField; 7] = [
     AdapterInputField::BakeFiles,
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AdapterInputFieldDescriptor {
+    field: AdapterInputField,
+    code: &'static str,
+    family_name: &'static str,
+    field_name: &'static str,
+    runtime_file_kind: Option<&'static str>,
+    runtime_file_label: Option<&'static str>,
+}
+
+const ADAPTER_INPUT_FIELD_DESCRIPTORS: [AdapterInputFieldDescriptor; 7] = [
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::ComposeCwd,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_CWD_OWNERSHIP",
+        family_name: "compose",
+        field_name: "cwd",
+        runtime_file_kind: None,
+        runtime_file_label: None,
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::ComposeEnvFiles,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_ENV_FILES_OWNERSHIP",
+        family_name: "compose",
+        field_name: "env_files",
+        runtime_file_kind: Some("compose_adapter_env_file"),
+        runtime_file_label: Some("compose adapter env file"),
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::ComposeFiles,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_FILES_OWNERSHIP",
+        family_name: "compose",
+        field_name: "files",
+        runtime_file_kind: Some("compose_adapter_file"),
+        runtime_file_label: Some("compose file"),
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::ComposeProfiles,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROFILES_OWNERSHIP",
+        family_name: "compose",
+        field_name: "profiles",
+        runtime_file_kind: None,
+        runtime_file_label: None,
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::ComposeProjectName,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP",
+        family_name: "compose",
+        field_name: "project_name",
+        runtime_file_kind: None,
+        runtime_file_label: None,
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::BakeCwd,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_BAKE_CWD_OWNERSHIP",
+        family_name: "bake",
+        field_name: "cwd",
+        runtime_file_kind: None,
+        runtime_file_label: None,
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::BakeFiles,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_BAKE_FILES_OWNERSHIP",
+        family_name: "bake",
+        field_name: "files",
+        runtime_file_kind: Some("bake_adapter_file"),
+        runtime_file_label: Some("bake file"),
+    },
+];
+
 impl AdapterInputField {
+    const fn descriptor(self) -> AdapterInputFieldDescriptor {
+        ADAPTER_INPUT_FIELD_DESCRIPTORS[self as usize]
+    }
+
     pub(crate) const fn code(self) -> &'static str {
-        match self {
-            Self::ComposeCwd => "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_CWD_OWNERSHIP",
-            Self::ComposeEnvFiles => {
-                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_ENV_FILES_OWNERSHIP"
-            }
-            Self::ComposeFiles => {
-                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_FILES_OWNERSHIP"
-            }
-            Self::ComposeProfiles => {
-                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROFILES_OWNERSHIP"
-            }
-            Self::ComposeProjectName => {
-                "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP"
-            }
-            Self::BakeCwd => "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_BAKE_CWD_OWNERSHIP",
-            Self::BakeFiles => "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_BAKE_FILES_OWNERSHIP",
-        }
+        self.descriptor().code
     }
 
     pub(crate) const fn family_name(self) -> &'static str {
-        match self {
-            Self::ComposeCwd
-            | Self::ComposeEnvFiles
-            | Self::ComposeFiles
-            | Self::ComposeProfiles
-            | Self::ComposeProjectName => "compose",
-            Self::BakeCwd | Self::BakeFiles => "bake",
-        }
+        self.descriptor().family_name
     }
 
     pub(crate) const fn field_name(self) -> &'static str {
-        match self {
-            Self::ComposeCwd | Self::BakeCwd => "cwd",
-            Self::ComposeEnvFiles => "env_files",
-            Self::ComposeFiles | Self::BakeFiles => "files",
-            Self::ComposeProfiles => "profiles",
-            Self::ComposeProjectName => "project_name",
-        }
+        self.descriptor().field_name
     }
 
     pub(crate) fn from_family_and_field_names(
         adapter_family: &str,
         field_name: &str,
     ) -> Option<Self> {
-        match (adapter_family, field_name) {
-            ("compose", "cwd") => Some(Self::ComposeCwd),
-            ("compose", "env_files") => Some(Self::ComposeEnvFiles),
-            ("compose", "files") => Some(Self::ComposeFiles),
-            ("compose", "profiles") => Some(Self::ComposeProfiles),
-            ("compose", "project_name") => Some(Self::ComposeProjectName),
-            ("bake", "cwd") => Some(Self::BakeCwd),
-            ("bake", "files") => Some(Self::BakeFiles),
-            _ => None,
-        }
+        ADAPTER_INPUT_FIELD_DESCRIPTORS
+            .iter()
+            .find(|descriptor| {
+                descriptor.family_name == adapter_family && descriptor.field_name == field_name
+            })
+            .map(|descriptor| descriptor.field)
     }
 
     pub(crate) fn workflow_location(self, workflow_name: &str) -> String {
-        match self {
-            Self::ComposeCwd => format!("workflows.{workflow_name}.env.adapter_inputs.compose.cwd"),
-            Self::ComposeEnvFiles => {
-                format!("workflows.{workflow_name}.env.adapter_inputs.compose.env_files")
-            }
-            Self::ComposeFiles => {
-                format!("workflows.{workflow_name}.env.adapter_inputs.compose.files")
-            }
-            Self::ComposeProfiles => {
-                format!("workflows.{workflow_name}.env.adapter_inputs.compose.profiles")
-            }
-            Self::ComposeProjectName => {
-                format!("workflows.{workflow_name}.env.adapter_inputs.compose.project_name")
-            }
-            Self::BakeCwd => format!("workflows.{workflow_name}.env.adapter_inputs.bake.cwd"),
-            Self::BakeFiles => format!("workflows.{workflow_name}.env.adapter_inputs.bake.files"),
-        }
+        format!(
+            "workflows.{workflow_name}.env.adapter_inputs.{}.{}",
+            self.family_name(),
+            self.field_name()
+        )
     }
 
     pub(crate) fn task_location(self, task_name: &str) -> String {
-        match self {
-            Self::ComposeCwd => format!("tasks.{task_name}.adapter_inputs.compose.cwd"),
-            Self::ComposeEnvFiles => format!("tasks.{task_name}.adapter_inputs.compose.env_files"),
-            Self::ComposeFiles => format!("tasks.{task_name}.adapter_inputs.compose.files"),
-            Self::ComposeProfiles => format!("tasks.{task_name}.adapter_inputs.compose.profiles"),
-            Self::ComposeProjectName => {
-                format!("tasks.{task_name}.adapter_inputs.compose.project_name")
-            }
-            Self::BakeCwd => format!("tasks.{task_name}.adapter_inputs.bake.cwd"),
-            Self::BakeFiles => format!("tasks.{task_name}.adapter_inputs.bake.files"),
-        }
+        format!(
+            "tasks.{task_name}.adapter_inputs.{}.{}",
+            self.family_name(),
+            self.field_name()
+        )
     }
 
     pub(crate) fn branch_location(self, task_name: &str, backend: Backend) -> String {
@@ -153,29 +266,11 @@ impl AdapterInputField {
             Backend::Container => "container",
             Backend::Remote => "remote",
         };
-        match self {
-            Self::ComposeCwd => {
-                format!("tasks.{task_name}.execution.modes.{backend}.adapter_inputs.compose.cwd")
-            }
-            Self::ComposeEnvFiles => format!(
-                "tasks.{task_name}.execution.modes.{backend}.adapter_inputs.compose.env_files"
-            ),
-            Self::ComposeFiles => {
-                format!("tasks.{task_name}.execution.modes.{backend}.adapter_inputs.compose.files")
-            }
-            Self::ComposeProfiles => format!(
-                "tasks.{task_name}.execution.modes.{backend}.adapter_inputs.compose.profiles"
-            ),
-            Self::ComposeProjectName => format!(
-                "tasks.{task_name}.execution.modes.{backend}.adapter_inputs.compose.project_name"
-            ),
-            Self::BakeCwd => {
-                format!("tasks.{task_name}.execution.modes.{backend}.adapter_inputs.bake.cwd")
-            }
-            Self::BakeFiles => {
-                format!("tasks.{task_name}.execution.modes.{backend}.adapter_inputs.bake.files")
-            }
-        }
+        format!(
+            "tasks.{task_name}.execution.modes.{backend}.adapter_inputs.{}.{}",
+            self.family_name(),
+            self.field_name()
+        )
     }
 
     pub(crate) fn workflow_value(self, adapter_inputs: &TaskAdapterInputsSpec) -> Option<String> {
@@ -331,25 +426,11 @@ impl AdapterInputField {
     }
 
     pub(crate) fn runtime_file_kind(self) -> Option<&'static str> {
-        match self {
-            Self::ComposeEnvFiles => Some("compose_adapter_env_file"),
-            Self::ComposeFiles => Some("compose_adapter_file"),
-            Self::BakeFiles => Some("bake_adapter_file"),
-            Self::ComposeCwd | Self::ComposeProfiles | Self::ComposeProjectName | Self::BakeCwd => {
-                None
-            }
-        }
+        self.descriptor().runtime_file_kind
     }
 
     pub(crate) fn runtime_file_label(self) -> Option<&'static str> {
-        match self {
-            Self::ComposeEnvFiles => Some("compose adapter env file"),
-            Self::ComposeFiles => Some("compose file"),
-            Self::BakeFiles => Some("bake file"),
-            Self::ComposeCwd | Self::ComposeProfiles | Self::ComposeProjectName | Self::BakeCwd => {
-                None
-            }
-        }
+        self.descriptor().runtime_file_label
     }
 
     pub(crate) fn backend_paths(self, task: &TaskSpec, backend: Backend) -> Vec<String> {
@@ -424,31 +505,15 @@ pub(crate) fn workflow_duplicates_canonical_compose_project_name_alias(
 impl AdapterInputFamily {
     pub(crate) fn task_declares_inputs(self, task: &TaskSpec) -> bool {
         match self {
-            Self::Compose => task
-                .adapter_inputs
-                .compose
-                .as_ref()
-                .is_some_and(|compose| !compose.workflow_overlay_bound),
-            Self::Bake => task
-                .adapter_inputs
-                .bake
-                .as_ref()
-                .is_some_and(|bake| !bake.workflow_overlay_bound),
+            Self::Compose => task_declares_family_inputs::<TaskComposeAdapterInputsSpec>(task),
+            Self::Bake => task_declares_family_inputs::<TaskBakeAdapterInputsSpec>(task),
         }
     }
 
     pub(crate) fn branch_declares_inputs(self, branch: &TaskModeBranchSpec) -> bool {
         match self {
-            Self::Compose => branch
-                .adapter_inputs
-                .compose
-                .as_ref()
-                .is_some_and(|compose| !compose.workflow_overlay_bound),
-            Self::Bake => branch
-                .adapter_inputs
-                .bake
-                .as_ref()
-                .is_some_and(|bake| !bake.workflow_overlay_bound),
+            Self::Compose => branch_declares_family_inputs::<TaskComposeAdapterInputsSpec>(branch),
+            Self::Bake => branch_declares_family_inputs::<TaskBakeAdapterInputsSpec>(branch),
         }
     }
 
@@ -493,115 +558,48 @@ impl AdapterInputFamily {
         workflow_adapter_inputs: &TaskAdapterInputsSpec,
     ) -> bool {
         match self {
-            Self::Compose => {
-                let Some(workflow_compose) = workflow_adapter_inputs.compose.as_ref() else {
-                    return false;
-                };
-                let mut bound = false;
-                if self.task_supports_direct_binding(task) {
-                    let inserted = task.adapter_inputs.compose.is_none();
-                    let compose = task
-                        .adapter_inputs
-                        .compose
-                        .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
-                    if inserted {
-                        compose.workflow_overlay_bound = true;
-                    }
-                    if compose.cwd.is_none() {
-                        compose.cwd = workflow_compose.cwd.clone();
-                    }
-                    prepend_unique_strings(&mut compose.env_files, &workflow_compose.env_files);
-                    prepend_unique_strings(&mut compose.files, &workflow_compose.files);
-                    prepend_unique_strings(&mut compose.profiles, &workflow_compose.profiles);
-                    if compose.project_name.is_none() {
-                        compose.project_name = workflow_compose.project_name.clone();
-                    }
-                    bound = true;
+            Self::Compose => self.bind_workflow_overlay_spec::<TaskComposeAdapterInputsSpec>(
+                task,
+                workflow_adapter_inputs,
+            ),
+            Self::Bake => self.bind_workflow_overlay_spec::<TaskBakeAdapterInputsSpec>(
+                task,
+                workflow_adapter_inputs,
+            ),
+        }
+    }
+
+    fn bind_workflow_overlay_spec<S: WorkflowOverlaySpec>(
+        self,
+        task: &mut TaskSpec,
+        workflow_adapter_inputs: &TaskAdapterInputsSpec,
+    ) -> bool {
+        let Some(workflow_overlay) = S::workflow_slot(workflow_adapter_inputs).cloned() else {
+            return false;
+        };
+
+        let mut bound = false;
+        if self.task_supports_direct_binding(task) {
+            bind_task_workflow_overlay::<S>(task, &workflow_overlay);
+            bound = true;
+        }
+        if let Some(execution) = task.execution.as_mut() {
+            for branch in [
+                execution.modes.native.as_mut(),
+                execution.modes.container.as_mut(),
+                execution.modes.remote.as_mut(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !self.branch_supports(branch) {
+                    continue;
                 }
-                if let Some(execution) = task.execution.as_mut() {
-                    for branch in [
-                        execution.modes.native.as_mut(),
-                        execution.modes.container.as_mut(),
-                        execution.modes.remote.as_mut(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    {
-                        if !self.branch_supports(branch) {
-                            continue;
-                        }
-                        let inserted = branch.adapter_inputs.compose.is_none();
-                        let compose = branch
-                            .adapter_inputs
-                            .compose
-                            .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
-                        if inserted {
-                            compose.workflow_overlay_bound = true;
-                        }
-                        if compose.cwd.is_none() {
-                            compose.cwd = workflow_compose.cwd.clone();
-                        }
-                        prepend_unique_strings(&mut compose.env_files, &workflow_compose.env_files);
-                        prepend_unique_strings(&mut compose.files, &workflow_compose.files);
-                        prepend_unique_strings(&mut compose.profiles, &workflow_compose.profiles);
-                        if compose.project_name.is_none() {
-                            compose.project_name = workflow_compose.project_name.clone();
-                        }
-                        bound = true;
-                    }
-                }
-                bound
-            }
-            Self::Bake => {
-                let Some(workflow_bake) = workflow_adapter_inputs.bake.as_ref() else {
-                    return false;
-                };
-                let mut bound = false;
-                if self.task_supports_direct_binding(task) {
-                    let inserted = task.adapter_inputs.bake.is_none();
-                    let bake = task
-                        .adapter_inputs
-                        .bake
-                        .get_or_insert_with(TaskBakeAdapterInputsSpec::default);
-                    if inserted {
-                        bake.workflow_overlay_bound = true;
-                    }
-                    if bake.cwd.is_none() {
-                        bake.cwd = workflow_bake.cwd.clone();
-                    }
-                    prepend_unique_strings(&mut bake.files, &workflow_bake.files);
-                    bound = true;
-                }
-                if let Some(execution) = task.execution.as_mut() {
-                    for branch in [
-                        execution.modes.native.as_mut(),
-                        execution.modes.container.as_mut(),
-                        execution.modes.remote.as_mut(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    {
-                        if !self.branch_supports(branch) {
-                            continue;
-                        }
-                        let inserted = branch.adapter_inputs.bake.is_none();
-                        let bake = branch
-                            .adapter_inputs
-                            .bake
-                            .get_or_insert_with(TaskBakeAdapterInputsSpec::default);
-                        if inserted {
-                            bake.workflow_overlay_bound = true;
-                        }
-                        if bake.cwd.is_none() {
-                            bake.cwd = workflow_bake.cwd.clone();
-                        }
-                        prepend_unique_strings(&mut bake.files, &workflow_bake.files);
-                        bound = true;
-                    }
-                }
-                bound
+                bind_branch_workflow_overlay::<S>(branch, &workflow_overlay);
+                bound = true;
             }
         }
+        bound
     }
 
     fn task_supports_direct_binding(self, task: &TaskSpec) -> bool {
@@ -673,6 +671,35 @@ impl AdapterInputFamily {
             Some(TaskLaunchSpec::Container(_)) | None => false,
         }
     }
+}
+
+fn task_declares_family_inputs<S: WorkflowOverlaySpec>(task: &TaskSpec) -> bool {
+    S::task_slot(task).is_some_and(|spec| !spec.workflow_overlay_bound())
+}
+
+fn branch_declares_family_inputs<S: WorkflowOverlaySpec>(branch: &TaskModeBranchSpec) -> bool {
+    S::branch_slot(branch).is_some_and(|spec| !spec.workflow_overlay_bound())
+}
+
+fn bind_task_workflow_overlay<S: WorkflowOverlaySpec>(task: &mut TaskSpec, overlay: &S) {
+    let inserted = S::task_slot(task).is_none();
+    let spec = S::task_slot_mut(task).get_or_insert_with(|| overlay.clone());
+    if inserted {
+        spec.set_workflow_overlay_bound(true);
+    }
+    spec.merge_workflow_overlay(overlay);
+}
+
+fn bind_branch_workflow_overlay<S: WorkflowOverlaySpec>(
+    branch: &mut TaskModeBranchSpec,
+    overlay: &S,
+) {
+    let inserted = S::branch_slot(branch).is_none();
+    let spec = S::branch_slot_mut(branch).get_or_insert_with(|| overlay.clone());
+    if inserted {
+        spec.set_workflow_overlay_bound(true);
+    }
+    spec.merge_workflow_overlay(overlay);
 }
 
 pub(crate) fn bind_workflow_adapter_overlays(

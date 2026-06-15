@@ -44803,6 +44803,56 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_likely_cause_does_not_invent_unknown_loopback_port() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/docker-build");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "worker | Error: connect ECONNREFUSED localhost\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::LoopbackServiceDrift {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                service: String::from("a dependent service"),
+                host: String::from("localhost"),
+                port: None,
+            }
+        );
+        let likely_message = likely.message();
+        assert!(likely_message.contains("(localhost)"), "{likely_message}");
+        assert!(!likely_message.contains(":0"), "{likely_message}");
+    }
+
+    #[test]
     fn proof_runtime_refined_phase_uses_up_log_phase_for_blocked_preconditions() {
         let fixture = TempDir::new().unwrap();
         let artifact_dir = fixture.path().join(".ota/proof/docker-build");
