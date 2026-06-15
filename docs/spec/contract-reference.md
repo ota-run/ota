@@ -644,6 +644,7 @@ Current behavior:
 - for `manager.kind: compose`, `ota doctor` derives compose lifecycle commands from manager metadata
 - for `manager.kind: host`, canonical lifecycle ownership lives on `manager.start` / `manager.stop`; legacy top-level `start` / `stop` still parse for compatibility, but new authoring should keep host service lifecycle under the manager block
 - for `manager.kind: host`, `ota doctor` runs readiness checks in the resolved host command context
+- legacy `services.<name>.readiness.run` still parses for compatibility, but new authoring should keep service readiness on structured `readiness.kind` or reusable `readiness.probe`
 - `services.<name>.readiness.from` selects the execution context for service readiness
 - `services.<name>.readiness.endpoint` selects one named endpoint projection when `from` alone is ambiguous
 - `services.<name>.readiness.probe` can reference one top-level `readiness.probes.<name>` declaration so service-manager readiness reuses the same transport and timeout truth as checks and workflows while `from` / `endpoint` still select the service endpoint projection

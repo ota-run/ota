@@ -1838,7 +1838,7 @@ Current behavior:
 - when container/Linux provisioning uses `apt`, ota also classifies supported provisioning failures as pinned-version unavailable, package unavailable, or apt-index/source failures
 - execution-plane precondition failures, backend startup failures, and provisioning failures now point through `ota execution plan` first so the selected backend, lifecycle, image, or target path is visible before you edit execution settings or retry `ota up`
 - `--dry-run` reuses the same contract path, member targeting, backend selection, lifecycle selection, and provisioning plan resolution as `ota up`, but does not mutate repo or execution state
-- runs explicit `services.<name>.start` commands for selected workflow services before and after setup as declared
+- runs selected workflow service startup through the declared service owner before and after setup as declared
 - starts required services, and required-service dependencies, in declared dependency order
 - verifies required service healthchecks before setup and treats them as readiness gates
 - stops in the `services` phase when required-service readiness still fails

@@ -335,8 +335,8 @@ Behavior:
   - `timeout`
   - `retries`
   - `start_period`
-- may still preserve legacy top-level `readiness.run` when the user asked only for review and Ota
-  cannot express the existing probe shape structurally
+- may preserve an existing compatibility readiness shape only when the user asked for review and
+  Ota cannot express the current probe truth structurally
 - must refuse contradictory output such as `method: HEAD` plus `body.contains`
 - must refuse a managed-service proposal when protocol truth cannot be inferred and the user did not
   pass `--style`
