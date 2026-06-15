@@ -93,12 +93,13 @@ use crate::output::{
     InitPackCatalogSuccess, InitPackInfo, InitPackOption, InitPackSeeds, InitSelectedPackOptions,
     InitSuccess, ListedWorkflowSummary, MemberServicesSuccess, MemberWorkflowsSuccess,
     OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
-    ProofRuntimeArtifacts, ProofRuntimeStatus, ReceiptDiffBaseline, ReceiptDiffComparison,
-    ReceiptDiffCounts, ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide,
-    ReceiptDiffSuccess, ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive,
-    ReceiptHistorySuccess, ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess,
-    RunPreviewPlan, RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure,
-    ServicesSuccess, TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
+    ProofRuntimeArtifacts, ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus,
+    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate,
+    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
+    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, RunPreviewPlan,
+    RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess,
+    TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
     ToolchainSelectionSummary, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
     ValidateFailure, ValidateSuccess, ValidateSummary, ValidateWarning, WorkflowSummary,
     WorkflowsFailure, WorkflowsSuccess, WorkspaceDiffSuccess, WorkspaceDiffSummary,
@@ -2335,12 +2336,18 @@ pub fn proof_runtime(
                     up_process_failure,
                     &up_log_artifact_path,
                 );
+                let proof_likely_cause_text = proof_likely_cause
+                    .as_ref()
+                    .map(ProofRuntimeLikelyCause::message);
+                let proof_likely_cause_evidence = proof_likely_cause
+                    .as_ref()
+                    .map(ProofRuntimeLikelyCause::json_evidence);
                 let proof_failure_class = proof_runtime_failure_class(
                     &proof_summary_for_output,
                     refined_proof_phase.as_str(),
                     cleanup_error.as_deref(),
                     up_process_failure,
-                    proof_likely_cause.as_deref(),
+                    proof_likely_cause.as_ref(),
                     &up_log_artifact_path,
                 );
                 let workflow_env_artifacts =
@@ -2364,7 +2371,7 @@ pub fn proof_runtime(
                             &doctor_artifact_display,
                             &up_log_artifact_display,
                             &workflow_env_artifacts,
-                            proof_likely_cause.as_deref(),
+                            proof_likely_cause_text.as_deref(),
                             cleanup_error.as_deref(),
                             cleanup_next.as_deref(),
                         ),
@@ -2387,7 +2394,8 @@ pub fn proof_runtime(
                             workflow_env_artifacts,
                             failure_class: proof_failure_class,
                             error: proof_error.as_deref(),
-                            likely_cause: proof_likely_cause,
+                            likely_cause: proof_likely_cause_text,
+                            likely_cause_evidence: proof_likely_cause_evidence,
                             next: proof_next.as_deref(),
                         }),
                         stderr: None,
@@ -25300,6 +25308,13 @@ fn render_clean_text(path: &str, report: &CleanExecutionReport) -> String {
         format!("Reviewed cleanup for {path}")
     };
     let mut lines = vec![header];
+    if report.stopped_host_services > 0 {
+        lines.push(format!(
+            "  {} stopped host-managed services: {}",
+            summary_bullet(),
+            report.stopped_host_services
+        ));
+    }
     if report.removed_current_persistent_containers > 0 {
         lines.push(format!(
             "  {} removed current persistent containers: {}",
@@ -25391,6 +25406,10 @@ fn clean_failure_summary_and_why(failure: &CleanExecutionFailure) -> (&'static s
         failure.resource_name.as_deref(),
         &failure.reason,
     ) {
+        (CleanExecutionResourceKind::HostService, Some(service_name), _) => format!(
+            "`ota clean` could not {} host-managed service `{service_name}` before cleaning repo state.",
+            failure.action
+        ),
         (
             CleanExecutionResourceKind::PersistentContainer,
             Some(state_name),
@@ -25465,12 +25484,26 @@ fn clean_failure_next_steps(failure: &CleanExecutionFailure) -> Vec<String> {
     }
 
     let state_kind = match failure.resource_kind {
+        CleanExecutionResourceKind::HostService => "host-managed service state",
         CleanExecutionResourceKind::PersistentContainer => "persistent container state",
         CleanExecutionResourceKind::DependencyIsolationVolume => {
             "dependency-isolation volume state"
         }
         CleanExecutionResourceKind::StaleContainers => "stale ota-managed container state",
     };
+    if matches!(
+        failure.resource_kind,
+        CleanExecutionResourceKind::HostService
+    ) {
+        let service_name = failure
+            .resource_name
+            .as_deref()
+            .unwrap_or("selected host-managed service");
+        return vec![
+            format!("inspect the stop command for `{service_name}` and rerun `ota clean`"),
+            String::from("verify the service can be stopped from this shell without Ota"),
+        ];
+    }
     vec![
         format!("repair the selected {state_kind} and rerun `ota clean`"),
         format!(
@@ -25482,6 +25515,7 @@ fn clean_failure_next_steps(failure: &CleanExecutionFailure) -> Vec<String> {
 
 fn clean_resource_kind_json_label(kind: &CleanExecutionResourceKind) -> &'static str {
     match kind {
+        CleanExecutionResourceKind::HostService => "host_service",
         CleanExecutionResourceKind::PersistentContainer => "persistent_container",
         CleanExecutionResourceKind::DependencyIsolationVolume => "dependency_isolation_volume",
         CleanExecutionResourceKind::StaleContainers => "stale_containers",
@@ -25500,6 +25534,7 @@ fn clean_report_json_value(path: &str, report: &CleanExecutionReport) -> JsonVal
         "ok": true,
         "path": path,
         "summary": {
+            "stopped_host_services": report.stopped_host_services,
             "removed_current_persistent_containers": report.removed_current_persistent_containers,
             "removed_drift_persistent_containers": report.removed_drift_persistent_containers,
             "removed_drift_attached_containers": report.removed_drift_attached_containers,
@@ -25510,6 +25545,7 @@ fn clean_report_json_value(path: &str, report: &CleanExecutionReport) -> JsonVal
             "total_removed": report.total_removed(),
             "total_skipped_ambiguous": report.total_skipped_ambiguous()
         },
+        "host_services": report.host_services,
         "queried_engines": report.queried_engines
     })
 }
@@ -43924,7 +43960,9 @@ Status:      success
 
         let hint = super::detached_run_failure_hint_from_log(&log_path);
         assert_eq!(
-            hint.as_deref(),
+            hint.as_ref()
+                .map(super::ProofRuntimeLikelyCause::message)
+                .as_deref(),
             Some("detached run output: address already in use (EADDRINUSE)")
         );
     }
@@ -43952,8 +43990,10 @@ Memory:      4GiB
 
         let hint = super::detached_run_failure_hint_from_log(&log_path);
         assert_eq!(
-            hint.as_deref(),
-            Some("detached run error: Host publication failed")
+            hint.as_ref()
+                .map(super::ProofRuntimeLikelyCause::message)
+                .as_deref(),
+            Some("detached run output: error: Host publication failed")
         );
     }
 
@@ -43974,7 +44014,9 @@ warning: command exited before readiness
 
         let hint = super::detached_run_failure_hint_from_log(&log_path);
         assert_eq!(
-            hint.as_deref(),
+            hint.as_ref()
+                .map(super::ProofRuntimeLikelyCause::message)
+                .as_deref(),
             Some("detached run output: warning: command exited before readiness")
         );
     }
@@ -44322,7 +44364,12 @@ workflows:
             "readiness",
             None,
             Some("timed out while waiting for readiness"),
-            Some("likely config drift: the runtime is still targeting Redis on loopback"),
+            Some(&super::ProofRuntimeLikelyCause::LoopbackServiceDrift {
+                artifact: PathBuf::from("./.ota/proof/instant/up-detached-run.log"),
+                service: String::from("Redis"),
+                host: String::from("127.0.0.1"),
+                port: Some(6379),
+            }),
             Path::new("./.ota/proof/instant/up.log"),
         );
         assert_eq!(class.as_deref(), Some("config_drift"));
@@ -44685,9 +44732,25 @@ workflows:
             &up_log,
         )
         .expect("likely cause should be detected");
-        assert!(likely.contains("Redis"), "{likely}");
-        assert!(likely.contains("task `env_files`"), "{likely}");
-        assert!(likely.contains("compose `manager.env_file`"), "{likely}");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::LoopbackServiceDrift {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                service: String::from("Redis"),
+                host: String::from("127.0.0.1"),
+                port: Some(6379),
+            }
+        );
+        let likely_message = likely.message();
+        assert!(likely_message.contains("Redis"), "{likely_message}");
+        assert!(
+            likely_message.contains("task `env_files`"),
+            "{likely_message}"
+        );
+        assert!(
+            likely_message.contains("compose `manager.env_file`"),
+            "{likely_message}"
+        );
     }
 
     #[test]
@@ -44728,6 +44791,13 @@ workflows:
         .expect("likely cause should be detected");
         assert_eq!(
             likely,
+            super::ProofRuntimeLikelyCause::DetachedRunOutput {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                signal: String::from("warning: command exited before readiness"),
+            }
+        );
+        assert_eq!(
+            likely.message(),
             "detached run output: warning: command exited before readiness"
         );
     }
@@ -45281,6 +45351,7 @@ workflows:
                 failure_class: None,
                 error: None,
                 likely_cause: None,
+                likely_cause_evidence: None,
                 next: None,
             }))
             .unwrap();
@@ -45293,6 +45364,50 @@ workflows:
             body["workflow_env_artifacts"][0]["consumers"][0],
             "task:build"
         );
+    }
+
+    #[test]
+    fn proof_runtime_status_json_includes_likely_cause_evidence() {
+        let body: serde_json::Value =
+            serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
+                ok: false,
+                path: "./ota.yaml",
+                mode: "runtime-proof",
+                workflow: Some("app"),
+                phase: "readiness",
+                summary: DoctorSummary::default(),
+                artifacts: Some(crate::output::ProofRuntimeArtifacts {
+                    topology: "topology.json",
+                    doctor: "doctor.json",
+                    up_log: "up.log",
+                }),
+                workflow_env_artifacts: Vec::new(),
+                failure_class: Some(String::from("config_drift")),
+                error: None,
+                likely_cause: Some(String::from(
+                    "likely config drift: the runtime is still targeting Redis on loopback (127.0.0.1:6379) inside a multi-service startup path; move that host binding into a workflow-scoped env overlay, rendered workflow env artifact, task `env_files`, or compose `manager.env_file` instead of `127.0.0.1` / `localhost`",
+                )),
+                likely_cause_evidence: Some(crate::output::ProofRuntimeLikelyCauseEvidence {
+                    kind: String::from("loopback_service_drift"),
+                    artifact: String::from("./.ota/proof/app/up-detached-run.log"),
+                    signal: Some(String::from("connection_refused")),
+                    service: Some(String::from("Redis")),
+                    host: Some(String::from("127.0.0.1")),
+                    port: Some(6379),
+                }),
+                next: None,
+            }))
+            .unwrap();
+
+        assert_eq!(
+            body["likely_cause_evidence"]["kind"].as_str(),
+            Some("loopback_service_drift")
+        );
+        assert_eq!(
+            body["likely_cause_evidence"]["service"].as_str(),
+            Some("Redis")
+        );
+        assert_eq!(body["likely_cause_evidence"]["port"].as_u64(), Some(6379));
     }
 
     #[test]
@@ -47204,6 +47319,7 @@ env:
                 stderr: String::from(".ota/state/logs/20260424-dev/stderr.log"),
             }),
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -49227,6 +49343,24 @@ tasks:
     }
 
     #[test]
+    fn clean_text_reports_stopped_host_managed_services() {
+        let report = CleanExecutionReport {
+            stopped_host_services: 2,
+            host_services: vec![String::from("redis"), String::from("postgres")],
+            ..CleanExecutionReport::default()
+        };
+
+        let text = render_clean_text("./ota.yaml", &report);
+        let plain = strip_ansi_codes(&text);
+
+        assert!(plain.starts_with("Cleaned ./ota.yaml"), "{plain}");
+        assert!(
+            plain.contains("stopped host-managed services: 2"),
+            "{plain}"
+        );
+    }
+
+    #[test]
     fn clean_failure_json_uses_structured_engine_unavailable_fields() {
         let failure = CleanExecutionFailure {
             engine: String::from("podman"),
@@ -49282,6 +49416,42 @@ tasks:
     }
 
     #[test]
+    fn clean_failure_json_reports_host_service_cleanup_failures() {
+        let failure = CleanExecutionFailure {
+            engine: String::from("host"),
+            action: String::from("stop"),
+            resource_kind: CleanExecutionResourceKind::HostService,
+            resource_name: Some(String::from("redis")),
+            reason: CleanExecutionFailureReason::Other,
+            details: String::from("stop command exited with code 1 (permission denied)"),
+        };
+
+        let value = super::clean_failure_json_value(
+            "./ota.yaml",
+            &CleanExecutionError::Cleanup(failure),
+            "Cleanup failed",
+        );
+
+        assert_eq!(
+            value.get("resource_kind").and_then(|value| value.as_str()),
+            Some("host_service")
+        );
+        assert_eq!(
+            value.get("why").and_then(|value| value.as_str()),
+            Some(
+                "`ota clean` could not stop host-managed service `redis` before cleaning repo state."
+            )
+        );
+        assert!(
+            value
+                .get("next")
+                .and_then(|value| value.as_array())
+                .is_some_and(|items| items.iter().any(|item| item.as_str()
+                    == Some("inspect the stop command for `redis` and rerun `ota clean`")))
+        );
+    }
+
+    #[test]
     fn clean_failure_json_uses_generic_envelope_for_unclassified_failures() {
         let value = super::clean_failure_json_value(
             "./ota.yaml",
@@ -49318,6 +49488,7 @@ tasks:
     #[test]
     fn clean_report_json_exposes_repo_cleanup_counters() {
         let report = CleanExecutionReport {
+            stopped_host_services: 8,
             removed_current_persistent_containers: 1,
             removed_drift_persistent_containers: 2,
             removed_drift_attached_containers: 3,
@@ -49325,6 +49496,7 @@ tasks:
             removed_drift_dependency_isolation_volumes: 5,
             skipped_ambiguous_persistent_containers: 6,
             skipped_ambiguous_dependency_isolation_volumes: 7,
+            host_services: vec![String::from("redis")],
             queried_engines: vec![String::from("docker"), String::from("podman")],
         };
 
@@ -49341,6 +49513,12 @@ tasks:
         let summary = value.get("summary").expect("summary");
         assert_eq!(
             summary
+                .get("stopped_host_services")
+                .and_then(|value| value.as_u64()),
+            Some(8)
+        );
+        assert_eq!(
+            summary
                 .get("removed_current_persistent_containers")
                 .and_then(|value| value.as_u64()),
             Some(1)
@@ -49352,10 +49530,18 @@ tasks:
             Some(5)
         );
         assert_eq!(
+            value
+                .get("host_services")
+                .and_then(|value| value.as_array())
+                .and_then(|items| items.first())
+                .and_then(|value| value.as_str()),
+            Some("redis")
+        );
+        assert_eq!(
             summary
                 .get("total_removed")
                 .and_then(|value| value.as_u64()),
-            Some(15)
+            Some(23)
         );
         assert_eq!(
             summary
@@ -51226,6 +51412,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -51308,6 +51495,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -51504,6 +51692,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -51568,6 +51757,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -51661,6 +51851,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -51776,6 +51967,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -51852,6 +52044,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -51992,6 +52185,7 @@ tasks:
                 runtime: None,
                 logs: None,
                 service_termination: None,
+                host_service_cleanup: Vec::new(),
                 backend_fulfillment: None,
                 workloads: BTreeMap::new(),
                 policy: Vec::new(),
@@ -58347,6 +58541,7 @@ agent:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -59788,6 +59983,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -59842,6 +60038,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -59896,6 +60093,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -59975,6 +60173,7 @@ tasks:
                 exit_code: Some(130),
                 readiness: None,
             }),
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -60038,6 +60237,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -60150,6 +60350,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -60250,6 +60451,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -60366,6 +60568,7 @@ tasks:
                 exit_code: Some(137),
                 readiness: None,
             }),
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -60422,6 +60625,7 @@ tasks:
                 exit_code: Some(1),
                 readiness: None,
             }),
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -60464,6 +60668,7 @@ tasks:
             target: None,
             runtime: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
         };
 
         assert_eq!(super::run_phase_failure_exit_code(&outcome), Some(42));
@@ -60486,6 +60691,7 @@ tasks:
                 exit_code: None,
                 readiness: None,
             }),
+            host_service_cleanup: Vec::new(),
         };
 
         assert_eq!(super::run_phase_failure_exit_code(&outcome), Some(1));
@@ -62257,6 +62463,7 @@ tasks:
                     requested_mode: Some(String::from("container")),
                     execution_mode: String::from("container"),
                     lifecycle: Some(String::from("persistent")),
+                    host_services: vec![String::from("redis"), String::from("postgres")],
                     pid: 48211,
                     started_at: String::from("2026-06-05T22:14:03Z"),
                 }),
@@ -62276,6 +62483,10 @@ tasks:
             "{rendered}"
         );
         assert!(rendered.contains("lifecycle: `persistent`"), "{rendered}");
+        assert!(
+            rendered.contains("host services: `redis`, `postgres`"),
+            "{rendered}"
+        );
         assert!(rendered.contains("pid: `48211`"), "{rendered}");
         assert!(
             rendered.contains("started: `2026-06-05T22:14:03Z`"),
@@ -63159,6 +63370,7 @@ tasks:
                 exit_code: Some(130),
                 readiness: None,
             }),
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -63229,6 +63441,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -63292,6 +63505,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -63358,6 +63572,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -63418,6 +63633,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -63486,6 +63702,7 @@ tasks:
                 exit_code: Some(1),
                 readiness: None,
             }),
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -63552,6 +63769,7 @@ tasks:
                 exit_code: Some(0),
                 readiness: None,
             }),
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -64313,6 +64531,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads,
             policy: Vec::new(),
@@ -64453,6 +64672,7 @@ tasks:
             runtime: Some(runtime),
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -64553,6 +64773,7 @@ tasks:
             runtime: Some(runtime),
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -65172,6 +65393,7 @@ tasks:
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
@@ -65218,6 +65440,84 @@ tasks:
                 "Command: rustup toolchain install 1.94.0 --profile minimal --component rustfmt"
             ),
             "{rendered}"
+        );
+    }
+
+    #[test]
+    fn execution_receipt_text_and_json_render_host_service_cleanup() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: Some(String::from("dev")),
+            lifecycle: Some(String::from("persistent")),
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
+            native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            host_service_cleanup: vec![crate::runner::HostServiceCleanupEvidence {
+                service: String::from("redis"),
+                action: String::from("stop"),
+                status: String::from("succeeded"),
+                trigger: String::from("interrupt_cleanup"),
+                detail: None,
+            }],
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: vec![execution_receipt_step(
+                1,
+                "dev",
+                "INTERRUPTED",
+                Some(String::from("task `dev`")),
+                Some(130),
+            )],
+            status: Some(String::from("interrupted")),
+            failed_task: Some(String::from("dev")),
+            failed_dependency: None,
+            failure_origin: Some(String::from("requested")),
+            blocked: Vec::new(),
+            summary: ExecutionReceiptSummary {
+                error_count: 0,
+                warn_count: 0,
+                info_count: 1,
+                step_count: 1,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_text(&receipt));
+        assert!(rendered.contains("Host Service Cleanup"), "{rendered}");
+        assert!(
+            rendered.contains("redis succeeded (stop, interrupt_cleanup)"),
+            "{rendered}"
+        );
+
+        let json = serde_json::to_value(&receipt).expect("receipt json");
+        assert_eq!(
+            json["host_service_cleanup"][0]["service"].as_str(),
+            Some("redis")
+        );
+        assert_eq!(
+            json["host_service_cleanup"][0]["status"].as_str(),
+            Some("succeeded")
         );
     }
 
@@ -69856,6 +70156,7 @@ fn run_single_contract_target_streaming(
                 Some(task_use_details_step(Some(&target.contract_path), member)),
             );
             receipt.service_termination = outcome.service_termination.clone();
+            receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
@@ -69929,6 +70230,7 @@ fn run_single_contract_target_streaming(
                 )),
             );
             receipt.service_termination = outcome.service_termination.clone();
+            receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
@@ -70121,6 +70423,7 @@ fn run_single_contract_target_captured(
                 Some(task_use_details_step(Some(&target.contract_path), member)),
             );
             receipt.service_termination = outcome.service_termination.clone();
+            receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
@@ -70192,6 +70495,7 @@ fn run_single_contract_target_captured(
                 )),
             );
             receipt.service_termination = outcome.service_termination.clone();
+            receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
             apply_interrupted_run_classification(
                 &mut receipt,
                 outcome.service_termination.as_ref(),
@@ -72436,6 +72740,17 @@ fn render_run_structured_error_text(
                 if let Some(lifecycle) = owner.lifecycle.as_deref() {
                     detail_lines.push(format!("lifecycle: `{lifecycle}`"));
                 }
+                if !owner.host_services.is_empty() {
+                    detail_lines.push(format!(
+                        "host services: {}",
+                        owner
+                            .host_services
+                            .iter()
+                            .map(|name| format!("`{name}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
                 detail_lines.push(format!("pid: `{}`", owner.pid));
                 detail_lines.push(format!("started: `{}`", owner.started_at));
             }
@@ -73592,6 +73907,7 @@ fn run_execution_receipt_with_shared(
         runtime,
         logs: None,
         service_termination: None,
+        host_service_cleanup: Vec::new(),
         backend_fulfillment,
         workloads: BTreeMap::new(),
         policy: policy_lines,
@@ -76344,6 +76660,73 @@ fn proof_runtime_ok(summary: &DoctorSummary, proof_error: Option<&str>) -> bool 
     summary.error_count == 0 && proof_error.is_none()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProofRuntimeLikelyCause {
+    LoopbackServiceDrift {
+        artifact: PathBuf,
+        service: String,
+        host: String,
+        port: Option<u16>,
+    },
+    DetachedRunOutput {
+        artifact: PathBuf,
+        signal: String,
+    },
+}
+
+impl ProofRuntimeLikelyCause {
+    fn message(&self) -> String {
+        match self {
+            Self::LoopbackServiceDrift {
+                service,
+                host,
+                port,
+                ..
+            } => {
+                let endpoint = port
+                    .map(|port| format!("{host}:{port}"))
+                    .unwrap_or_else(|| host.clone());
+                format!(
+                    "likely config drift: the runtime is still targeting {service} on loopback ({endpoint}) inside a multi-service startup path; move that host binding into a workflow-scoped env overlay, rendered workflow env artifact, task `env_files`, or compose `manager.env_file` instead of `127.0.0.1` / `localhost`"
+                )
+            }
+            Self::DetachedRunOutput { signal, .. } => {
+                format!("detached run output: {signal}")
+            }
+        }
+    }
+
+    fn json_evidence(&self) -> ProofRuntimeLikelyCauseEvidence {
+        match self {
+            Self::LoopbackServiceDrift {
+                artifact,
+                service,
+                host,
+                port,
+            } => ProofRuntimeLikelyCauseEvidence {
+                kind: String::from("loopback_service_drift"),
+                artifact: compact_repo_path(artifact),
+                signal: Some(String::from("connection_refused")),
+                service: Some(service.clone()),
+                host: Some(host.clone()),
+                port: *port,
+            },
+            Self::DetachedRunOutput { artifact, signal } => ProofRuntimeLikelyCauseEvidence {
+                kind: String::from("detached_run_output"),
+                artifact: compact_repo_path(artifact),
+                signal: Some(signal.clone()),
+                service: None,
+                host: None,
+                port: None,
+            },
+        }
+    }
+
+    fn implies_config_drift(&self) -> bool {
+        matches!(self, Self::LoopbackServiceDrift { .. })
+    }
+}
+
 fn canonical_proof_runtime_phase_key(phase: &str) -> String {
     match phase.trim().to_ascii_lowercase().as_str() {
         "preconditions" | "validation" | "dependencies" | "provisioning" | "activation" => {
@@ -76365,14 +76748,11 @@ fn proof_runtime_failure_class(
     phase: &str,
     cleanup_error: Option<&str>,
     up_process_failure: Option<&str>,
-    likely_cause: Option<&str>,
+    likely_cause: Option<&ProofRuntimeLikelyCause>,
     up_log_artifact_path: &Path,
 ) -> Option<String> {
-    let likely_config_drift = likely_cause.is_some_and(|cause| {
-        cause
-            .to_ascii_lowercase()
-            .starts_with("likely config drift:")
-    });
+    let likely_config_drift =
+        likely_cause.is_some_and(ProofRuntimeLikelyCause::implies_config_drift);
     if cleanup_error.is_some() {
         return Some(String::from("cleanup_failure"));
     }
@@ -76528,7 +76908,7 @@ fn proof_runtime_likely_cause(
     summary: &DoctorSummary,
     up_process_failure: Option<&str>,
     up_log_artifact_path: &Path,
-) -> Option<String> {
+) -> Option<ProofRuntimeLikelyCause> {
     let primary = proof_runtime_blocking_primary_blocker(summary);
     let looks_like_readiness_failure = primary.is_some_and(|primary| {
         primary.summary == "Run task exited before readiness"
@@ -77518,6 +77898,25 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
     if let Some(runtime) = receipt.runtime.as_ref() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Runtime")));
         append_runtime_listener_lines(&mut stdout, runtime, "");
+    }
+
+    if !receipt.host_service_cleanup.is_empty() {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Host Service Cleanup")
+        ));
+        for cleanup in &receipt.host_service_cleanup {
+            stdout.push_str(&format!(
+                "\n{} {} ({}, {})",
+                paint_key(&cleanup.service),
+                cleanup.status,
+                cleanup.action,
+                cleanup.trigger
+            ));
+            if let Some(detail) = cleanup.detail.as_deref() {
+                stdout.push_str(&format!("\n  {} {detail}", paint_key("Detail:")));
+            }
+        }
     }
 
     if !receipt.workloads.is_empty() {
@@ -79098,6 +79497,7 @@ struct CommandRunResult {
     target: Option<String>,
     runtime: Option<ResolvedTaskRuntime>,
     service_termination: Option<ServiceTermination>,
+    host_service_cleanup: Vec<crate::runner::HostServiceCleanupEvidence>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -79779,6 +80179,7 @@ fn repo_execution_receipt(
         runtime: None,
         logs: None,
         service_termination: None,
+        host_service_cleanup: Vec::new(),
         backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: execution_policy_lines_for_toolchain_names(
@@ -80475,6 +80876,7 @@ fn workspace_up_receipt(
         runtime: None,
         logs: None,
         service_termination: None,
+        host_service_cleanup: Vec::new(),
         backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
@@ -80557,6 +80959,7 @@ fn workspace_status_receipt(
         runtime: None,
         logs: None,
         service_termination: None,
+        host_service_cleanup: Vec::new(),
         backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
@@ -80646,6 +81049,7 @@ fn workspace_run_receipt(
         runtime: None,
         logs: None,
         service_termination: None,
+        host_service_cleanup: Vec::new(),
         backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
@@ -80886,6 +81290,7 @@ fn acquire_workspace_repo(
             target: None,
             runtime: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
         });
     }
 
@@ -80923,6 +81328,7 @@ fn acquire_workspace_repo(
             target: None,
             runtime: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
         });
     }
 
@@ -80944,6 +81350,7 @@ fn acquire_workspace_repo(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                host_service_cleanup: Vec::new(),
             });
         }
     }
@@ -80955,6 +81362,7 @@ fn acquire_workspace_repo(
         target: None,
         runtime: None,
         service_termination: None,
+        host_service_cleanup: Vec::new(),
     })
 }
 
@@ -80979,6 +81387,7 @@ fn run_git_command(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                host_service_cleanup: Vec::new(),
             })
         }
         RepoExecutionMode::Stream => {
@@ -80990,6 +81399,7 @@ fn run_git_command(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                host_service_cleanup: Vec::new(),
             })
         }
     }
@@ -82615,6 +83025,7 @@ fn run_up_task(
             target: outcome.target,
             runtime: outcome.runtime,
             service_termination: outcome.service_termination,
+            host_service_cleanup: outcome.host_service_cleanup,
         })
         .map_err(|error| error),
         RepoExecutionMode::Capture => run_task_captured_with_args_with_overrides_with_policy(
@@ -82632,6 +83043,7 @@ fn run_up_task(
             target: outcome.target,
             runtime: outcome.runtime,
             service_termination: outcome.service_termination,
+            host_service_cleanup: outcome.host_service_cleanup,
         })
         .map_err(|error| error),
     }
@@ -82839,6 +83251,7 @@ fn run_up_task_detached_until_ready(
             target: None,
             runtime: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
         });
     }
 
@@ -82858,10 +83271,11 @@ fn run_up_task_detached_until_ready(
             .unwrap_or_else(|| String::from("detached run task did not reach readiness"))
     });
     let mut failure_details = Vec::new();
-    if let Some(hint) = detached_run_failure_hint_from_log(&run_log_artifact_path)
-        && !failure.contains(hint.as_str())
-    {
-        failure_details.push(hint);
+    if let Some(hint) = detached_run_failure_hint_from_log(&run_log_artifact_path) {
+        let hint_message = hint.message();
+        if !failure.contains(hint_message.as_str()) {
+            failure_details.push(hint_message);
+        }
     }
     if let Some(endpoint_hint) =
         up_declared_readiness_endpoint_hint(contract, resolved_path, workflow_name, overrides)
@@ -82880,6 +83294,7 @@ fn run_up_task_detached_until_ready(
         target: None,
         runtime: None,
         service_termination: None,
+        host_service_cleanup: Vec::new(),
     })
 }
 
@@ -82942,14 +83357,27 @@ fn detached_run_bind_conflict_port_hint(failure: &str, failure_details: &[String
     None
 }
 
-fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
+fn parse_port_from_line(line: &str) -> Option<u16> {
+    for token in line.split(|ch: char| ch.is_whitespace() || ch == ')' || ch == '(' || ch == ',') {
+        let candidate = token.rsplit(':').next().unwrap_or_default().trim();
+        if let Ok(port) = candidate.parse::<u16>() {
+            return Some(port);
+        }
+    }
+    None
+}
+
+fn detached_run_failure_hint_from_log(path: &Path) -> Option<ProofRuntimeLikelyCause> {
     let contents = fs::read_to_string(path).ok()?;
     for raw_line in contents.lines() {
         let line = strip_ansi_codes(raw_line).trim().to_string();
         if let Some(title) = line.strip_prefix("◉ ERROR") {
             let title = title.trim();
             if !title.is_empty() {
-                return Some(format!("detached run error: {title}"));
+                return Some(ProofRuntimeLikelyCause::DetachedRunOutput {
+                    artifact: path.to_path_buf(),
+                    signal: format!("error: {title}"),
+                });
             }
         }
     }
@@ -82981,12 +83409,16 @@ fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
             continue;
         }
         if line.contains("EADDRINUSE") {
-            return Some(String::from(
-                "detached run output: address already in use (EADDRINUSE)",
-            ));
+            return Some(ProofRuntimeLikelyCause::DetachedRunOutput {
+                artifact: path.to_path_buf(),
+                signal: String::from("address already in use (EADDRINUSE)"),
+            });
         }
         if line.contains("address already in use") || line.starts_with("Error:") {
-            return Some(format!("detached run output: {line}"));
+            return Some(ProofRuntimeLikelyCause::DetachedRunOutput {
+                artifact: path.to_path_buf(),
+                signal: line,
+            });
         }
         if (line.starts_with("warning:")
             || line.contains("failed")
@@ -82997,10 +83429,13 @@ fn detached_run_failure_hint_from_log(path: &Path) -> Option<String> {
             fallback = Some(line);
         }
     }
-    fallback.map(|line| format!("detached run output: {line}"))
+    fallback.map(|line| ProofRuntimeLikelyCause::DetachedRunOutput {
+        artifact: path.to_path_buf(),
+        signal: line,
+    })
 }
 
-fn runtime_loopback_drift_hint_from_log(path: &Path) -> Option<String> {
+fn runtime_loopback_drift_hint_from_log(path: &Path) -> Option<ProofRuntimeLikelyCause> {
     let contents = fs::read_to_string(path).ok()?;
     for raw_line in contents.lines() {
         let line = strip_ansi_codes(raw_line);
@@ -83015,19 +83450,32 @@ fn runtime_loopback_drift_hint_from_log(path: &Path) -> Option<String> {
             continue;
         }
 
-        let service = if lowered.contains(":6379") {
-            "Redis"
+        let (service, port) = if lowered.contains(":6379") {
+            ("Redis", Some(6379))
         } else if lowered.contains(":5432") {
-            "Postgres"
-        } else if lowered.contains(":8123") || lowered.contains(":9000") {
-            "ClickHouse"
+            ("Postgres", Some(5432))
+        } else if lowered.contains(":8123") {
+            ("ClickHouse", Some(8123))
+        } else if lowered.contains(":9000") {
+            ("ClickHouse", Some(9000))
         } else {
-            "a dependent service"
+            (
+                "a dependent service",
+                parse_port_from_line(lowered.as_str()),
+            )
+        };
+        let host = if lowered.contains("localhost") {
+            String::from("localhost")
+        } else {
+            String::from("127.0.0.1")
         };
 
-        return Some(format!(
-            "likely config drift: the runtime is still targeting {service} on loopback inside a multi-service startup path; move that host binding into a workflow-scoped env overlay, rendered workflow env artifact, task `env_files`, or compose `manager.env_file` instead of `127.0.0.1` / `localhost`"
-        ));
+        return Some(ProofRuntimeLikelyCause::LoopbackServiceDrift {
+            artifact: path.to_path_buf(),
+            service: service.to_string(),
+            host,
+            port,
+        });
     }
     None
 }
@@ -83720,6 +84168,7 @@ fn run_corepack_activation_action(
         target: None,
         runtime: None,
         service_termination: None,
+        host_service_cleanup: Vec::new(),
     })
 }
 
@@ -83805,6 +84254,7 @@ fn run_process_command(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                host_service_cleanup: Vec::new(),
             },
             Err(error) => command_spawn_failure_result(&command_label, error),
         },
@@ -83817,6 +84267,7 @@ fn run_process_command(
                     target: None,
                     runtime: None,
                     service_termination: None,
+                    host_service_cleanup: Vec::new(),
                 },
                 Err(error) => command_spawn_failure_result(&command_label, error),
             }
@@ -83844,6 +84295,7 @@ fn command_spawn_failure_result(command_label: &str, error: io::Error) -> Comman
         target: None,
         runtime: None,
         service_termination: None,
+        host_service_cleanup: Vec::new(),
     }
 }
 
@@ -85296,6 +85748,7 @@ fn execute_repo_up_with_behavior(
                     None,
                 );
                 receipt.service_termination = outcome.service_termination.clone();
+                receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
                 return Ok(RepoUpResult {
                     ok: false,
                     status: "RUN FAILED",
@@ -87498,6 +87951,7 @@ fn run_workspace_repo_refresh_command(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                host_service_cleanup: Vec::new(),
             });
         }
 
@@ -87514,6 +87968,7 @@ fn run_workspace_repo_refresh_command(
             target: None,
             runtime: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
         });
     }
 
@@ -88019,6 +88474,7 @@ fn run_workspace_repo_task(
                         target: result.target,
                         runtime: result.runtime,
                         service_termination: result.service_termination,
+                        host_service_cleanup: result.host_service_cleanup,
                     })
                 }
                 RepoExecutionMode::Stream => {
@@ -88040,6 +88496,7 @@ fn run_workspace_repo_task(
                         target: result.target,
                         runtime: result.runtime,
                         service_termination: result.service_termination,
+                        host_service_cleanup: result.host_service_cleanup,
                     })
                 }
             };
@@ -88643,6 +89100,7 @@ fn run_shell_command(
                     target: None,
                     runtime: None,
                     service_termination: None,
+                    host_service_cleanup: Vec::new(),
                 })
                 .map_err(|error| format!("failed to execute `{command}`: {error}"))
         }
@@ -88660,6 +89118,7 @@ fn run_shell_command(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                host_service_cleanup: Vec::new(),
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),
     }

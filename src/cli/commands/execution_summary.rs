@@ -799,6 +799,7 @@ mod tests {
             runtime: None,
             logs: None,
             service_termination: None,
+            host_service_cleanup: Vec::new(),
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),

@@ -30,6 +30,23 @@
   lifecycle through structured `manager.start` / `manager.stop` commands; `ota up` and
   `requires_services` execution paths now run that first-class host-manager lifecycle truth
   directly instead of forcing authors back to legacy top-level shell `start` / `stop` strings
+- interrupt-driven cleanup now consumes typed host `manager.stop` for Ota-started required
+  services, so detached/proof teardown can actually stop host-managed service lifecycles Ota
+  started instead of treating structured shutdown as validation-only truth
+- `ota clean` now consumes typed host `manager.stop` for Ota-owned host-managed services, scopes
+  that cleanup to the selected workflow when requested, and reports host-service cleanup in both
+  text and JSON instead of only owning container/volume repo state
+- repo execution lock ownership now records Ota-owned host-managed services for the active run,
+  `ota clean` now honors that lock before mutating lifecycle-owned repo state, and lock-busy
+  diagnostics now show the active execution’s owned host services instead of only PID/process
+  metadata
+- proof/runtime execution receipts now emit first-class `host_service_cleanup` evidence for
+  interrupt-driven host-managed service stop attempts, so machine-readable consumers can see the
+  service, action, status, trigger, and any failure detail instead of inferring cleanup from
+  summary prose alone
+- runtime proof JSON now emits first-class `likely_cause_evidence` when ota can derive a
+  higher-confidence readiness root cause from captured proof logs, so automation can distinguish
+  loopback service config drift and detached-run failure signals without parsing advisory prose
 - policy-backed tool governance now resolves common executable aliases across provisioning and
   strict version policy lanes, so canonical tool names like `bundler` and `maven` can govern the
   executable-facing requirements `bundle` and `mvn` without forcing org policy authors onto

@@ -76,6 +76,7 @@ The receipt includes:
 - `runtime`
 - `workloads`
 - `service_termination`
+- `host_service_cleanup`
 - `steps`
 - `blocked`
 - `summary`
@@ -92,7 +93,9 @@ and `Next` before the trailing summary block. The receipt keeps the structured
 summary data for JSON and optional receipt output. For container-backed service tasks, receipts can
 also include `service_termination` when a task reached a projected runtime endpoint and then
 stopped; this records whether the stop happened after readiness and whether the engine reported an
-OOM kill.
+OOM kill. For host-managed service cleanup owned by ota, receipts can also include
+`host_service_cleanup`; each entry records the service name, attempted action, outcome status,
+cleanup trigger, and any failure detail ota captured while stopping that host-managed service.
 `target` is only present when the actual recorded execution phase used a real named target.
 That includes persistent backends, remote targets, and named ephemeral task or diagnosis
 containers. Previews and host-side phases stay targetless.

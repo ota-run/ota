@@ -447,6 +447,8 @@ pub struct ExecutionReceipt {
     pub runtime: Option<ResolvedTaskRuntime>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_termination: Option<crate::runner::ServiceTermination>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_service_cleanup: Vec<crate::runner::HostServiceCleanupEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend_fulfillment: Option<BackendFulfillmentEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -546,6 +548,9 @@ impl Serialize for ExecutionReceipt {
         }
         if let Some(service_termination) = self.service_termination.as_ref() {
             map.serialize_entry("service_termination", service_termination)?;
+        }
+        if !self.host_service_cleanup.is_empty() {
+            map.serialize_entry("host_service_cleanup", &self.host_service_cleanup)?;
         }
         if let Some(backend_fulfillment) = self.backend_fulfillment.as_ref() {
             map.serialize_entry("backend_fulfillment", backend_fulfillment)?;
@@ -2172,6 +2177,20 @@ pub struct ProofRuntimeArtifacts<'a> {
     pub up_log: &'a str,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ProofRuntimeLikelyCauseEvidence {
+    pub kind: String,
+    pub artifact: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ProofRuntimeStatus<'a> {
     pub ok: bool,
@@ -2191,6 +2210,8 @@ pub struct ProofRuntimeStatus<'a> {
     pub error: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub likely_cause: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub likely_cause_evidence: Option<ProofRuntimeLikelyCauseEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<&'a str>,
 }

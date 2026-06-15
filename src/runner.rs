@@ -909,6 +909,13 @@ pub enum RunError {
         engine: String,
         details: String,
     },
+    #[error("task `{task}` could not {action} host-managed service `{service}`: {details}")]
+    HostServiceCleanupFailure {
+        task: String,
+        action: String,
+        service: String,
+        details: String,
+    },
     #[error(
         "task `{task}` cannot reuse launch container name `{container}` with container engine `{engine}`: {details}"
     )]
@@ -1318,6 +1325,7 @@ pub struct RunOutcome {
     pub task_step_shared_local_backends: Vec<Option<SharedLocalBackendEvidence>>,
     pub shared_local_backend: Option<SharedLocalBackendEvidence>,
     pub fulfilled_toolchains: Vec<ToolchainFulfillmentEvidence>,
+    pub host_service_cleanup: Vec<HostServiceCleanupEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
 }
@@ -1339,6 +1347,7 @@ pub struct CapturedRunOutcome {
     pub task_step_shared_local_backends: Vec<Option<SharedLocalBackendEvidence>>,
     pub shared_local_backend: Option<SharedLocalBackendEvidence>,
     pub fulfilled_toolchains: Vec<ToolchainFulfillmentEvidence>,
+    pub host_service_cleanup: Vec<HostServiceCleanupEvidence>,
     pub execution_note: Option<String>,
     pub interrupted: bool,
 }
@@ -1347,6 +1356,16 @@ pub struct CapturedRunOutcome {
 pub struct ToolchainFulfillmentEvidence {
     pub name: String,
     pub commands: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct HostServiceCleanupEvidence {
+    pub service: String,
+    pub action: String,
+    pub status: String,
+    pub trigger: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
@@ -1565,6 +1584,7 @@ pub struct StaleContainerCleanupReport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CleanExecutionResourceKind {
+    HostService,
     PersistentContainer,
     DependencyIsolationVolume,
     StaleContainers,
@@ -1597,6 +1617,11 @@ pub enum CleanExecutionError {
 impl std::fmt::Display for CleanExecutionFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match (&self.resource_kind, self.resource_name.as_deref()) {
+            (CleanExecutionResourceKind::HostService, Some(name)) => write!(
+                f,
+                "task `clean` could not {} host-managed service `{}`: {}",
+                self.action, name, self.details
+            ),
             (CleanExecutionResourceKind::PersistentContainer, Some(name)) => write!(
                 f,
                 "task `clean` could not {} persistent container `{}` using container engine `{}`: {}",
@@ -1623,6 +1648,7 @@ impl std::fmt::Display for CleanExecutionFailure {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CleanExecutionReport {
+    pub stopped_host_services: usize,
     pub removed_current_persistent_containers: usize,
     pub removed_drift_persistent_containers: usize,
     pub removed_drift_attached_containers: usize,
@@ -1630,6 +1656,8 @@ pub struct CleanExecutionReport {
     pub removed_drift_dependency_isolation_volumes: usize,
     pub skipped_ambiguous_persistent_containers: usize,
     pub skipped_ambiguous_dependency_isolation_volumes: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_services: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub queried_engines: Vec<String>,
 }
@@ -1640,7 +1668,8 @@ impl CleanExecutionReport {
     }
 
     pub fn total_removed(&self) -> usize {
-        self.removed_current_persistent_containers
+        self.stopped_host_services
+            + self.removed_current_persistent_containers
             + self.removed_drift_persistent_containers
             + self.removed_drift_attached_containers
             + self.removed_current_dependency_isolation_volumes
@@ -1697,6 +1726,8 @@ pub struct RepoExecutionLockOwner {
     pub execution_mode: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_services: Vec<String>,
     pub pid: u32,
     pub started_at: String,
 }
@@ -1709,6 +1740,7 @@ fn format_repo_execution_lock_timestamp(now: OffsetDateTime) -> String {
 }
 
 fn repo_execution_lock_owner_for_backend(
+    contract: &Contract,
     task_name: &str,
     overrides: ExecutionOverrides,
     backend: &ResolvedExecutionBackend,
@@ -1729,6 +1761,23 @@ fn repo_execution_lock_owner_for_backend(
             .map(|backend| format_backend(backend).to_string()),
         execution_mode: format_backend(resolved_execution_backend_kind(backend)).to_string(),
         lifecycle,
+        host_services: required_service_closure(
+            contract,
+            &contract
+                .tasks
+                .get(task_name)
+                .map(|task| task.requires_services.clone())
+                .unwrap_or_default(),
+        )
+        .into_iter()
+        .filter(|service_name| {
+            contract
+                .services
+                .get(service_name.as_str())
+                .and_then(|service| service.manager.as_ref())
+                .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Host)
+        })
+        .collect(),
         pid: std::process::id(),
         started_at: format_repo_execution_lock_timestamp(OffsetDateTime::now_utc()),
     }
@@ -3699,6 +3748,7 @@ pub(crate) fn run_task_with_progress_and_args_and_overrides_with_policy(
         task_step_shared_local_backends: outcome.task_step_shared_local_backends,
         shared_local_backend: outcome.shared_local_backend,
         fulfilled_toolchains: outcome.fulfilled_toolchains,
+        host_service_cleanup: outcome.host_service_cleanup,
         execution_note: outcome.execution_note,
         interrupted: outcome.interrupted,
     })
@@ -4076,11 +4126,52 @@ fn clean_execution_report_inner(
     cleanup_scope: Option<&PersistentCleanupScope>,
 ) -> Result<CleanExecutionReport, RunError> {
     let clean_task_name = OTA_CLEAN_INTERNAL_TASK_NAME;
-    let cleanup_targets = persistent_cleanup_targets(contract, cleanup_scope)?;
-
     let working_dir = contract_working_dir(contract_path);
+    let _repo_execution_lock = acquire_repo_execution_lock(clean_task_name, working_dir, None)?;
+    let host_services_to_stop = host_managed_services_for_cleanup(contract, cleanup_scope);
+    let cleanup_targets = persistent_cleanup_targets(contract, cleanup_scope)?;
     let repo_ownership_token = repo_ownership_token("clean", contract_path)?;
     let mut report = CleanExecutionReport::default();
+    for service_name in host_services_to_stop {
+        let service = contract
+            .services
+            .get(service_name.as_str())
+            .expect("selected host-managed cleanup service should exist");
+        if service.stop_command_spec().is_none() {
+            continue;
+        }
+        match run_service_stop_command(
+            service_name.as_str(),
+            service,
+            working_dir,
+            TaskExecutionMode::CaptureActivation,
+        ) {
+            Ok(output) if output.exit_code == 0 => {
+                report.stopped_host_services += 1;
+                report.host_services.push(service_name);
+            }
+            Ok(output) => {
+                return Err(RunError::HostServiceCleanupFailure {
+                    task: clean_task_name.to_string(),
+                    action: String::from("stop"),
+                    service: service_name,
+                    details: format!(
+                        "stop command exited with code {}{}",
+                        output.exit_code,
+                        render_cleanup_command_output_detail(&output)
+                    ),
+                });
+            }
+            Err(error) => {
+                return Err(RunError::HostServiceCleanupFailure {
+                    task: clean_task_name.to_string(),
+                    action: String::from("stop"),
+                    service: service_name,
+                    details: error,
+                });
+            }
+        }
+    }
     let mut visited = BTreeSet::new();
     let mut current_target_engines = BTreeSet::new();
     let mut relevant_engines = BTreeSet::new();
@@ -4323,6 +4414,19 @@ fn classify_clean_execution_error(error: RunError) -> CleanExecutionError {
             resource_name: Some(container),
             reason: classify_clean_execution_failure_reason(details.as_str()),
             engine,
+            details,
+        }),
+        RunError::HostServiceCleanupFailure {
+            action,
+            service,
+            details,
+            ..
+        } => CleanExecutionError::Cleanup(CleanExecutionFailure {
+            action,
+            resource_kind: CleanExecutionResourceKind::HostService,
+            resource_name: Some(service),
+            reason: CleanExecutionFailureReason::Other,
+            engine: String::from("host"),
             details,
         }),
         RunError::DependencyIsolationVolumeFailure {
@@ -4626,6 +4730,7 @@ fn persistent_cleanup_targets(
 struct PersistentCleanupScope {
     context_names: BTreeSet<String>,
     shared_backend_names: BTreeSet<String>,
+    service_names: BTreeSet<String>,
 }
 
 fn persistent_cleanup_scope_for_workflow(
@@ -4633,6 +4738,10 @@ fn persistent_cleanup_scope_for_workflow(
     workflow_name: Option<&str>,
 ) -> PersistentCleanupScope {
     let mut scope = PersistentCleanupScope::default();
+    scope.service_names = required_service_closure(
+        contract,
+        &contract.selected_workflow_required_service_names(workflow_name),
+    );
     for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
         let effective =
             effective_task_execution(contract, task_name.as_str(), ExecutionOverrides::default());
@@ -4649,6 +4758,24 @@ fn persistent_cleanup_scope_for_workflow(
         }
     }
     scope
+}
+
+fn host_managed_services_for_cleanup(
+    contract: &Contract,
+    cleanup_scope: Option<&PersistentCleanupScope>,
+) -> Vec<String> {
+    let mut names = match cleanup_scope {
+        Some(scope) => scope.service_names.iter().cloned().collect::<Vec<_>>(),
+        None => contract.services.keys().cloned().collect::<Vec<_>>(),
+    };
+    names.retain(|service_name| {
+        contract
+            .services
+            .get(service_name.as_str())
+            .and_then(|service| service.manager.as_ref())
+            .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Host)
+    });
+    names
 }
 
 fn list_stale_ota_containers(engine: &str) -> Result<Vec<StaleContainerCleanupTarget>, RunError> {
@@ -4901,6 +5028,7 @@ struct TaskRunState {
     backend_fulfillment: Option<BackendFulfillmentEvidence>,
     task_step_shared_local_backends: Vec<Option<SharedLocalBackendEvidence>>,
     shared_local_backend: Option<SharedLocalBackendEvidence>,
+    host_service_cleanup: Vec<HostServiceCleanupEvidence>,
     execution_note: Option<String>,
     interrupted: bool,
     fulfilled_backend_units: BTreeMap<String, BackendFulfillmentEvidence>,
@@ -5351,7 +5479,8 @@ fn run_task_internal(
         Err(error) => return Err(error),
     };
     let working_dir = contract_working_dir(contract_path);
-    let lock_owner = repo_execution_lock_owner_for_backend(task_name, overrides, &backend);
+    let lock_owner =
+        repo_execution_lock_owner_for_backend(contract, task_name, overrides, &backend);
     let _repo_execution_lock =
         acquire_repo_execution_lock(task_name, working_dir, Some(&lock_owner))?;
     if overrides.skip_deps
@@ -5458,6 +5587,10 @@ fn run_task_internal(
         );
         state.execution_note = merge_execution_note(
             state.execution_note.take(),
+            cleanup_interrupted_started_services_and_note(contract, working_dir, &mut state),
+        );
+        state.execution_note = merge_execution_note(
+            state.execution_note.take(),
             cleanup_interrupted_activation_started_producers_and_note(
                 contract,
                 contract_path,
@@ -5493,6 +5626,7 @@ fn run_task_internal(
             .into_iter()
             .map(|(name, commands)| ToolchainFulfillmentEvidence { name, commands })
             .collect(),
+        host_service_cleanup: state.host_service_cleanup,
         execution_note: state.execution_note,
         interrupted: state.interrupted,
     })
@@ -5676,6 +5810,27 @@ pub(crate) fn run_service_start_command(
         .start_command(service_name)
         .ok_or_else(|| format!("service `{service_name}` has no start command"))?;
     run_host_shell_command(start.as_str(), working_dir, mode)
+}
+
+pub(crate) fn run_service_stop_command(
+    service_name: &str,
+    service: &crate::schema::ServiceSpec,
+    working_dir: &Path,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, String> {
+    if let Some(command) = service.stop_command_spec() {
+        return run_host_structured_command(
+            &format!("service:{service_name}:stop"),
+            command,
+            working_dir,
+            mode,
+        );
+    }
+
+    let stop = service
+        .stop_command(service_name)
+        .ok_or_else(|| format!("service `{service_name}` has no stop command"))?;
+    run_host_shell_command(stop.as_str(), working_dir, mode)
 }
 
 #[derive(Clone, Copy)]
@@ -12271,10 +12426,110 @@ fn cleanup_interrupted_requested_task_service_workload_and_note(
     ))
 }
 
+fn cleanup_interrupted_started_services_and_note(
+    contract: &Contract,
+    working_dir: &Path,
+    state: &mut TaskRunState,
+) -> Option<String> {
+    let mut stopped = Vec::new();
+    let mut failures = Vec::new();
+    let mut started_services = service_start_order(contract)
+        .into_iter()
+        .filter(|name| state.started_services.contains(name))
+        .collect::<Vec<_>>();
+    started_services.reverse();
+
+    for service_name in started_services {
+        let Some(service) = contract.services.get(service_name.as_str()) else {
+            continue;
+        };
+        if service.stop_command(service_name.as_str()).is_none() {
+            continue;
+        }
+
+        match run_service_stop_command(
+            service_name.as_str(),
+            service,
+            working_dir,
+            TaskExecutionMode::CaptureActivation,
+        ) {
+            Ok(output) if output.exit_code == 0 => {
+                state.host_service_cleanup.push(HostServiceCleanupEvidence {
+                    service: service_name.clone(),
+                    action: String::from("stop"),
+                    status: String::from("succeeded"),
+                    trigger: String::from("interrupt_cleanup"),
+                    detail: cleanup_command_output_detail_text(&output),
+                });
+                stopped.push(service_name);
+            }
+            Ok(output) => {
+                let detail = format!(
+                    "stop command exited with code {}{}",
+                    output.exit_code,
+                    render_cleanup_command_output_detail(&output)
+                );
+                state.host_service_cleanup.push(HostServiceCleanupEvidence {
+                    service: service_name.clone(),
+                    action: String::from("stop"),
+                    status: String::from("failed"),
+                    trigger: String::from("interrupt_cleanup"),
+                    detail: Some(detail.clone()),
+                });
+                failures.push(format!("required service `{service_name}` {detail}"));
+            }
+            Err(error) => {
+                state.host_service_cleanup.push(HostServiceCleanupEvidence {
+                    service: service_name.clone(),
+                    action: String::from("stop"),
+                    status: String::from("failed"),
+                    trigger: String::from("interrupt_cleanup"),
+                    detail: Some(error.clone()),
+                });
+                failures.push(format!(
+                    "required service `{service_name}` stop command failed: {error}"
+                ));
+            }
+        }
+    }
+
+    let success_note = (!stopped.is_empty()).then(|| {
+        format!(
+            "required services {} stopped after interrupt",
+            join_quoted_names(&stopped)
+        )
+    });
+    merge_execution_note(
+        success_note,
+        (!failures.is_empty()).then(|| failures.join("; ")),
+    )
+}
+
 fn normalize_requested_service_cleanup_note(note: String) -> String {
     note.strip_prefix("activation-started ")
         .map(str::to_string)
         .unwrap_or(note)
+}
+
+fn join_quoted_names(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_cleanup_command_output_detail(output: &TaskCommandOutput) -> String {
+    [output.stderr.trim(), output.stdout.trim()]
+        .into_iter()
+        .find(|value| !value.is_empty())
+        .map(|value| format!(" ({})", value.lines().next().unwrap_or(value)))
+        .unwrap_or_default()
+}
+
+fn cleanup_command_output_detail_text(output: &TaskCommandOutput) -> Option<String> {
+    let detail = render_cleanup_command_output_detail(output);
+    (!detail.is_empty()).then_some(detail)
 }
 
 fn wait_for_readiness_target_to_clear(target: &RuntimeReadinessTarget) -> bool {
@@ -24796,6 +25051,7 @@ mod tests {
             requested_mode: Some(String::from("native")),
             execution_mode: String::from("native"),
             lifecycle: None,
+            host_services: vec![String::from("redis")],
             pid: 48211,
             started_at: String::from("2026-06-05T22:14:03Z"),
         };
@@ -24817,6 +25073,52 @@ mod tests {
             }
             Ok(_) => panic!("second acquisition should report busy"),
             Err(other) => panic!("expected busy lock with owner metadata, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clean_execution_respects_active_repo_execution_lock() {
+        let fixture = tempdir().expect("tempdir");
+        let owner = super::RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: Some(String::from("persistent")),
+            host_services: vec![String::from("redis")],
+            pid: 48211,
+            started_at: String::from("2026-06-05T22:14:03Z"),
+        };
+        let _guard = acquire_repo_execution_lock("dev", fixture.path(), Some(&owner))
+            .expect("lock should acquire");
+        let contract = parse_contract_str(
+            &fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    manager:
+      kind: host
+      stop:
+        exe: sh
+        args:
+          - -c
+          - echo stop
+"#,
+        )
+        .expect("contract should parse");
+
+        match clean_execution_report(&contract, &fixture.path().join("ota.yaml")) {
+            Err(super::CleanExecutionError::Other(RunError::RepoExecutionLockBusy {
+                task,
+                owner: Some(active_owner),
+                ..
+            })) => {
+                assert_eq!(task, super::OTA_CLEAN_INTERNAL_TASK_NAME);
+                assert_eq!(active_owner, owner);
+            }
+            other => panic!("expected clean to honor active repo execution lock, got {other:?}"),
         }
     }
 
@@ -33311,6 +33613,57 @@ tasks:
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn interrupted_cleanup_stops_ota_started_host_manager_services() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    manager:
+      kind: host
+      stop:
+        exe: sh
+        args:
+          - -c
+          - printf 'stop\n' >> service.log
+"#,
+        );
+
+        let mut state = super::TaskRunState::default();
+        state.started_services.insert(String::from("redis"));
+
+        let note = super::cleanup_interrupted_started_services_and_note(
+            &fixture.contract,
+            fixture.dir.path(),
+            &mut state,
+        )
+        .expect("cleanup note should exist");
+
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("service.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["stop"]
+        );
+        assert!(note.contains("required services `redis` stopped after interrupt"));
+        assert_eq!(
+            state.host_service_cleanup,
+            vec![super::HostServiceCleanupEvidence {
+                service: String::from("redis"),
+                action: String::from("stop"),
+                status: String::from("succeeded"),
+                trigger: String::from("interrupt_cleanup"),
+                detail: None,
+            }]
+        );
+    }
+
     #[test]
     fn run_task_requires_services_rechecks_readiness_for_hook_tasks() {
         let _guard = env_mutex_lock();
@@ -33534,6 +33887,7 @@ tasks:
                 task_step_shared_local_backends: vec![None],
                 shared_local_backend: None,
                 fulfilled_toolchains: vec![],
+                host_service_cleanup: vec![],
                 execution_note: None,
                 interrupted: false,
             }
@@ -46870,6 +47224,97 @@ workflows:
         let app_scope =
             super::persistent_cleanup_scope_for_workflow(&fixture.contract, Some("app"));
         assert!(app_scope.context_names.contains("app"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_stops_host_managed_services() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    manager:
+      kind: host
+      stop:
+        exe: sh
+        args:
+          - -c
+          - printf 'redis\n' >> clean.log
+"#,
+        );
+
+        let report = clean_execution_report(&fixture.contract, fixture.file_path()).unwrap();
+
+        assert_eq!(report.stopped_host_services, 1);
+        assert_eq!(report.host_services, vec![String::from("redis")]);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("clean.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["redis"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_for_workflow_stops_only_selected_host_managed_services() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    manager:
+      kind: host
+      stop:
+        exe: sh
+        args:
+          - -c
+          - printf 'redis\n' >> clean.log
+  postgres:
+    manager:
+      kind: host
+      stop:
+        exe: sh
+        args:
+          - -c
+          - printf 'postgres\n' >> clean.log
+tasks:
+  dev:
+    requires_services:
+      - redis
+    run: echo app
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        );
+
+        let report = super::clean_execution_report_for_workflow(
+            &fixture.contract,
+            fixture.file_path(),
+            Some("app"),
+        )
+        .unwrap();
+
+        assert_eq!(report.stopped_host_services, 1);
+        assert_eq!(report.host_services, vec![String::from("redis")]);
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("clean.log"))
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            vec!["redis"]
+        );
     }
 
     #[cfg(unix)]

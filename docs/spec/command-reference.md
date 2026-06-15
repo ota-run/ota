@@ -1317,7 +1317,7 @@ ota run build --skip-deps
 - for container-backed `runtime.kind: service` tasks, ota now captures container termination state before ephemeral teardown and reports post-readiness service stops as first-class failures (including explicit OOM classification when the engine reports it)
 - prints task progress and advisory notes on stderr when output is streaming
 - prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
-- execution receipts include backend, remote `provider` / `target` / optional `cwd` when relevant, lifecycle, container image when relevant, resolved container memory when requested, acquired paths, env sources, step summary data, resolved runtime listener endpoints, and optional `service_termination` details for post-readiness service stops; text receipts also print the winning env source for each resolved value
+- execution receipts include backend, remote `provider` / `target` / optional `cwd` when relevant, lifecycle, container image when relevant, resolved container memory when requested, acquired paths, env sources, step summary data, resolved runtime listener endpoints, optional `service_termination` details for post-readiness service stops, and optional `host_service_cleanup` evidence when ota attempted host-managed service shutdown during cleanup; text receipts also print the winning env source for each resolved value
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.

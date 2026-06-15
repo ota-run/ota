@@ -128,6 +128,9 @@ human text output:
 - `ota workspace list --json`: use the top-level `summary`, per-repo readiness, and contract presence
 - `ota workspace check --json`: use the top-level `summary`, per-repo findings, and per-repo `primary_blocker` when present
 - `ota receipt --json`: use the top-level `summary`, `receipt`, and `findings`
+- `ota run --json`, `ota up --json`, `ota workspace run --json`, and `ota workspace up --json`:
+  inspect `receipt.host_service_cleanup[]` when you need machine-readable evidence that ota
+  attempted interrupt-driven host-managed service cleanup and whether each stop succeeded or failed
 - `ota clean --json` and `ota clean --stale --json`: use cleanup counters and `queried_engines` on success; on classified cleanup failures use `summary`, `reason`, `engine`, `resource_kind`, `resource_name`, `details`, and ordered `next` steps, while generic repo-state failures fall back to `summary` plus `error`
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results; workspace repo results may also include additive `next` / `next_steps`
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results; repo results may also include additive `next` / `next_steps`
@@ -745,6 +748,8 @@ Notes:
 - `likely_cause` is optional and appears only when ota can derive a higher-confidence runtime-drift
   hint from captured proof logs; treat it as advisory, not a replacement for `doctor.json` or
   `up.log`
+- `likely_cause_evidence` is optional and publishes the machine-readable root-cause signal behind
+  `likely_cause`; current shipped kinds are `loopback_service_drift` and `detached_run_output`
 - cleanup failures are reported through top-level `error` and `next` without duplicating the doctor
   findings stream
 - high-confidence runtime-drift hints upgrade readiness-shaped failures to
@@ -818,7 +823,15 @@ Blocked:
     "up_log": "./.ota/proof/docker/up.log"
   },
   "failure_class": "config_drift",
-  "likely_cause": "likely config drift: the runtime is still targeting Redis on loopback inside a multi-service startup path; move that host binding into a workflow-scoped env overlay or task `env_files` instead of `127.0.0.1` / `localhost`"
+  "likely_cause": "likely config drift: the runtime is still targeting Redis on loopback (127.0.0.1:6379) inside a multi-service startup path; move that host binding into a workflow-scoped env overlay, rendered workflow env artifact, task `env_files`, or compose `manager.env_file` instead of `127.0.0.1` / `localhost`",
+  "likely_cause_evidence": {
+    "kind": "loopback_service_drift",
+    "artifact": "./.ota/proof/docker/up-detached-run.log",
+    "signal": "connection_refused",
+    "service": "Redis",
+    "host": "127.0.0.1",
+    "port": 6379
+  }
 }
 ```
 
