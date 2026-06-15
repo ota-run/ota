@@ -6508,6 +6508,7 @@ pub enum ContractAdvisory {
     LegacyNodeRuntimeToolSplit(LegacyNodeRuntimeToolSplitAdvisory),
     LegacyStandalonePoetry(LegacyStandalonePoetryAdvisory),
     LegacyHostServiceLifecycle(LegacyHostServiceLifecycleAdvisory),
+    LegacyServiceReadinessRun(LegacyServiceReadinessRunAdvisory),
     ServiceUsesOpaqueShellStart(ServiceUsesOpaqueShellStartAdvisory),
     ReplaceableShellCheck(ReplaceableShellCheckAdvisory),
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
@@ -6573,6 +6574,12 @@ pub struct LegacyStandalonePoetryAdvisory {
 pub struct LegacyHostServiceLifecycleAdvisory {
     pub service_name: String,
     pub locations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyServiceReadinessRunAdvisory {
+    pub service_name: String,
+    pub location: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6725,6 +6732,9 @@ impl ContractAdvisory {
             ContractAdvisory::LegacyHostServiceLifecycle(_) => {
                 "OTA_CONTRACT_ADVISORY_LEGACY_HOST_SERVICE_LIFECYCLE"
             }
+            ContractAdvisory::LegacyServiceReadinessRun(_) => {
+                "OTA_CONTRACT_ADVISORY_LEGACY_SERVICE_READINESS_RUN"
+            }
             ContractAdvisory::ServiceUsesOpaqueShellStart(_) => {
                 "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
             }
@@ -6841,6 +6851,10 @@ impl ContractAdvisory {
                 advisory.service_name,
                 advisory.locations.join("`, `")
             ),
+            ContractAdvisory::LegacyServiceReadinessRun(advisory) => format!(
+                "service `{}` keeps readiness ownership on legacy `run` at `{}`",
+                advisory.service_name, advisory.location
+            ),
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
                 "task `{}` uses opaque shell `{}` for long-running service path `{}`",
                 advisory.task_name, advisory.body_kind, advisory.body_location
@@ -6956,6 +6970,10 @@ impl ContractAdvisory {
                 advisory.service_name,
                 advisory.locations.join("`, `")
             ),
+            ContractAdvisory::LegacyServiceReadinessRun(advisory) => format!(
+                "service `{}` keeps readiness truth on legacy shell `run` at `{}` instead of a structured `kind` contract or named `probe`, which keeps service-readiness ownership less governable and less portable than the canonical surfaces",
+                advisory.service_name, advisory.location
+            ),
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
                 "task `{}` declares `runtime.kind: service` at `{}`, but starts that long-running workload through opaque shell `{}` at `{}`; this hides launch semantics from Ota and weakens governance around startup, interruption, and service ownership compared with `launch.kind: command`",
                 advisory.task_name,
@@ -7047,6 +7065,7 @@ impl ContractAdvisory {
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
             | ContractAdvisory::LegacyHostServiceLifecycle(_)
+            | ContractAdvisory::LegacyServiceReadinessRun(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
@@ -7077,6 +7096,7 @@ impl ContractAdvisory {
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
             | ContractAdvisory::LegacyHostServiceLifecycle(_)
+            | ContractAdvisory::LegacyServiceReadinessRun(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
@@ -7108,6 +7128,7 @@ impl ContractAdvisory {
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
             | ContractAdvisory::LegacyHostServiceLifecycle(_)
+            | ContractAdvisory::LegacyServiceReadinessRun(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
@@ -7166,6 +7187,10 @@ impl ContractAdvisory {
                 advisory.service_name,
                 advisory.service_name,
                 advisory.locations.join("`, `")
+            ),
+            ContractAdvisory::LegacyServiceReadinessRun(advisory) => format!(
+                "replace `{}` with structured service readiness under `services.{}.readiness.kind` (or a named `readiness.probe`) so Ota owns readiness through one canonical surface instead of shell `run` glue",
+                advisory.location, advisory.service_name
             ),
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
                 "replace `{}` with `{}` modeled as `kind: command`; keep service exposure and readiness under `{}` and reserve `run`/`script` for shell-oriented finite tasks",
@@ -7323,6 +7348,7 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_legacy_node_runtime_tool_split_advisories(contract));
     advisories.extend(collect_legacy_standalone_poetry_advisories(contract));
     advisories.extend(collect_legacy_host_service_lifecycle_advisories(contract));
+    advisories.extend(collect_legacy_service_readiness_run_advisories(contract));
     advisories.extend(collect_service_uses_opaque_shell_start_advisories(contract));
     advisories.extend(collect_replaceable_shell_check_advisories(contract));
     advisories.extend(collect_replaceable_shell_env_mutation_advisories(contract));
@@ -7450,6 +7476,31 @@ fn collect_legacy_host_service_lifecycle_advisories(contract: &Contract) -> Vec<
             LegacyHostServiceLifecycleAdvisory {
                 service_name: service_name.clone(),
                 locations,
+            },
+        ));
+    }
+    advisories
+}
+
+fn collect_legacy_service_readiness_run_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (service_name, service) in &contract.services {
+        let Some(readiness) = service.readiness.as_ref() else {
+            continue;
+        };
+        if readiness
+            .run
+            .as_deref()
+            .map(str::trim)
+            .filter(|run| !run.is_empty())
+            .is_none()
+        {
+            continue;
+        }
+        advisories.push(ContractAdvisory::LegacyServiceReadinessRun(
+            LegacyServiceReadinessRunAdvisory {
+                service_name: service_name.clone(),
+                location: format!("services.{service_name}.readiness.run"),
             },
         ));
     }
@@ -27997,6 +28048,57 @@ services:
                 advisory,
                 ContractAdvisory::LegacyHostServiceLifecycle(_)
             ))
+        );
+    }
+
+    #[test]
+    fn collects_legacy_service_readiness_run_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    readiness:
+      from: host
+      run: redis-cli ping
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LegacyServiceReadinessRun(value)
+                if value.service_name == "redis"
+                    && value.location == "services.redis.readiness.run"
+        )));
+    }
+
+    #[test]
+    fn skips_legacy_service_readiness_run_advisory_for_structured_readiness() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    readiness:
+      from: host
+      kind: tcp
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(
+            !advisories
+                .iter()
+                .any(|advisory| matches!(advisory, ContractAdvisory::LegacyServiceReadinessRun(_)))
         );
     }
 

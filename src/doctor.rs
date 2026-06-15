@@ -4091,6 +4091,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::LegacyHostServiceLifecycle(advisory) => {
                 ContractAdvisory::LegacyHostServiceLifecycle(advisory)
             }
+            ContractAdvisory::LegacyServiceReadinessRun(advisory) => {
+                ContractAdvisory::LegacyServiceReadinessRun(advisory)
+            }
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => {
                 ContractAdvisory::ServiceUsesOpaqueShellStart(advisory)
             }
@@ -4183,6 +4186,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ),
         ContractAdvisory::LegacyHostServiceLifecycle(advisory) => format!(
             "Service `{}` keeps host lifecycle ownership on legacy top-level field(s)",
+            advisory.service_name
+        ),
+        ContractAdvisory::LegacyServiceReadinessRun(advisory) => format!(
+            "Service `{}` keeps readiness ownership on legacy `run`",
             advisory.service_name
         ),
         ContractAdvisory::ServiceUsesOpaqueShellStart(_)

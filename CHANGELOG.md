@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- validate/doctor now explicitly flag legacy service readiness shell ownership
+  (`services.<name>.readiness.run`) and push canonical modeling onto structured
+  `services.<name>.readiness.kind` or named `probe`, so service-readiness ownership stays
+  compatible without remaining governance-silent
 - validate/doctor now explicitly flag legacy top-level host service lifecycle ownership
   (`services.<name>.start` / `.stop`) and push canonical modeling onto `manager.kind: host`, so
   host-managed service ownership stays truthful for compatibility without remaining governance-silent
