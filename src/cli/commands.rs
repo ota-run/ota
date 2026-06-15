@@ -1407,6 +1407,30 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::NativePackageManagerLikelyWrongPlatform(value) => format!(
+            "{} native prerequisite `{}` platform `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.prerequisite_name,
+            value.platform_name,
+            paint_key("Path:"),
+            render_validate_warning_detail(&value.location),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
+        ContractAdvisory::MixedNativePackageOwnership(value) => format!(
+            "{} native prerequisite `{}` platform `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.prerequisite_name,
+            value.platform_name,
+            paint_key("Path:"),
+            render_validate_warning_detail(&value.location),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::EmptyAdapterInputMarker(value) => format!(
             "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -38973,6 +38997,7 @@ fn doctor_finding_group_key(finding: &Finding) -> String {
         "OTA_ENV_INVALID" => String::from("environment-invalid"),
         "OTA_CONTRACT_DRIFT" => String::from("contract-drift"),
         "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => String::from("policy-surface"),
+        "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED" => String::from("policy-native-package"),
         "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
         | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => String::from("policy-surface"),
         "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => {
@@ -39035,6 +39060,7 @@ fn doctor_finding_action_key(finding: &Finding) -> String {
         "OTA_ENV_INVALID" => String::from("environment-invalid"),
         "OTA_CONTRACT_DRIFT" => String::from("contract-drift"),
         "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => String::from("policy-surface"),
+        "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED" => String::from("policy-native-package"),
         "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
         | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => String::from("policy-surface"),
         "OTA_BACKEND_CLI_MISSING" | "OTA_CONTAINER_BACKEND_CLI_MISSING" => {
@@ -39091,6 +39117,7 @@ fn doctor_finding_group_kind(finding: &Finding) -> DoctorFindingGroupKind {
         "OTA_CONTRACT_DRIFT" => DoctorFindingGroupKind::ContractDrift,
         "OTA_POLICY_PACK_VIOLATION"
         | "OTA_POLICY_PACK_INVALID"
+        | "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED"
         | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
         | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
         | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => DoctorFindingGroupKind::PolicySurface,

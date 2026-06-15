@@ -232,6 +232,14 @@ policies:
       source: sdkman-bootstrap
       approved_versions:
         - "1.0"
+  native_packages:
+    apt:
+      approved:
+        - build-essential
+        - libpq-dev
+    brew:
+      approved:
+        - pkg-config
 ```
 
 ## Value
@@ -242,6 +250,7 @@ This policy gives you:
 - clearer source provenance in `doctor`
 - explicit review gates for agent safety
 - macOS/Linux provisioning that stays policy-driven
+- manager-scoped host package approval for `native_prerequisites`
 - adapter bootstrap that is separate from repo provisioning
 - less room for silent host-first drift
 

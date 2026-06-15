@@ -42,10 +42,10 @@ use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path}
 use crate::schema::{
     AgentPosture, Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
     ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
-    ExtensionKind, Lifecycle, OrchestratorKind, RuntimeRequirement, ServiceProducerSpec,
-    ServiceSpec, TaskCommandSpec, TaskLaunchSpec, TaskModeBranchSpec, TaskNetworkEffectKind,
-    TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode,
-    TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    ExtensionKind, Lifecycle, NativePrerequisitePlatformSpec, OrchestratorKind, RuntimeRequirement,
+    ServiceProducerSpec, ServiceSpec, TaskCommandSpec, TaskLaunchSpec, TaskModeBranchSpec,
+    TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
+    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement,
     ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec, parse_memory_size_bytes,
     parse_readiness_duration_spec, task_target_env_name,
@@ -6487,6 +6487,8 @@ pub enum ContractAdvisory {
     ReplaceableContainerNetworkOwnership(ReplaceableContainerNetworkOwnershipAdvisory),
     ReplaceableComposeEnvFileOwnership(ReplaceableComposeEnvFileOwnershipAdvisory),
     ReplaceableBakeFileOwnership(ReplaceableBakeFileOwnershipAdvisory),
+    NativePackageManagerLikelyWrongPlatform(NativePackageManagerLikelyWrongPlatformAdvisory),
+    MixedNativePackageOwnership(MixedNativePackageOwnershipAdvisory),
     EmptyAdapterInputMarker(EmptyAdapterInputMarkerAdvisory),
     DuplicateWorkflowRenderedEnvOwnership(DuplicateWorkflowRenderedEnvOwnershipAdvisory),
     DuplicateWorkflowAdapterInputOwnership(DuplicateWorkflowAdapterInputOwnershipAdvisory),
@@ -6579,6 +6581,22 @@ pub struct ReplaceableComposeEnvFileOwnershipAdvisory {
 pub struct ReplaceableBakeFileOwnershipAdvisory {
     pub task_name: String,
     pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativePackageManagerLikelyWrongPlatformAdvisory {
+    pub prerequisite_name: String,
+    pub platform_name: String,
+    pub manager_name: String,
+    pub location: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MixedNativePackageOwnershipAdvisory {
+    pub prerequisite_name: String,
+    pub platform_name: String,
+    pub location: String,
+    pub package_managers: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6694,6 +6712,12 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableBakeFileOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP"
             }
+            ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_) => {
+                "OTA_CONTRACT_ADVISORY_NATIVE_PACKAGE_MANAGER_LIKELY_WRONG_PLATFORM"
+            }
+            ContractAdvisory::MixedNativePackageOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_MIXED_NATIVE_PACKAGE_OWNERSHIP"
+            }
             ContractAdvisory::EmptyAdapterInputMarker(advisory) => {
                 match advisory.adapter_family.as_str() {
                     "compose" => "OTA_CONTRACT_ADVISORY_EMPTY_COMPOSE_ADAPTER_INPUT_MARKER",
@@ -6806,6 +6830,14 @@ impl ContractAdvisory {
                 "task `{}` hard-codes Bake file selection in its task body",
                 advisory.task_name
             ),
+            ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory) => format!(
+                "native prerequisite `{}` platform `{}` declares likely wrong-OS package manager `{}`",
+                advisory.prerequisite_name, advisory.platform_name, advisory.manager_name
+            ),
+            ContractAdvisory::MixedNativePackageOwnership(advisory) => format!(
+                "native prerequisite `{}` platform `{}` mixes manual install glue with manager-owned package truth",
+                advisory.prerequisite_name, advisory.platform_name
+            ),
             ContractAdvisory::EmptyAdapterInputMarker(advisory) => format!(
                 "task `{}` declares empty {} adapter inputs",
                 advisory.task_name, advisory.adapter_family
@@ -6911,6 +6943,15 @@ impl ContractAdvisory {
                 "task `{}` hard-codes Bake file selection or adapter-root shell glue inside its task body (`{}`), which hides `docker buildx bake` adapter input ownership from Ota instead of declaring it under `adapter_inputs.bake.*`",
                 advisory.task_name, advisory.command
             ),
+            ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory) => format!(
+                "`{}` declares package manager `{}` under platform `{}`, which is likely the wrong host package lane for that OS and weakens fulfillment and policy truth",
+                advisory.location, advisory.manager_name, advisory.platform_name
+            ),
+            ContractAdvisory::MixedNativePackageOwnership(advisory) => format!(
+                "`{}` combines opaque manual install glue with manager-scoped package lanes ({}) on the same platform entry; that splits native prerequisite ownership between shell instructions and Ota-owned package fulfillment",
+                advisory.location,
+                advisory.package_managers.join(", ")
+            ),
             ContractAdvisory::EmptyAdapterInputMarker(advisory) => format!(
                 "`{}` is present but empty, so it does not declare any {} adapter input ownership; keep adapter-input surfaces only when they own concrete truth such as adapter cwd, env files, compose files, profiles, or project naming",
                 advisory.location, advisory.adapter_family
@@ -6965,6 +7006,8 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
+            | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
+            | ContractAdvisory::MixedNativePackageOwnership(_)
             | ContractAdvisory::EmptyAdapterInputMarker(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
@@ -6992,6 +7035,8 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
+            | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
+            | ContractAdvisory::MixedNativePackageOwnership(_)
             | ContractAdvisory::EmptyAdapterInputMarker(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
@@ -7020,6 +7065,8 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
+            | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
+            | ContractAdvisory::MixedNativePackageOwnership(_)
             | ContractAdvisory::EmptyAdapterInputMarker(_)
             | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
             | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
@@ -7094,6 +7141,15 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
                 "move Bake adapter ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.bake.*` when the task owns `docker buildx bake` cwd or file selection truth",
                 advisory.task_name
+            ),
+            ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory) => format!(
+                "move `{}` to a package manager lane that matches platform `{}` and keep host package truth OS-specific",
+                advisory.location, advisory.platform_name
+            ),
+            ContractAdvisory::MixedNativePackageOwnership(advisory) => format!(
+                "keep manager-owned package installs under `{}` and move opaque package-oriented shell glue out of `{}`; if the manual step is still needed, separate it so Ota-owned package fulfillment stays clear",
+                advisory.package_managers.join(", "),
+                advisory.location
             ),
             ContractAdvisory::EmptyAdapterInputMarker(advisory) => format!(
                 "remove `{}` if the task does not own concrete {} adapter input truth, or declare the real fields under it instead of keeping an empty marker",
@@ -7221,6 +7277,8 @@ pub fn collect_contract_advisories_with_contract_path(
         contract,
     ));
     advisories.extend(collect_replaceable_bake_file_ownership_advisories(contract));
+    advisories.extend(collect_native_package_manager_platform_advisories(contract));
+    advisories.extend(collect_mixed_native_package_ownership_advisories(contract));
     advisories.extend(collect_empty_adapter_input_marker_advisories(contract));
     advisories.extend(collect_duplicate_workflow_rendered_env_ownership_advisories(contract));
     advisories.extend(collect_duplicate_workflow_adapter_input_ownership_advisories(contract));
@@ -7608,6 +7666,126 @@ fn collect_replaceable_bake_file_ownership_advisories(
     contract: &Contract,
 ) -> Vec<ContractAdvisory> {
     collect_replaceable_adapter_ownership_advisories(contract, AdapterInputFamily::Bake)
+}
+
+fn collect_native_package_manager_platform_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+
+    for (prerequisite_name, prerequisite) in &contract.native_prerequisites {
+        for (platform_name, platform_detail) in &prerequisite.platforms {
+            for manager_name in
+                likely_wrong_os_native_package_managers(platform_name, platform_detail)
+            {
+                advisories.push(ContractAdvisory::NativePackageManagerLikelyWrongPlatform(
+                    NativePackageManagerLikelyWrongPlatformAdvisory {
+                        prerequisite_name: prerequisite_name.clone(),
+                        platform_name: platform_name.clone(),
+                        manager_name: manager_name.to_string(),
+                        location: format!(
+                            "native_prerequisites.{prerequisite_name}.platforms.{platform_name}.{manager_name}"
+                        ),
+                    },
+                ));
+            }
+        }
+    }
+
+    advisories
+}
+
+fn likely_wrong_os_native_package_managers<'a>(
+    platform_name: &str,
+    platform_detail: &'a NativePrerequisitePlatformSpec,
+) -> Vec<&'static str> {
+    let mut managers = Vec::new();
+    match platform_name {
+        "linux" => {
+            if !platform_detail.winget.is_empty() {
+                managers.push("winget");
+            }
+            if !platform_detail.choco.is_empty() {
+                managers.push("choco");
+            }
+            if !platform_detail.scoop.is_empty() {
+                managers.push("scoop");
+            }
+        }
+        "macos" => {
+            if !platform_detail.apt.is_empty() {
+                managers.push("apt");
+            }
+            if !platform_detail.winget.is_empty() {
+                managers.push("winget");
+            }
+            if !platform_detail.choco.is_empty() {
+                managers.push("choco");
+            }
+            if !platform_detail.scoop.is_empty() {
+                managers.push("scoop");
+            }
+        }
+        "windows" => {
+            if !platform_detail.apt.is_empty() {
+                managers.push("apt");
+            }
+            if !platform_detail.brew.is_empty() {
+                managers.push("brew");
+            }
+        }
+        _ => {}
+    }
+    managers
+}
+
+fn collect_mixed_native_package_ownership_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+
+    for (prerequisite_name, prerequisite) in &contract.native_prerequisites {
+        for (platform_name, platform_detail) in &prerequisite.platforms {
+            let Some(install) = platform_detail
+                .install
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let mut package_managers = Vec::new();
+            if !platform_detail.apt.is_empty() {
+                package_managers.push(String::from("apt"));
+            }
+            if !platform_detail.brew.is_empty() {
+                package_managers.push(String::from("brew"));
+            }
+            if !platform_detail.winget.is_empty() {
+                package_managers.push(String::from("winget"));
+            }
+            if !platform_detail.choco.is_empty() {
+                package_managers.push(String::from("choco"));
+            }
+            if !platform_detail.scoop.is_empty() {
+                package_managers.push(String::from("scoop"));
+            }
+            if package_managers.is_empty() {
+                continue;
+            }
+            let _ = install;
+            advisories.push(ContractAdvisory::MixedNativePackageOwnership(
+                MixedNativePackageOwnershipAdvisory {
+                    prerequisite_name: prerequisite_name.clone(),
+                    platform_name: platform_name.clone(),
+                    location: format!(
+                        "native_prerequisites.{prerequisite_name}.platforms.{platform_name}"
+                    ),
+                    package_managers,
+                },
+            ));
+        }
+    }
+
+    advisories
 }
 
 fn collect_empty_adapter_input_marker_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
@@ -27835,6 +28013,77 @@ tasks:
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(value)
                 if value.task_name == "docker-build"
                     && value.command == "docker compose --env-file .env.compose -f compose.yaml up -d"
+        )));
+    }
+
+    #[test]
+    fn collects_native_package_manager_likely_wrong_platform_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  native-build-tools:
+    platforms:
+      linux:
+        check: native-build-tools-linux
+        winget:
+          - Microsoft.VisualStudio.2022.BuildTools
+checks:
+  - name: native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version"
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::NativePackageManagerLikelyWrongPlatform(value)
+                if value.prerequisite_name == "native-build-tools"
+                    && value.platform_name == "linux"
+                    && value.manager_name == "winget"
+                    && value.location == "native_prerequisites.native-build-tools.platforms.linux.winget"
+        )));
+    }
+
+    #[test]
+    fn collects_mixed_native_package_ownership_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+native_prerequisites:
+  native-build-tools:
+    platforms:
+      linux:
+        check: native-build-tools-linux
+        install: ./scripts/bootstrap-native.sh
+        apt:
+          - build-essential
+checks:
+  - name: native-build-tools-linux
+    kind: precondition
+    severity: error
+    run: sh -c "cc --version"
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::MixedNativePackageOwnership(value)
+                if value.prerequisite_name == "native-build-tools"
+                    && value.platform_name == "linux"
+                    && value.location == "native_prerequisites.native-build-tools.platforms.linux"
+                    && value.package_managers == vec![String::from("apt")]
         )));
     }
 

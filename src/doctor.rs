@@ -1951,6 +1951,11 @@ fn resolve_policy_finding_metadata(finding: &Finding) -> FindingResolvedMetadata
             "policy-backed provisioning rules declare required package identifiers for OS package managers",
             "org_policy",
         )),
+        "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED" => Some(static_finding_evidence(
+            "the repo requires a host package that is not approved by org policy",
+            "the repo's required host packages are approved by org policy",
+            "org_policy",
+        )),
         "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED" => Some(static_finding_evidence(
             "the org policy pack declares approved adapter bootstrap sources",
             "the org policy pack has no adapter bootstrap sources declared",
@@ -2004,6 +2009,13 @@ fn resolve_policy_finding_metadata(finding: &Finding) -> FindingResolvedMetadata
         "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING" => Some(PolicyFindingContext {
             outcome: "blocked_by_policy",
             reason: "missing_package_identifiers",
+            source: "org",
+            install_scope: "repo_local",
+            mutation_allowed: false,
+        }),
+        "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED" => Some(PolicyFindingContext {
+            outcome: "blocked_by_policy",
+            reason: "native_package_not_approved",
             source: "org",
             install_scope: "repo_local",
             mutation_allowed: false,
@@ -2210,6 +2222,7 @@ fn finding_registry_entry(code: &str) -> Option<FindingRegistryEntry> {
         | "OTA_POLICY_BACKED_VERSION_RULES_DECLARED"
         | "OTA_POLICY_BACKED_PROVISIONING_DECLARED"
         | "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
+        | "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED"
         | "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED"
         | "OTA_POLICY_INSTALLED_VERSION_NONCOMPLIANT" => {
             if matches!(
@@ -2895,6 +2908,9 @@ impl Finding {
             "Policy provisioning needs explicit package identifiers" => {
                 "OTA_POLICY_PROVISIONING_PACKAGE_MAPPING_MISSING"
             }
+            s if s.starts_with("Org policy does not approve native package: ") => {
+                "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED"
+            }
             "Adapter bootstrap sources are declared" => {
                 "OTA_POLICY_BACKED_ADAPTER_BOOTSTRAP_DECLARED"
             }
@@ -2953,6 +2969,18 @@ impl Finding {
                 && s.contains(" hard-codes Bake file selection in its task body") =>
             {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP"
+            }
+            s if s.starts_with("native prerequisite `")
+                && s.contains(" platform `")
+                && s.contains(" declares likely wrong-OS package manager `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_NATIVE_PACKAGE_MANAGER_LIKELY_WRONG_PLATFORM"
+            }
+            s if s.starts_with("native prerequisite `")
+                && s.contains(" platform `")
+                && s.contains(" mixes manual install glue with manager-owned package truth") =>
+            {
+                "OTA_CONTRACT_ADVISORY_MIXED_NATIVE_PACKAGE_OWNERSHIP"
             }
             s if s.starts_with("workflow `")
                 && s.contains(" profile `")
@@ -4078,6 +4106,12 @@ fn diagnose_contract_advisories(
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => {
                 ContractAdvisory::ReplaceableBakeFileOwnership(advisory)
             }
+            ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory) => {
+                ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory)
+            }
+            ContractAdvisory::MixedNativePackageOwnership(advisory) => {
+                ContractAdvisory::MixedNativePackageOwnership(advisory)
+            }
             ContractAdvisory::EmptyAdapterInputMarker(advisory) => {
                 ContractAdvisory::EmptyAdapterInputMarker(advisory)
             }
@@ -4150,6 +4184,8 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
         | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
         | ContractAdvisory::ReplaceableBakeFileOwnership(_)
+        | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
+        | ContractAdvisory::MixedNativePackageOwnership(_)
         | ContractAdvisory::EmptyAdapterInputMarker(_)
         | ContractAdvisory::DuplicateWorkflowRenderedEnvOwnership(_)
         | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_) => advisory.summary(),
@@ -6970,6 +7006,26 @@ fn diagnose_org_policy(
         ));
     }
     if !native_package_violations.is_empty() {
+        for entry in &native_package_plan.blocked {
+            let (Some(source), Some(package)) = (entry.source.as_deref(), entry.package.as_deref())
+            else {
+                continue;
+            };
+            findings.push(policy_finding(
+                "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED",
+                FindingSeverity::Error,
+                format!("Org policy does not approve native package: {source}:{package}"),
+                entry.blocked_reason.clone().unwrap_or_else(|| {
+                    format!(
+                        "repo-native prerequisite requires {source} package `{package}`, but org policy does not approve it"
+                    )
+                }),
+                format!(
+                    "update the repo contract to use approved {source} package truth, or widen `{}#policies.native_packages.{source}.approved`",
+                    compact_display_path(&policy_path)
+                ),
+            ));
+        }
         why_parts.push(format!(
             "native package policy violations: {}",
             native_package_violations.join("; ")
@@ -20081,6 +20137,24 @@ tasks:
             why: String::from("bake file selection is hidden in shell"),
             next: String::from("move ownership under adapter_inputs.bake.files"),
         };
+        let wrong_platform_manager = Finding {
+            identity: None,
+            severity: FindingSeverity::Warn,
+            summary: String::from(
+                "native prerequisite `native-build-tools` platform `linux` declares likely wrong-OS package manager `winget`",
+            ),
+            why: String::from("winget is likely the wrong lane for linux"),
+            next: String::from("move to the correct OS package-manager lane"),
+        };
+        let mixed_native_package_ownership = Finding {
+            identity: None,
+            severity: FindingSeverity::Warn,
+            summary: String::from(
+                "native prerequisite `native-build-tools` platform `linux` mixes manual install glue with manager-owned package truth",
+            ),
+            why: String::from("package truth is split across shell glue and apt"),
+            next: String::from("separate opaque install glue from manager-owned package truth"),
+        };
         let workflow_compose_env_files = Finding {
             identity: None,
             severity: FindingSeverity::Warn,
@@ -20130,6 +20204,14 @@ tasks:
         assert_eq!(
             bake.code(),
             "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP"
+        );
+        assert_eq!(
+            wrong_platform_manager.code(),
+            "OTA_CONTRACT_ADVISORY_NATIVE_PACKAGE_MANAGER_LIKELY_WRONG_PLATFORM"
+        );
+        assert_eq!(
+            mixed_native_package_ownership.code(),
+            "OTA_CONTRACT_ADVISORY_MIXED_NATIVE_PACKAGE_OWNERSHIP"
         );
         assert_eq!(
             workflow_compose_env_files.code(),
@@ -21300,6 +21382,12 @@ tasks:
             },
             DoctorFindingReferenceEntry {
                 code: "OTA_POLICY_PACK_VIOLATION",
+                category: "policy",
+                owner_surface: "org_policy",
+                provenance_key_surface: "org_policy",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED",
                 category: "policy",
                 owner_surface: "org_policy",
                 provenance_key_surface: "org_policy",
@@ -22811,6 +22899,24 @@ policies:
         .unwrap();
 
         let report = diagnose_preconditions(&contract, &fixture.path().join("ota.yaml"));
+        let native_package_finding = report
+            .findings
+            .iter()
+            .find(|finding| {
+                finding.summary
+                    == format!("Org policy does not approve native package: {package_source}:{package_name}")
+            })
+            .expect("native package policy finding should be present");
+        assert_eq!(
+            native_package_finding.code(),
+            "OTA_POLICY_NATIVE_PACKAGE_NOT_APPROVED"
+        );
+        assert!(native_package_finding.why.contains(&format!(
+            "native prerequisite `ruby-native-build-tools` requires {package_source} package `{package_name}`"
+        )));
+        assert!(native_package_finding.next.contains(&format!(
+            "policies.native_packages.{package_source}.approved"
+        )));
         let finding = report
             .findings
             .iter()

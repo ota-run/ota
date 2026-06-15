@@ -1073,6 +1073,13 @@ Rules:
 - `ota doctor` remains non-mutating for native prerequisites
 - `ota up` and `ota run` may fulfill selected native prerequisite package-manager guidance from
   `apt`, `brew`, `winget`, `choco`, and `scoop`, then rerun preconditions
+- keep package-manager lanes aligned to the platform entry they live under; for example, prefer
+  `apt` under `linux`, `brew` under `macos`, and `winget` / `choco` / `scoop` under `windows`
+  instead of mixing likely wrong-OS package-manager lanes into the same platform entry
+- avoid mixing opaque `install` shell glue with manager-owned package lanes on the same platform
+  entry when the shell command is only there to install host packages; keep package-manager truth
+  under `apt` / `brew` / `winget` / `choco` / `scoop`, and reserve `install` for the remaining
+  manual step only when no first-class lane owns it yet
 - when an org policy pack is active, native prerequisite package fulfillment must also be approved
   under `policies.native_packages.<manager>.approved`; Ota does not silently bypass that policy
   gate
