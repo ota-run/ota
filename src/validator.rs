@@ -3503,6 +3503,147 @@ fn validate_task_env_files(
     }
 }
 
+fn validate_adapter_input_cwd(
+    task_name: Option<&str>,
+    field: &str,
+    cwd: Option<&str>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(cwd) = cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
+        return;
+    };
+    if is_safe_repo_relative_file_path(cwd) {
+        return;
+    }
+    let message = match task_name {
+        Some(task_name) => format!(
+            "task `{task_name}` `{field}` must be a repo-relative path that does not escape the repo"
+        ),
+        None => format!("`{field}` must be a repo-relative path that does not escape the repo"),
+    };
+    errors.push(ValidationError::new(message));
+}
+
+fn validate_adapter_input_paths(
+    task_name: Option<&str>,
+    scope: &str,
+    field_name: &str,
+    paths: &[String],
+    errors: &mut Vec<ValidationError>,
+) {
+    for (index, path) in paths.iter().enumerate() {
+        let field = format!("{scope}.{field_name}[{index}]");
+        if is_safe_repo_relative_file_path(path.trim()) {
+            continue;
+        }
+        let message = match task_name {
+            Some(task_name) => format!(
+                "task `{task_name}` `{field}` must be a repo-relative path that does not escape the repo"
+            ),
+            None => format!("`{field}` must be a repo-relative path that does not escape the repo"),
+        };
+        errors.push(ValidationError::new(message));
+    }
+}
+
+fn validate_adapter_input_values_non_empty(
+    task_name: Option<&str>,
+    scope: &str,
+    field_name: &str,
+    values: &[String],
+    errors: &mut Vec<ValidationError>,
+) {
+    for (index, value) in values.iter().enumerate() {
+        if !value.trim().is_empty() {
+            continue;
+        }
+        let field = format!("{scope}.{field_name}[{index}]");
+        let message = match task_name {
+            Some(task_name) => format!("task `{task_name}` `{field}` must not be empty"),
+            None => format!("`{field}` must not be empty"),
+        };
+        errors.push(ValidationError::new(message));
+    }
+}
+
+fn validate_adapter_input_optional_non_empty(
+    task_name: Option<&str>,
+    field: &str,
+    value: Option<&str>,
+    errors: &mut Vec<ValidationError>,
+) {
+    if !value.map(str::trim).is_some_and(str::is_empty) {
+        return;
+    }
+    let message = match task_name {
+        Some(task_name) => format!("task `{task_name}` `{field}` must not be empty"),
+        None => format!("`{field}` must not be empty"),
+    };
+    errors.push(ValidationError::new(message));
+}
+
+fn validate_compose_adapter_inputs(
+    task_name: Option<&str>,
+    scope: &str,
+    compose: &crate::schema::TaskComposeAdapterInputsSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    validate_adapter_input_cwd(
+        task_name,
+        &format!("{scope}.compose.cwd"),
+        compose.cwd.as_deref(),
+        errors,
+    );
+    validate_adapter_input_paths(
+        task_name,
+        &format!("{scope}.compose"),
+        "env_files",
+        &compose.env_files,
+        errors,
+    );
+    validate_adapter_input_paths(
+        task_name,
+        &format!("{scope}.compose"),
+        "files",
+        &compose.files,
+        errors,
+    );
+    validate_adapter_input_values_non_empty(
+        task_name,
+        &format!("{scope}.compose"),
+        "profiles",
+        &compose.profiles,
+        errors,
+    );
+    validate_adapter_input_optional_non_empty(
+        task_name,
+        &format!("{scope}.compose.project_name"),
+        compose.project_name.as_deref(),
+        errors,
+    );
+}
+
+fn validate_bake_adapter_inputs(
+    task_name: Option<&str>,
+    scope: &str,
+    bake: &crate::schema::TaskBakeAdapterInputsSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    validate_adapter_input_cwd(
+        task_name,
+        &format!("{scope}.bake.cwd"),
+        bake.cwd.as_deref(),
+        errors,
+    );
+    validate_adapter_input_paths(
+        task_name,
+        &format!("{scope}.bake"),
+        "files",
+        &bake.files,
+        errors,
+    );
+}
+
 fn validate_task_adapter_inputs(
     task_name: &str,
     scope: &str,
@@ -3510,139 +3651,24 @@ fn validate_task_adapter_inputs(
     errors: &mut Vec<ValidationError>,
 ) {
     if let Some(compose) = adapter_inputs.compose.as_ref() {
-        if let Some(cwd) = compose
-            .cwd
-            .as_deref()
-            .map(str::trim)
-            .filter(|cwd| !cwd.is_empty())
-            && !is_safe_repo_relative_file_path(cwd)
-        {
-            errors.push(ValidationError::new(format!(
-                "task `{task_name}` `{scope}.compose.cwd` must be a repo-relative path that does not escape the repo"
-            )));
-        }
-        validate_task_env_files(
-            task_name,
-            &format!("{scope}.compose.env_files"),
-            &compose.env_files,
-            errors,
-        );
-        validate_task_env_files(
-            task_name,
-            &format!("{scope}.compose.files"),
-            &compose.files,
-            errors,
-        );
-        for (index, profile) in compose.profiles.iter().enumerate() {
-            if profile.trim().is_empty() {
-                errors.push(ValidationError::new(format!(
-                    "task `{task_name}` `{scope}.compose.profiles[{index}]` must not be empty"
-                )));
-            }
-        }
-        if compose
-            .project_name
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(str::is_empty)
-        {
-            errors.push(ValidationError::new(format!(
-                "task `{task_name}` `{scope}.compose.project_name` must not be empty"
-            )));
-        }
+        validate_compose_adapter_inputs(Some(task_name), scope, compose, errors);
     }
     if let Some(bake) = adapter_inputs.bake.as_ref() {
-        if let Some(cwd) = bake
-            .cwd
-            .as_deref()
-            .map(str::trim)
-            .filter(|cwd| !cwd.is_empty())
-            && !is_safe_repo_relative_file_path(cwd)
-        {
-            errors.push(ValidationError::new(format!(
-                "task `{task_name}` `{scope}.bake.cwd` must be a repo-relative path that does not escape the repo"
-            )));
-        }
-        validate_task_env_files(
-            task_name,
-            &format!("{scope}.bake.files"),
-            &bake.files,
-            errors,
-        );
+        validate_bake_adapter_inputs(Some(task_name), scope, bake, errors);
     }
 }
 
 fn validate_workflow_adapter_inputs(
-    workflow_name: &str,
+    _workflow_name: &str,
     scope: &str,
     adapter_inputs: &crate::schema::TaskAdapterInputsSpec,
     errors: &mut Vec<ValidationError>,
 ) {
     if let Some(compose) = adapter_inputs.compose.as_ref() {
-        if let Some(cwd) = compose
-            .cwd
-            .as_deref()
-            .map(str::trim)
-            .filter(|cwd| !cwd.is_empty())
-            && !is_safe_repo_relative_file_path(cwd)
-        {
-            errors.push(ValidationError::new(format!(
-                "`{scope}.compose.cwd` must be a repo-relative path that does not escape the repo"
-            )));
-        }
-        for (index, path) in compose.env_files.iter().enumerate() {
-            let field = format!("{scope}.compose.env_files[{index}]");
-            if !is_safe_repo_relative_file_path(path.trim()) {
-                errors.push(ValidationError::new(format!(
-                    "`{field}` must be a repo-relative path that does not escape the repo"
-                )));
-            }
-        }
-        for (index, path) in compose.files.iter().enumerate() {
-            let field = format!("{scope}.compose.files[{index}]");
-            if !is_safe_repo_relative_file_path(path.trim()) {
-                errors.push(ValidationError::new(format!(
-                    "`{field}` must be a repo-relative path that does not escape the repo"
-                )));
-            }
-        }
-        for (index, profile) in compose.profiles.iter().enumerate() {
-            let field = format!("{scope}.compose.profiles[{index}]");
-            if profile.trim().is_empty() {
-                errors.push(ValidationError::new(format!("`{field}` must not be empty")));
-            }
-        }
-        if compose
-            .project_name
-            .as_deref()
-            .map(str::trim)
-            .is_some_and(str::is_empty)
-        {
-            errors.push(ValidationError::new(format!(
-                "`workflows.{workflow_name}.env.adapter_inputs.compose.project_name` must not be empty"
-            )));
-        }
+        validate_compose_adapter_inputs(None, scope, compose, errors);
     }
     if let Some(bake) = adapter_inputs.bake.as_ref() {
-        if let Some(cwd) = bake
-            .cwd
-            .as_deref()
-            .map(str::trim)
-            .filter(|cwd| !cwd.is_empty())
-            && !is_safe_repo_relative_file_path(cwd)
-        {
-            errors.push(ValidationError::new(format!(
-                "`{scope}.bake.cwd` must be a repo-relative path that does not escape the repo"
-            )));
-        }
-        for (index, path) in bake.files.iter().enumerate() {
-            let field = format!("{scope}.bake.files[{index}]");
-            if !is_safe_repo_relative_file_path(path.trim()) {
-                errors.push(ValidationError::new(format!(
-                    "`{field}` must be a repo-relative path that does not escape the repo"
-                )));
-            }
-        }
+        validate_bake_adapter_inputs(None, scope, bake, errors);
     }
 }
 
