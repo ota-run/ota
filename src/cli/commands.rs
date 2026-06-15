@@ -1284,6 +1284,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::LegacyHostServiceLifecycle(value) => format!(
+            "{} service `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.service_name,
+            paint_key("Legacy:"),
+            render_validate_warning_detail(&format!("`{}`", value.locations.join("`, `"))),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::IsolatedYarnReleaseShadow(value) => format!(
             "{} context `{}` path `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),

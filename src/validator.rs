@@ -6507,6 +6507,7 @@ pub enum ContractAdvisory {
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
     LegacyNodeRuntimeToolSplit(LegacyNodeRuntimeToolSplitAdvisory),
     LegacyStandalonePoetry(LegacyStandalonePoetryAdvisory),
+    LegacyHostServiceLifecycle(LegacyHostServiceLifecycleAdvisory),
     ServiceUsesOpaqueShellStart(ServiceUsesOpaqueShellStartAdvisory),
     ReplaceableShellCheck(ReplaceableShellCheckAdvisory),
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
@@ -6565,6 +6566,12 @@ pub struct LegacyNodeRuntimeToolSplitAdvisory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegacyStandalonePoetryAdvisory {
+    pub locations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyHostServiceLifecycleAdvisory {
+    pub service_name: String,
     pub locations: Vec<String>,
 }
 
@@ -6715,6 +6722,9 @@ impl ContractAdvisory {
             ContractAdvisory::LegacyStandalonePoetry(_) => {
                 "OTA_CONTRACT_ADVISORY_LEGACY_STANDALONE_POETRY"
             }
+            ContractAdvisory::LegacyHostServiceLifecycle(_) => {
+                "OTA_CONTRACT_ADVISORY_LEGACY_HOST_SERVICE_LIFECYCLE"
+            }
             ContractAdvisory::ServiceUsesOpaqueShellStart(_) => {
                 "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
             }
@@ -6826,6 +6836,11 @@ impl ContractAdvisory {
                 "Poetry is modeled as a standalone tool instead of `toolchains.python.package_managers.poetry` ({})",
                 advisory.locations.join(", ")
             ),
+            ContractAdvisory::LegacyHostServiceLifecycle(advisory) => format!(
+                "service `{}` keeps host lifecycle ownership on legacy top-level field(s) `{}`",
+                advisory.service_name,
+                advisory.locations.join("`, `")
+            ),
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
                 "task `{}` uses opaque shell `{}` for long-running service path `{}`",
                 advisory.task_name, advisory.body_kind, advisory.body_location
@@ -6936,6 +6951,11 @@ impl ContractAdvisory {
             ContractAdvisory::LegacyStandalonePoetry(_) => String::from(
                 "Poetry owns Python dependency installation, lockfile semantics, virtualenv behavior, and often task execution through `poetry run`; keeping it as a standalone tool splits Python ecosystem ownership away from `toolchains.python`",
             ),
+            ContractAdvisory::LegacyHostServiceLifecycle(advisory) => format!(
+                "service `{}` keeps host lifecycle truth on legacy top-level field(s) `{}` instead of an explicit `manager.kind: host` owner, which leaves host service ownership less standardized than the canonical lifecycle surface",
+                advisory.service_name,
+                advisory.locations.join("`, `")
+            ),
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
                 "task `{}` declares `runtime.kind: service` at `{}`, but starts that long-running workload through opaque shell `{}` at `{}`; this hides launch semantics from Ota and weakens governance around startup, interruption, and service ownership compared with `launch.kind: command`",
                 advisory.task_name,
@@ -7026,6 +7046,7 @@ impl ContractAdvisory {
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::LegacyHostServiceLifecycle(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
@@ -7055,6 +7076,7 @@ impl ContractAdvisory {
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::LegacyHostServiceLifecycle(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
@@ -7085,6 +7107,7 @@ impl ContractAdvisory {
             ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::LegacyHostServiceLifecycle(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
@@ -7137,6 +7160,12 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::LegacyStandalonePoetry(_) => String::from(
                 "add or widen `toolchains.python`, move Poetry version governance under `toolchains.python.package_managers.poetry`, and remove the standalone Poetry declaration from the listed location(s)",
+            ),
+            ContractAdvisory::LegacyHostServiceLifecycle(advisory) => format!(
+                "move service `{}` host lifecycle truth under `services.{}.manager.kind: host`, then relocate `{}` to `manager.start` / `manager.stop` so Ota owns host service lifecycle through one canonical surface",
+                advisory.service_name,
+                advisory.service_name,
+                advisory.locations.join("`, `")
             ),
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
                 "replace `{}` with `{}` modeled as `kind: command`; keep service exposure and readiness under `{}` and reserve `run`/`script` for shell-oriented finite tasks",
@@ -7293,6 +7322,7 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories.extend(collect_legacy_node_runtime_tool_split_advisories(contract));
     advisories.extend(collect_legacy_standalone_poetry_advisories(contract));
+    advisories.extend(collect_legacy_host_service_lifecycle_advisories(contract));
     advisories.extend(collect_service_uses_opaque_shell_start_advisories(contract));
     advisories.extend(collect_replaceable_shell_check_advisories(contract));
     advisories.extend(collect_replaceable_shell_env_mutation_advisories(contract));
@@ -7398,6 +7428,32 @@ fn collect_legacy_standalone_poetry_advisories(contract: &Contract) -> Vec<Contr
     vec![ContractAdvisory::LegacyStandalonePoetry(
         LegacyStandalonePoetryAdvisory { locations },
     )]
+}
+
+fn collect_legacy_host_service_lifecycle_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (service_name, service) in &contract.services {
+        if service.manager.is_some() || service.provider.is_some() {
+            continue;
+        }
+        let mut locations = Vec::new();
+        if service.start.is_some() {
+            locations.push(format!("services.{service_name}.start"));
+        }
+        if service.stop.is_some() {
+            locations.push(format!("services.{service_name}.stop"));
+        }
+        if locations.is_empty() {
+            continue;
+        }
+        advisories.push(ContractAdvisory::LegacyHostServiceLifecycle(
+            LegacyHostServiceLifecycleAdvisory {
+                service_name: service_name.clone(),
+                locations,
+            },
+        ));
+    }
+    advisories
 }
 
 fn collect_service_uses_opaque_shell_start_advisories(
@@ -27881,6 +27937,66 @@ tasks:
             !advisories
                 .iter()
                 .any(|advisory| matches!(advisory, ContractAdvisory::LegacyStandalonePoetry(_)))
+        );
+    }
+
+    #[test]
+    fn collects_legacy_host_service_lifecycle_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    start: redis-server --daemonize yes
+    stop: redis-cli shutdown
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LegacyHostServiceLifecycle(value)
+                if value.service_name == "redis"
+                    && value.locations
+                        == vec![
+                            String::from("services.redis.start"),
+                            String::from("services.redis.stop")
+                        ]
+        )));
+    }
+
+    #[test]
+    fn skips_legacy_host_service_lifecycle_advisory_for_canonical_host_manager() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    manager:
+      kind: host
+      start:
+        exe: redis-server
+        args: [--daemonize, yes]
+      stop:
+        exe: redis-cli
+        args: [shutdown]
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(
+            !advisories.iter().any(|advisory| matches!(
+                advisory,
+                ContractAdvisory::LegacyHostServiceLifecycle(_)
+            ))
         );
     }
 

@@ -4088,6 +4088,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::LegacyStandalonePoetry(advisory) => {
                 ContractAdvisory::LegacyStandalonePoetry(advisory)
             }
+            ContractAdvisory::LegacyHostServiceLifecycle(advisory) => {
+                ContractAdvisory::LegacyHostServiceLifecycle(advisory)
+            }
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => {
                 ContractAdvisory::ServiceUsesOpaqueShellStart(advisory)
             }
@@ -4177,6 +4180,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::LegacyStandalonePoetry(advisory) => format!(
             "Poetry is modeled as a standalone tool ({})",
             advisory.locations.join(", ")
+        ),
+        ContractAdvisory::LegacyHostServiceLifecycle(advisory) => format!(
+            "Service `{}` keeps host lifecycle ownership on legacy top-level field(s)",
+            advisory.service_name
         ),
         ContractAdvisory::ServiceUsesOpaqueShellStart(_)
         | ContractAdvisory::ReplaceableShellCheck(_)

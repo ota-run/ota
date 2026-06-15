@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- validate/doctor now explicitly flag legacy top-level host service lifecycle ownership
+  (`services.<name>.start` / `.stop`) and push canonical modeling onto `manager.kind: host`, so
+  host-managed service ownership stays truthful for compatibility without remaining governance-silent
 - aligned `ota clean` host-service cleanup with the rest of the lifecycle surface: cleanup now
   honors legacy host-owned `services.<name>.stop` commands in addition to structured
   `services.<name>.manager.stop`, and workflow-scoped cleanup now includes those legacy host-owned
