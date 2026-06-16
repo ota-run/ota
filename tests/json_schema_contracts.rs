@@ -237,8 +237,11 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
     assert!(success.get("workflow").is_some());
     assert!(success.get("phase").is_some());
     assert!(success.get("summary").is_some());
+    assert!(success.get("workflow_env_artifacts").is_some());
     assert!(success.get("artifacts").is_some());
     assert!(success.get("failure_class").is_some());
+    assert!(success.get("cleanup_failure").is_some());
+    assert!(success.get("likely_cause_evidence").is_some());
     assert!(success.get("next").is_some());
     assert!(artifacts.get("topology").is_some());
     assert!(artifacts.get("doctor").is_some());
@@ -249,14 +252,24 @@ fn proof_runtime_schema_covers_summary_and_artifact_fields() {
 fn clean_schema_covers_repo_workspace_stale_and_nullable_stale_failure_resource() {
     let schema = load_schema("docs/spec/json-schemas/clean.json");
     let classified_failure = &schema["$defs"]["classifiedFailure"]["properties"];
+    let classified_failure_reason_enum = classified_failure["reason"]["enum"]
+        .as_array()
+        .expect("clean classified failure reason enum");
     let generic_failure = &schema["$defs"]["genericFailure"]["properties"];
     let workspace = &schema["oneOf"][4]["properties"]["workspace"]["properties"];
     let stale_success = &schema["oneOf"][5]["properties"];
 
     assert!(classified_failure.get("reason").is_some());
+    assert!(
+        classified_failure_reason_enum.contains(&serde_json::json!("active_execution_conflict"))
+    );
     assert!(classified_failure.get("engine").is_some());
     assert!(classified_failure.get("resource_kind").is_some());
     assert!(classified_failure.get("resource_name").is_some());
+    assert!(classified_failure.get("registry_path").is_some());
+    assert!(classified_failure.get("reasons").is_some());
+    assert!(classified_failure.get("active_execution_count").is_some());
+    assert!(classified_failure.get("owners").is_some());
     assert_eq!(
         classified_failure["resource_name"]["type"],
         serde_json::json!(["string", "null"])
@@ -1589,6 +1602,16 @@ fn receipt_schema_includes_runtime_endpoint_metadata() {
     assert!(resolved_runtime.get("primary_listener").is_some());
     assert!(resolved_runtime.get("primary_endpoint").is_some());
     assert!(resolved_runtime.get("exposed_endpoints").is_some());
+}
+
+#[test]
+fn receipt_schema_includes_execution_conflict_metadata() {
+    let schema = load_schema("docs/spec/json-schemas/receipt.json");
+    let receipt_properties = &schema["oneOf"][0]["properties"]["receipt"]["properties"];
+    let execution_conflict = &receipt_properties["execution_conflict"]["properties"];
+
+    assert!(receipt_properties.get("execution_conflict").is_some());
+    assert!(execution_conflict.get("reasons").is_some());
 }
 
 #[test]

@@ -1222,7 +1222,9 @@ Current behavior:
 - Compose attachment namespace drift also counts as persistent execution-shape drift, so changing `attachments.compose` recreates the persistent backend instead of reusing a container bound to the old Compose network family
 - service tasks with projected listeners classify post-readiness exits as service-stop failures (including `interrupted`) so summaries and receipts stay truthful across both ephemeral and persistent lifecycle modes
 - active repo execution ownership is now tracked in `.ota/state/active-executions.json` instead of a single whole-run lock, so compatible runs can coexist when their execution ownership does not conflict
-- the current shipped conflict rule is intentionally narrow: duplicate long-running service-task ownership still blocks, while finite task paths can run alongside an active service owner
+- the current shipped conflict rule is ownership-shaped: duplicate long-running service-task ownership still blocks, and so do shared host-managed service ownership, shared Compose project ownership, shared persistent backend-family ownership, and shared deterministic env-file materialization ownership; finite task paths can still run alongside an active service owner when they do not claim the same owned resources
+- execution-conflict reporting now carries typed reason identities such as `active_execution_present`, `host_service`, `compose_project`, `persistent_backend_family`, `env_materialization_path`, and `service_task` instead of reducing the failure to owner detail text alone
+- failure receipts now also publish an `execution_conflict.reasons[]` object derived from that same ownership truth while keeping the existing `blocked[]` compatibility lane
 - stale active-execution records are pruned by owner PID before conflict checks, so interrupted or crashed ota processes do not leave a permanent fake-active barrier behind
 - when `--skip-deps` is used, receipts and run summaries mark the override explicitly and point back to rerunning without it when you need to validate the full declared task flow
 - on success, text output includes the compact `RUN SUMMARY` block with `Status` first for quick scanning, followed by the selected mode, container image when relevant, target when one exists, and task
@@ -2337,7 +2339,7 @@ Current behavior:
 - stale cleanup uses ota ownership labels first and falls back to legacy `ota-*` container names for older persistent backends
 - if a local container engine cannot answer `ps`, stale cleanup continues with other available engines and only fails when none of them can be queried
 - `ota clean --stale --dry-run` previews stale containers without removing them
-- `ota clean --json` emits structured repo/member/workspace cleanup counters on success and structured engine/resource failure details on failure
+- `ota clean --json` emits structured repo/member/workspace cleanup counters on success and structured cleanup failure details on failure; active execution cleanup barriers now classify separately from engine/resource failures instead of falling back to a generic error string
 - `ota clean --stale --json` emits the matched engines, containers, and cleanup counts for automation
 - `ota clean --stale` has its own exit-code contract and is separate from repo-scoped `ota clean`
 - remote backends do not currently define cleanup semantics; they report `No cleanup needed`

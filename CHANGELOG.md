@@ -70,6 +70,21 @@
 - runtime proof JSON now emits first-class `likely_cause_evidence` when ota can derive a
   higher-confidence readiness root cause from captured proof logs, so automation can distinguish
   loopback service config drift and detached-run failure signals without parsing advisory prose
+- runtime proof JSON now also emits additive structured `cleanup_failure` detail when ota can
+  classify proof-boundary cleanup failures, so automation can distinguish cleanup resource/reason
+  truth without scraping top-level proof error prose
+- centralized task adapter-input runtime env projection behind one shared registry-driven helper,
+  so future adapter families widen one projection surface instead of repeating family-specific
+  Compose/Bake binding logic across execution paths
+- runtime proof now classifies address-in-use startup failures as first-class `bind_conflict`
+  likely-cause evidence and failure class, and the published proof schema now documents
+  `likely_cause_evidence` explicitly instead of leaving that machine-readable surface implicit
+- runtime proof now also emits first-class `install_or_toolchain_failure` likely-cause evidence
+  from captured `up.log`, so package-manager/compiler/toolchain startup breaks no longer stop at a
+  class-only lane or prose-only diagnosis
+- `proof-runtime.json` now explicitly publishes `workflow_env_artifacts` in the success schema, so
+  the shipped machine contract matches the additive rendered-env evidence already present in proof
+  JSON output
 - policy-backed tool governance now resolves common executable aliases across provisioning and
   strict version policy lanes, so canonical tool names like `bundler` and `maven` can govern the
   executable-facing requirements `bundle` and `mvn` without forcing org policy authors onto
@@ -90,7 +105,15 @@
 - replaced the whole-run repo execution mutex with an active-execution registry, so compatible
   runs can now coexist in one repo (`ota run dev` plus a finite task path) while `ota clean` and
   duplicate long-running service ownership still block on first-class execution conflicts instead
-  of a coarse single-command lock
+  of a coarse single-command lock; that conflict ownership now widens to shared host-managed
+  services, shared Compose project ownership, shared persistent backend families, and shared
+  deterministic env-file materialization outputs instead of staying task-name-only, and the
+  conflict surface now emits typed reason identities instead of forcing operators and agents to
+  infer the cause from owner detail text alone; failure receipts now also publish a first-class
+  `execution_conflict` object derived from those reason identities instead of hiding the signal in
+  generic blocked strings alone; `ota clean --json` now classifies active execution cleanup
+  barriers as their own structured failure lane instead of collapsing them into generic repo-state
+  errors
 - made stream-phase loader timing explicit in the runner, so noisy task-output paths now use the
   governed delayed loader policy instead of ad hoc immediate spinner behavior that could dirty
   terminal output handoff before real task logs arrive

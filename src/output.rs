@@ -474,6 +474,25 @@ pub struct ExecutionReceipt {
     pub next: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ExecutionConflictReceipt {
+    pub reasons: Vec<String>,
+}
+
+pub(crate) fn execution_receipt_conflict(blocked: &[String]) -> Option<ExecutionConflictReceipt> {
+    let reasons = blocked
+        .iter()
+        .filter_map(|entry| entry.strip_prefix("execution_conflict:"))
+        .filter(|reason| !reason.trim().is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if reasons.is_empty() {
+        None
+    } else {
+        Some(ExecutionConflictReceipt { reasons })
+    }
+}
+
 fn execution_receipt_next_steps_json(next: Option<&str>) -> Vec<String> {
     next.map(|next| {
         next.split("; ")
@@ -581,6 +600,9 @@ impl Serialize for ExecutionReceipt {
         }
         if !self.blocked.is_empty() {
             map.serialize_entry("blocked", &self.blocked)?;
+        }
+        if let Some(execution_conflict) = execution_receipt_conflict(&self.blocked) {
+            map.serialize_entry("execution_conflict", &execution_conflict)?;
         }
         map.serialize_entry("summary", &self.summary)?;
         if let Some(next) = self.next.as_ref() {
@@ -2208,6 +2230,8 @@ pub struct ProofRuntimeStatus<'a> {
     pub failure_class: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup_failure: Option<JsonValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub likely_cause: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

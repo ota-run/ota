@@ -111,6 +111,7 @@ use crate::output::{
     WorkspaceRepoTasksReport, WorkspaceRepoUpReport, WorkspaceRunSuccess, WorkspaceStatusSuccess,
     WorkspaceStatusSummary, WorkspaceTaskLaunchSummary, WorkspaceTaskPrepareSummary,
     WorkspaceTaskSummary, WorkspaceTasksSuccess, WorkspaceTasksSummary, WorkspaceUpSuccess,
+    execution_receipt_conflict,
 };
 use crate::parser::{
     LoadContractError, load_contract, load_contract_auto, load_contract_for_member,
@@ -128,7 +129,8 @@ use crate::provisioning::{
 use crate::runner::{
     CleanExecutionError, CleanExecutionFailure, CleanExecutionFailureReason, CleanExecutionReport,
     CleanExecutionResourceKind, DeclaredEnvSourceStatus, EnvResolutionSource, ExecutedTaskStep,
-    ExecutionOverrides, HostRuntimeReadinessProbe, LoadedDeclaredEnvSource, ResolvedEnvValue,
+    ExecutionOverrides, HostRuntimeReadinessProbe, LoadedDeclaredEnvSource,
+    RepoExecutionConflictReason, RepoExecutionLockOwner, ResolvedEnvValue,
     ResolvedExecutionBackend, ResolvedNamedReadinessProbe, ResolvedTaskRuntime, RunError,
     RuntimeListenerBindDiscoveryFailure, RuntimeListenerHostPublicationFailure,
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
@@ -2298,17 +2300,21 @@ pub fn proof_runtime(
                     return CommandOutput::failure(error);
                 }
 
-                let cleanup_error = if proof_runtime_selected_workflow_uses_container_backend(
+                let repo_cleanup_error = if proof_runtime_selected_workflow_uses_container_backend(
                     contract,
                     effective_workflow_name,
                     overrides,
                 ) {
-                    clean_execution_report(contract, &target.contract_path)
-                        .err()
-                        .and_then(proof_runtime_cleanup_failure_message)
+                    clean_execution_report(contract, &target.contract_path).err()
                 } else {
                     None
                 };
+                let cleanup_failure_detail = repo_cleanup_error
+                    .as_ref()
+                    .and_then(proof_runtime_cleanup_failure_detail);
+                let cleanup_error = repo_cleanup_error
+                    .as_ref()
+                    .and_then(proof_runtime_cleanup_failure_message);
                 let process_cleanup_error = stop_proof_runtime_up_process(&mut up_process)
                     .err()
                     .map(|error| error.to_string());
@@ -2450,6 +2456,7 @@ pub fn proof_runtime(
                             workflow_env_artifacts,
                             failure_class: proof_failure_class,
                             error: proof_error.as_deref(),
+                            cleanup_failure: cleanup_failure_detail,
                             likely_cause: proof_likely_cause_text,
                             likely_cause_evidence: proof_likely_cause_evidence,
                             next: proof_next.as_deref(),
@@ -9700,6 +9707,7 @@ fn build_assist_add_task_proposal(
         after_always: Vec::new(),
         safe_for_agent: false,
         internal: internal.unwrap_or(matches!(kind, AssistTaskKindArg::Setup)),
+        projected_env_materialization_paths: Vec::new(),
         variants: Vec::new(),
         execution: None,
         when: crate::schema::TaskExecutionWhenSpec::default(),
@@ -25431,6 +25439,12 @@ fn render_clean_failure_text(path: &str, error: &CleanExecutionError, summary: &
         CleanExecutionError::Cleanup(cleanup) => {
             render_structured_clean_failure_text(path, cleanup)
         }
+        CleanExecutionError::Other(RunError::RepoExecutionConflict {
+            path: registry_path,
+            reasons,
+            owners,
+            ..
+        }) => render_structured_clean_execution_conflict_text(path, registry_path, reasons, owners),
         CleanExecutionError::Other(error) => {
             command_message_failure_text("CLEAN", path, summary, &error.to_string(), &[])
         }
@@ -25448,6 +25462,102 @@ fn render_structured_clean_failure_text(path: &str, failure: &CleanExecutionFail
         &[why],
         &clean_failure_next_steps(failure),
         &[details],
+    )
+}
+
+fn render_structured_clean_execution_conflict_text(
+    path: &str,
+    registry_path: &str,
+    reasons: &[RepoExecutionConflictReason],
+    owners: &[RepoExecutionLockOwner],
+) -> String {
+    let mut details = Vec::new();
+    if !reasons.is_empty() {
+        details.push(format!(
+            "reasons: {}",
+            reasons
+                .iter()
+                .map(|reason| format!("`{}`", repo_execution_conflict_reason_label(*reason)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if let Some(owner) = owners.first() {
+        details.push(format!("task: `{}`", owner.task));
+        if let Some(requested_mode) = owner.requested_mode.as_deref() {
+            details.push(format!("requested mode: `{requested_mode}`"));
+        }
+        details.push(format!("execution mode: `{}`", owner.execution_mode));
+        if let Some(lifecycle) = owner.lifecycle.as_deref() {
+            details.push(format!("lifecycle: `{lifecycle}`"));
+        }
+        if !owner.host_services.is_empty() {
+            details.push(format!(
+                "host services: {}",
+                owner
+                    .host_services
+                    .iter()
+                    .map(|service| format!("`{service}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !owner.compose_projects.is_empty() {
+            details.push(format!(
+                "compose projects: {}",
+                owner
+                    .compose_projects
+                    .iter()
+                    .map(|project| format!("`{project}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !owner.persistent_backend_families.is_empty() {
+            details.push(format!(
+                "persistent backend families: {}",
+                owner
+                    .persistent_backend_families
+                    .iter()
+                    .map(|family| format!("`{family}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        if !owner.env_materialization_paths.is_empty() {
+            details.push(format!(
+                "env materialization paths: {}",
+                owner
+                    .env_materialization_paths
+                    .iter()
+                    .map(|env_path| format!("`{env_path}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        details.push(format!("pid: `{}`", owner.pid));
+        details.push(format!("started: `{}`", owner.started_at));
+    }
+    if owners.len() > 1 {
+        details.push(format!(
+            "additional active executions: `{}`",
+            owners.len() - 1
+        ));
+    }
+    structured_error_text_with_details(
+        "CLEAN",
+        path,
+        "Active execution conflict",
+        &[format!(
+            "`ota clean` cannot remove repo state while active executions recorded in `{registry_path}` still own it."
+        )],
+        &[
+            String::from("wait for the active execution to finish before rerunning `ota clean`"),
+            String::from(
+                "or stop the conflicting execution first if you intentionally want cleanup now",
+            ),
+        ],
+        &details,
     )
 }
 
@@ -25585,6 +25695,87 @@ fn clean_failure_reason_json_label(reason: &CleanExecutionFailureReason) -> &'st
     }
 }
 
+fn clean_execution_conflict_json_value(
+    path: &str,
+    registry_path: &str,
+    reasons: &[RepoExecutionConflictReason],
+    owners: &[RepoExecutionLockOwner],
+) -> JsonValue {
+    json!({
+        "ok": false,
+        "path": path,
+        "summary": "Active execution conflict",
+        "error": format!(
+            "ota clean cannot proceed while active executions recorded in `{registry_path}` still own repo cleanup state"
+        ),
+        "why": format!(
+            "`ota clean` cannot remove repo state while active executions recorded in `{registry_path}` still own it."
+        ),
+        "next": [
+            "wait for the active execution to finish before rerunning `ota clean`",
+            "or stop the conflicting execution first if you intentionally want cleanup now"
+        ],
+        "reason": "active_execution_conflict",
+        "registry_path": registry_path,
+        "reasons": reasons
+            .iter()
+            .map(|reason| repo_execution_conflict_reason_label(*reason))
+            .collect::<Vec<_>>(),
+        "active_execution_count": owners.len(),
+        "owners": owners.iter().map(|owner| json!({
+            "task": owner.task,
+            "requested_mode": owner.requested_mode,
+            "execution_mode": owner.execution_mode,
+            "lifecycle": owner.lifecycle,
+            "host_services": owner.host_services,
+            "compose_projects": owner.compose_projects,
+            "persistent_backend_families": owner.persistent_backend_families,
+            "env_materialization_paths": owner.env_materialization_paths,
+            "service_task": owner.service_task,
+            "pid": owner.pid,
+            "started_at": owner.started_at
+        })).collect::<Vec<_>>()
+    })
+}
+
+fn clean_failure_detail_json_value(error: &CleanExecutionError) -> Option<JsonValue> {
+    match error {
+        CleanExecutionError::Cleanup(failure) => {
+            let (derived_summary, why) = clean_failure_summary_and_why(failure);
+            let next_steps = clean_failure_next_steps(failure);
+            Some(json!({
+                "summary": derived_summary,
+                "error": failure.to_string(),
+                "why": why,
+                "next": next_steps,
+                "reason": clean_failure_reason_json_label(&failure.reason),
+                "engine": failure.engine,
+                "action": failure.action,
+                "resource_kind": clean_resource_kind_json_label(&failure.resource_kind),
+                "resource_name": failure.resource_name,
+                "details": summarize_clean_engine_details(failure.details.as_str())
+            }))
+        }
+        CleanExecutionError::Other(RunError::RepoExecutionConflict {
+            path: registry_path,
+            reasons,
+            owners,
+            ..
+        }) => Some(
+            clean_execution_conflict_json_value("", registry_path, reasons, owners)
+                .as_object()
+                .map(|value| {
+                    let mut detail = value.clone();
+                    detail.remove("ok");
+                    detail.remove("path");
+                    JsonValue::Object(detail)
+                })
+                .expect("clean execution conflict json should be an object"),
+        ),
+        CleanExecutionError::Other(_) => None,
+    }
+}
+
 fn clean_report_json_value(path: &str, report: &CleanExecutionReport) -> JsonValue {
     json!({
         "ok": true,
@@ -25607,31 +25798,21 @@ fn clean_report_json_value(path: &str, report: &CleanExecutionReport) -> JsonVal
 }
 
 fn clean_failure_json_value(path: &str, error: &CleanExecutionError, summary: &str) -> JsonValue {
+    if let Some(JsonValue::Object(mut detail)) = clean_failure_detail_json_value(error) {
+        detail.insert(String::from("ok"), json!(false));
+        detail.insert(String::from("path"), json!(path));
+        return JsonValue::Object(detail);
+    }
     match error {
-        CleanExecutionError::Cleanup(failure) => {
-            let (derived_summary, why) = clean_failure_summary_and_why(failure);
-            let next_steps = clean_failure_next_steps(failure);
-            json!({
-                "ok": false,
-                "path": path,
-                "summary": derived_summary,
-                "error": failure.to_string(),
-                "why": why,
-                "next": next_steps,
-                "reason": clean_failure_reason_json_label(&failure.reason),
-                "engine": failure.engine,
-                "action": failure.action,
-                "resource_kind": clean_resource_kind_json_label(&failure.resource_kind),
-                "resource_name": failure.resource_name,
-                "details": summarize_clean_engine_details(failure.details.as_str())
-            })
-        }
         CleanExecutionError::Other(error) => json!({
             "ok": false,
             "path": path,
             "summary": summary,
             "error": error.to_string()
         }),
+        CleanExecutionError::Cleanup(_) => {
+            unreachable!("structured cleanup failures should be handled above")
+        }
     }
 }
 
@@ -42873,10 +43054,10 @@ mod tests {
     use crate::runner::{
         CleanExecutionError, CleanExecutionFailure, CleanExecutionFailureReason,
         CleanExecutionReport, CleanExecutionResourceKind, ExecutedTaskStep, ExecutionOverrides,
-        RepoExecutionLockOwner, RunError, ServiceTermination, ServiceTerminationCause,
-        ServiceTerminationKind, SharedLocalBackendEvidence, TaskExecutionRelation,
-        TaskTargetResolutionEvidence, TaskTargetResolutionSource, ToolchainFulfillmentEvidence,
-        simulate_run_interrupt_for_test,
+        RepoExecutionConflictReason, RepoExecutionLockOwner, RunError, ServiceTermination,
+        ServiceTerminationCause, ServiceTerminationKind, SharedLocalBackendEvidence,
+        TaskExecutionRelation, TaskTargetResolutionEvidence, TaskTargetResolutionSource,
+        ToolchainFulfillmentEvidence, simulate_run_interrupt_for_test,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskInputSpec, TaskTargetAddressView, ToolAcquisitionProvider,
@@ -44022,7 +44203,7 @@ readiness:
     #[test]
     fn proof_runtime_cleanup_failure_message_ignores_engine_unavailable() {
         let message = super::proof_runtime_cleanup_failure_message(
-            crate::runner::CleanExecutionError::Cleanup(crate::runner::CleanExecutionFailure {
+            &crate::runner::CleanExecutionError::Cleanup(crate::runner::CleanExecutionFailure {
                 engine: String::from("docker"),
                 action: String::from("list"),
                 resource_kind: crate::runner::CleanExecutionResourceKind::PersistentContainer,
@@ -44038,7 +44219,7 @@ readiness:
     #[test]
     fn proof_runtime_cleanup_failure_message_keeps_other_failures() {
         let message = super::proof_runtime_cleanup_failure_message(
-            crate::runner::CleanExecutionError::Cleanup(crate::runner::CleanExecutionFailure {
+            &crate::runner::CleanExecutionError::Cleanup(crate::runner::CleanExecutionFailure {
                 engine: String::from("docker"),
                 action: String::from("remove"),
                 resource_kind: crate::runner::CleanExecutionResourceKind::PersistentContainer,
@@ -44049,6 +44230,25 @@ readiness:
         );
 
         assert!(message.is_some());
+    }
+
+    #[test]
+    fn proof_runtime_cleanup_failure_detail_classifies_host_service_cleanup() {
+        let detail = super::proof_runtime_cleanup_failure_detail(
+            &crate::runner::CleanExecutionError::Cleanup(crate::runner::CleanExecutionFailure {
+                engine: String::from("host"),
+                action: String::from("stop"),
+                resource_kind: crate::runner::CleanExecutionResourceKind::HostService,
+                resource_name: Some(String::from("redis")),
+                reason: crate::runner::CleanExecutionFailureReason::Other,
+                details: String::from("stop command exited with code 1 (permission denied)"),
+            }),
+        )
+        .expect("cleanup detail should be classified");
+
+        assert_eq!(detail["reason"].as_str(), Some("other"));
+        assert_eq!(detail["resource_kind"].as_str(), Some("host_service"));
+        assert_eq!(detail["resource_name"].as_str(), Some("redis"));
     }
 
     #[test]
@@ -44382,6 +44582,38 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_install_toolchain_from_likely_cause() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("run exited"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "run",
+            None,
+            Some("run failed"),
+            Some(&super::ProofRuntimeLikelyCause::InstallOrToolchainFailure {
+                artifact: PathBuf::from("./.ota/proof/instant/up.log"),
+                signal: String::from("node-gyp rebuild failed"),
+            }),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("install_or_toolchain_failure"));
+    }
+
+    #[test]
     fn proof_runtime_failure_class_marks_readiness_timeout() {
         let summary = DoctorSummary {
             verdict: DoctorVerdict::NotReady,
@@ -44484,6 +44716,38 @@ workflows:
             Path::new("./.ota/proof/instant/up.log"),
         );
         assert_eq!(class.as_deref(), Some("config_drift"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_marks_bind_conflict_when_likely_cause_is_present() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out"),
+                next: String::from("rerun"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "run",
+            None,
+            Some("timed out while waiting for readiness"),
+            Some(&super::ProofRuntimeLikelyCause::BindConflict {
+                artifact: PathBuf::from("./.ota/proof/instant/up-detached-run.log"),
+                port: Some(3000),
+            }),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("bind_conflict"));
     }
 
     #[test]
@@ -44910,6 +45174,94 @@ workflows:
         assert_eq!(
             likely.message(),
             "detached run output: warning: command exited before readiness"
+        );
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_surfaces_bind_conflict() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "Error: listen EADDRINUSE: address already in use 0.0.0.0:3000\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::BindConflict {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                port: Some(3000),
+            }
+        );
+        let likely_message = likely.message();
+        assert!(likely_message.contains("bind conflict"), "{likely_message}");
+        assert!(likely_message.contains("3000"), "{likely_message}");
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_surfaces_install_or_toolchain_failure() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "node-gyp rebuild failed\nerror C2362\n").unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(&summary, Some("run failed"), &up_log)
+            .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::InstallOrToolchainFailure {
+                artifact: up_log.clone(),
+                signal: String::from("node-gyp rebuild failed"),
+            }
+        );
+        assert_eq!(
+            likely.message(),
+            "likely install or toolchain failure: node-gyp rebuild failed"
         );
     }
 
@@ -45511,6 +45863,7 @@ workflows:
                     ),
                 failure_class: None,
                 error: None,
+                cleanup_failure: None,
                 likely_cause: None,
                 likely_cause_evidence: None,
                 next: None,
@@ -45545,6 +45898,7 @@ workflows:
                 workflow_env_artifacts: Vec::new(),
                 failure_class: Some(String::from("config_drift")),
                 error: None,
+                cleanup_failure: None,
                 likely_cause: Some(String::from(
                     "likely config drift: the runtime is still targeting Redis on loopback (127.0.0.1:6379) inside a multi-service startup path; move that host binding into a workflow-scoped env overlay, rendered workflow env artifact, task `env_files`, or compose `manager.env_file` instead of `127.0.0.1` / `localhost`",
                 )),
@@ -45569,6 +45923,134 @@ workflows:
             Some("Redis")
         );
         assert_eq!(body["likely_cause_evidence"]["port"].as_u64(), Some(6379));
+    }
+
+    #[test]
+    fn proof_runtime_status_json_includes_bind_conflict_evidence() {
+        let body: serde_json::Value =
+            serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
+                ok: false,
+                path: "./ota.yaml",
+                mode: "runtime-proof",
+                workflow: Some("app"),
+                phase: "run",
+                summary: DoctorSummary::default(),
+                artifacts: Some(crate::output::ProofRuntimeArtifacts {
+                    topology: "topology.json",
+                    doctor: "doctor.json",
+                    up_log: "up.log",
+                }),
+                workflow_env_artifacts: Vec::new(),
+                failure_class: Some(String::from("bind_conflict")),
+                error: None,
+                cleanup_failure: None,
+                likely_cause: Some(String::from(
+                    "bind conflict: the runtime could not claim declared port 3000; free that port or change the declared published port before rerunning proof",
+                )),
+                likely_cause_evidence: Some(crate::output::ProofRuntimeLikelyCauseEvidence {
+                    kind: String::from("bind_conflict"),
+                    artifact: String::from("./.ota/proof/app/up-detached-run.log"),
+                    signal: Some(String::from("address_in_use")),
+                    service: None,
+                    host: None,
+                    port: Some(3000),
+                }),
+                next: None,
+            }))
+            .unwrap();
+
+        assert_eq!(
+            body["likely_cause_evidence"]["kind"].as_str(),
+            Some("bind_conflict")
+        );
+        assert_eq!(body["likely_cause_evidence"]["port"].as_u64(), Some(3000));
+    }
+
+    #[test]
+    fn proof_runtime_status_json_includes_install_or_toolchain_evidence() {
+        let body: serde_json::Value =
+            serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
+                ok: false,
+                path: "./ota.yaml",
+                mode: "runtime-proof",
+                workflow: Some("app"),
+                phase: "run",
+                summary: DoctorSummary::default(),
+                artifacts: Some(crate::output::ProofRuntimeArtifacts {
+                    topology: "topology.json",
+                    doctor: "doctor.json",
+                    up_log: "up.log",
+                }),
+                workflow_env_artifacts: Vec::new(),
+                failure_class: Some(String::from("install_or_toolchain_failure")),
+                error: None,
+                cleanup_failure: None,
+                likely_cause: Some(String::from(
+                    "likely install or toolchain failure: node-gyp rebuild failed",
+                )),
+                likely_cause_evidence: Some(crate::output::ProofRuntimeLikelyCauseEvidence {
+                    kind: String::from("install_or_toolchain_failure"),
+                    artifact: String::from("./.ota/proof/app/up.log"),
+                    signal: Some(String::from("node-gyp rebuild failed")),
+                    service: None,
+                    host: None,
+                    port: None,
+                }),
+                next: None,
+            }))
+            .unwrap();
+
+        assert_eq!(
+            body["likely_cause_evidence"]["kind"].as_str(),
+            Some("install_or_toolchain_failure")
+        );
+        assert_eq!(
+            body["likely_cause_evidence"]["signal"].as_str(),
+            Some("node-gyp rebuild failed")
+        );
+    }
+
+    #[test]
+    fn proof_runtime_status_json_includes_cleanup_failure() {
+        let body: serde_json::Value =
+            serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
+                ok: false,
+                path: "./ota.yaml",
+                mode: "runtime-proof",
+                workflow: Some("app"),
+                phase: "cleanup",
+                summary: DoctorSummary::default(),
+                artifacts: Some(crate::output::ProofRuntimeArtifacts {
+                    topology: "topology.json",
+                    doctor: "doctor.json",
+                    up_log: "up.log",
+                }),
+                workflow_env_artifacts: Vec::new(),
+                failure_class: Some(String::from("cleanup_failure")),
+                error: Some("cleanup failed"),
+                cleanup_failure: Some(serde_json::json!({
+                    "summary": "Cleanup failed",
+                    "error": "cleanup failed",
+                    "why": "`ota clean` could not stop host-managed service `redis` before cleaning repo state.",
+                    "next": ["inspect the stop command for `redis` and rerun `ota clean`"],
+                    "reason": "other",
+                    "engine": "host",
+                    "action": "stop",
+                    "resource_kind": "host_service",
+                    "resource_name": "redis",
+                    "details": "stop command exited with code 1 (permission denied)"
+                })),
+                likely_cause: None,
+                likely_cause_evidence: None,
+                next: Some("run `ota clean` to remove the remaining runtime state, then rerun proof"),
+            }))
+            .unwrap();
+
+        assert_eq!(body["cleanup_failure"]["reason"].as_str(), Some("other"));
+        assert_eq!(
+            body["cleanup_failure"]["resource_kind"].as_str(),
+            Some("host_service")
+        );
     }
 
     #[test]
@@ -49768,6 +50250,98 @@ tasks:
     }
 
     #[test]
+    fn clean_failure_json_classifies_active_execution_conflicts() {
+        let value = super::clean_failure_json_value(
+            "./ota.yaml",
+            &CleanExecutionError::Other(RunError::RepoExecutionConflict {
+                task: String::from("__ota_clean_internal__"),
+                path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![
+                    RepoExecutionConflictReason::HostService,
+                    RepoExecutionConflictReason::ComposeProject,
+                ],
+                owners: vec![RepoExecutionLockOwner {
+                    task: String::from("dev"),
+                    requested_mode: Some(String::from("container")),
+                    execution_mode: String::from("container"),
+                    lifecycle: Some(String::from("persistent")),
+                    host_services: vec![String::from("redis")],
+                    compose_projects: vec![String::from("app-local")],
+                    persistent_backend_families: vec![],
+                    env_materialization_paths: vec![],
+                    service_task: true,
+                    pid: 48211,
+                    started_at: String::from("2026-06-16T10:40:03Z"),
+                }],
+            }),
+            "Cleanup failed",
+        );
+
+        assert_eq!(
+            value.get("summary").and_then(|value| value.as_str()),
+            Some("Active execution conflict")
+        );
+        assert_eq!(
+            value.get("reason").and_then(|value| value.as_str()),
+            Some("active_execution_conflict")
+        );
+        assert_eq!(
+            value.get("registry_path").and_then(|value| value.as_str()),
+            Some("./.ota/state/active-executions.json")
+        );
+        assert_eq!(
+            value
+                .get("active_execution_count")
+                .and_then(|value| value.as_u64()),
+            Some(1)
+        );
+        assert_eq!(value["reasons"][0].as_str(), Some("host_service"));
+        assert_eq!(value["reasons"][1].as_str(), Some("compose_project"));
+        assert_eq!(value["owners"][0]["task"].as_str(), Some("dev"));
+        assert_eq!(
+            value["owners"][0]["compose_projects"][0].as_str(),
+            Some("app-local")
+        );
+    }
+
+    #[test]
+    fn clean_failure_text_classifies_active_execution_conflicts() {
+        let rendered = strip_ansi_codes(&super::render_clean_failure_text(
+            "./ota.yaml",
+            &CleanExecutionError::Other(RunError::RepoExecutionConflict {
+                task: String::from("__ota_clean_internal__"),
+                path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![
+                    RepoExecutionConflictReason::ActiveExecutionPresent,
+                    RepoExecutionConflictReason::HostService,
+                ],
+                owners: vec![RepoExecutionLockOwner {
+                    task: String::from("dev"),
+                    requested_mode: Some(String::from("native")),
+                    execution_mode: String::from("native"),
+                    lifecycle: None,
+                    host_services: vec![String::from("redis")],
+                    compose_projects: vec![],
+                    persistent_backend_families: vec![],
+                    env_materialization_paths: vec![],
+                    service_task: true,
+                    pid: 48211,
+                    started_at: String::from("2026-06-16T10:40:03Z"),
+                }],
+            }),
+            "Cleanup failed",
+        ));
+
+        assert!(rendered.contains("Active execution conflict"), "{rendered}");
+        assert!(
+            rendered.contains("reasons: `active_execution_present`, `host_service`"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("task: `dev`"), "{rendered}");
+        assert!(rendered.contains("host services: `redis`"), "{rendered}");
+    }
+
+    #[test]
     fn clean_report_json_exposes_repo_cleanup_counters() {
         let report = CleanExecutionReport {
             stopped_host_services: 8,
@@ -52918,6 +53492,43 @@ workflows:
                 .and_then(|service| service.manager.as_ref())
                 .and_then(|manager| manager.env_file.as_deref()),
             None
+        );
+    }
+
+    #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_projects_rendered_dotenv_ownership() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: env-profile-render-ownership
+env:
+  profiles:
+    compose:
+      render:
+        dotenv:
+          path: .env.compose
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: compose
+  compose:
+    env:
+      profile: compose
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(&contract, None)
+            .expect("workflow env profile should adjust contract");
+        let task = adjusted.tasks.get("dev").expect("task should exist");
+        assert_eq!(
+            task.projected_env_materialization_paths,
+            vec![String::from(".env.compose")]
         );
     }
 
@@ -62660,6 +63271,7 @@ tasks:
             &RunError::RepoExecutionConflict {
                 task: String::from("build"),
                 path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
                 owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
@@ -62700,6 +63312,7 @@ tasks:
             &RunError::RepoExecutionConflict {
                 task: String::from("deploy:cloudflare"),
                 path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
                 owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
@@ -62740,12 +63353,21 @@ tasks:
             &RunError::RepoExecutionConflict {
                 task: String::from("build"),
                 path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![
+                    RepoExecutionConflictReason::HostService,
+                    RepoExecutionConflictReason::ComposeProject,
+                    RepoExecutionConflictReason::PersistentBackendFamily,
+                    RepoExecutionConflictReason::EnvMaterializationPath,
+                ],
                 owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: Some(String::from("container")),
                     execution_mode: String::from("container"),
                     lifecycle: Some(String::from("persistent")),
                     host_services: vec![String::from("redis"), String::from("postgres")],
+                    compose_projects: vec![String::from("app-local")],
+                    persistent_backend_families: vec![String::from("family-a")],
+                    env_materialization_paths: vec![String::from(".env.local")],
                     service_task: true,
                     pid: 48211,
                     started_at: String::from("2026-06-05T22:14:03Z"),
@@ -62755,7 +63377,16 @@ tasks:
             None,
         ));
 
-        assert!(rendered.contains("\n\nConflicting execution:"), "{rendered}");
+        assert!(
+            rendered.contains("\n\nConflicting execution:"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "reasons: `host_service`, `compose_project`, `persistent_backend_family`, `env_materialization_path`"
+            ),
+            "{rendered}"
+        );
         assert!(rendered.contains("task: `dev`"), "{rendered}");
         assert!(
             rendered.contains("requested mode: `container`"),
@@ -62768,6 +63399,18 @@ tasks:
         assert!(rendered.contains("lifecycle: `persistent`"), "{rendered}");
         assert!(
             rendered.contains("host services: `redis`, `postgres`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("compose projects: `app-local`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("persistent backend families: `family-a`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("env materialization paths: `.env.local`"),
             "{rendered}"
         );
         assert!(rendered.contains("pid: `48211`"), "{rendered}");
@@ -62806,6 +63449,7 @@ tasks:
             &RunError::RepoExecutionConflict {
                 task: String::from("version:bump"),
                 path: String::from("./.ota/state/active-executions.json"),
+                reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
                 owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
@@ -62815,6 +63459,26 @@ tasks:
         assert!(
             rendered.contains("then rerun `ota run version:bump --version patch`"),
             "{rendered}"
+        );
+    }
+
+    #[test]
+    fn run_error_receipt_blocked_entries_project_execution_conflict_reasons() {
+        let blocked = super::run_error_receipt_blocked_entries(&RunError::RepoExecutionConflict {
+            task: String::from("dev"),
+            path: String::from("./.ota/state/active-executions.json"),
+            reasons: vec![
+                RepoExecutionConflictReason::HostService,
+                RepoExecutionConflictReason::ComposeProject,
+            ],
+            owners: vec![],
+        });
+        assert_eq!(
+            blocked,
+            vec![
+                String::from("execution_conflict:host_service"),
+                String::from("execution_conflict:compose_project"),
+            ]
         );
     }
 
@@ -65801,6 +66465,75 @@ tasks:
         assert_eq!(
             json["host_service_cleanup"][0]["status"].as_str(),
             Some("succeeded")
+        );
+    }
+
+    #[test]
+    fn execution_receipt_text_and_json_render_execution_conflict() {
+        let receipt = ExecutionReceipt {
+            ok: false,
+            path: String::from("./ota.yaml"),
+            scope: String::from("repo"),
+            contract: String::from("./ota.yaml"),
+            contract_identity: None,
+            workspace: None,
+            backend: Some(String::from("native")),
+            context: Some(String::from("dev")),
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
+            native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
+            runtime: None,
+            logs: None,
+            service_termination: None,
+            host_service_cleanup: Vec::new(),
+            backend_fulfillment: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            steps: Vec::new(),
+            status: Some(String::from("blocked")),
+            failed_task: Some(String::from("dev")),
+            failed_dependency: None,
+            failure_origin: Some(String::from("requested")),
+            blocked: vec![
+                String::from("execution_conflict:host_service"),
+                String::from("execution_conflict:compose_project"),
+            ],
+            summary: ExecutionReceiptSummary {
+                error_count: 1,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 0,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+
+        let rendered = strip_ansi_codes(&render_execution_receipt_text(&receipt));
+        assert!(rendered.contains("Execution Conflict"), "{rendered}");
+        assert!(
+            rendered.contains("Reasons: `host_service`, `compose_project`"),
+            "{rendered}"
+        );
+
+        let json = serde_json::to_value(&receipt).expect("receipt json");
+        assert_eq!(
+            json["execution_conflict"]["reasons"][0].as_str(),
+            Some("host_service")
+        );
+        assert_eq!(
+            json["execution_conflict"]["reasons"][1].as_str(),
+            Some("compose_project")
         );
     }
 
@@ -70612,6 +71345,8 @@ fn run_single_contract_target_streaming(
                 None,
                 Some(next_note),
             );
+            receipt.blocked = run_error_receipt_blocked_entries(&error);
+            refresh_execution_receipt_status(&mut receipt);
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             if overrides.skip_deps {
                 receipt.next = Some(skip_deps_next(
@@ -70877,6 +71612,8 @@ fn run_single_contract_target_captured(
                 None,
                 Some(next_note),
             );
+            receipt.blocked = run_error_receipt_blocked_entries(&error);
+            refresh_execution_receipt_status(&mut receipt);
             apply_run_log_capture_to_receipt(&mut receipt, log_capture);
             if overrides.skip_deps {
                 receipt.next = Some(skip_deps_next(
@@ -73013,7 +73750,25 @@ fn render_run_structured_error_text(
                 format!("rerun `{}` when ready", rerun_stream_command),
             ],
         ),
-        RunError::RepoExecutionConflict { path, owners, .. } => {
+        RunError::RepoExecutionConflict {
+            path,
+            reasons,
+            owners,
+            ..
+        } => {
+            if !reasons.is_empty() {
+                detail_lines.push(format!(
+                    "reasons: {}",
+                    reasons
+                        .iter()
+                        .map(|reason| format!(
+                            "`{}`",
+                            repo_execution_conflict_reason_label(*reason)
+                        ))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             if let Some(owner) = owners.first() {
                 detail_lines.push(format!("task: `{}`", owner.task));
                 if let Some(requested_mode) = owner.requested_mode.as_deref() {
@@ -73030,6 +73785,39 @@ fn render_run_structured_error_text(
                             .host_services
                             .iter()
                             .map(|name| format!("`{name}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                if !owner.compose_projects.is_empty() {
+                    detail_lines.push(format!(
+                        "compose projects: {}",
+                        owner
+                            .compose_projects
+                            .iter()
+                            .map(|project| format!("`{project}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                if !owner.persistent_backend_families.is_empty() {
+                    detail_lines.push(format!(
+                        "persistent backend families: {}",
+                        owner
+                            .persistent_backend_families
+                            .iter()
+                            .map(|family| format!("`{family}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+                if !owner.env_materialization_paths.is_empty() {
+                    detail_lines.push(format!(
+                        "env materialization paths: {}",
+                        owner
+                            .env_materialization_paths
+                            .iter()
+                            .map(|path| format!("`{path}`"))
                             .collect::<Vec<_>>()
                             .join(", ")
                     ));
@@ -73794,6 +74582,48 @@ fn render_run_structured_error_text(
     output.push('\n');
     output.push_str(summary_block);
     output
+}
+
+fn repo_execution_conflict_reason_label(
+    reason: crate::runner::RepoExecutionConflictReason,
+) -> &'static str {
+    match reason {
+        crate::runner::RepoExecutionConflictReason::ActiveExecutionPresent => {
+            "active_execution_present"
+        }
+        crate::runner::RepoExecutionConflictReason::HostService => "host_service",
+        crate::runner::RepoExecutionConflictReason::ComposeProject => "compose_project",
+        crate::runner::RepoExecutionConflictReason::PersistentBackendFamily => {
+            "persistent_backend_family"
+        }
+        crate::runner::RepoExecutionConflictReason::EnvMaterializationPath => {
+            "env_materialization_path"
+        }
+        crate::runner::RepoExecutionConflictReason::ServiceTask => "service_task",
+    }
+}
+
+fn run_error_receipt_blocked_entries(error: &RunError) -> Vec<String> {
+    match error {
+        RunError::RepoExecutionConflict { reasons, .. } => reasons
+            .iter()
+            .map(|reason| {
+                format!(
+                    "execution_conflict:{}",
+                    repo_execution_conflict_reason_label(*reason)
+                )
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn refresh_execution_receipt_status(receipt: &mut ExecutionReceipt) {
+    receipt.status = Some(aggregate_execution_summary_status(
+        receipt.ok,
+        &receipt.steps,
+        &receipt.blocked,
+    ));
 }
 
 fn receipt_env_value(resolved: &ResolvedEnvValue) -> String {
@@ -76905,7 +77735,7 @@ fn signal_process_group(process_id: u32, signal: &str) -> Result<(), String> {
     }
 }
 
-fn proof_runtime_cleanup_failure_message(error: CleanExecutionError) -> Option<String> {
+fn proof_runtime_cleanup_failure_message(error: &CleanExecutionError) -> Option<String> {
     match error {
         CleanExecutionError::Cleanup(CleanExecutionFailure {
             reason: CleanExecutionFailureReason::EngineUnavailable,
@@ -76913,6 +77743,19 @@ fn proof_runtime_cleanup_failure_message(error: CleanExecutionError) -> Option<S
         }) => None,
         other => Some(other.to_string()),
     }
+}
+
+fn proof_runtime_cleanup_failure_detail(error: &CleanExecutionError) -> Option<JsonValue> {
+    if matches!(
+        error,
+        CleanExecutionError::Cleanup(CleanExecutionFailure {
+            reason: CleanExecutionFailureReason::EngineUnavailable,
+            ..
+        })
+    ) {
+        return None;
+    }
+    clean_failure_detail_json_value(error)
 }
 
 fn proof_runtime_selected_workflow_uses_container_backend(
@@ -76964,6 +77807,14 @@ enum ProofRuntimeLikelyCause {
         host: String,
         port: Option<u16>,
     },
+    InstallOrToolchainFailure {
+        artifact: PathBuf,
+        signal: String,
+    },
+    BindConflict {
+        artifact: PathBuf,
+        port: Option<u16>,
+    },
     DetachedRunOutput {
         artifact: PathBuf,
         signal: String,
@@ -76986,6 +77837,17 @@ impl ProofRuntimeLikelyCause {
                     "likely config drift: the runtime is still targeting {service} on loopback ({endpoint}) inside a multi-service startup path; move that host binding into a workflow-scoped env overlay, rendered workflow env artifact, task `env_files`, or compose `manager.env_file` instead of `127.0.0.1` / `localhost`"
                 )
             }
+            Self::InstallOrToolchainFailure { signal, .. } => {
+                format!("likely install or toolchain failure: {signal}")
+            }
+            Self::BindConflict { port, .. } => match port {
+                Some(port) => format!(
+                    "bind conflict: the runtime could not claim declared port {port}; free that port or change the declared published port before rerunning proof"
+                ),
+                None => String::from(
+                    "bind conflict: the runtime could not claim a declared listener port; free the conflicting port or change the declared published port before rerunning proof",
+                ),
+            },
             Self::DetachedRunOutput { signal, .. } => {
                 format!("detached run output: {signal}")
             }
@@ -77007,6 +77869,22 @@ impl ProofRuntimeLikelyCause {
                 host: Some(host.clone()),
                 port: *port,
             },
+            Self::InstallOrToolchainFailure { artifact, signal } => ProofRuntimeLikelyCauseEvidence {
+                kind: String::from("install_or_toolchain_failure"),
+                artifact: compact_repo_path(artifact),
+                signal: Some(signal.clone()),
+                service: None,
+                host: None,
+                port: None,
+            },
+            Self::BindConflict { artifact, port } => ProofRuntimeLikelyCauseEvidence {
+                kind: String::from("bind_conflict"),
+                artifact: compact_repo_path(artifact),
+                signal: Some(String::from("address_in_use")),
+                service: None,
+                host: None,
+                port: *port,
+            },
             Self::DetachedRunOutput { artifact, signal } => ProofRuntimeLikelyCauseEvidence {
                 kind: String::from("detached_run_output"),
                 artifact: compact_repo_path(artifact),
@@ -77020,6 +77898,14 @@ impl ProofRuntimeLikelyCause {
 
     fn implies_config_drift(&self) -> bool {
         matches!(self, Self::LoopbackServiceDrift { .. })
+    }
+
+    fn is_bind_conflict(&self) -> bool {
+        matches!(self, Self::BindConflict { .. })
+    }
+
+    fn is_install_or_toolchain_failure(&self) -> bool {
+        matches!(self, Self::InstallOrToolchainFailure { .. })
     }
 }
 
@@ -77049,6 +77935,9 @@ fn proof_runtime_failure_class(
 ) -> Option<String> {
     let likely_config_drift =
         likely_cause.is_some_and(ProofRuntimeLikelyCause::implies_config_drift);
+    let likely_bind_conflict = likely_cause.is_some_and(ProofRuntimeLikelyCause::is_bind_conflict);
+    let likely_install_or_toolchain_failure = likely_cause
+        .is_some_and(ProofRuntimeLikelyCause::is_install_or_toolchain_failure);
     if cleanup_error.is_some() {
         return Some(String::from("cleanup_failure"));
     }
@@ -77065,6 +77954,9 @@ fn proof_runtime_failure_class(
         if up_process_failure
             .is_some_and(|failure| failure.contains("timed out while waiting for readiness"))
         {
+            if likely_bind_conflict {
+                return Some(String::from("bind_conflict"));
+            }
             if likely_config_drift {
                 return Some(String::from("config_drift"));
             }
@@ -77083,8 +77975,13 @@ fn proof_runtime_failure_class(
         return None;
     };
     if primary.summary == "Run task exited before readiness" {
-        if proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path) {
+        if likely_install_or_toolchain_failure
+            || proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path)
+        {
             return Some(String::from("install_or_toolchain_failure"));
+        }
+        if likely_bind_conflict {
+            return Some(String::from("bind_conflict"));
         }
         if likely_config_drift {
             return Some(String::from("config_drift"));
@@ -77097,6 +77994,9 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness timed out:")
     {
+        if likely_bind_conflict {
+            return Some(String::from("bind_conflict"));
+        }
         if likely_config_drift {
             return Some(String::from("config_drift"));
         }
@@ -77107,6 +78007,9 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness failed:")
     {
+        if likely_bind_conflict {
+            return Some(String::from("bind_conflict"));
+        }
         if likely_config_drift {
             return Some(String::from("config_drift"));
         }
@@ -77222,6 +78125,12 @@ fn proof_runtime_likely_cause(
         return None;
     }
 
+    if let Some(cause) = proof_runtime_install_or_toolchain_failure_hint_from_log(
+        up_log_artifact_path,
+    ) {
+        return Some(cause);
+    }
+
     let artifact_dir = up_log_artifact_path.parent()?;
     for candidate in [
         artifact_dir.join("up-detached-run.log"),
@@ -77236,11 +78145,16 @@ fn proof_runtime_likely_cause(
 }
 
 fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path: &Path) -> bool {
+    proof_runtime_install_or_toolchain_failure_hint_from_log(up_log_artifact_path).is_some()
+}
+
+fn proof_runtime_install_or_toolchain_failure_hint_from_log(
+    up_log_artifact_path: &Path,
+) -> Option<ProofRuntimeLikelyCause> {
     let Ok(log) = fs::read_to_string(up_log_artifact_path) else {
-        return false;
+        return None;
     };
-    let log = log.to_ascii_lowercase();
-    [
+    let patterns = [
         "node-gyp",
         "gyp err",
         "error c",
@@ -77248,9 +78162,21 @@ fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path
         "local package.json exists, but node_modules missing",
         "turbo: not found",
         "not recognized as an internal or external command",
-    ]
-    .iter()
-    .any(|pattern| log.contains(pattern))
+    ];
+    for raw_line in log.lines() {
+        let line = strip_ansi_codes(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        let lowered = line.to_ascii_lowercase();
+        if patterns.iter().any(|pattern| lowered.contains(pattern)) {
+            return Some(ProofRuntimeLikelyCause::InstallOrToolchainFailure {
+                artifact: up_log_artifact_path.to_path_buf(),
+                signal: line,
+            });
+        }
+    }
+    None
 }
 
 fn proof_runtime_status_word(
@@ -78256,6 +79182,24 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
             summary_bullet(),
             paint_key("Items:"),
             receipt.blocked.join(", ")
+        ));
+    }
+
+    if let Some(execution_conflict) = execution_receipt_conflict(&receipt.blocked) {
+        stdout.push_str(&format!(
+            "\n\n{}",
+            paint_section_title("Execution Conflict")
+        ));
+        stdout.push_str(&format!(
+            "\n{} {} {}",
+            summary_bullet(),
+            paint_key("Reasons:"),
+            execution_conflict
+                .reasons
+                .iter()
+                .map(|reason| format!("`{reason}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
 
@@ -83667,6 +84611,16 @@ fn detached_run_failure_hint_from_log(path: &Path) -> Option<ProofRuntimeLikelyC
     let contents = fs::read_to_string(path).ok()?;
     for raw_line in contents.lines() {
         let line = strip_ansi_codes(raw_line).trim().to_string();
+        let lowered = line.to_ascii_lowercase();
+        if lowered.contains("eaddrinuse") || lowered.contains("address already in use") {
+            return Some(ProofRuntimeLikelyCause::BindConflict {
+                artifact: path.to_path_buf(),
+                port: parse_port_from_line(&line),
+            });
+        }
+    }
+    for raw_line in contents.lines() {
+        let line = strip_ansi_codes(raw_line).trim().to_string();
         if let Some(title) = line.strip_prefix("◉ ERROR") {
             let title = title.trim();
             if !title.is_empty() {
@@ -83943,6 +84897,14 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         };
         let adapter_bound = adapter_task_names.iter().any(|name| name == &task_name)
             && bind_workflow_adapter_overlays(task, &workflow_adapter_inputs);
+        if let Some(path) = rendered_dotenv_path.as_ref()
+            && !task
+                .projected_env_materialization_paths
+                .iter()
+                .any(|existing| existing == path)
+        {
+            task.projected_env_materialization_paths.push(path.clone());
+        }
         if !adapter_bound {
             if let Some(path) = rendered_dotenv_path.as_ref()
                 && !task.env_files.iter().any(|existing| existing == path)

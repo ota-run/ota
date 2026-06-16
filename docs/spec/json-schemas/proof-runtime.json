@@ -14,6 +14,10 @@
         "workflow": { "type": "string" },
         "phase": { "type": "string" },
         "summary": { "$ref": "./doctor.json#/properties/summary" },
+        "workflow_env_artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workflowEnvArtifact" }
+        },
         "artifacts": {
           "type": "object",
           "additionalProperties": false,
@@ -26,7 +30,9 @@
         },
         "failure_class": { "type": "string" },
         "error": { "type": "string" },
+        "cleanup_failure": { "$ref": "#/$defs/cleanupFailure" },
         "likely_cause": { "type": "string" },
+        "likely_cause_evidence": { "$ref": "#/$defs/likelyCauseEvidence" },
         "next": { "type": "string" }
       }
     },
@@ -51,5 +57,136 @@
         }
       }
     }
-  ]
+  ],
+  "$defs": {
+    "cleanupFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "error", "why", "next"],
+      "properties": {
+        "summary": { "type": "string" },
+        "error": { "type": "string" },
+        "why": { "type": "string" },
+        "next": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["engine_unavailable", "other", "active_execution_conflict"]
+        },
+        "engine": { "type": "string" },
+        "action": { "type": "string" },
+        "resource_kind": {
+          "type": "string",
+          "enum": [
+            "host_service",
+            "persistent_container",
+            "dependency_isolation_volume",
+            "stale_containers"
+          ]
+        },
+        "resource_name": { "type": ["string", "null"] },
+        "details": { "type": "string" },
+        "registry_path": { "type": "string" },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "active_execution_present",
+              "host_service",
+              "compose_project",
+              "persistent_backend_family",
+              "env_materialization_path",
+              "service_task"
+            ]
+          }
+        },
+        "active_execution_count": { "type": "integer", "minimum": 0 },
+        "owners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "task",
+              "execution_mode",
+              "host_services",
+              "compose_projects",
+              "persistent_backend_families",
+              "env_materialization_paths",
+              "pid",
+              "started_at"
+            ],
+            "properties": {
+              "task": { "type": "string" },
+              "requested_mode": { "type": ["string", "null"] },
+              "execution_mode": { "type": "string" },
+              "lifecycle": { "type": ["string", "null"] },
+              "host_services": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "compose_projects": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "persistent_backend_families": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "env_materialization_paths": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "service_task": { "type": ["string", "null"] },
+              "pid": { "type": "integer", "minimum": 0 },
+              "started_at": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "likelyCauseEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "artifact"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "loopback_service_drift",
+            "install_or_toolchain_failure",
+            "detached_run_output",
+            "bind_conflict"
+          ]
+        },
+        "artifact": { "type": "string" },
+        "signal": { "type": ["string", "null"] },
+        "service": { "type": ["string", "null"] },
+        "host": { "type": ["string", "null"] },
+        "port": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "workflowEnvArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind", "exists"],
+      "properties": {
+        "path": { "type": "string" },
+        "kind": { "type": "string" },
+        "includes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "exists": { "type": "boolean" },
+        "profile": { "type": ["string", "null"] },
+        "consumers": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
 }

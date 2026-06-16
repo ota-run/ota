@@ -77,6 +77,7 @@ The receipt includes:
 - `workloads`
 - `service_termination`
 - `host_service_cleanup`
+- `execution_conflict`
 - `steps`
 - `blocked`
 - `summary`
@@ -96,6 +97,10 @@ stopped; this records whether the stop happened after readiness and whether the 
 OOM kill. For host-managed service cleanup owned by ota, receipts can also include
 `host_service_cleanup`; each entry records the service name, attempted action, outcome status,
 cleanup trigger, and any failure detail ota captured while stopping that host-managed service.
+When execution was blocked by an active repo-execution ownership conflict, receipts can also
+include `execution_conflict`; this records the typed ownership reasons such as `host_service`,
+`compose_project`, or `persistent_backend_family` while keeping the existing `blocked[]`
+compatibility lane.
 `target` is only present when the actual recorded execution phase used a real named target.
 That includes persistent backends, remote targets, and named ephemeral task or diagnosis
 containers. Previews and host-side phases stay targetless.

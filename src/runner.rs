@@ -40,7 +40,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::adapter_inputs::{
-    ADAPTER_INPUT_FIELDS, rebase_repo_relative_adapter_paths, task_effective_adapter_cwd,
+    ADAPTER_INPUT_FIELDS, task_adapter_env_bindings, task_effective_adapter_cwd,
 };
 #[cfg(windows)]
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -950,6 +950,7 @@ pub enum RunError {
     RepoExecutionConflict {
         task: String,
         path: String,
+        reasons: Vec<RepoExecutionConflictReason>,
         owners: Vec<RepoExecutionLockOwner>,
     },
     #[error("task `{task}` could not {action} repo execution lock `{path}`: {details}")]
@@ -1733,10 +1734,27 @@ pub struct RepoExecutionLockOwner {
     pub lifecycle: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub host_services: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compose_projects: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub persistent_backend_families: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_materialization_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub service_task: bool,
     pub pid: u32,
     pub started_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepoExecutionConflictReason {
+    ActiveExecutionPresent,
+    HostService,
+    ComposeProject,
+    PersistentBackendFamily,
+    EnvMaterializationPath,
+    ServiceTask,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1746,6 +1764,7 @@ struct ActiveRepoExecutionRecord {
     owner: RepoExecutionLockOwner,
 }
 
+#[derive(Debug)]
 struct ActiveRepoExecutionGuard {
     working_dir: PathBuf,
     execution_id: String,
@@ -1770,6 +1789,19 @@ fn repo_execution_lock_owner_for_backend(
     overrides: ExecutionOverrides,
     backend: &ResolvedExecutionBackend,
 ) -> RepoExecutionLockOwner {
+    let backend_kind = resolved_execution_backend_kind(backend);
+    let persistent_backend_families = persistent_backend_family_ownership(task_name, backend);
+    let compose_projects = contract
+        .tasks
+        .get(task_name)
+        .and_then(|task| task.compose_adapter_project_name_for_backend(backend_kind))
+        .map(|value| vec![value.to_string()])
+        .unwrap_or_default();
+    let env_materialization_paths = contract
+        .tasks
+        .get(task_name)
+        .map(task_env_materialization_ownership)
+        .unwrap_or_default();
     let lifecycle = match backend {
         ResolvedExecutionBackend::Native {
             shared_local_backend: Some(shared_local_backend),
@@ -1803,14 +1835,90 @@ fn repo_execution_lock_owner_for_backend(
                 .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Host)
         })
         .collect(),
+        compose_projects,
+        persistent_backend_families,
+        env_materialization_paths,
         service_task: contract
             .tasks
             .get(task_name)
-            .and_then(|task| task.service_runtime_for_backend(resolved_execution_backend_kind(backend)))
+            .and_then(|task| task.service_runtime_for_backend(backend_kind))
             .is_some(),
         pid: std::process::id(),
         started_at: format_repo_execution_lock_timestamp(OffsetDateTime::now_utc()),
     }
+}
+
+fn persistent_backend_family_ownership(
+    task_name: &str,
+    backend: &ResolvedExecutionBackend,
+) -> Vec<String> {
+    match backend {
+        ResolvedExecutionBackend::Container {
+            context_name,
+            shared_local_backend,
+            lifecycle,
+            ..
+        } if *lifecycle == Lifecycle::Persistent => vec![persistent_container_family_token(
+            task_name,
+            context_name.as_deref(),
+            shared_local_backend
+                .as_ref()
+                .map(|shared| shared.name.as_str()),
+        )],
+        ResolvedExecutionBackend::Native {
+            shared_local_backend: Some(shared_local_backend),
+        }
+        | ResolvedExecutionBackend::Remote {
+            shared_local_backend: Some(shared_local_backend),
+            ..
+        }
+        | ResolvedExecutionBackend::BackendProvider {
+            shared_local_backend: Some(shared_local_backend),
+            ..
+        } if shared_local_backend.lifecycle == Lifecycle::Persistent => {
+            vec![persistent_container_family_token(
+                task_name,
+                shared_local_backend.context_name.as_deref(),
+                Some(shared_local_backend.name.as_str()),
+            )]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn task_env_materialization_ownership(task: &TaskSpec) -> Vec<String> {
+    let mut paths = task.projected_env_materialization_paths.clone();
+    if let Some(action) = task.action.as_ref() {
+        collect_action_env_materialization_paths(action, &mut paths);
+    }
+    paths
+}
+
+fn collect_action_env_materialization_paths(
+    action: &crate::schema::TaskActionSpec,
+    paths: &mut Vec<String>,
+) {
+    match action {
+        crate::schema::TaskActionSpec::EnsureEnvFile(spec) => {
+            push_unique_owned_path(paths, spec.path.as_str());
+        }
+        crate::schema::TaskActionSpec::EnsureBundle(spec) => {
+            for step in &spec.steps {
+                if let crate::schema::TaskEnsureBundleStepSpec::EnsureEnvFile(step_spec) = step {
+                    push_unique_owned_path(paths, step_spec.path.as_str());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_unique_owned_path(paths: &mut Vec<String>, value: &str) {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || paths.iter().any(|existing| existing == trimmed) {
+        return;
+    }
+    paths.push(trimmed.to_string());
 }
 
 fn clean_engine_timeout_cache() -> &'static Mutex<BTreeMap<String, String>> {
@@ -2165,50 +2273,7 @@ fn effective_task_env_for_backend_with_resolved_env(
             )
         }),
     );
-    let adapter_cwd = task_effective_adapter_cwd(task, backend_kind);
-    let compose_adapter_env_files = rebase_repo_relative_adapter_paths(
-        &task.compose_adapter_env_files_for_backend(backend_kind),
-        adapter_cwd,
-    );
-    if !compose_adapter_env_files.is_empty() {
-        env.insert(
-            String::from("COMPOSE_ENV_FILES"),
-            compose_adapter_env_files.join(","),
-        );
-    }
-    let compose_adapter_files = rebase_repo_relative_adapter_paths(
-        &task.compose_adapter_files_for_backend(backend_kind),
-        adapter_cwd,
-    );
-    if !compose_adapter_files.is_empty() {
-        env.insert(
-            String::from("COMPOSE_FILE"),
-            adapter_file_env_value(&compose_adapter_files),
-        );
-    }
-    let compose_adapter_profiles = task.compose_adapter_profiles_for_backend(backend_kind);
-    if !compose_adapter_profiles.is_empty() {
-        env.insert(
-            String::from("COMPOSE_PROFILES"),
-            compose_adapter_profiles.join(","),
-        );
-    }
-    if let Some(project_name) = task.compose_adapter_project_name_for_backend(backend_kind) {
-        env.insert(
-            String::from("COMPOSE_PROJECT_NAME"),
-            project_name.to_string(),
-        );
-    }
-    let bake_adapter_files = rebase_repo_relative_adapter_paths(
-        &task.bake_adapter_files_for_backend(backend_kind),
-        adapter_cwd,
-    );
-    if !bake_adapter_files.is_empty() {
-        env.insert(
-            String::from("BUILDX_BAKE_FILE"),
-            adapter_file_env_value(&bake_adapter_files),
-        );
-    }
+    env.extend(task_adapter_env_bindings(task, backend_kind));
     env.extend(service_env_bindings_for_task(
         contract,
         task,
@@ -2283,50 +2348,7 @@ pub(crate) fn effective_task_env_for_selection(
                 )
             }),
     );
-    let adapter_cwd = task_effective_adapter_cwd(task, backend);
-    let compose_adapter_env_files = rebase_repo_relative_adapter_paths(
-        &task.compose_adapter_env_files_for_backend(backend),
-        adapter_cwd,
-    );
-    if !compose_adapter_env_files.is_empty() {
-        env.insert(
-            String::from("COMPOSE_ENV_FILES"),
-            compose_adapter_env_files.join(","),
-        );
-    }
-    let compose_adapter_files = rebase_repo_relative_adapter_paths(
-        &task.compose_adapter_files_for_backend(backend),
-        adapter_cwd,
-    );
-    if !compose_adapter_files.is_empty() {
-        env.insert(
-            String::from("COMPOSE_FILE"),
-            adapter_file_env_value(&compose_adapter_files),
-        );
-    }
-    let compose_adapter_profiles = task.compose_adapter_profiles_for_backend(backend);
-    if !compose_adapter_profiles.is_empty() {
-        env.insert(
-            String::from("COMPOSE_PROFILES"),
-            compose_adapter_profiles.join(","),
-        );
-    }
-    if let Some(project_name) = task.compose_adapter_project_name_for_backend(backend) {
-        env.insert(
-            String::from("COMPOSE_PROJECT_NAME"),
-            project_name.to_string(),
-        );
-    }
-    let bake_adapter_files = rebase_repo_relative_adapter_paths(
-        &task.bake_adapter_files_for_backend(backend),
-        adapter_cwd,
-    );
-    if !bake_adapter_files.is_empty() {
-        env.insert(
-            String::from("BUILDX_BAKE_FILE"),
-            adapter_file_env_value(&bake_adapter_files),
-        );
-    }
+    env.extend(task_adapter_env_bindings(task, backend));
     env.extend(service_env_bindings_for_task(
         contract,
         task,
@@ -2367,11 +2389,6 @@ fn load_task_env_file_values(
         merged.extend(values);
     }
     merged
-}
-
-fn adapter_file_env_value(paths: &[String]) -> String {
-    let separator = if cfg!(windows) { ';' } else { ':' };
-    paths.join(&separator.to_string())
 }
 
 pub(crate) fn ensure_task_env_files_ready(
@@ -24060,12 +24077,14 @@ fn acquire_repo_execution_lock(
             path: lock_path.display().to_string(),
             details: source.to_string(),
         })?;
-    lock_file.lock_exclusive().map_err(|source| RunError::RepoExecutionLockFailed {
-        task: task_name.to_string(),
-        action: action.to_string(),
-        path: lock_path.display().to_string(),
-        details: source.to_string(),
-    })?;
+    lock_file
+        .lock_exclusive()
+        .map_err(|source| RunError::RepoExecutionLockFailed {
+            task: task_name.to_string(),
+            action: action.to_string(),
+            path: lock_path.display().to_string(),
+            details: source.to_string(),
+        })?;
     Ok(RepoExecutionLockGuard { lock_file })
 }
 
@@ -24104,11 +24123,72 @@ fn active_repo_execution_record_alive(record: &ActiveRepoExecutionRecord) -> boo
     owner_pid_running(record.owner.pid).unwrap_or(true)
 }
 
+fn execution_conflict_reasons_with_active_owner(
+    candidate: &RepoExecutionLockOwner,
+    active: &RepoExecutionLockOwner,
+) -> Vec<RepoExecutionConflictReason> {
+    let mut reasons = Vec::new();
+    if candidate
+        .host_services
+        .iter()
+        .any(|service| active.host_services.contains(service))
+    {
+        reasons.push(RepoExecutionConflictReason::HostService);
+    }
+    if candidate
+        .compose_projects
+        .iter()
+        .any(|project| active.compose_projects.contains(project))
+    {
+        reasons.push(RepoExecutionConflictReason::ComposeProject);
+    }
+    if candidate
+        .persistent_backend_families
+        .iter()
+        .any(|family| active.persistent_backend_families.contains(family))
+    {
+        reasons.push(RepoExecutionConflictReason::PersistentBackendFamily);
+    }
+    if candidate
+        .env_materialization_paths
+        .iter()
+        .any(|path| active.env_materialization_paths.contains(path))
+    {
+        reasons.push(RepoExecutionConflictReason::EnvMaterializationPath);
+    }
+    if candidate.service_task && active.service_task && candidate.task == active.task {
+        reasons.push(RepoExecutionConflictReason::ServiceTask);
+    }
+    reasons
+}
+
 fn execution_conflicts_with_active_owner(
     candidate: &RepoExecutionLockOwner,
     active: &RepoExecutionLockOwner,
 ) -> bool {
-    candidate.service_task && active.service_task && candidate.task == active.task
+    !execution_conflict_reasons_with_active_owner(candidate, active).is_empty()
+}
+
+fn merge_execution_conflict_reason(
+    reasons: &mut Vec<RepoExecutionConflictReason>,
+    reason: RepoExecutionConflictReason,
+) {
+    if !reasons.contains(&reason) {
+        reasons.push(reason);
+    }
+}
+
+fn active_execution_conflict_reasons(
+    candidate: &RepoExecutionLockOwner,
+    owners: &[RepoExecutionLockOwner],
+) -> Vec<RepoExecutionConflictReason> {
+    let mut reasons = Vec::new();
+    for owner in owners {
+        for reason in execution_conflict_reasons_with_active_owner(candidate, owner) {
+            merge_execution_conflict_reason(&mut reasons, reason);
+        }
+    }
+    reasons
 }
 
 fn active_repo_execution_id(owner: &RepoExecutionLockOwner) -> String {
@@ -24130,7 +24210,9 @@ fn register_active_repo_execution(
         RunError::RepoExecutionLockFailed {
             task: task_name.to_string(),
             action: String::from("read"),
-            path: repo_active_executions_path(working_dir).display().to_string(),
+            path: repo_active_executions_path(working_dir)
+                .display()
+                .to_string(),
             details: source.to_string(),
         }
     })?;
@@ -24143,7 +24225,10 @@ fn register_active_repo_execution(
     if !owners.is_empty() {
         return Err(RunError::RepoExecutionConflict {
             task: task_name.to_string(),
-            path: repo_active_executions_path(working_dir).display().to_string(),
+            path: repo_active_executions_path(working_dir)
+                .display()
+                .to_string(),
+            reasons: active_execution_conflict_reasons(owner, &owners),
             owners,
         });
     }
@@ -24156,7 +24241,9 @@ fn register_active_repo_execution(
         RunError::RepoExecutionLockFailed {
             task: task_name.to_string(),
             action: String::from("write"),
-            path: repo_active_executions_path(working_dir).display().to_string(),
+            path: repo_active_executions_path(working_dir)
+                .display()
+                .to_string(),
             details: source.to_string(),
         }
     })?;
@@ -24167,24 +24254,27 @@ fn register_active_repo_execution(
 }
 
 fn unregister_active_repo_execution(working_dir: &Path, execution_id: &str) -> io::Result<()> {
-    let _registry_lock = acquire_repo_execution_lock(
-        "__ota_unregister_execution__",
-        working_dir,
-        "lock",
-    )
-    .map_err(|error| io::Error::other(error.to_string()))?;
+    let _registry_lock =
+        acquire_repo_execution_lock("__ota_unregister_execution__", working_dir, "lock")
+            .map_err(|error| io::Error::other(error.to_string()))?;
     let mut records = read_active_repo_execution_records(working_dir)?;
-    records.retain(|record| record.id != execution_id && active_repo_execution_record_alive(record));
+    records
+        .retain(|record| record.id != execution_id && active_repo_execution_record_alive(record));
     write_active_repo_execution_records(working_dir, &records)
 }
 
-fn ensure_no_active_repo_execution_conflicts(task_name: &str, working_dir: &Path) -> Result<(), RunError> {
+fn ensure_no_active_repo_execution_conflicts(
+    task_name: &str,
+    working_dir: &Path,
+) -> Result<(), RunError> {
     let _registry_lock = acquire_repo_execution_lock(task_name, working_dir, "lock")?;
     let mut records = read_active_repo_execution_records(working_dir).map_err(|source| {
         RunError::RepoExecutionLockFailed {
             task: task_name.to_string(),
             action: String::from("read"),
-            path: repo_active_executions_path(working_dir).display().to_string(),
+            path: repo_active_executions_path(working_dir)
+                .display()
+                .to_string(),
             details: source.to_string(),
         }
     })?;
@@ -24193,7 +24283,9 @@ fn ensure_no_active_repo_execution_conflicts(task_name: &str, working_dir: &Path
         RunError::RepoExecutionLockFailed {
             task: task_name.to_string(),
             action: String::from("write"),
-            path: repo_active_executions_path(working_dir).display().to_string(),
+            path: repo_active_executions_path(working_dir)
+                .display()
+                .to_string(),
             details: source.to_string(),
         }
     })?;
@@ -24206,7 +24298,10 @@ fn ensure_no_active_repo_execution_conflicts(task_name: &str, working_dir: &Path
     } else {
         Err(RunError::RepoExecutionConflict {
             task: task_name.to_string(),
-            path: repo_active_executions_path(working_dir).display().to_string(),
+            path: repo_active_executions_path(working_dir)
+                .display()
+                .to_string(),
+            reasons: vec![RepoExecutionConflictReason::ActiveExecutionPresent],
             owners,
         })
     }
@@ -25147,7 +25242,6 @@ mod tests {
         RuntimeReadinessTarget, StreamLogFile, StreamLogTee, TaskExecutionMode,
         TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
         TaskTargetActivationStatus, TaskTargetResolutionSource, acquire_repo_execution_lock,
-        register_active_repo_execution,
         activation_loader_label, backend_fulfillment_plan, clean_execution, clean_execution_report,
         container_identity_seed, contract_working_dir, current_os, effective_task_env_for_backend,
         effective_task_env_for_selection, effective_task_execution,
@@ -25157,15 +25251,15 @@ mod tests {
         persistent_container_name_for_seed, plan_task_execution,
         preflight_container_host_publications, prepare_container_runtime_projection,
         preparing_loader_label, producer_owned_service_next, ready_runtime_public_endpoint_line,
+        register_active_repo_execution, repo_execution_lock_owner_for_backend,
         repo_execution_lock_path, repo_ota_state_dir, resolve_execution_backend,
-        write_active_repo_execution_records,
         resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
         resolve_task_env_details_for_task, resolve_task_target_binding_url,
         resolve_task_target_binding_url_with_contract_path, run_task, run_task_captured,
         run_task_captured_with_args_with_overrides, run_task_with_args,
         run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
         run_task_with_progress, running_loader_label, running_loader_label_for_backend,
-        shell_quote, version_matches_requirement,
+        shell_quote, version_matches_requirement, write_active_repo_execution_records,
     };
     use crate::schema::{
         Backend, Lifecycle, TaskRuntimeBindSpec, TaskRuntimeHostPortMode, TaskRuntimeHostPortSpec,
@@ -25222,6 +25316,9 @@ mod tests {
             execution_mode: String::from("native"),
             lifecycle: None,
             host_services: vec![String::from("redis")],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
             service_task: true,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
@@ -25233,12 +25330,20 @@ mod tests {
             Err(RunError::RepoExecutionConflict {
                 task,
                 path,
+                reasons,
                 owners,
             }) => {
                 assert_eq!(task, "dev");
                 assert!(
                     path.ends_with(".ota/state/active-executions.json"),
                     "unexpected lock path: {path}"
+                );
+                assert_eq!(
+                    reasons,
+                    vec![
+                        super::RepoExecutionConflictReason::HostService,
+                        super::RepoExecutionConflictReason::ServiceTask
+                    ]
                 );
                 assert_eq!(owners, vec![owner]);
             }
@@ -25256,6 +25361,9 @@ mod tests {
             execution_mode: String::from("native"),
             lifecycle: None,
             host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
             service_task: true,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
@@ -25266,6 +25374,9 @@ mod tests {
             execution_mode: String::from("native"),
             lifecycle: None,
             host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
             service_task: false,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:04Z"),
@@ -25275,6 +25386,211 @@ mod tests {
             .expect("service registration should succeed");
         let _finite_guard = register_active_repo_execution("test", fixture.path(), &finite_owner)
             .expect("finite execution should coexist with active service");
+    }
+
+    #[test]
+    fn shared_host_service_ownership_conflicts_across_tasks() {
+        let fixture = tempdir().expect("tempdir");
+        let first_owner = super::RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![String::from("redis")],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            service_task: false,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:03Z"),
+        };
+        let second_owner = super::RepoExecutionLockOwner {
+            task: String::from("worker"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![String::from("redis")],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            service_task: false,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:04Z"),
+        };
+
+        let _guard = register_active_repo_execution("dev", fixture.path(), &first_owner)
+            .expect("first owner should register");
+        match register_active_repo_execution("worker", fixture.path(), &second_owner) {
+            Err(RunError::RepoExecutionConflict {
+                task,
+                reasons,
+                owners,
+                ..
+            }) => {
+                assert_eq!(task, "worker");
+                assert_eq!(
+                    reasons,
+                    vec![super::RepoExecutionConflictReason::HostService]
+                );
+                assert_eq!(owners, vec![first_owner]);
+            }
+            other => panic!("expected shared host-service ownership conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shared_persistent_backend_family_conflicts_across_tasks() {
+        let fixture = tempdir().expect("tempdir");
+        let family = String::from("family-a");
+        let first_owner = super::RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("container")),
+            execution_mode: String::from("container"),
+            lifecycle: Some(String::from("persistent")),
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![family.clone()],
+            env_materialization_paths: vec![],
+            service_task: false,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:03Z"),
+        };
+        let second_owner = super::RepoExecutionLockOwner {
+            task: String::from("verify"),
+            requested_mode: Some(String::from("container")),
+            execution_mode: String::from("container"),
+            lifecycle: Some(String::from("persistent")),
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![family],
+            env_materialization_paths: vec![],
+            service_task: false,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:04Z"),
+        };
+
+        let _guard = register_active_repo_execution("dev", fixture.path(), &first_owner)
+            .expect("first owner should register");
+        match register_active_repo_execution("verify", fixture.path(), &second_owner) {
+            Err(RunError::RepoExecutionConflict {
+                task,
+                reasons,
+                owners,
+                ..
+            }) => {
+                assert_eq!(task, "verify");
+                assert_eq!(
+                    reasons,
+                    vec![super::RepoExecutionConflictReason::PersistentBackendFamily]
+                );
+                assert_eq!(owners, vec![first_owner]);
+            }
+            other => panic!(
+                "expected shared persistent-backend-family ownership conflict, got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn shared_compose_project_ownership_conflicts_across_tasks() {
+        let fixture = tempdir().expect("tempdir");
+        let first_owner = super::RepoExecutionLockOwner {
+            task: String::from("compose:up"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            compose_projects: vec![String::from("app-local")],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            service_task: false,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:03Z"),
+        };
+        let second_owner = super::RepoExecutionLockOwner {
+            task: String::from("compose:down"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            compose_projects: vec![String::from("app-local")],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            service_task: false,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:04Z"),
+        };
+
+        let _guard = register_active_repo_execution("compose:up", fixture.path(), &first_owner)
+            .expect("first owner should register");
+        match register_active_repo_execution("compose:down", fixture.path(), &second_owner) {
+            Err(RunError::RepoExecutionConflict {
+                task,
+                reasons,
+                owners,
+                ..
+            }) => {
+                assert_eq!(task, "compose:down");
+                assert_eq!(
+                    reasons,
+                    vec![super::RepoExecutionConflictReason::ComposeProject]
+                );
+                assert_eq!(owners, vec![first_owner]);
+            }
+            other => panic!("expected shared compose-project ownership conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shared_env_materialization_path_conflicts_across_tasks() {
+        let fixture = tempdir().expect("tempdir");
+        let first_owner = super::RepoExecutionLockOwner {
+            task: String::from("setup:env"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![String::from(".env.local")],
+            service_task: false,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:03Z"),
+        };
+        let second_owner = super::RepoExecutionLockOwner {
+            task: String::from("setup:env:ci"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![String::from(".env.local")],
+            service_task: false,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:04Z"),
+        };
+
+        let _guard = register_active_repo_execution("setup:env", fixture.path(), &first_owner)
+            .expect("first owner should register");
+        match register_active_repo_execution("setup:env:ci", fixture.path(), &second_owner) {
+            Err(RunError::RepoExecutionConflict {
+                task,
+                reasons,
+                owners,
+                ..
+            }) => {
+                assert_eq!(task, "setup:env:ci");
+                assert_eq!(
+                    reasons,
+                    vec![super::RepoExecutionConflictReason::EnvMaterializationPath]
+                );
+                assert_eq!(owners, vec![first_owner]);
+            }
+            other => {
+                panic!("expected shared env-materialization-path ownership conflict, got {other:?}")
+            }
+        }
     }
 
     #[test]
@@ -25291,6 +25607,9 @@ mod tests {
                     execution_mode: String::from("native"),
                     lifecycle: None,
                     host_services: vec![],
+                    compose_projects: vec![],
+                    persistent_backend_families: vec![],
+                    env_materialization_paths: vec![],
                     service_task: true,
                     pid: u32::MAX,
                     started_at: String::from("2026-06-05T22:14:03Z"),
@@ -25305,6 +25624,9 @@ mod tests {
             execution_mode: String::from("native"),
             lifecycle: None,
             host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
             service_task: true,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:04Z"),
@@ -25323,6 +25645,9 @@ mod tests {
             execution_mode: String::from("native"),
             lifecycle: Some(String::from("persistent")),
             host_services: vec![String::from("redis")],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
             service_task: true,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
@@ -25351,14 +25676,120 @@ services:
         match clean_execution_report(&contract, &fixture.path().join("ota.yaml")) {
             Err(super::CleanExecutionError::Other(RunError::RepoExecutionConflict {
                 task,
+                reasons,
                 owners,
                 ..
             })) => {
                 assert_eq!(task, super::OTA_CLEAN_INTERNAL_TASK_NAME);
+                assert_eq!(
+                    reasons,
+                    vec![super::RepoExecutionConflictReason::ActiveExecutionPresent]
+                );
                 assert_eq!(owners, vec![owner]);
             }
             other => panic!("expected clean to honor active execution registry, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn repo_execution_lock_owner_derives_compose_project_and_env_materialization_ownership() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  compose:up:
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+    adapter_inputs:
+      compose:
+        project_name: app-local
+  setup:env:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_env_file
+          path: .env.local
+          vars:
+            APP_KEY:
+              random:
+                bytes: 16
+"#,
+        )
+        .expect("contract should parse");
+
+        let compose_backend =
+            resolve_execution_backend(&contract, "compose:up", ExecutionOverrides::default())
+                .expect("compose backend");
+        let compose_owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            "compose:up",
+            ExecutionOverrides::default(),
+            &compose_backend,
+        );
+        assert_eq!(
+            compose_owner.compose_projects,
+            vec![String::from("app-local")]
+        );
+
+        let env_backend =
+            resolve_execution_backend(&contract, "setup:env", ExecutionOverrides::default())
+                .expect("env backend");
+        let env_owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            "setup:env",
+            ExecutionOverrides::default(),
+            &env_backend,
+        );
+        assert_eq!(
+            env_owner.env_materialization_paths,
+            vec![String::from(".env.local")]
+        );
+    }
+
+    #[test]
+    fn repo_execution_lock_owner_derives_projected_workflow_env_artifact_ownership() {
+        let mut contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    command:
+      exe: docker
+      args:
+        - compose
+        - build
+"#,
+        )
+        .expect("contract should parse");
+        contract
+            .tasks
+            .get_mut("build")
+            .expect("build task should exist")
+            .projected_env_materialization_paths
+            .push(String::from(".env.docker-build"));
+
+        let backend = resolve_execution_backend(&contract, "build", ExecutionOverrides::default())
+            .expect("build backend");
+        let owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            "build",
+            ExecutionOverrides::default(),
+            &backend,
+        );
+        assert_eq!(
+            owner.env_materialization_paths,
+            vec![String::from(".env.docker-build")]
+        );
     }
 
     #[test]

@@ -131,7 +131,7 @@ human text output:
 - `ota run --json`, `ota up --json`, `ota workspace run --json`, and `ota workspace up --json`:
   inspect `receipt.host_service_cleanup[]` when you need machine-readable evidence that ota
   attempted interrupt-driven host-managed service cleanup and whether each stop succeeded or failed
-- `ota clean --json` and `ota clean --stale --json`: use cleanup counters and `queried_engines` on success; on classified cleanup failures use `summary`, `reason`, `engine`, `resource_kind`, `resource_name`, `details`, and ordered `next` steps, while generic repo-state failures fall back to `summary` plus `error`
+- `ota clean --json` and `ota clean --stale --json`: use cleanup counters and `queried_engines` on success; on classified cleanup failures use `summary`, `reason`, ordered `next` steps, and the matching structured lane: engine/resource failures expose `engine`, `resource_kind`, `resource_name`, and `details`, while active execution cleanup barriers expose `registry_path`, typed `reasons[]`, `active_execution_count`, and `owners[]`; generic repo-state failures still fall back to `summary` plus `error`
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results; workspace repo results may also include additive `next` / `next_steps`
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results; repo results may also include additive `next` / `next_steps`
 - `ota workspace receipt --json`: use the top-level `summary`, `receipt`, and per-repo results
@@ -749,12 +749,22 @@ Notes:
   hint from captured proof logs; treat it as advisory, not a replacement for `doctor.json` or
   `up.log`
 - `likely_cause_evidence` is optional and publishes the machine-readable root-cause signal behind
-  `likely_cause`; current shipped kinds are `loopback_service_drift` and `detached_run_output`
-- cleanup failures are reported through top-level `error` and `next` without duplicating the doctor
-  findings stream
+  `likely_cause`; current shipped kinds are `loopback_service_drift`,
+  `install_or_toolchain_failure`, `bind_conflict`, and `detached_run_output`
+- `cleanup_failure` is optional and appears when ota can classify proof-boundary cleanup failure
+  truth structurally; it keeps cleanup reason, owned resource lane, and next steps machine-readable
+  without forcing automation back onto prose parsing
+- cleanup failures still surface through top-level `error`, `failure_class: cleanup_failure`, and
+  `next` so existing consumers remain compatible while richer cleanup evidence stays additive
 - high-confidence runtime-drift hints upgrade readiness-shaped failures to
   `failure_class: config_drift` so automation can distinguish probable contract/config drift from
   generic slow-start timeouts
+- high-confidence port/listener collisions upgrade readiness-shaped failures to
+  `failure_class: bind_conflict` so automation can distinguish address-in-use failures from
+  generic startup noise
+- high-confidence install/hydration/compiler failures can now surface structured
+  `likely_cause_evidence.kind: install_or_toolchain_failure` from captured `up.log`, so the proof
+  lane does not reduce package-manager/toolchain breaks back to prose-only diagnostics
 - timeout-only failures without a blocking primary doctor finding are normalized to
   `failure_class: readiness_timeout`
 - signal-terminated proof runs are normalized to `failure_class: interrupted`
@@ -832,6 +842,45 @@ Blocked:
     "host": "127.0.0.1",
     "port": 6379
   }
+}
+```
+
+Cleanup-classified failure:
+
+```json
+{
+  "ok": false,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "runtime-proof",
+  "workflow": "app",
+  "phase": "cleanup",
+  "summary": {
+    "verdict": "ready",
+    "agent_verdict": "ready",
+    "error_count": 0,
+    "warn_count": 0,
+    "info_count": 0
+  },
+  "artifacts": {
+    "topology": "./.ota/proof/app/topology.json",
+    "doctor": "./.ota/proof/app/doctor.json",
+    "up_log": "./.ota/proof/app/up.log"
+  },
+  "failure_class": "cleanup_failure",
+  "error": "cleanup failed",
+  "cleanup_failure": {
+    "summary": "Cleanup failed",
+    "error": "cleanup failed",
+    "why": "`ota clean` could not stop host-managed service `redis` before cleaning repo state.",
+    "next": ["inspect the stop command for `redis` and rerun `ota clean`"],
+    "reason": "other",
+    "engine": "host",
+    "action": "stop",
+    "resource_kind": "host_service",
+    "resource_name": "redis",
+    "details": "stop command exited with code 1 (permission denied)"
+  },
+  "next": "run `ota clean /abs/path/to/ota.yaml` to remove the remaining runtime state, then rerun proof"
 }
 ```
 
@@ -3505,6 +3554,9 @@ The nested `receipt` object can also include:
 - `native_prerequisites[*].activation.applied` tells you whether this command actually ran inside
   the declared native activation; preview and read-only receipt paths can still report the
   declared activation with `applied: false`
+- `execution_conflict.reasons[]` when the recorded failure was blocked by active execution
+  ownership; entries use typed identities such as `active_execution_present`, `host_service`,
+  `compose_project`, `persistent_backend_family`, `env_materialization_path`, and `service_task`
 
 `ok` mirrors the current repo receipt readiness result, so blocked repo receipts still return the
 receipt success shape with `ok: false`.

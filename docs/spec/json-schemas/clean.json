@@ -70,7 +70,7 @@
           "items": { "type": "string" }
         },
         "reason": {
-          "enum": ["engine_unavailable", "other"]
+          "enum": ["engine_unavailable", "active_execution_conflict", "other"]
         },
         "engine": { "type": "string" },
         "action": { "type": "string" },
@@ -82,7 +82,52 @@
           ]
         },
         "resource_name": { "type": ["string", "null"] },
-        "details": { "type": "string" }
+        "details": { "type": "string" },
+        "registry_path": { "type": "string" },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "active_execution_count": { "type": "integer", "minimum": 0 },
+        "owners": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "task",
+              "execution_mode",
+              "service_task",
+              "pid",
+              "started_at"
+            ],
+            "properties": {
+              "task": { "type": "string" },
+              "requested_mode": { "type": ["string", "null"] },
+              "execution_mode": { "type": "string" },
+              "lifecycle": { "type": ["string", "null"] },
+              "host_services": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "compose_projects": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "persistent_backend_families": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "env_materialization_paths": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "service_task": { "type": "boolean" },
+              "pid": { "type": "integer", "minimum": 0 },
+              "started_at": { "type": "string" }
+            }
+          }
+        }
       }
     },
     "genericFailure": {

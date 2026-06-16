@@ -3599,6 +3599,8 @@ pub struct TaskSpec {
     pub execution: Option<TaskModeExecutionSpec>,
     #[serde(default)]
     pub when: TaskExecutionWhenSpec,
+    #[serde(skip, default)]
+    pub projected_env_materialization_paths: Vec<String>,
 }
 
 impl TaskSpec {

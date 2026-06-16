@@ -24,6 +24,7 @@ use crate::schema::{
     Backend, TaskAdapterInputsSpec, TaskBakeAdapterInputsSpec, TaskCommandSpec,
     TaskComposeAdapterInputsSpec, TaskLaunchSpec, TaskModeBranchSpec, TaskSpec, WorkflowEnvSpec,
 };
+use std::collections::BTreeMap;
 
 trait WorkflowOverlaySpec: Clone {
     fn workflow_slot(adapter_inputs: &TaskAdapterInputsSpec) -> Option<&Self>;
@@ -443,6 +444,45 @@ impl AdapterInputField {
             }
         }
     }
+
+    fn runtime_env_var(self) -> Option<&'static str> {
+        match self {
+            Self::ComposeEnvFiles => Some("COMPOSE_ENV_FILES"),
+            Self::ComposeFiles => Some("COMPOSE_FILE"),
+            Self::ComposeProfiles => Some("COMPOSE_PROFILES"),
+            Self::ComposeProjectName => Some("COMPOSE_PROJECT_NAME"),
+            Self::BakeFiles => Some("BUILDX_BAKE_FILE"),
+            Self::ComposeCwd | Self::BakeCwd => None,
+        }
+    }
+
+    fn runtime_env_value(self, task: &TaskSpec, backend: Backend) -> Option<String> {
+        let adapter_cwd = task_effective_adapter_cwd(task, backend);
+        match self {
+            Self::ComposeEnvFiles => {
+                let values = rebase_repo_relative_adapter_paths(
+                    &self.backend_paths(task, backend),
+                    adapter_cwd,
+                );
+                (!values.is_empty()).then(|| values.join(","))
+            }
+            Self::ComposeFiles | Self::BakeFiles => {
+                let values = rebase_repo_relative_adapter_paths(
+                    &self.backend_paths(task, backend),
+                    adapter_cwd,
+                );
+                (!values.is_empty()).then(|| render_adapter_file_env_value(&values))
+            }
+            Self::ComposeProfiles => {
+                let values = task.compose_adapter_profiles_for_backend(backend);
+                (!values.is_empty()).then(|| values.join(","))
+            }
+            Self::ComposeProjectName => task
+                .compose_adapter_project_name_for_backend(backend)
+                .map(ToString::to_string),
+            Self::ComposeCwd | Self::BakeCwd => None,
+        }
+    }
 }
 
 pub(crate) fn effective_workflow_adapter_inputs(env: &WorkflowEnvSpec) -> TaskAdapterInputsSpec {
@@ -503,6 +543,13 @@ pub(crate) fn workflow_duplicates_canonical_compose_project_name_alias(
 }
 
 impl AdapterInputFamily {
+    pub(crate) fn effective_cwd(self, task: &TaskSpec, backend: Backend) -> Option<&str> {
+        match self {
+            Self::Compose => task.compose_adapter_cwd_for_backend(backend),
+            Self::Bake => task.bake_adapter_cwd_for_backend(backend),
+        }
+    }
+
     pub(crate) fn task_declares_inputs(self, task: &TaskSpec) -> bool {
         match self {
             Self::Compose => task_declares_family_inputs::<TaskComposeAdapterInputsSpec>(task),
@@ -714,13 +761,10 @@ pub(crate) fn bind_workflow_adapter_overlays(
 }
 
 pub(crate) fn task_effective_adapter_cwd(task: &TaskSpec, backend: Backend) -> Option<&str> {
-    if AdapterInputFamily::Compose.task_supports(task) {
-        if let Some(cwd) = task.compose_adapter_cwd_for_backend(backend) {
-            return Some(cwd);
-        }
-    }
-    if AdapterInputFamily::Bake.task_supports(task) {
-        if let Some(cwd) = task.bake_adapter_cwd_for_backend(backend) {
+    for family in ADAPTER_INPUT_FAMILIES {
+        if family.task_supports(task)
+            && let Some(cwd) = family.effective_cwd(task, backend)
+        {
             return Some(cwd);
         }
     }
@@ -769,6 +813,30 @@ fn rebase_repo_relative_adapter_path(path: &str, adapter_cwd: Option<&str>) -> S
     }
 }
 
+fn render_adapter_file_env_value(paths: &[String]) -> String {
+    if cfg!(windows) {
+        paths.join(";")
+    } else {
+        paths.join(":")
+    }
+}
+
+pub(crate) fn task_adapter_env_bindings(
+    task: &TaskSpec,
+    backend: Backend,
+) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    for field in ADAPTER_INPUT_FIELDS {
+        let Some(name) = field.runtime_env_var() else {
+            continue;
+        };
+        if let Some(value) = field.runtime_env_value(task, backend) {
+            env.insert(name.to_string(), value);
+        }
+    }
+    env
+}
+
 fn prepend_unique_strings(target: &mut Vec<String>, additions: &[String]) {
     if additions.is_empty() {
         return;
@@ -798,7 +866,15 @@ fn render_adapter_input_value_list(values: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{ADAPTER_INPUT_FIELDS, AdapterInputField};
+    use super::{
+        ADAPTER_INPUT_FIELDS, AdapterInputField, task_adapter_env_bindings,
+        task_effective_adapter_cwd,
+    };
+    use crate::schema::{
+        Backend, TaskComposeAdapterInputsSpec, TaskExecutionWhenSpec, TaskRequirementsSpec,
+        TaskSpec,
+    };
+    use std::collections::BTreeMap;
 
     #[test]
     fn adapter_input_field_registry_round_trips_family_and_field_names() {
@@ -838,5 +914,123 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn task_adapter_env_bindings_project_registry_owned_env_vars() {
+        let task = TaskSpec {
+            description: None,
+            notes: None,
+            category: None,
+            context: None,
+            env: BTreeMap::new(),
+            env_files: Vec::new(),
+            env_bindings: BTreeMap::new(),
+            adapter_inputs: crate::schema::TaskAdapterInputsSpec {
+                compose: Some(TaskComposeAdapterInputsSpec {
+                    cwd: Some(String::from("ops/compose")),
+                    env_files: vec![String::from("ops/compose/.env.compose")],
+                    files: vec![String::from("ops/compose/docker-compose.yml")],
+                    profiles: vec![String::from("web")],
+                    project_name: Some(String::from("app")),
+                    workflow_overlay_bound: false,
+                }),
+                bake: None,
+            },
+            inputs: BTreeMap::new(),
+            targets: BTreeMap::new(),
+            run: Some(String::from("docker compose up")),
+            script: None,
+            command: None,
+            prepare: None,
+            launch: None,
+            action: None,
+            aggregate: None,
+            effects: crate::schema::TaskEffectsSpec::default(),
+            requirements: TaskRequirementsSpec::default(),
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            runtime: None,
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            execution: None,
+            when: TaskExecutionWhenSpec::default(),
+            projected_env_materialization_paths: Vec::new(),
+        };
+
+        let env = task_adapter_env_bindings(&task, Backend::Native);
+        assert_eq!(
+            env.get("COMPOSE_ENV_FILES").map(String::as_str),
+            Some(".env.compose")
+        );
+        assert_eq!(
+            env.get("COMPOSE_FILE").map(String::as_str),
+            Some("docker-compose.yml")
+        );
+        assert_eq!(env.get("COMPOSE_PROFILES").map(String::as_str), Some("web"));
+        assert_eq!(
+            env.get("COMPOSE_PROJECT_NAME").map(String::as_str),
+            Some("app")
+        );
+    }
+
+    #[test]
+    fn task_effective_adapter_cwd_uses_family_registry_order() {
+        let task = TaskSpec {
+            description: None,
+            notes: None,
+            category: None,
+            context: None,
+            env: BTreeMap::new(),
+            env_files: Vec::new(),
+            env_bindings: BTreeMap::new(),
+            adapter_inputs: crate::schema::TaskAdapterInputsSpec {
+                compose: Some(TaskComposeAdapterInputsSpec {
+                    cwd: Some(String::from("ops/compose")),
+                    env_files: Vec::new(),
+                    files: Vec::new(),
+                    profiles: Vec::new(),
+                    project_name: None,
+                    workflow_overlay_bound: false,
+                }),
+                bake: Some(crate::schema::TaskBakeAdapterInputsSpec {
+                    cwd: Some(String::from("ops/bake")),
+                    files: Vec::new(),
+                    workflow_overlay_bound: false,
+                }),
+            },
+            inputs: BTreeMap::new(),
+            targets: BTreeMap::new(),
+            run: Some(String::from("docker compose up")),
+            script: None,
+            command: None,
+            prepare: None,
+            launch: None,
+            action: None,
+            aggregate: None,
+            effects: crate::schema::TaskEffectsSpec::default(),
+            requirements: TaskRequirementsSpec::default(),
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            runtime: None,
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            execution: None,
+            when: TaskExecutionWhenSpec::default(),
+            projected_env_materialization_paths: Vec::new(),
+        };
+
+        assert_eq!(
+            task_effective_adapter_cwd(&task, Backend::Native),
+            Some("ops/compose")
+        );
     }
 }

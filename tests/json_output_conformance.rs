@@ -988,6 +988,62 @@ tasks:
 }
 
 #[test]
+fn receipt_json_schema_accepts_execution_conflict_metadata() {
+    let json = serde_json::json!({
+        "ok": false,
+        "path": "/abs/path/to/ota.yaml",
+        "mode": "receipt",
+        "summary": {
+            "error_count": 1,
+            "warn_count": 0,
+            "info_count": 0,
+            "step_count": 0
+        },
+        "receipt": {
+            "ok": false,
+            "path": "/abs/path/to/ota.yaml",
+            "scope": "repo",
+            "contract": "/abs/path/to/ota.yaml",
+            "contract_identity": {
+                "version": 1,
+                "project": {
+                    "name": "receipt-conflict"
+                },
+                "counts": {
+                    "runtimes": 0,
+                    "tools": 0,
+                    "env": 0,
+                    "services": 0,
+                    "checks": 0,
+                    "tasks": 1
+                }
+            },
+            "status": "blocked",
+            "blocked": [
+                "execution_conflict:host_service",
+                "execution_conflict:compose_project"
+            ],
+            "execution_conflict": {
+                "reasons": [
+                    "host_service",
+                    "compose_project"
+                ]
+            },
+            "steps": [],
+            "summary": {
+                "error_count": 1,
+                "warn_count": 0,
+                "info_count": 0,
+                "step_count": 0
+            }
+        },
+        "findings": []
+    });
+
+    assert_matches_schema("receipt.json", &json);
+}
+
+#[test]
 fn up_dry_run_json_output_matches_published_schema() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(

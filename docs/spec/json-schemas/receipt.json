@@ -185,6 +185,17 @@
                 }
               }
             },
+            "execution_conflict": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["reasons"],
+              "properties": {
+                "reasons": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            },
             "toolchains": {
               "type": "array",
               "items": {

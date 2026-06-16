@@ -3644,18 +3644,27 @@ fn validate_bake_adapter_inputs(
     );
 }
 
+fn validate_adapter_inputs(
+    task_name: Option<&str>,
+    scope: &str,
+    adapter_inputs: &crate::schema::TaskAdapterInputsSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if let Some(compose) = adapter_inputs.compose.as_ref() {
+        validate_compose_adapter_inputs(task_name, scope, compose, errors);
+    }
+    if let Some(bake) = adapter_inputs.bake.as_ref() {
+        validate_bake_adapter_inputs(task_name, scope, bake, errors);
+    }
+}
+
 fn validate_task_adapter_inputs(
     task_name: &str,
     scope: &str,
     adapter_inputs: &crate::schema::TaskAdapterInputsSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    if let Some(compose) = adapter_inputs.compose.as_ref() {
-        validate_compose_adapter_inputs(Some(task_name), scope, compose, errors);
-    }
-    if let Some(bake) = adapter_inputs.bake.as_ref() {
-        validate_bake_adapter_inputs(Some(task_name), scope, bake, errors);
-    }
+    validate_adapter_inputs(Some(task_name), scope, adapter_inputs, errors);
 }
 
 fn validate_workflow_adapter_inputs(
@@ -3664,12 +3673,7 @@ fn validate_workflow_adapter_inputs(
     adapter_inputs: &crate::schema::TaskAdapterInputsSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    if let Some(compose) = adapter_inputs.compose.as_ref() {
-        validate_compose_adapter_inputs(None, scope, compose, errors);
-    }
-    if let Some(bake) = adapter_inputs.bake.as_ref() {
-        validate_bake_adapter_inputs(None, scope, bake, errors);
-    }
+    validate_adapter_inputs(None, scope, adapter_inputs, errors);
 }
 
 fn validate_task_prepare(
