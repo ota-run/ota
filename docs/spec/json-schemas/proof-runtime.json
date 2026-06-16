@@ -156,6 +156,7 @@
         "kind": {
           "type": "string",
           "enum": [
+            "auth_credential_failure",
             "dns_service_name_resolution_failure",
             "readiness_target_mismatch",
             "loopback_service_drift",

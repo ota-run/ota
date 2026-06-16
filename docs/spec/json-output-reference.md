@@ -749,7 +749,8 @@ Notes:
   hint from captured proof logs; treat it as advisory, not a replacement for `doctor.json` or
   `up.log`
 - `likely_cause_evidence` is optional and publishes the machine-readable root-cause signal behind
-  `likely_cause`; current shipped kinds are `dns_service_name_resolution_failure`,
+  `likely_cause`; current shipped kinds are `auth_credential_failure`,
+  `dns_service_name_resolution_failure`,
   `readiness_target_mismatch`,
   `loopback_service_drift`, `missing_env`, `install_or_toolchain_failure`, `bind_conflict`, and
   `detached_run_output`
@@ -779,6 +780,9 @@ Notes:
 - high-confidence dns/service-name resolution failures can now surface structured
   `likely_cause_evidence.kind: dns_service_name_resolution_failure`, including the unresolved host
   name when Ota can recover it from proof logs
+- high-confidence auth/credential failures can now surface structured
+  `likely_cause_evidence.kind: auth_credential_failure`, including the named backend service when
+  Ota can recover it from proof logs
 - timeout-only failures without a blocking primary doctor finding are normalized to
   `failure_class: readiness_timeout`
 - signal-terminated proof runs are normalized to `failure_class: interrupted`

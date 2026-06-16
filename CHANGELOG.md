@@ -94,6 +94,8 @@
 - runtime proof can now emit first-class `dns_service_name_resolution_failure` likely-cause
   evidence and failure classification when proof logs show unresolved service-name or host
   resolution failures
+- runtime proof can now emit first-class `auth_credential_failure` likely-cause evidence and
+  failure classification when proof logs show rejected credentials or authorization
 - policy-backed tool governance now resolves common executable aliases across provisioning and
   strict version policy lanes, so canonical tool names like `bundler` and `maven` can govern the
   executable-facing requirements `bundle` and `mvn` without forcing org policy authors onto

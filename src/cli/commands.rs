@@ -44824,6 +44824,40 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_auth_credential_failure_when_likely_cause_is_present() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out"),
+                next: String::from("rerun"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "run",
+            None,
+            Some("timed out while waiting for readiness"),
+            Some(&super::ProofRuntimeLikelyCause::AuthCredentialFailure {
+                artifact: PathBuf::from("./.ota/proof/instant/up-detached-run.log"),
+                service: Some(String::from("Postgres")),
+                host: None,
+                signal: String::from("password authentication failed for user \"postgres\""),
+            }),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("auth_credential_failure"));
+    }
+
+    #[test]
     fn proof_runtime_failure_class_marks_missing_env_when_likely_cause_is_present() {
         let summary = DoctorSummary {
             verdict: DoctorVerdict::NotReady,
@@ -45362,6 +45396,147 @@ workflows:
         assert!(
             likely_message.contains("service naming"),
             "{likely_message}"
+        );
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_surfaces_auth_credential_failure() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "FATAL: password authentication failed for user \"postgres\"\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::AuthCredentialFailure {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                service: Some(String::from("Postgres")),
+                host: None,
+                signal: String::from("FATAL: password authentication failed for user \"postgres\""),
+            }
+        );
+        let likely_message = likely.message();
+        assert!(
+            likely_message.contains("auth/credential failure"),
+            "{likely_message}"
+        );
+        assert!(likely_message.contains("Postgres"), "{likely_message}");
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_prefers_missing_env_over_auth_failure() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(
+            &up_log,
+            "Missing environment variable: DATABASE_URL\npassword authentication failed for user \"postgres\"\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(&summary, Some("run failed"), &up_log)
+            .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::MissingEnv {
+                artifact: up_log.clone(),
+                variable: Some(String::from("DATABASE_URL")),
+                signal: String::from("Missing environment variable: DATABASE_URL"),
+            }
+        );
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_recovers_auth_host_from_endpoint_style_logs() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "authentication failed for postgres://db.internal:5432/app\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::AuthCredentialFailure {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                service: Some(String::from("Postgres")),
+                host: Some(String::from("db.internal")),
+                signal: String::from("authentication failed for postgres://db.internal:5432/app"),
+            }
         );
     }
 
@@ -46306,6 +46481,54 @@ workflows:
         assert_eq!(
             body["likely_cause_evidence"]["host"].as_str(),
             Some("postgres")
+        );
+    }
+
+    #[test]
+    fn proof_runtime_status_json_includes_auth_credential_evidence() {
+        let body: serde_json::Value =
+            serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
+                ok: false,
+                path: "./ota.yaml",
+                mode: "runtime-proof",
+                workflow: Some("app"),
+                phase: "run",
+                summary: DoctorSummary::default(),
+                artifacts: Some(crate::output::ProofRuntimeArtifacts {
+                    topology: "topology.json",
+                    doctor: "doctor.json",
+                    up_log: "up.log",
+                }),
+                workflow_env_artifacts: Vec::new(),
+                failure_class: Some(String::from("auth_credential_failure")),
+                error: None,
+                cleanup_failure: None,
+                likely_cause: Some(String::from(
+                    "auth/credential failure: the runtime could not authenticate against Postgres; fix the selected credentials, secrets, or workflow-owned auth inputs before rerunning proof",
+                )),
+                likely_cause_evidence: Some(crate::output::ProofRuntimeLikelyCauseEvidence {
+                    kind: String::from("auth_credential_failure"),
+                    artifact: String::from("./.ota/proof/app/up-detached-run.log"),
+                    signal: Some(String::from("password authentication failed for user \"postgres\"")),
+                    listener: None,
+                    variable: None,
+                    service: Some(String::from("Postgres")),
+                    host: None,
+                    port: None,
+                    declared_target: None,
+                    observed_target: None,
+                }),
+                next: None,
+            }))
+            .unwrap();
+
+        assert_eq!(
+            body["likely_cause_evidence"]["kind"].as_str(),
+            Some("auth_credential_failure")
+        );
+        assert_eq!(
+            body["likely_cause_evidence"]["service"].as_str(),
+            Some("Postgres")
         );
     }
 
@@ -78253,6 +78476,12 @@ enum ProofRuntimeLikelyCause {
         host: Option<String>,
         signal: String,
     },
+    AuthCredentialFailure {
+        artifact: PathBuf,
+        service: Option<String>,
+        host: Option<String>,
+        signal: String,
+    },
     LoopbackServiceDrift {
         artifact: PathBuf,
         service: String,
@@ -78296,6 +78525,22 @@ impl ProofRuntimeLikelyCause {
                     "dns/service-name resolution failure: the runtime could not resolve a required host or service name; align the selected runtime network, service naming, or workflow-owned adapter/env inputs before rerunning proof",
                 ),
             },
+            Self::AuthCredentialFailure { service, host, .. } => {
+                match (service.as_deref(), host.as_deref()) {
+                    (Some(service), Some(host)) => format!(
+                        "auth/credential failure: the runtime could not authenticate against {service} at {host}; fix the selected credentials, secrets, or workflow-owned auth inputs before rerunning proof"
+                    ),
+                    (Some(service), None) => format!(
+                        "auth/credential failure: the runtime could not authenticate against {service}; fix the selected credentials, secrets, or workflow-owned auth inputs before rerunning proof"
+                    ),
+                    (None, Some(host)) => format!(
+                        "auth/credential failure: the runtime could not authenticate against {host}; fix the selected credentials, secrets, or workflow-owned auth inputs before rerunning proof"
+                    ),
+                    (None, None) => String::from(
+                        "auth/credential failure: the runtime rejected required credentials or authorization; fix the selected credentials, secrets, or workflow-owned auth inputs before rerunning proof",
+                    ),
+                }
+            }
             Self::LoopbackServiceDrift {
                 service,
                 host,
@@ -78365,6 +78610,23 @@ impl ProofRuntimeLikelyCause {
                 listener: None,
                 variable: None,
                 service: None,
+                host: host.clone(),
+                port: None,
+                declared_target: None,
+                observed_target: None,
+            },
+            Self::AuthCredentialFailure {
+                artifact,
+                service,
+                host,
+                signal,
+            } => ProofRuntimeLikelyCauseEvidence {
+                kind: String::from("auth_credential_failure"),
+                artifact: compact_repo_path(artifact),
+                signal: Some(signal.clone()),
+                listener: None,
+                variable: None,
+                service: service.clone(),
                 host: host.clone(),
                 port: None,
                 declared_target: None,
@@ -78452,6 +78714,10 @@ impl ProofRuntimeLikelyCause {
         matches!(self, Self::DnsServiceNameResolutionFailure { .. })
     }
 
+    fn is_auth_credential_failure(&self) -> bool {
+        matches!(self, Self::AuthCredentialFailure { .. })
+    }
+
     fn implies_config_drift(&self) -> bool {
         matches!(self, Self::LoopbackServiceDrift { .. })
     }
@@ -78497,6 +78763,8 @@ fn proof_runtime_failure_class(
         likely_cause.is_some_and(ProofRuntimeLikelyCause::is_readiness_target_mismatch);
     let likely_dns_service_name_resolution_failure =
         likely_cause.is_some_and(ProofRuntimeLikelyCause::is_dns_service_name_resolution_failure);
+    let likely_auth_credential_failure =
+        likely_cause.is_some_and(ProofRuntimeLikelyCause::is_auth_credential_failure);
     let likely_config_drift =
         likely_cause.is_some_and(ProofRuntimeLikelyCause::implies_config_drift);
     let likely_missing_env = likely_cause.is_some_and(ProofRuntimeLikelyCause::is_missing_env);
@@ -78524,6 +78792,9 @@ fn proof_runtime_failure_class(
             }
             if likely_dns_service_name_resolution_failure {
                 return Some(String::from("dns_service_name_resolution_failure"));
+            }
+            if likely_auth_credential_failure {
+                return Some(String::from("auth_credential_failure"));
             }
             if likely_missing_env {
                 return Some(String::from("missing_env"));
@@ -78555,6 +78826,9 @@ fn proof_runtime_failure_class(
         if likely_dns_service_name_resolution_failure {
             return Some(String::from("dns_service_name_resolution_failure"));
         }
+        if likely_auth_credential_failure {
+            return Some(String::from("auth_credential_failure"));
+        }
         if likely_missing_env {
             return Some(String::from("missing_env"));
         }
@@ -78583,6 +78857,9 @@ fn proof_runtime_failure_class(
         if likely_dns_service_name_resolution_failure {
             return Some(String::from("dns_service_name_resolution_failure"));
         }
+        if likely_auth_credential_failure {
+            return Some(String::from("auth_credential_failure"));
+        }
         if likely_missing_env {
             return Some(String::from("missing_env"));
         }
@@ -78604,6 +78881,9 @@ fn proof_runtime_failure_class(
         }
         if likely_dns_service_name_resolution_failure {
             return Some(String::from("dns_service_name_resolution_failure"));
+        }
+        if likely_auth_credential_failure {
+            return Some(String::from("auth_credential_failure"));
         }
         if likely_missing_env {
             return Some(String::from("missing_env"));
@@ -78730,11 +79010,15 @@ fn proof_runtime_likely_cause(
         return Some(cause);
     }
 
+    if let Some(cause) = proof_runtime_missing_env_hint_from_log(up_log_artifact_path) {
+        return Some(cause);
+    }
+
     if let Some(cause) = proof_runtime_dns_service_name_resolution_hint(up_log_artifact_path) {
         return Some(cause);
     }
 
-    if let Some(cause) = proof_runtime_missing_env_hint_from_log(up_log_artifact_path) {
+    if let Some(cause) = proof_runtime_auth_credential_failure_hint(up_log_artifact_path) {
         return Some(cause);
     }
 
@@ -78842,6 +79126,132 @@ fn proof_runtime_dns_service_name_resolution_hint(
             continue;
         };
         return Some(cause);
+    }
+    None
+}
+
+fn proof_runtime_auth_credential_failure_hint(
+    up_log_artifact_path: &Path,
+) -> Option<ProofRuntimeLikelyCause> {
+    let artifact_dir = up_log_artifact_path.parent()?;
+    for candidate in [
+        artifact_dir.join("up-detached-run.log"),
+        up_log_artifact_path.to_path_buf(),
+    ] {
+        let Some(cause) = auth_credential_failure_hint_from_log(candidate.as_path()) else {
+            continue;
+        };
+        return Some(cause);
+    }
+    None
+}
+
+fn auth_credential_failure_hint_from_log(path: &Path) -> Option<ProofRuntimeLikelyCause> {
+    let contents = fs::read_to_string(path).ok()?;
+    for raw_line in contents.lines() {
+        let line = strip_ansi_codes(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        let lowered = line.to_ascii_lowercase();
+        let auth_like = lowered.contains("authentication failed")
+            || lowered.contains("invalid credentials")
+            || lowered.contains("access denied")
+            || lowered.contains("password authentication failed")
+            || lowered.contains("login failed")
+            || lowered.contains("invalid token")
+            || lowered.contains("token expired")
+            || lowered.contains("permission denied for user")
+            || lowered.contains("unauthorized")
+            || lowered.contains("forbidden")
+            || lowered.contains("auth failed")
+            || lowered.contains("authentication error");
+        if !auth_like {
+            continue;
+        }
+        if (lowered.contains("unauthorized") || lowered.contains("forbidden"))
+            && !(lowered.contains("token")
+                || lowered.contains("auth")
+                || lowered.contains("credential")
+                || lowered.contains("login")
+                || lowered.contains("password")
+                || lowered.contains("permission denied for user"))
+        {
+            continue;
+        }
+        return Some(ProofRuntimeLikelyCause::AuthCredentialFailure {
+            artifact: path.to_path_buf(),
+            service: infer_auth_failure_service(&lowered),
+            host: extract_auth_failure_host(&line),
+            signal: line,
+        });
+    }
+    None
+}
+
+fn infer_auth_failure_service(lowered_line: &str) -> Option<String> {
+    if lowered_line.contains("password authentication failed")
+        || lowered_line.contains("permission denied for user")
+        || lowered_line.contains("postgres")
+    {
+        return Some(String::from("Postgres"));
+    }
+    if lowered_line.contains("access denied for user") || lowered_line.contains("mysql") {
+        return Some(String::from("MySQL"));
+    }
+    if lowered_line.contains("redis") || lowered_line.contains("invalid password") {
+        return Some(String::from("Redis"));
+    }
+    if lowered_line.contains("mongodb") || lowered_line.contains("mongo") {
+        return Some(String::from("MongoDB"));
+    }
+    if lowered_line.contains("clickhouse") {
+        return Some(String::from("ClickHouse"));
+    }
+    if lowered_line.contains("jwt") || lowered_line.contains("bearer token") {
+        return Some(String::from("HTTP auth"));
+    }
+    None
+}
+
+fn extract_auth_failure_host(line: &str) -> Option<String> {
+    for token in line.split_whitespace() {
+        let candidate = token.trim_matches(|ch: char| {
+            matches!(ch, '"' | '\'' | '`' | ',' | ';' | '(' | ')' | '[' | ']')
+        });
+        if candidate.starts_with("http://")
+            || candidate.starts_with("https://")
+            || candidate.starts_with("tcp://")
+            || candidate.starts_with("postgres://")
+            || candidate.starts_with("mysql://")
+            || candidate.starts_with("redis://")
+            || candidate.starts_with("mongodb://")
+        {
+            let after_scheme = candidate
+                .split_once("://")
+                .map(|(_, rest)| rest)
+                .unwrap_or(candidate);
+            let host = after_scheme
+                .split('/')
+                .next()
+                .unwrap_or(after_scheme)
+                .split(':')
+                .next()
+                .unwrap_or_default()
+                .trim();
+            if !host.is_empty() {
+                return Some(host.to_string());
+            }
+        }
+    }
+    if let Some(host) = extract_host_after_prefix(line, "host=") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_after_prefix(line, "server=") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_after_prefix(line, "on host ") {
+        return Some(host);
     }
     None
 }
