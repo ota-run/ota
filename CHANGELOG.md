@@ -85,6 +85,9 @@
 - `proof-runtime.json` now explicitly publishes `workflow_env_artifacts` in the success schema, so
   the shipped machine contract matches the additive rendered-env evidence already present in proof
   JSON output
+- runtime proof can now emit first-class `missing_env` likely-cause evidence and failure
+  classification from captured `up.log`, including the missing variable name when Ota can recover
+  it
 - policy-backed tool governance now resolves common executable aliases across provisioning and
   strict version policy lanes, so canonical tool names like `bundler` and `maven` can govern the
   executable-facing requirements `bundle` and `mvn` without forcing org policy authors onto

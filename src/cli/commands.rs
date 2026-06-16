@@ -44751,6 +44751,39 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_missing_env_when_likely_cause_is_present() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out"),
+                next: String::from("rerun"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "run",
+            None,
+            Some("timed out while waiting for readiness"),
+            Some(&super::ProofRuntimeLikelyCause::MissingEnv {
+                artifact: PathBuf::from("./.ota/proof/instant/up.log"),
+                variable: Some(String::from("DATABASE_URL")),
+                signal: String::from("Missing environment variable: DATABASE_URL"),
+            }),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("missing_env"));
+    }
+
+    #[test]
     fn proof_runtime_failure_class_marks_interrupted_without_primary_blocker() {
         let summary = DoctorSummary {
             verdict: DoctorVerdict::NotReady,
@@ -45263,6 +45296,45 @@ workflows:
             likely.message(),
             "likely install or toolchain failure: node-gyp rebuild failed"
         );
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_surfaces_missing_env() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "Missing environment variable: DATABASE_URL\n").unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(&summary, Some("run failed"), &up_log)
+            .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::MissingEnv {
+                artifact: up_log.clone(),
+                variable: Some(String::from("DATABASE_URL")),
+                signal: String::from("Missing environment variable: DATABASE_URL"),
+            }
+        );
+        let likely_message = likely.message();
+        assert!(likely_message.contains("DATABASE_URL"), "{likely_message}");
     }
 
     #[test]
@@ -45906,6 +45978,7 @@ workflows:
                     kind: String::from("loopback_service_drift"),
                     artifact: String::from("./.ota/proof/app/up-detached-run.log"),
                     signal: Some(String::from("connection_refused")),
+                    variable: None,
                     service: Some(String::from("Redis")),
                     host: Some(String::from("127.0.0.1")),
                     port: Some(6379),
@@ -45951,6 +46024,7 @@ workflows:
                     kind: String::from("bind_conflict"),
                     artifact: String::from("./.ota/proof/app/up-detached-run.log"),
                     signal: Some(String::from("address_in_use")),
+                    variable: None,
                     service: None,
                     host: None,
                     port: Some(3000),
@@ -45992,6 +46066,7 @@ workflows:
                     kind: String::from("install_or_toolchain_failure"),
                     artifact: String::from("./.ota/proof/app/up.log"),
                     signal: Some(String::from("node-gyp rebuild failed")),
+                    variable: None,
                     service: None,
                     host: None,
                     port: None,
@@ -46007,6 +46082,51 @@ workflows:
         assert_eq!(
             body["likely_cause_evidence"]["signal"].as_str(),
             Some("node-gyp rebuild failed")
+        );
+    }
+
+    #[test]
+    fn proof_runtime_status_json_includes_missing_env_evidence() {
+        let body: serde_json::Value =
+            serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
+                ok: false,
+                path: "./ota.yaml",
+                mode: "runtime-proof",
+                workflow: Some("app"),
+                phase: "run",
+                summary: DoctorSummary::default(),
+                artifacts: Some(crate::output::ProofRuntimeArtifacts {
+                    topology: "topology.json",
+                    doctor: "doctor.json",
+                    up_log: "up.log",
+                }),
+                workflow_env_artifacts: Vec::new(),
+                failure_class: Some(String::from("missing_env")),
+                error: None,
+                cleanup_failure: None,
+                likely_cause: Some(String::from(
+                    "missing environment variable: DATABASE_URL; declare or supply that value on the selected proof path before rerunning proof",
+                )),
+                likely_cause_evidence: Some(crate::output::ProofRuntimeLikelyCauseEvidence {
+                    kind: String::from("missing_env"),
+                    artifact: String::from("./.ota/proof/app/up.log"),
+                    signal: Some(String::from("Missing environment variable: DATABASE_URL")),
+                    variable: Some(String::from("DATABASE_URL")),
+                    service: None,
+                    host: None,
+                    port: None,
+                }),
+                next: None,
+            }))
+            .unwrap();
+
+        assert_eq!(
+            body["likely_cause_evidence"]["kind"].as_str(),
+            Some("missing_env")
+        );
+        assert_eq!(
+            body["likely_cause_evidence"]["variable"].as_str(),
+            Some("DATABASE_URL")
         );
     }
 
@@ -77807,6 +77927,11 @@ enum ProofRuntimeLikelyCause {
         host: String,
         port: Option<u16>,
     },
+    MissingEnv {
+        artifact: PathBuf,
+        variable: Option<String>,
+        signal: String,
+    },
     InstallOrToolchainFailure {
         artifact: PathBuf,
         signal: String,
@@ -77837,6 +77962,14 @@ impl ProofRuntimeLikelyCause {
                     "likely config drift: the runtime is still targeting {service} on loopback ({endpoint}) inside a multi-service startup path; move that host binding into a workflow-scoped env overlay, rendered workflow env artifact, task `env_files`, or compose `manager.env_file` instead of `127.0.0.1` / `localhost`"
                 )
             }
+            Self::MissingEnv { variable, .. } => match variable.as_deref() {
+                Some(variable) => format!(
+                    "missing environment variable: {variable}; declare or supply that value on the selected proof path before rerunning proof"
+                ),
+                None => String::from(
+                    "missing environment value on the selected proof path; declare or supply the missing config before rerunning proof",
+                ),
+            },
             Self::InstallOrToolchainFailure { signal, .. } => {
                 format!("likely install or toolchain failure: {signal}")
             }
@@ -77865,22 +77998,40 @@ impl ProofRuntimeLikelyCause {
                 kind: String::from("loopback_service_drift"),
                 artifact: compact_repo_path(artifact),
                 signal: Some(String::from("connection_refused")),
+                variable: None,
                 service: Some(service.clone()),
                 host: Some(host.clone()),
                 port: *port,
             },
-            Self::InstallOrToolchainFailure { artifact, signal } => ProofRuntimeLikelyCauseEvidence {
-                kind: String::from("install_or_toolchain_failure"),
+            Self::MissingEnv {
+                artifact,
+                variable,
+                signal,
+            } => ProofRuntimeLikelyCauseEvidence {
+                kind: String::from("missing_env"),
                 artifact: compact_repo_path(artifact),
                 signal: Some(signal.clone()),
+                variable: variable.clone(),
                 service: None,
                 host: None,
                 port: None,
             },
+            Self::InstallOrToolchainFailure { artifact, signal } => {
+                ProofRuntimeLikelyCauseEvidence {
+                    kind: String::from("install_or_toolchain_failure"),
+                    artifact: compact_repo_path(artifact),
+                    signal: Some(signal.clone()),
+                    variable: None,
+                    service: None,
+                    host: None,
+                    port: None,
+                }
+            }
             Self::BindConflict { artifact, port } => ProofRuntimeLikelyCauseEvidence {
                 kind: String::from("bind_conflict"),
                 artifact: compact_repo_path(artifact),
                 signal: Some(String::from("address_in_use")),
+                variable: None,
                 service: None,
                 host: None,
                 port: *port,
@@ -77889,6 +78040,7 @@ impl ProofRuntimeLikelyCause {
                 kind: String::from("detached_run_output"),
                 artifact: compact_repo_path(artifact),
                 signal: Some(signal.clone()),
+                variable: None,
                 service: None,
                 host: None,
                 port: None,
@@ -77898,6 +78050,10 @@ impl ProofRuntimeLikelyCause {
 
     fn implies_config_drift(&self) -> bool {
         matches!(self, Self::LoopbackServiceDrift { .. })
+    }
+
+    fn is_missing_env(&self) -> bool {
+        matches!(self, Self::MissingEnv { .. })
     }
 
     fn is_bind_conflict(&self) -> bool {
@@ -77935,9 +78091,10 @@ fn proof_runtime_failure_class(
 ) -> Option<String> {
     let likely_config_drift =
         likely_cause.is_some_and(ProofRuntimeLikelyCause::implies_config_drift);
+    let likely_missing_env = likely_cause.is_some_and(ProofRuntimeLikelyCause::is_missing_env);
     let likely_bind_conflict = likely_cause.is_some_and(ProofRuntimeLikelyCause::is_bind_conflict);
-    let likely_install_or_toolchain_failure = likely_cause
-        .is_some_and(ProofRuntimeLikelyCause::is_install_or_toolchain_failure);
+    let likely_install_or_toolchain_failure =
+        likely_cause.is_some_and(ProofRuntimeLikelyCause::is_install_or_toolchain_failure);
     if cleanup_error.is_some() {
         return Some(String::from("cleanup_failure"));
     }
@@ -77954,6 +78111,9 @@ fn proof_runtime_failure_class(
         if up_process_failure
             .is_some_and(|failure| failure.contains("timed out while waiting for readiness"))
         {
+            if likely_missing_env {
+                return Some(String::from("missing_env"));
+            }
             if likely_bind_conflict {
                 return Some(String::from("bind_conflict"));
             }
@@ -77975,6 +78135,9 @@ fn proof_runtime_failure_class(
         return None;
     };
     if primary.summary == "Run task exited before readiness" {
+        if likely_missing_env {
+            return Some(String::from("missing_env"));
+        }
         if likely_install_or_toolchain_failure
             || proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path)
         {
@@ -77994,6 +78157,9 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness timed out:")
     {
+        if likely_missing_env {
+            return Some(String::from("missing_env"));
+        }
         if likely_bind_conflict {
             return Some(String::from("bind_conflict"));
         }
@@ -78007,6 +78173,9 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness failed:")
     {
+        if likely_missing_env {
+            return Some(String::from("missing_env"));
+        }
         if likely_bind_conflict {
             return Some(String::from("bind_conflict"));
         }
@@ -78125,9 +78294,13 @@ fn proof_runtime_likely_cause(
         return None;
     }
 
-    if let Some(cause) = proof_runtime_install_or_toolchain_failure_hint_from_log(
-        up_log_artifact_path,
-    ) {
+    if let Some(cause) = proof_runtime_missing_env_hint_from_log(up_log_artifact_path) {
+        return Some(cause);
+    }
+
+    if let Some(cause) =
+        proof_runtime_install_or_toolchain_failure_hint_from_log(up_log_artifact_path)
+    {
         return Some(cause);
     }
 
@@ -78174,6 +78347,76 @@ fn proof_runtime_install_or_toolchain_failure_hint_from_log(
                 artifact: up_log_artifact_path.to_path_buf(),
                 signal: line,
             });
+        }
+    }
+    None
+}
+
+fn proof_runtime_missing_env_hint_from_log(
+    up_log_artifact_path: &Path,
+) -> Option<ProofRuntimeLikelyCause> {
+    let Ok(log) = fs::read_to_string(up_log_artifact_path) else {
+        return None;
+    };
+    for raw_line in log.lines() {
+        let line = strip_ansi_codes(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        let lowered = line.to_ascii_lowercase();
+        if !(lowered.contains("missing environment variable")
+            || lowered.contains("environment variable")
+            || lowered.contains("required but not set"))
+        {
+            continue;
+        }
+        if let Some(variable) = extract_missing_env_variable_from_line(&line) {
+            return Some(ProofRuntimeLikelyCause::MissingEnv {
+                artifact: up_log_artifact_path.to_path_buf(),
+                variable: Some(variable),
+                signal: line,
+            });
+        }
+        if lowered.contains("missing environment variable")
+            || lowered.contains("required but not set")
+        {
+            return Some(ProofRuntimeLikelyCause::MissingEnv {
+                artifact: up_log_artifact_path.to_path_buf(),
+                variable: None,
+                signal: line,
+            });
+        }
+    }
+    None
+}
+
+fn extract_missing_env_variable_from_line(line: &str) -> Option<String> {
+    if let Some(value) = line.strip_prefix("Missing environment variable:") {
+        return Some(value.trim().trim_matches('`').to_string());
+    }
+    if let Some(start) = line.find('`')
+        && let Some(end) = line[start + 1..].find('`')
+    {
+        let candidate = line[start + 1..start + 1 + end].trim();
+        if !candidate.is_empty()
+            && candidate
+                .chars()
+                .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+        {
+            return Some(candidate.to_string());
+        }
+    }
+    for token in line
+        .split(|ch: char| ch.is_whitespace() || ch == ':' || ch == ',' || ch == '(' || ch == ')')
+    {
+        let candidate = token.trim_matches('`').trim();
+        if candidate.len() >= 2
+            && candidate
+                .chars()
+                .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+            && candidate.chars().any(|ch| ch.is_ascii_alphabetic())
+        {
+            return Some(candidate.to_string());
         }
     }
     None

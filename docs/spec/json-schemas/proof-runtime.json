@@ -157,6 +157,7 @@
           "type": "string",
           "enum": [
             "loopback_service_drift",
+            "missing_env",
             "install_or_toolchain_failure",
             "detached_run_output",
             "bind_conflict"
@@ -164,6 +165,7 @@
         },
         "artifact": { "type": "string" },
         "signal": { "type": ["string", "null"] },
+        "variable": { "type": ["string", "null"] },
         "service": { "type": ["string", "null"] },
         "host": { "type": ["string", "null"] },
         "port": { "type": ["integer", "null"], "minimum": 0 }

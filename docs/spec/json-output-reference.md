@@ -749,7 +749,7 @@ Notes:
   hint from captured proof logs; treat it as advisory, not a replacement for `doctor.json` or
   `up.log`
 - `likely_cause_evidence` is optional and publishes the machine-readable root-cause signal behind
-  `likely_cause`; current shipped kinds are `loopback_service_drift`,
+  `likely_cause`; current shipped kinds are `loopback_service_drift`, `missing_env`,
   `install_or_toolchain_failure`, `bind_conflict`, and `detached_run_output`
 - `cleanup_failure` is optional and appears when ota can classify proof-boundary cleanup failure
   truth structurally; it keeps cleanup reason, owned resource lane, and next steps machine-readable
@@ -765,6 +765,9 @@ Notes:
 - high-confidence install/hydration/compiler failures can now surface structured
   `likely_cause_evidence.kind: install_or_toolchain_failure` from captured `up.log`, so the proof
   lane does not reduce package-manager/toolchain breaks back to prose-only diagnostics
+- high-confidence missing-config failures can now surface structured
+  `likely_cause_evidence.kind: missing_env`, including the missing variable name when Ota can
+  recover it from captured `up.log`
 - timeout-only failures without a blocking primary doctor finding are normalized to
   `failure_class: readiness_timeout`
 - signal-terminated proof runs are normalized to `failure_class: interrupted`

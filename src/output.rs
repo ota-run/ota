@@ -2206,6 +2206,8 @@ pub struct ProofRuntimeLikelyCauseEvidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signal: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
