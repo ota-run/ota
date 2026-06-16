@@ -4501,6 +4501,28 @@ fn is_safe_repo_relative_file_path(value: &str) -> bool {
         .any(|part| part == "..")
 }
 
+fn is_safe_workspace_relative_file_path(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.starts_with('/') || trimmed.starts_with('\\') {
+        return false;
+    }
+    let bytes = trimmed.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::RootDir | Component::Prefix(_)))
+    {
+        return false;
+    }
+    !trimmed
+        .chars()
+        .any(|ch| ch == '\0' || ch == '\n' || ch == '\r')
+}
+
 fn task_declares_service_runtime(task: &TaskSpec) -> bool {
     if task
         .runtime
@@ -7495,9 +7517,9 @@ impl ContractAdvisory {
                 advisory.body_location, advisory.launch_location, advisory.runtime_location
             ),
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
-                ReplaceableShellCheckKind::File => format!(
-                    "replace check `{}` with `kind: file` for `{}` instead of shell `run` glue",
-                    advisory.check_name, advisory.subject
+                ReplaceableShellCheckKind::File => file_check_replacement_guidance(
+                    advisory.check_name.as_str(),
+                    advisory.subject.as_str(),
                 ),
                 ReplaceableShellCheckKind::Env => format!(
                     "replace check `{}` with `kind: env` for `{}` instead of shell `run` glue",
@@ -8855,6 +8877,18 @@ fn obvious_env_check_path(command: &str) -> Option<&str> {
 
 fn trim_shell_token(value: &str) -> &str {
     value.trim_matches(|ch| ch == '"' || ch == '\'')
+}
+
+fn file_check_replacement_guidance(check_name: &str, path: &str) -> String {
+    if path.trim().starts_with("../") {
+        format!(
+            "replace check `{check_name}` with `kind: file`, `scope: workspace`, and `path: {path}` instead of shell `run` glue"
+        )
+    } else {
+        format!(
+            "replace check `{check_name}` with `kind: file` for `{path}` instead of shell `run` glue"
+        )
+    }
 }
 
 fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
@@ -11327,6 +11361,12 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 check.name
             )));
         }
+        if check.kind != CheckKind::File && check.scope.is_some() {
+            errors.push(ValidationError::new(format!(
+                "check `{}` must use `kind: file` when declaring `scope`",
+                check.name
+            )));
+        }
         if check.kind == CheckKind::File && check.expect.is_none() {
             errors.push(ValidationError::new(format!(
                 "file check `{}` must declare `expect`",
@@ -11371,7 +11411,12 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     )));
                 }
                 for path in &changed_files.paths {
-                    validate_repo_relative_check_path(check.name.as_str(), path.as_str(), errors);
+                    validate_check_path(
+                        check.name.as_str(),
+                        path.as_str(),
+                        Some(crate::schema::FileCheckScope::Repo),
+                        errors,
+                    );
                 }
                 if changed_files
                     .base_ref
@@ -11516,7 +11561,7 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
             )));
         }
         if let Some(path) = check.path.as_deref() {
-            validate_repo_relative_check_path(check.name.as_str(), path, errors);
+            validate_check_path(check.name.as_str(), path, check.scope, errors);
         }
         if let Some(probe_name) = check.probe.as_deref()
             && !contract.readiness.probes.contains_key(probe_name)
@@ -11536,7 +11581,12 @@ fn validate_checks(contract: &Contract, errors: &mut Vec<ValidationError>) {
     }
 }
 
-fn validate_repo_relative_check_path(name: &str, value: &str, errors: &mut Vec<ValidationError>) {
+fn validate_check_path(
+    name: &str,
+    value: &str,
+    scope: Option<crate::schema::FileCheckScope>,
+    errors: &mut Vec<ValidationError>,
+) {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         errors.push(ValidationError::new(format!(
@@ -11544,10 +11594,21 @@ fn validate_repo_relative_check_path(name: &str, value: &str, errors: &mut Vec<V
         )));
         return;
     }
-    if !is_safe_repo_relative_file_path(trimmed) {
-        errors.push(ValidationError::new(format!(
-            "file check `{name}` path must be repo-relative and must not escape the repo"
-        )));
+    match scope.unwrap_or(crate::schema::FileCheckScope::Repo) {
+        crate::schema::FileCheckScope::Repo => {
+            if !is_safe_repo_relative_file_path(trimmed) {
+                errors.push(ValidationError::new(format!(
+                    "file check `{name}` path must be repo-relative and must not escape the repo"
+                )));
+            }
+        }
+        crate::schema::FileCheckScope::Workspace => {
+            if !is_safe_workspace_relative_file_path(trimmed) {
+                errors.push(ValidationError::new(format!(
+                    "file check `{name}` path must be workspace-relative and must not be absolute"
+                )));
+            }
+        }
     }
 }
 
@@ -14935,6 +14996,28 @@ tasks:
     }
 
     #[test]
+    fn validates_workspace_scoped_file_checks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: shared-schema-present
+    kind: file
+    severity: error
+    scope: workspace
+    path: ../task-sdk/schema.json
+    expect: file
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("workspace-scoped file checks should validate");
+    }
+
+    #[test]
     fn rejects_ensure_env_file_replace_template_mode_without_template() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -15066,6 +15149,65 @@ tasks:
                 "task `setup:env-local` action `ensure_env_file` key `FROM_BAD` has invalid `from_env` source `bad-key`"
             )),
             "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_repo_scoped_file_checks_that_escape_the_repo() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: bad-file-check
+    kind: file
+    severity: error
+    path: ../task-sdk/schema.json
+    expect: file
+"#,
+        )
+        .unwrap();
+
+        let message = validate_contract(&contract)
+            .expect_err("repo-scoped file checks should reject parent paths")
+            .to_string();
+        assert!(
+            message.contains(
+                "file check `bad-file-check` path must be repo-relative and must not escape the repo"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_workspace_scoped_file_checks() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: bad-file-check
+    kind: file
+    severity: error
+    scope: workspace
+    path: /tmp/schema.json
+    expect: file
+"#,
+        )
+        .unwrap();
+
+        let message = validate_contract(&contract)
+            .expect_err("workspace-scoped file checks should still reject absolute paths")
+            .to_string();
+        assert!(
+            message.contains(
+                "file check `bad-file-check` path must be workspace-relative and must not be absolute"
+            ),
+            "{message}"
         );
     }
 

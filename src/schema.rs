@@ -5959,6 +5959,8 @@ pub struct CheckSpec {
     pub probe: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<FileCheckScope>,
     #[serde(default)]
     pub expect: Option<FileCheckExpectation>,
     #[serde(default)]
@@ -6046,6 +6048,13 @@ pub enum FileCheckExpectation {
     File,
     Directory,
     Missing,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FileCheckScope {
+    Repo,
+    Workspace,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]

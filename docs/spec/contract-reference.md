@@ -3172,6 +3172,8 @@ Fields:
 - `run`: optional shell command when the check is command-backed
 - `probe`: optional probe reference when the check is probe-backed
 - `path`: optional repo-relative path when the check is file-backed
+- `scope`: optional for `kind: file`; `repo` (default) keeps the path inside the repo, while
+  `workspace` allows a relative sibling path such as `../task-sdk/schema.json`
 - `expect`: required for `kind: file`; one of `exists`, `file`, `directory`, or `missing`
 - `env`: required for `kind: env`
   - `env.path`: required repo-relative dotenv file path
@@ -3197,8 +3199,9 @@ Choose check kind by intent:
   (runtime/tool presence, host capability checks, policy gates)
 - use `kind: health` with `probe` for readiness/liveness that should reuse one declared
   `readiness.probes.<name>` contract
-- use `kind: file` for deterministic repo filesystem expectations without shell drift
-  (`node_modules` exists, lockfile is present, bootstrap file is intentionally missing)
+- use `kind: file` for deterministic filesystem expectations without shell drift
+  (`node_modules` exists, lockfile is present, bootstrap file is intentionally missing, sibling
+  workspace schema input is present)
 - use `kind: env` for deterministic dotenv assertions without shell grep drift
   (compose-compatible host rewrites, non-loopback service hosts, exact required values, key
   presence/absence)
@@ -3211,6 +3214,13 @@ Choose check kind by intent:
 - `expect: file` when only regular file presence should satisfy the check
 - `expect: directory` when only directory presence should satisfy the check
 - `expect: missing` when absence is required (for example enforce no generated artifact in tree)
+
+`kind: file` + `scope` decision:
+
+- omit `scope` or use `scope: repo` when the path must stay inside the repo root
+- use `scope: workspace` when the truthful input is a sibling or parent-relative workspace path
+  such as `../task-sdk/schema.json`
+- `scope: workspace` still requires a relative path and still rejects absolute paths
 
 `kind: env` decision:
 
@@ -3254,8 +3264,10 @@ Current behavior:
 - `doctor` runs configured checks and reports findings by severity
 - checks must declare exactly one of `run`, `probe`, `path`, `env`, or `changed_files`
 - `checks[].probe` must reference a named `readiness.probes.<name>` declaration
-- file checks use the repo filesystem directly and do not invoke a shell; prefer them over
+- file checks use the filesystem directly and do not invoke a shell; prefer them over
   `run: test -d ...` or other OS-specific shell checks for file and directory state
+- repo-scoped file checks stay inside the repo boundary by default; widen to `scope: workspace`
+  only when the contract truth really depends on sibling workspace inputs
 - env checks parse dotenv files directly and should be preferred over shell `grep`, `findstr`, or
   ad hoc scripting when the contract needs deterministic env-file assertions
 - validate/doctor emit governance warnings for obvious shell file-state and env-file checks that

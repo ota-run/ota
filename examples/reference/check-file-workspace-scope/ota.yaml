@@ -1,0 +1,24 @@
+# Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+
+version: 1
+project:
+  name: check-file-workspace-scope
+  description: Reference contract showing first-class file checks for sibling workspace inputs
+  type: application
+
+checks:
+  - name: shared-schema-present
+    kind: file
+    severity: error
+    scope: workspace
+    path: ../task-sdk/schema.json
+    expect: file
+
+tasks:
+  build:
+    description: Build only after the shared schema input is present
+    run: ./gradlew build
+    requirements:
+      checks:
+        - shared-schema-present

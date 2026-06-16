@@ -83,6 +83,10 @@
 - fixed container-mode doctor precondition scoping across mixed container contexts, so runtime,
   tool, and toolchain probes only evaluate the selected workflow/task container images instead of
   leaking failures from unrelated container contexts
+- widened first-class file checks with `checks[].scope: workspace`, so contracts can truthfully
+  own sibling workspace inputs such as `../task-sdk/schema.json` without falling back to shell
+  `test -f ...` glue; validator/doctor/docs/examples now keep repo-bound file checks strict by
+  default and use explicit workspace scope only when that broader ownership is real
 - made stream-phase loader timing explicit in the runner, so noisy task-output paths now use the
   governed delayed loader policy instead of ad hoc immediate spinner behavior that could dirty
   terminal output handoff before real task logs arrive

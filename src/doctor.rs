@@ -10181,7 +10181,10 @@ fn run_file_check(check: &crate::schema::CheckSpec, working_dir: &Path) -> Check
     else {
         return CheckStatus::Failed;
     };
-    let target = working_dir.join(path);
+    let target = match check.scope.unwrap_or(crate::schema::FileCheckScope::Repo) {
+        crate::schema::FileCheckScope::Repo => working_dir.join(path),
+        crate::schema::FileCheckScope::Workspace => working_dir.join(path),
+    };
     match check
         .expect
         .unwrap_or(crate::schema::FileCheckExpectation::Exists)
@@ -16136,6 +16139,37 @@ checks:
     severity: error
     path: node_modules
     expect: directory
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_checks_only(&contract, &contract_path);
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    fn workspace_scoped_file_checks_use_workspace_relative_paths_without_shelling_out() {
+        let root = TempDir::new().unwrap();
+        let repo_dir = root.path().join("java-sdk");
+        let sibling_dir = root.path().join("task-sdk");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::create_dir_all(&sibling_dir).unwrap();
+        fs::write(sibling_dir.join("schema.json"), "{}\n").unwrap();
+        let contract_path = repo_dir.join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+checks:
+  - name: shared-schema-present
+    kind: file
+    severity: error
+    scope: workspace
+    path: ../task-sdk/schema.json
+    expect: file
 "#,
         )
         .unwrap();
