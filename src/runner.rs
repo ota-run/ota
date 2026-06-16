@@ -8324,6 +8324,27 @@ fn prepare_task_shell_command(
                 "cd {} && go mod download",
                 shell_quote_command_word(source.cwd.trim(), quote_style)
             )),
+            crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => Ok(format!(
+                "cd {} && {} -q dependency:resolve",
+                shell_quote_command_word(source.cwd.trim(), quote_style),
+                shell_quote_command_word(if source.wrapper { "./mvnw" } else { "mvn" }, quote_style)
+            )),
+            crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => Ok(format!(
+                "cd {} && {} dependencies",
+                shell_quote_command_word(source.cwd.trim(), quote_style),
+                shell_quote_command_word(
+                    if source.wrapper { "./gradlew" } else { "gradle" },
+                    quote_style
+                )
+            )),
+            crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => Ok(format!(
+                "cd {} && cargo fetch",
+                shell_quote_command_word(source.cwd.trim(), quote_style)
+            )),
+            crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => Ok(format!(
+                "cd {} && dotnet restore",
+                shell_quote_command_word(source.cwd.trim(), quote_style)
+            )),
         },
     }
 }
@@ -51416,6 +51437,275 @@ tasks:
                     .dir
                     .path()
                     .join("server")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_executes_maven_wrapper_from_declared_cwd() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  java:
+    version: "22"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: maven
+        cwd: app
+        wrapper: true
+    requirements:
+      toolchains:
+        - java
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let java_body = if cfg!(windows) {
+            "@echo off\r\necho openjdk version \"22.0.1\"\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'openjdk version \"22.0.1\"\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "java", java_body);
+        let javac_body = if cfg!(windows) {
+            "@echo off\r\n1>&2 echo javac 22.0.1\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'javac 22.0.1\\n' >&2\n"
+        };
+        write_fake_bin(&bin_dir, "javac", javac_body);
+        let wrapper_body = if cfg!(windows) {
+            "@echo off\r\n>> \"%OTA_MAVEN_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_MAVEN_LOG\"\n"
+        };
+        fixture.write("app/mvnw", wrapper_body);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = fixture.dir.path().join("app").join("mvnw");
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).unwrap();
+        }
+        let log_path = fixture.dir.path().join("maven.log");
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_MAVEN_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_MAVEN_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("prepare task should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_MAVEN_LOG", value) },
+            None => unsafe { env::remove_var("OTA_MAVEN_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(logged.contains("dependency:resolve"), "{logged}");
+        assert!(
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("app")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_executes_cargo_from_declared_cwd() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    version: "1.85"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: cargo
+        cwd: app
+    requirements:
+      toolchains:
+        - rust
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let rustc_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo rustc 1.85.0\r\n  exit /b 0\r\n)\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'rustc 1.85.0\\n'\n  exit 0\nfi\n"
+        };
+        write_fake_bin(&bin_dir, "rustc", rustc_body);
+        let rust_body = if cfg!(windows) {
+            "@echo off\r\necho rust 1.85.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'rust 1.85.0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "rust", rust_body);
+        let cargo_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo cargo 1.85.0\r\n  exit /b 0\r\n)\r\n>> \"%OTA_CARGO_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'cargo 1.85.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_CARGO_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "cargo", cargo_body);
+        let log_path = fixture.dir.path().join("cargo.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_CARGO_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_CARGO_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("prepare task should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_CARGO_LOG", value) },
+            None => unsafe { env::remove_var("OTA_CARGO_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(logged.contains("fetch"), "{logged}");
+        assert!(
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("app")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_executes_dotnet_restore_from_declared_cwd() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  dotnet:
+    version: "9.0"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: dotnet_restore
+        cwd: app
+    requirements:
+      toolchains:
+        - dotnet
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let dotnet_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo 9.0.100\r\n  exit /b 0\r\n)\r\n>> \"%OTA_DOTNET_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '9.0.100\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_DOTNET_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "dotnet", dotnet_body);
+        let log_path = fixture.dir.path().join("dotnet.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_DOTNET_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_DOTNET_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("prepare task should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_DOTNET_LOG", value) },
+            None => unsafe { env::remove_var("OTA_DOTNET_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(logged.contains("restore"), "{logged}");
+        assert!(
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("app")
                     .display()
                     .to_string()
                     .as_str()

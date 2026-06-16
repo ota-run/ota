@@ -26150,6 +26150,9 @@ requires-python = ">=3.12"
         assert!(stdout.contains("version: '22'") || stdout.contains("version: \"22\""));
         assert!(stdout.contains("maven: '3.9'"));
         assert!(stdout.contains("name: maven-installed"));
+        assert!(stdout.contains("prepare:"));
+        assert!(stdout.contains("kind: dependency_hydration"));
+        assert!(stdout.contains("kind: maven"));
         assert!(stdout.contains("run: mvn package"));
     }
 
@@ -26170,9 +26173,14 @@ requires-python = ">=3.12"
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(json["config"]["tasks"]["setup"]["run"].is_null());
         assert_eq!(
-            json["config"]["tasks"]["setup"]["run"],
-            "./mvnw -q dependency:resolve"
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["kind"],
+            "maven"
+        );
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["wrapper"],
+            true
         );
         assert_eq!(json["config"]["tasks"]["build"]["run"], "./mvnw package");
         assert_eq!(json["config"]["tasks"]["test"]["run"], "./mvnw test");
@@ -26248,6 +26256,11 @@ requires-python = ">=3.12"
         assert!(json["config"]["runtimes"].is_null());
         assert!(json["config"]["tools"].is_null());
         assert!(json["config"]["checks"].is_null());
+        assert!(json["config"]["tasks"]["setup"]["run"].is_null());
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["kind"],
+            "cargo"
+        );
         assert_eq!(
             json["config"]["tasks"]["build"]["description"],
             "Build the default Cargo outputs."
@@ -26287,7 +26300,11 @@ requires-python = ">=3.12"
         assert!(json["config"]["runtimes"].is_null());
         assert!(json["config"]["tools"].is_null());
         assert!(json["config"]["checks"].is_null());
-        assert_eq!(json["config"]["tasks"]["setup"]["run"], "dotnet restore");
+        assert!(json["config"]["tasks"]["setup"]["run"].is_null());
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["kind"],
+            "dotnet_restore"
+        );
         assert_eq!(
             json["config"]["tasks"]["build"]["description"],
             "Build the default .NET solution or project."
@@ -26474,6 +26491,11 @@ requires-python = ">=3.12"
         assert_eq!(json["config"]["toolchains"]["java"]["version"], "22");
         assert_eq!(json["config"]["tools"]["gradle"], "8");
         assert_eq!(json["config"]["checks"][0]["name"], "gradle-installed");
+        assert!(json["config"]["tasks"]["setup"]["run"].is_null());
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["kind"],
+            "gradle"
+        );
         assert_eq!(
             json["config"]["tasks"]["build"]["description"],
             "Build the default Gradle outputs."
@@ -26507,9 +26529,14 @@ requires-python = ">=3.12"
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(json["config"]["tasks"]["setup"]["run"].is_null());
         assert_eq!(
-            json["config"]["tasks"]["setup"]["run"],
-            "./gradlew dependencies"
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["kind"],
+            "gradle"
+        );
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["wrapper"],
+            true
         );
         assert_eq!(json["config"]["tasks"]["build"]["run"], "./gradlew build");
         assert_eq!(json["config"]["tasks"]["test"]["run"], "./gradlew test");

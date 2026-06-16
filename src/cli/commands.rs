@@ -34425,6 +34425,24 @@ fn collect_prepare_field_paths(
                 TaskDependencyHydrationSourceSpec::GoModules(_source) => {
                     fields.push(format!("{prefix}.source.cwd"));
                 }
+                TaskDependencyHydrationSourceSpec::Maven(source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                    if source.wrapper {
+                        fields.push(format!("{prefix}.source.wrapper"));
+                    }
+                }
+                TaskDependencyHydrationSourceSpec::Gradle(source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                    if source.wrapper {
+                        fields.push(format!("{prefix}.source.wrapper"));
+                    }
+                }
+                TaskDependencyHydrationSourceSpec::Cargo(_source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                }
+                TaskDependencyHydrationSourceSpec::DotnetRestore(_source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                }
             }
         }
     }
@@ -35788,6 +35806,24 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
         Some("go_modules") => {
             let cwd = cwd.unwrap_or(".");
             format!("hydrate {medium} with `go mod download` in `{cwd}`")
+        }
+        Some("maven") => {
+            let cwd = cwd.unwrap_or(".");
+            let manager = manager.unwrap_or("mvn");
+            format!("hydrate {medium} with `{manager} -q dependency:resolve` in `{cwd}`")
+        }
+        Some("gradle") => {
+            let cwd = cwd.unwrap_or(".");
+            let manager = manager.unwrap_or("gradle");
+            format!("hydrate {medium} with `{manager} dependencies` in `{cwd}`")
+        }
+        Some("cargo") => {
+            let cwd = cwd.unwrap_or(".");
+            format!("hydrate {medium} with `cargo fetch` in `{cwd}`")
+        }
+        Some("dotnet_restore") => {
+            let cwd = cwd.unwrap_or(".");
+            format!("hydrate {medium} with `dotnet restore` in `{cwd}`")
         }
         Some(other) => format!("hydrate {medium} from {}", other.replace('_', " ")),
         None => format!("hydrate {medium} from declared source"),

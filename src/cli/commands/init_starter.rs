@@ -36,9 +36,12 @@ use crate::schema::{
     FileCheckExpectation, TaskActionSpec, TaskBundlerHydrationSourceSpec, TaskCommandSpec,
     TaskCopyIfMissingActionSpec, TaskDependencyHydrationMedium,
     TaskDependencyHydrationPrepareSpec, TaskDependencyHydrationSourceSpec, TaskEffectsSpec,
-    TaskGoModulesHydrationSourceSpec, TaskNetworkEffectKind, TaskNodePackageManagerHydrationMode,
-    TaskNodePackageManagerHydrationSourceSpec, TaskNodePackageManagerKind, TaskPrepareSpec,
-    TaskRequirementsSpec, TaskUvHydrationSourceSpec, ToolRequirement,
+    TaskDotnetRestoreHydrationSourceSpec, TaskCargoHydrationSourceSpec,
+    TaskGoModulesHydrationSourceSpec, TaskGradleHydrationSourceSpec,
+    TaskMavenHydrationSourceSpec, TaskNetworkEffectKind,
+    TaskNodePackageManagerHydrationMode, TaskNodePackageManagerHydrationSourceSpec,
+    TaskNodePackageManagerKind, TaskPrepareSpec, TaskRequirementsSpec,
+    TaskUvHydrationSourceSpec, ToolRequirement,
 };
 
 const INIT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
@@ -2304,10 +2307,15 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             );
             contract.tasks.insert(
                 String::from("setup"),
-                pack_task(
+                pack_dependency_hydration_task(
                     "setup",
-                    "cargo fetch",
-                    Some(String::from("Fetch Cargo dependencies for the repo.")),
+                    "Hydrate Cargo dependencies for the repo.",
+                    TaskDependencyHydrationSourceSpec::Cargo(TaskCargoHydrationSourceSpec {
+                        cwd: String::from("."),
+                    }),
+                    "rust",
+                    Vec::new(),
+                    BTreeMap::new(),
                 ),
             );
             contract.tasks.insert(
@@ -2339,10 +2347,17 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             );
             contract.tasks.insert(
                 String::from("setup"),
-                pack_task(
+                pack_dependency_hydration_task(
                     "setup",
-                    "dotnet restore",
-                    Some(String::from("Restore the default .NET dependencies.")),
+                    "Hydrate the default .NET dependencies through dotnet restore.",
+                    TaskDependencyHydrationSourceSpec::DotnetRestore(
+                        TaskDotnetRestoreHydrationSourceSpec {
+                            cwd: String::from("."),
+                        },
+                    ),
+                    "dotnet",
+                    vec![String::from("obj")],
+                    BTreeMap::new(),
                 ),
             );
             contract.tasks.insert(
@@ -2430,14 +2445,23 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             }
             contract.tasks.insert(
                 String::from("setup"),
-                pack_task(
+                pack_dependency_hydration_task(
                     "setup",
+                    "Hydrate Maven dependencies for the repo.",
+                    TaskDependencyHydrationSourceSpec::Maven(TaskMavenHydrationSourceSpec {
+                        cwd: String::from("."),
+                        wrapper: uses_wrapper,
+                    }),
+                    "java",
+                    Vec::new(),
                     if uses_wrapper {
-                        "./mvnw -q dependency:resolve"
+                        BTreeMap::new()
                     } else {
-                        "mvn -q dependency:resolve"
+                        BTreeMap::from([(
+                            String::from("maven"),
+                            ToolRequirement::Simple(String::from("*")),
+                        )])
                     },
-                    Some(String::from("Resolve Maven dependencies for the repo.")),
                 ),
             );
             contract.tasks.insert(
@@ -2491,14 +2515,23 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             }
             contract.tasks.insert(
                 String::from("setup"),
-                pack_task(
+                pack_dependency_hydration_task(
                     "setup",
+                    "Hydrate Gradle dependencies for the repo.",
+                    TaskDependencyHydrationSourceSpec::Gradle(TaskGradleHydrationSourceSpec {
+                        cwd: String::from("."),
+                        wrapper: uses_wrapper,
+                    }),
+                    "java",
+                    vec![String::from(".gradle")],
                     if uses_wrapper {
-                        "./gradlew dependencies"
+                        BTreeMap::new()
                     } else {
-                        "gradle dependencies"
+                        BTreeMap::from([(
+                            String::from("gradle"),
+                            ToolRequirement::Simple(String::from("*")),
+                        )])
                     },
-                    Some(String::from("Resolve Gradle dependencies for the repo.")),
                 ),
             );
             contract.tasks.insert(

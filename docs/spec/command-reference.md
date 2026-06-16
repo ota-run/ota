@@ -1512,9 +1512,11 @@ Choosing an init path:
 - use `ota init --pack node --package-manager <name> --dry-run` when the repo is intentionally npm-, pnpm-, yarn-, or bun-based and you want the starter to match that package-manager boundary from the first write, including first-class setup hydration for every shipped Node manager lane
 - use `ota init --pack python --test-runner <name> --dry-run` when the repo is intentionally `pytest`- or `unittest`-driven and you want the starter to reflect that test command directly
 - use `ota init --pack ruby --dry-run` when the repo is intentionally Ruby/Bundler-based and you want the starter to seed first-class Bundler dependency hydration plus the default `bundle exec rake test` loop, with Bundler version governance under `toolchains.ruby.package_managers.bundler`
-- use `ota init --pack dotnet --dry-run` when the repo is intentionally .NET-first and you want `toolchains.dotnet` ownership with the standard `dotnet restore` / `dotnet build` / `dotnet test` loop as the honest first draft
+- use `ota init --pack rust --dry-run` when the repo is intentionally Rust-first and you want `toolchains.rust` ownership plus first-class Cargo hydration for `setup`, with `cargo build` / `cargo test` as the honest first draft
+- use `ota init --pack dotnet --dry-run` when the repo is intentionally .NET-first and you want `toolchains.dotnet` ownership plus first-class `dotnet_restore` hydration for `setup`, with the standard `dotnet build` / `dotnet test` loop as the honest first draft
 - use `ota init --pack php-composer --dry-run` when the repo is intentionally Composer-managed PHP and `composer install` plus reuse of an existing `scripts.test` entry is the honest first draft you want to review
-- the Java packs prefer `mvnw` or `gradlew` when those wrappers already exist
+- use `ota init --pack java-maven --dry-run` when the repo is intentionally Maven-based and you want `toolchains.java` ownership plus first-class Maven hydration for `setup`, preferring `mvnw` when the wrapper already exists
+- use `ota init --pack java-gradle --dry-run` when the repo is intentionally Gradle-based and you want `toolchains.java` ownership plus first-class Gradle hydration for `setup`, preferring `gradlew` when the wrapper already exists
 - explicit packs seed short task `description` fields so the authoring pattern is visible immediately
 
 Examples:

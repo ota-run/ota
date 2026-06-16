@@ -4741,8 +4741,33 @@ impl TaskPrepareSpec {
                     source.cwd.trim()
                 ),
                 TaskDependencyHydrationSourceSpec::GoModules(source) => format!(
-                    "hydrate {} with go mod download in `{}`",
+                    "hydrate {} with {} in `{}`",
                     spec.medium.label(),
+                    source.command_preview(),
+                    source.cwd.trim()
+                ),
+                TaskDependencyHydrationSourceSpec::Maven(source) => format!(
+                    "hydrate {} with {} in `{}`",
+                    spec.medium.label(),
+                    source.command_preview(),
+                    source.cwd.trim()
+                ),
+                TaskDependencyHydrationSourceSpec::Gradle(source) => format!(
+                    "hydrate {} with {} in `{}`",
+                    spec.medium.label(),
+                    source.command_preview(),
+                    source.cwd.trim()
+                ),
+                TaskDependencyHydrationSourceSpec::Cargo(source) => format!(
+                    "hydrate {} with {} in `{}`",
+                    spec.medium.label(),
+                    source.command_preview(),
+                    source.cwd.trim()
+                ),
+                TaskDependencyHydrationSourceSpec::DotnetRestore(source) => format!(
+                    "hydrate {} with {} in `{}`",
+                    spec.medium.label(),
+                    source.command_preview(),
                     source.cwd.trim()
                 ),
             },
@@ -4798,6 +4823,10 @@ pub enum TaskDependencyHydrationSourceSpec {
     Uv(TaskUvHydrationSourceSpec),
     Poetry(TaskPoetryHydrationSourceSpec),
     GoModules(TaskGoModulesHydrationSourceSpec),
+    Maven(TaskMavenHydrationSourceSpec),
+    Gradle(TaskGradleHydrationSourceSpec),
+    Cargo(TaskCargoHydrationSourceSpec),
+    DotnetRestore(TaskDotnetRestoreHydrationSourceSpec),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -4903,6 +4932,72 @@ impl TaskPoetryHydrationSourceSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskGoModulesHydrationSourceSpec {
     pub cwd: String,
+}
+
+impl TaskGoModulesHydrationSourceSpec {
+    pub fn command_preview(&self) -> String {
+        String::from("go mod download")
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskMavenHydrationSourceSpec {
+    pub cwd: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub wrapper: bool,
+}
+
+impl TaskMavenHydrationSourceSpec {
+    pub fn command_preview(&self) -> String {
+        if self.wrapper {
+            String::from("./mvnw -q dependency:resolve")
+        } else {
+            String::from("mvn -q dependency:resolve")
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskGradleHydrationSourceSpec {
+    pub cwd: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub wrapper: bool,
+}
+
+impl TaskGradleHydrationSourceSpec {
+    pub fn command_preview(&self) -> String {
+        if self.wrapper {
+            String::from("./gradlew dependencies")
+        } else {
+            String::from("gradle dependencies")
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskCargoHydrationSourceSpec {
+    pub cwd: String,
+}
+
+impl TaskCargoHydrationSourceSpec {
+    pub fn command_preview(&self) -> String {
+        String::from("cargo fetch")
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDotnetRestoreHydrationSourceSpec {
+    pub cwd: String,
+}
+
+impl TaskDotnetRestoreHydrationSourceSpec {
+    pub fn command_preview(&self) -> String {
+        String::from("dotnet restore")
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]

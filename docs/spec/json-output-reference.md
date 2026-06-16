@@ -3095,9 +3095,26 @@ contract. The current catalog includes `node`, `python`, `ruby`, `go`, `rust`, `
       }
     },
     {
+      "name": "rust",
+      "summary": "Conventional Rust starter with toolchain-owned Rust plus first-class Cargo hydration for `setup`, followed by build and test tasks.",
+      "when": "Use this for Rust repos that should start from `toolchains.rust` ownership, first-class setup hydration through `prepare.kind: dependency_hydration`, and the standard `cargo build` / `cargo test` loop without relying on detector-led init.",
+      "command": "ota init --pack rust",
+      "next": "ota init --pack rust --dry-run .",
+      "does_not_infer": [
+        "workspace members, feature flags, or custom cargo aliases beyond the standard fetch/build/test loop"
+      ],
+      "seeds": {
+        "toolchains": ["rust"],
+        "runtimes": [],
+        "tools": [],
+        "checks": [],
+        "tasks": ["setup", "build", "test"]
+      }
+    },
+    {
       "name": "dotnet",
-      "summary": "Conventional .NET starter with toolchain-owned .NET plus restore, build, and test tasks.",
-      "when": "Use this for .NET repos that should start from `toolchains.dotnet` ownership and the standard `dotnet restore`, `dotnet build`, and `dotnet test` loop without relying on detector-led init.",
+      "summary": "Conventional .NET starter with toolchain-owned .NET plus first-class `dotnet_restore` hydration for `setup`, followed by build and test tasks.",
+      "when": "Use this for .NET repos that should start from `toolchains.dotnet` ownership, first-class setup hydration through `prepare.kind: dependency_hydration`, and the standard `dotnet build` / `dotnet test` loop without relying on detector-led init.",
       "command": "ota init --pack dotnet",
       "next": "ota init --pack dotnet --dry-run .",
       "does_not_infer": [
@@ -3130,12 +3147,29 @@ contract. The current catalog includes `node`, `python`, `ruby`, `go`, `rust`, `
     },
     {
       "name": "java-maven",
-      "summary": "Conventional Java starter for Maven-driven repos with build and test lifecycles, preferring `mvnw` when the repo already ships it.",
-      "when": "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection. If `mvnw` already exists, ota uses the wrapper instead of requiring a global Maven install.",
+      "summary": "Conventional Java starter for Maven-driven repos with first-class Maven hydration for `setup`, plus build and test lifecycles, preferring `mvnw` when the repo already ships it.",
+      "when": "Use this when the repo is intentionally Maven-based and you want an explicit Java starter without relying on repo detection. If `mvnw` already exists, ota uses wrapper-owned `prepare.kind: dependency_hydration` instead of requiring a global Maven install.",
       "command": "ota init --pack java-maven",
       "next": "ota init --pack java-maven --dry-run .",
       "does_not_infer": [
         "multi-module reactor details, plugin goals, or org-specific wrapper/bootstrap scripts beyond the standard Maven build/test loop"
+      ],
+      "seeds": {
+        "toolchains": ["java"],
+        "runtimes": [],
+        "tools": [],
+        "checks": [],
+        "tasks": ["setup", "build", "test"]
+      }
+    },
+    {
+      "name": "java-gradle",
+      "summary": "Conventional Java starter for Gradle-driven repos with first-class Gradle hydration for `setup`, plus build and test lifecycles, preferring `gradlew` when the repo already ships it.",
+      "when": "Use this when the repo is intentionally Gradle-based and you want an explicit Java starter without relying on repo detection. If `gradlew` already exists, ota uses wrapper-owned `prepare.kind: dependency_hydration` instead of requiring a global Gradle install.",
+      "command": "ota init --pack java-gradle",
+      "next": "ota init --pack java-gradle --dry-run .",
+      "does_not_infer": [
+        "multi-project build logic, plugin conventions, or org-specific Gradle bootstrap beyond the standard build/test loop"
       ],
       "seeds": {
         "toolchains": ["java"],

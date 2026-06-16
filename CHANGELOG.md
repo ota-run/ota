@@ -218,6 +218,11 @@
   more than one ordered structural prepare step in a single truthful setup lane, which closes the
   remaining mixed-ecosystem fallback to ad hoc shell setup bodies such as Node hydration plus
   Python `uv` hydration in one repo-level `setup` task
+- widened first-class dependency hydration across the remaining starter-owned setup families:
+  contracts can now model Maven, Gradle, Cargo, and `dotnet restore` hydration structurally under
+  `prepare.kind: dependency_hydration`, with Java wrapper awareness for `mvnw` / `gradlew`; `ota
+  init --pack` now seeds those first-class setup bodies for Java, Rust, and .NET instead of
+  falling back to raw shell install commands
 - aligned published task inventory truth with the widened setup surface: `ota tasks` text now
   renders structured prepare lanes truthfully, the published `tasks.json` / `workspace-tasks.json`
   schemas now cover additive `prepare`, additive `aggregate`, additive `effects`, task `env` /
