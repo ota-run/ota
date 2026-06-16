@@ -88,6 +88,9 @@
 - runtime proof can now emit first-class `missing_env` likely-cause evidence and failure
   classification from captured `up.log`, including the missing variable name when Ota can recover
   it
+- runtime proof can now emit first-class `readiness_target_mismatch` likely-cause evidence and
+  failure classification when the declared proof endpoint differs from the runtime endpoint Ota
+  observed in proof artifacts
 - policy-backed tool governance now resolves common executable aliases across provisioning and
   strict version policy lanes, so canonical tool names like `bundler` and `maven` can govern the
   executable-facing requirements `bundle` and `mvn` without forcing org policy authors onto

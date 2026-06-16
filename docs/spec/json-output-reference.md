@@ -749,8 +749,12 @@ Notes:
   hint from captured proof logs; treat it as advisory, not a replacement for `doctor.json` or
   `up.log`
 - `likely_cause_evidence` is optional and publishes the machine-readable root-cause signal behind
-  `likely_cause`; current shipped kinds are `loopback_service_drift`, `missing_env`,
-  `install_or_toolchain_failure`, `bind_conflict`, and `detached_run_output`
+  `likely_cause`; current shipped kinds are `readiness_target_mismatch`,
+  `loopback_service_drift`, `missing_env`, `install_or_toolchain_failure`, `bind_conflict`, and
+  `detached_run_output`
+- `likely_cause_evidence` can now publish additive target fields such as `listener`,
+  `declared_target`, and `observed_target` when ota can compare the declared proof endpoint with
+  the runtime endpoint it observed in proof artifacts
 - `cleanup_failure` is optional and appears when ota can classify proof-boundary cleanup failure
   truth structurally; it keeps cleanup reason, owned resource lane, and next steps machine-readable
   without forcing automation back onto prose parsing
@@ -768,6 +772,9 @@ Notes:
 - high-confidence missing-config failures can now surface structured
   `likely_cause_evidence.kind: missing_env`, including the missing variable name when Ota can
   recover it from captured `up.log`
+- high-confidence runtime endpoint mismatches can now surface structured
+  `likely_cause_evidence.kind: readiness_target_mismatch`, including the declared readiness target
+  and the observed runtime target when Ota can recover both from proof artifacts
 - timeout-only failures without a blocking primary doctor finding are normalized to
   `failure_class: readiness_timeout`
 - signal-terminated proof runs are normalized to `failure_class: interrupted`

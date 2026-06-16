@@ -156,6 +156,7 @@
         "kind": {
           "type": "string",
           "enum": [
+            "readiness_target_mismatch",
             "loopback_service_drift",
             "missing_env",
             "install_or_toolchain_failure",
@@ -165,10 +166,13 @@
         },
         "artifact": { "type": "string" },
         "signal": { "type": ["string", "null"] },
+        "listener": { "type": ["string", "null"] },
         "variable": { "type": ["string", "null"] },
         "service": { "type": ["string", "null"] },
         "host": { "type": ["string", "null"] },
-        "port": { "type": ["integer", "null"], "minimum": 0 }
+        "port": { "type": ["integer", "null"], "minimum": 0 },
+        "declared_target": { "type": ["string", "null"] },
+        "observed_target": { "type": ["string", "null"] }
       }
     },
     "workflowEnvArtifact": {

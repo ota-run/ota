@@ -44751,6 +44751,41 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_readiness_target_mismatch_when_likely_cause_is_present() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out"),
+                next: String::from("rerun"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "run",
+            None,
+            Some("timed out while waiting for readiness"),
+            Some(&super::ProofRuntimeLikelyCause::ReadinessTargetMismatch {
+                artifact: PathBuf::from("./.ota/proof/instant/up-detached-run.log"),
+                listener: Some(String::from("backend")),
+                declared_target: String::from("http://127.0.0.1:3000/health"),
+                observed_target: String::from("http://localhost:3001/"),
+                signal: String::from("Local:   http://localhost:3001/"),
+            }),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(class.as_deref(), Some("readiness_target_mismatch"));
+    }
+
+    #[test]
     fn proof_runtime_failure_class_marks_missing_env_when_likely_cause_is_present() {
         let summary = DoctorSummary {
             verdict: DoctorVerdict::NotReady,
@@ -45159,6 +45194,85 @@ workflows:
             likely_message.contains("compose `manager.env_file`"),
             "{likely_message}"
         );
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_surfaces_readiness_target_mismatch() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("topology.json"),
+            r#"{
+  "tasks": [
+    {
+      "runtime": {
+        "readiness": {
+          "kind": "http",
+          "listener": "backend",
+          "path": "/health"
+        },
+        "listeners": {
+          "backend": {
+            "protocol": "http",
+            "bind_address": "0.0.0.0",
+            "bind_port_value": 3000,
+            "host_projection": {
+              "address": "127.0.0.1",
+              "port_value": 3000
+            }
+          }
+        }
+      }
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "Local:   http://localhost:3001/\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::ReadinessTargetMismatch {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                listener: Some(String::from("backend")),
+                declared_target: String::from("http://127.0.0.1:3000/health"),
+                observed_target: String::from("http://localhost:3001"),
+                signal: String::from("Local:   http://localhost:3001/"),
+            }
+        );
+        let likely_message = likely.message();
+        assert!(likely_message.contains("3000"), "{likely_message}");
+        assert!(likely_message.contains("3001"), "{likely_message}");
     }
 
     #[test]
@@ -45978,10 +46092,13 @@ workflows:
                     kind: String::from("loopback_service_drift"),
                     artifact: String::from("./.ota/proof/app/up-detached-run.log"),
                     signal: Some(String::from("connection_refused")),
+                    listener: None,
                     variable: None,
                     service: Some(String::from("Redis")),
                     host: Some(String::from("127.0.0.1")),
                     port: Some(6379),
+                    declared_target: None,
+                    observed_target: None,
                 }),
                 next: None,
             }))
@@ -45996,6 +46113,62 @@ workflows:
             Some("Redis")
         );
         assert_eq!(body["likely_cause_evidence"]["port"].as_u64(), Some(6379));
+    }
+
+    #[test]
+    fn proof_runtime_status_json_includes_readiness_target_mismatch_evidence() {
+        let body: serde_json::Value =
+            serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
+                ok: false,
+                path: "./ota.yaml",
+                mode: "runtime-proof",
+                workflow: Some("app"),
+                phase: "run",
+                summary: DoctorSummary::default(),
+                artifacts: Some(crate::output::ProofRuntimeArtifacts {
+                    topology: "topology.json",
+                    doctor: "doctor.json",
+                    up_log: "up.log",
+                }),
+                workflow_env_artifacts: Vec::new(),
+                failure_class: Some(String::from("readiness_target_mismatch")),
+                error: None,
+                cleanup_failure: None,
+                likely_cause: Some(String::from(
+                    "readiness target mismatch: declared readiness target http://127.0.0.1:3000/health but runtime advertised http://localhost:3001/; align the declared readiness target or the app's published endpoint before rerunning proof",
+                )),
+                likely_cause_evidence: Some(crate::output::ProofRuntimeLikelyCauseEvidence {
+                    kind: String::from("readiness_target_mismatch"),
+                    artifact: String::from("./.ota/proof/app/up-detached-run.log"),
+                    signal: Some(String::from("Local:   http://localhost:3001/")),
+                    listener: Some(String::from("backend")),
+                    variable: None,
+                    service: None,
+                    host: None,
+                    port: None,
+                    declared_target: Some(String::from("http://127.0.0.1:3000/health")),
+                    observed_target: Some(String::from("http://localhost:3001/")),
+                }),
+                next: None,
+            }))
+            .unwrap();
+
+        assert_eq!(
+            body["likely_cause_evidence"]["kind"].as_str(),
+            Some("readiness_target_mismatch")
+        );
+        assert_eq!(
+            body["likely_cause_evidence"]["listener"].as_str(),
+            Some("backend")
+        );
+        assert_eq!(
+            body["likely_cause_evidence"]["declared_target"].as_str(),
+            Some("http://127.0.0.1:3000/health")
+        );
+        assert_eq!(
+            body["likely_cause_evidence"]["observed_target"].as_str(),
+            Some("http://localhost:3001/")
+        );
     }
 
     #[test]
@@ -46024,10 +46197,13 @@ workflows:
                     kind: String::from("bind_conflict"),
                     artifact: String::from("./.ota/proof/app/up-detached-run.log"),
                     signal: Some(String::from("address_in_use")),
+                    listener: None,
                     variable: None,
                     service: None,
                     host: None,
                     port: Some(3000),
+                    declared_target: None,
+                    observed_target: None,
                 }),
                 next: None,
             }))
@@ -46066,10 +46242,13 @@ workflows:
                     kind: String::from("install_or_toolchain_failure"),
                     artifact: String::from("./.ota/proof/app/up.log"),
                     signal: Some(String::from("node-gyp rebuild failed")),
+                    listener: None,
                     variable: None,
                     service: None,
                     host: None,
                     port: None,
+                    declared_target: None,
+                    observed_target: None,
                 }),
                 next: None,
             }))
@@ -46111,10 +46290,13 @@ workflows:
                     kind: String::from("missing_env"),
                     artifact: String::from("./.ota/proof/app/up.log"),
                     signal: Some(String::from("Missing environment variable: DATABASE_URL")),
+                    listener: None,
                     variable: Some(String::from("DATABASE_URL")),
                     service: None,
                     host: None,
                     port: None,
+                    declared_target: None,
+                    observed_target: None,
                 }),
                 next: None,
             }))
@@ -77921,6 +78103,13 @@ fn proof_runtime_ok(summary: &DoctorSummary, proof_error: Option<&str>) -> bool 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProofRuntimeLikelyCause {
+    ReadinessTargetMismatch {
+        artifact: PathBuf,
+        listener: Option<String>,
+        declared_target: String,
+        observed_target: String,
+        signal: String,
+    },
     LoopbackServiceDrift {
         artifact: PathBuf,
         service: String,
@@ -77949,6 +78138,13 @@ enum ProofRuntimeLikelyCause {
 impl ProofRuntimeLikelyCause {
     fn message(&self) -> String {
         match self {
+            Self::ReadinessTargetMismatch {
+                declared_target,
+                observed_target,
+                ..
+            } => format!(
+                "readiness target mismatch: declared readiness target {declared_target} but runtime advertised {observed_target}; align the declared readiness target or the app's published endpoint before rerunning proof"
+            ),
             Self::LoopbackServiceDrift {
                 service,
                 host,
@@ -77989,6 +78185,24 @@ impl ProofRuntimeLikelyCause {
 
     fn json_evidence(&self) -> ProofRuntimeLikelyCauseEvidence {
         match self {
+            Self::ReadinessTargetMismatch {
+                artifact,
+                listener,
+                declared_target,
+                observed_target,
+                signal,
+            } => ProofRuntimeLikelyCauseEvidence {
+                kind: String::from("readiness_target_mismatch"),
+                artifact: compact_repo_path(artifact),
+                signal: Some(signal.clone()),
+                listener: listener.clone(),
+                variable: None,
+                service: None,
+                host: None,
+                port: None,
+                declared_target: Some(declared_target.clone()),
+                observed_target: Some(observed_target.clone()),
+            },
             Self::LoopbackServiceDrift {
                 artifact,
                 service,
@@ -77998,10 +78212,13 @@ impl ProofRuntimeLikelyCause {
                 kind: String::from("loopback_service_drift"),
                 artifact: compact_repo_path(artifact),
                 signal: Some(String::from("connection_refused")),
+                listener: None,
                 variable: None,
                 service: Some(service.clone()),
                 host: Some(host.clone()),
                 port: *port,
+                declared_target: None,
+                observed_target: None,
             },
             Self::MissingEnv {
                 artifact,
@@ -78011,41 +78228,57 @@ impl ProofRuntimeLikelyCause {
                 kind: String::from("missing_env"),
                 artifact: compact_repo_path(artifact),
                 signal: Some(signal.clone()),
+                listener: None,
                 variable: variable.clone(),
                 service: None,
                 host: None,
                 port: None,
+                declared_target: None,
+                observed_target: None,
             },
             Self::InstallOrToolchainFailure { artifact, signal } => {
                 ProofRuntimeLikelyCauseEvidence {
                     kind: String::from("install_or_toolchain_failure"),
                     artifact: compact_repo_path(artifact),
                     signal: Some(signal.clone()),
+                    listener: None,
                     variable: None,
                     service: None,
                     host: None,
                     port: None,
+                    declared_target: None,
+                    observed_target: None,
                 }
             }
             Self::BindConflict { artifact, port } => ProofRuntimeLikelyCauseEvidence {
                 kind: String::from("bind_conflict"),
                 artifact: compact_repo_path(artifact),
                 signal: Some(String::from("address_in_use")),
+                listener: None,
                 variable: None,
                 service: None,
                 host: None,
                 port: *port,
+                declared_target: None,
+                observed_target: None,
             },
             Self::DetachedRunOutput { artifact, signal } => ProofRuntimeLikelyCauseEvidence {
                 kind: String::from("detached_run_output"),
                 artifact: compact_repo_path(artifact),
                 signal: Some(signal.clone()),
+                listener: None,
                 variable: None,
                 service: None,
                 host: None,
                 port: None,
+                declared_target: None,
+                observed_target: None,
             },
         }
+    }
+
+    fn is_readiness_target_mismatch(&self) -> bool {
+        matches!(self, Self::ReadinessTargetMismatch { .. })
     }
 
     fn implies_config_drift(&self) -> bool {
@@ -78089,6 +78322,8 @@ fn proof_runtime_failure_class(
     likely_cause: Option<&ProofRuntimeLikelyCause>,
     up_log_artifact_path: &Path,
 ) -> Option<String> {
+    let likely_readiness_target_mismatch =
+        likely_cause.is_some_and(ProofRuntimeLikelyCause::is_readiness_target_mismatch);
     let likely_config_drift =
         likely_cause.is_some_and(ProofRuntimeLikelyCause::implies_config_drift);
     let likely_missing_env = likely_cause.is_some_and(ProofRuntimeLikelyCause::is_missing_env);
@@ -78111,6 +78346,9 @@ fn proof_runtime_failure_class(
         if up_process_failure
             .is_some_and(|failure| failure.contains("timed out while waiting for readiness"))
         {
+            if likely_readiness_target_mismatch {
+                return Some(String::from("readiness_target_mismatch"));
+            }
             if likely_missing_env {
                 return Some(String::from("missing_env"));
             }
@@ -78135,6 +78373,9 @@ fn proof_runtime_failure_class(
         return None;
     };
     if primary.summary == "Run task exited before readiness" {
+        if likely_readiness_target_mismatch {
+            return Some(String::from("readiness_target_mismatch"));
+        }
         if likely_missing_env {
             return Some(String::from("missing_env"));
         }
@@ -78157,6 +78398,9 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness timed out:")
     {
+        if likely_readiness_target_mismatch {
+            return Some(String::from("readiness_target_mismatch"));
+        }
         if likely_missing_env {
             return Some(String::from("missing_env"));
         }
@@ -78173,6 +78417,9 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness failed:")
     {
+        if likely_readiness_target_mismatch {
+            return Some(String::from("readiness_target_mismatch"));
+        }
         if likely_missing_env {
             return Some(String::from("missing_env"));
         }
@@ -78294,6 +78541,10 @@ fn proof_runtime_likely_cause(
         return None;
     }
 
+    if let Some(cause) = proof_runtime_readiness_target_mismatch_hint(up_log_artifact_path) {
+        return Some(cause);
+    }
+
     if let Some(cause) = proof_runtime_missing_env_hint_from_log(up_log_artifact_path) {
         return Some(cause);
     }
@@ -78388,6 +78639,224 @@ fn proof_runtime_missing_env_hint_from_log(
         }
     }
     None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProofRuntimeDeclaredReadinessTarget {
+    listener: Option<String>,
+    target: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProofRuntimeObservedTarget {
+    target: String,
+    signal: String,
+}
+
+fn proof_runtime_readiness_target_mismatch_hint(
+    up_log_artifact_path: &Path,
+) -> Option<ProofRuntimeLikelyCause> {
+    let artifact_dir = up_log_artifact_path.parent()?;
+    let declared =
+        proof_runtime_declared_readiness_target_from_topology(&artifact_dir.join("topology.json"))?;
+    for candidate in [
+        artifact_dir.join("up-detached-run.log"),
+        up_log_artifact_path.to_path_buf(),
+    ] {
+        let Some(observed) = proof_runtime_observed_runtime_target_from_log(&candidate) else {
+            continue;
+        };
+        if !proof_runtime_targets_materially_differ(
+            declared.target.as_str(),
+            observed.target.as_str(),
+        ) {
+            continue;
+        }
+        return Some(ProofRuntimeLikelyCause::ReadinessTargetMismatch {
+            artifact: candidate,
+            listener: declared.listener.clone(),
+            declared_target: declared.target.clone(),
+            observed_target: observed.target,
+            signal: observed.signal,
+        });
+    }
+    None
+}
+
+fn proof_runtime_declared_readiness_target_from_topology(
+    topology_artifact_path: &Path,
+) -> Option<ProofRuntimeDeclaredReadinessTarget> {
+    let body: JsonValue =
+        serde_json::from_str(&fs::read_to_string(topology_artifact_path).ok()?).ok()?;
+    let tasks = body.get("tasks")?.as_array()?;
+    for task in tasks {
+        let runtime = task.get("runtime")?;
+        let readiness = runtime.get("readiness")?;
+        let listener_name = readiness.get("listener")?.as_str()?.to_string();
+        let listener = runtime.get("listeners")?.get(listener_name.as_str())?;
+        let protocol = listener.get("protocol")?.as_str()?.to_ascii_lowercase();
+        let scheme = match protocol.as_str() {
+            "http" => "http",
+            "https" => "https",
+            "tcp" => "tcp",
+            _ => continue,
+        };
+        let host_projection = listener.get("host_projection");
+        let address = host_projection
+            .and_then(|projection| projection.get("address"))
+            .and_then(JsonValue::as_str)
+            .or_else(|| listener.get("bind_address").and_then(JsonValue::as_str))?;
+        let port = host_projection
+            .and_then(|projection| projection.get("port_value"))
+            .and_then(JsonValue::as_u64)
+            .or_else(|| listener.get("bind_port_value").and_then(JsonValue::as_u64))?;
+        let port = u16::try_from(port).ok()?;
+        let base_path = host_projection
+            .and_then(|projection| projection.get("path"))
+            .and_then(JsonValue::as_str);
+        let readiness_path = readiness.get("path").and_then(JsonValue::as_str);
+        let path = combine_runtime_target_paths(base_path, readiness_path, scheme != "tcp");
+        let target = if scheme == "tcp" {
+            format!("tcp://{address}:{port}")
+        } else {
+            format!("{scheme}://{address}:{port}{path}")
+        };
+        return Some(ProofRuntimeDeclaredReadinessTarget {
+            listener: Some(listener_name),
+            target,
+        });
+    }
+    None
+}
+
+fn combine_runtime_target_paths(
+    base_path: Option<&str>,
+    readiness_path: Option<&str>,
+    include_default_root: bool,
+) -> String {
+    match (base_path, readiness_path) {
+        (_, Some(readiness_path)) if !readiness_path.is_empty() => {
+            if readiness_path.starts_with('/') {
+                readiness_path.to_string()
+            } else {
+                format!("/{readiness_path}")
+            }
+        }
+        (Some(base_path), _) if !base_path.is_empty() => {
+            if base_path.starts_with('/') {
+                base_path.to_string()
+            } else {
+                format!("/{base_path}")
+            }
+        }
+        _ if include_default_root => String::from("/"),
+        _ => String::new(),
+    }
+}
+
+fn proof_runtime_observed_runtime_target_from_log(
+    path: &Path,
+) -> Option<ProofRuntimeObservedTarget> {
+    let contents = fs::read_to_string(path).ok()?;
+    for raw_line in contents.lines() {
+        let line = strip_ansi_codes(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        let lowered = line.to_ascii_lowercase();
+        if !(lowered.contains("local:")
+            || lowered.contains("listening")
+            || lowered.contains("running")
+            || lowered.contains("ready")
+            || lowered.contains("started")
+            || lowered.contains("available at")
+            || lowered.contains("http://")
+            || lowered.contains("https://")
+            || lowered.contains("tcp://"))
+        {
+            continue;
+        }
+        let Some(target) = extract_runtime_target_from_line(&line) else {
+            continue;
+        };
+        return Some(ProofRuntimeObservedTarget {
+            target,
+            signal: line,
+        });
+    }
+    None
+}
+
+fn extract_runtime_target_from_line(line: &str) -> Option<String> {
+    for token in line.split_whitespace() {
+        let candidate = token.trim_matches(|ch: char| {
+            matches!(ch, '"' | '\'' | '`' | ',' | ';' | '(' | ')' | '[' | ']')
+        });
+        if candidate.starts_with("http://")
+            || candidate.starts_with("https://")
+            || candidate.starts_with("tcp://")
+        {
+            return Some(candidate.trim_end_matches('/').to_string());
+        }
+    }
+    None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedRuntimeTarget {
+    scheme: String,
+    host: String,
+    port: Option<u16>,
+    path: String,
+}
+
+fn parse_runtime_target(target: &str) -> Option<ParsedRuntimeTarget> {
+    let (scheme, remainder) = target.split_once("://")?;
+    let (host_port, path) = match remainder.split_once('/') {
+        Some((host_port, path)) => (host_port, format!("/{}", path.trim_start_matches('/'))),
+        None => (remainder, String::from("/")),
+    };
+    let (host, port) = match host_port.rsplit_once(':') {
+        Some((host, port)) => (host, port.parse::<u16>().ok()),
+        None => (host_port, None),
+    };
+    Some(ParsedRuntimeTarget {
+        scheme: scheme.to_string(),
+        host: normalize_runtime_target_host(host),
+        port,
+        path,
+    })
+}
+
+fn normalize_runtime_target_host(host: &str) -> String {
+    match host {
+        "127.0.0.1" | "localhost" | "0.0.0.0" => String::from("local"),
+        other => other.to_string(),
+    }
+}
+
+fn proof_runtime_targets_materially_differ(declared: &str, observed: &str) -> bool {
+    let Some(declared) = parse_runtime_target(declared) else {
+        return false;
+    };
+    let Some(observed) = parse_runtime_target(observed) else {
+        return false;
+    };
+    if declared.scheme != observed.scheme {
+        return true;
+    }
+    if declared.host != observed.host {
+        return true;
+    }
+    if declared.port != observed.port {
+        return true;
+    }
+    let declared_path = declared.path.trim_end_matches('/');
+    let observed_path = observed.path.trim_end_matches('/');
+    !observed_path.is_empty()
+        && !declared_path.is_empty()
+        && declared_path != observed_path
+        && observed_path != "/"
 }
 
 fn extract_missing_env_variable_from_line(line: &str) -> Option<String> {

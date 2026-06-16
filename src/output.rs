@@ -2206,6 +2206,8 @@ pub struct ProofRuntimeLikelyCauseEvidence {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signal: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub listener: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub variable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
@@ -2213,6 +2215,10 @@ pub struct ProofRuntimeLikelyCauseEvidence {
     pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_target: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
