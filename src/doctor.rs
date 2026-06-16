@@ -4088,6 +4088,12 @@ fn diagnose_contract_advisories(
             ContractAdvisory::LegacyStandalonePoetry(advisory) => {
                 ContractAdvisory::LegacyStandalonePoetry(advisory)
             }
+            ContractAdvisory::LegacyToolchainProvider(advisory) => {
+                ContractAdvisory::LegacyToolchainProvider(advisory)
+            }
+            ContractAdvisory::LegacyFlatToolchainFulfillment(advisory) => {
+                ContractAdvisory::LegacyFlatToolchainFulfillment(advisory)
+            }
             ContractAdvisory::LegacyHostServiceLifecycle(advisory) => {
                 ContractAdvisory::LegacyHostServiceLifecycle(advisory)
             }
@@ -4183,6 +4189,14 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::LegacyStandalonePoetry(advisory) => format!(
             "Poetry is modeled as a standalone tool ({})",
             advisory.locations.join(", ")
+        ),
+        ContractAdvisory::LegacyToolchainProvider(advisory) => format!(
+            "Toolchain `{}` keeps legacy provider ownership",
+            advisory.toolchain_name
+        ),
+        ContractAdvisory::LegacyFlatToolchainFulfillment(advisory) => format!(
+            "Toolchain `{}` keeps legacy flat fulfillment ownership",
+            advisory.toolchain_name
         ),
         ContractAdvisory::LegacyHostServiceLifecycle(advisory) => format!(
             "Service `{}` keeps host lifecycle ownership on legacy top-level field(s)",

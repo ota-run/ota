@@ -1825,11 +1825,17 @@ pub struct ToolchainFulfillmentSpec {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<ToolchainFulfillmentSource>,
     pub mode: ToolchainFulfillmentMode,
+    #[serde(skip)]
+    pub legacy_mode: bool,
 }
 
 impl ToolchainFulfillmentSpec {
     pub fn mode(&self) -> ToolchainFulfillmentMode {
         self.mode
+    }
+
+    pub fn uses_legacy_mode_shape(&self) -> bool {
+        self.legacy_mode
     }
 }
 
@@ -1867,10 +1873,15 @@ impl Default for ToolchainFulfillmentSpecWire {
 impl From<ToolchainFulfillmentWire> for ToolchainFulfillmentSpec {
     fn from(value: ToolchainFulfillmentWire) -> Self {
         match value {
-            ToolchainFulfillmentWire::LegacyMode(mode) => Self { source: None, mode },
+            ToolchainFulfillmentWire::LegacyMode(mode) => Self {
+                source: None,
+                mode,
+                legacy_mode: true,
+            },
             ToolchainFulfillmentWire::Structured(spec) => Self {
                 source: spec.source,
                 mode: spec.mode,
+                legacy_mode: false,
             },
         }
     }
@@ -1881,6 +1892,7 @@ impl Default for ToolchainFulfillmentSpec {
         Self {
             source: None,
             mode: ToolchainFulfillmentMode::None,
+            legacy_mode: false,
         }
     }
 }
@@ -4826,6 +4838,7 @@ impl TaskNodePackageManagerHydrationSourceSpec {
             TaskNodePackageManagerKind::Npm => None,
             TaskNodePackageManagerKind::Pnpm => Some("--frozen-lockfile"),
             TaskNodePackageManagerKind::Yarn => Some("--immutable"),
+            TaskNodePackageManagerKind::Bun => Some("--frozen-lockfile"),
         }
     }
 
@@ -4919,6 +4932,7 @@ pub enum TaskNodePackageManagerKind {
     Npm,
     Pnpm,
     Yarn,
+    Bun,
 }
 
 impl TaskNodePackageManagerKind {
@@ -4927,6 +4941,7 @@ impl TaskNodePackageManagerKind {
             Self::Npm => "npm",
             Self::Pnpm => "pnpm",
             Self::Yarn => "yarn",
+            Self::Bun => "bun",
         }
     }
 }
@@ -6320,6 +6335,15 @@ tasks:
         };
         assert_eq!(npm.lockfile_flag(), None);
         assert_eq!(npm.command_preview(), "npm install");
+
+        let bun = super::TaskNodePackageManagerHydrationSourceSpec {
+            cwd: String::from("."),
+            manager: super::TaskNodePackageManagerKind::Bun,
+            mode: super::TaskNodePackageManagerHydrationMode::Install,
+            frozen_lockfile: true,
+        };
+        assert_eq!(bun.lockfile_flag(), Some("--frozen-lockfile"));
+        assert_eq!(bun.command_preview(), "bun install --frozen-lockfile");
     }
 
     #[test]

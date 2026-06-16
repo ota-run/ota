@@ -259,8 +259,11 @@ Rules:
 - `source: mise` is the current non-canonical supported source for repos whose selected path is
   mediated by `mise`
 - legacy flat `fulfillment: run` is still accepted for compatibility, but it is not the canonical
-  public model
+  public model and `ota validate` / `ota doctor` now warn and push authors onto structured
+  `fulfillment`
 - legacy `provider` is still accepted for compatibility, but it is not the canonical public model
+  and `ota validate` / `ota doctor` now warn and push authors onto toolchain-owned structured
+  `fulfillment`
 
 Canonical shipped fulfillment sources today are:
 
@@ -279,6 +282,9 @@ Public docs, examples, and new contracts should use:
 - structured `fulfillment`
 - no legacy toolchain `provider`
 - explicit `orchestrators` when repo-level mediation exists
+
+Compatibility lanes remain parseable, but validate/doctor now treat them as migration-only and
+emit advisories until the contract moves onto the canonical structured shape.
 
 Runtime compatibility still accepts the old provider-based shape temporarily.
 

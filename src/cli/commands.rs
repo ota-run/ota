@@ -1306,6 +1306,28 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::LegacyToolchainProvider(value) => format!(
+            "{} toolchain `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.toolchain_name,
+            paint_key("Legacy:"),
+            render_validate_warning_detail(&format!("`{}`", value.location)),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
+        ContractAdvisory::LegacyFlatToolchainFulfillment(value) => format!(
+            "{} toolchain `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.toolchain_name,
+            paint_key("Legacy:"),
+            render_validate_warning_detail(&format!("`{}`", value.location)),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::IsolatedYarnReleaseShadow(value) => format!(
             "{} context `{}` path `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -35728,7 +35750,11 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
             let mode = mode.unwrap_or("install");
             let mut command = format!("{manager} {mode}");
             if frozen_lockfile {
-                command.push_str(" --frozen-lockfile");
+                command.push(' ');
+                command.push_str(match manager {
+                    "yarn" => "--immutable",
+                    _ => "--frozen-lockfile",
+                });
             }
             format!("hydrate {medium} with `{command}` in `{cwd}`")
         }
@@ -46026,6 +46052,121 @@ tasks:
         assert!(
             rendered.contains(
                 "Prepare: sequence: hydrate package dependencies with `pnpm install --frozen-lockfile` in `.` -> hydrate package dependencies with `uv sync` in `api`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_tasks_text_uses_manager_specific_node_lockfile_flags() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let yarn_task = TaskSummary {
+            name: "setup:yarn",
+            context: Some("host"),
+            default_mode: None,
+            description: Some("Hydrate Yarn dependencies"),
+            notes: None,
+            category: None,
+            env: &env,
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs: &inputs,
+            kind: "prepare",
+            run: None,
+            script: None,
+            command: None,
+            launch: None,
+            action: None,
+            prepare: Some(crate::output::TaskPrepareSummary {
+                kind: "dependency_hydration",
+                steps: Vec::new(),
+                medium: Some("package_dependencies"),
+                source_kind: Some("node_package_manager"),
+                cwd: Some("."),
+                file: None,
+                manager: Some("yarn"),
+                mode: Some("install"),
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: true,
+                no_root: false,
+                targets: Vec::new(),
+            }),
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+        let bun_task = TaskSummary {
+            name: "setup:bun",
+            context: Some("host"),
+            default_mode: None,
+            description: Some("Hydrate Bun dependencies"),
+            notes: None,
+            category: None,
+            env: &env,
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs: &inputs,
+            kind: "prepare",
+            run: None,
+            script: None,
+            command: None,
+            launch: None,
+            action: None,
+            prepare: Some(crate::output::TaskPrepareSummary {
+                kind: "dependency_hydration",
+                steps: Vec::new(),
+                medium: Some("package_dependencies"),
+                source_kind: Some("node_package_manager"),
+                cwd: Some("."),
+                file: None,
+                manager: Some("bun"),
+                mode: Some("install"),
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: true,
+                no_root: false,
+                targets: Vec::new(),
+            }),
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[yarn_task, bun_task]));
+
+        assert!(
+            rendered.contains(
+                "Prepare: hydrate package dependencies with `yarn install --immutable` in `.`"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Prepare: hydrate package dependencies with `bun install --frozen-lockfile` in `.`"
             ),
             "{rendered}"
         );

@@ -47,8 +47,8 @@ use crate::schema::{
     TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
     TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
     TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement,
-    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainSpec, parse_memory_size_bytes,
-    parse_readiness_duration_spec, task_target_env_name,
+    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainProvider, ToolchainSpec,
+    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
     declared_toolchain_contract, fulfillment_source_legacy_provider,
@@ -1635,13 +1635,13 @@ fn validate_tool_acquisition(
             }
             if name.eq_ignore_ascii_case("node") {
                 errors.push(ValidationError::new(
-                    "tool `node` acquisition `corepack` is invalid; declare Node under `toolchains.node` with `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks, and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
+                    "tool `node` acquisition `corepack` is invalid; declare Node under `toolchains.node` with structured `fulfillment` when ota should own selected-path activation, or under `runtimes.node` for simple unmanaged checks, and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
                         .to_string(),
                 ));
             }
             if package.eq_ignore_ascii_case("node") && !name.eq_ignore_ascii_case("node") {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `corepack` must not declare `package: node`; declare Node under `toolchains.node` with `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks, and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
+                    "tool `{name}` acquisition `corepack` must not declare `package: node`; declare Node under `toolchains.node` with structured `fulfillment` when ota should own selected-path activation, or under `runtimes.node` for simple unmanaged checks, and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
                 )));
             }
             if acquisition.shell.is_some() {
@@ -3825,6 +3825,17 @@ fn validate_task_prepare(
                     ) {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `node_package_manager` must not use `manager: yarn` with `mode: ci`; use `mode: install` and `frozen_lockfile: true` for lockfile-strict Yarn hydration"
+                        )));
+                    }
+                    if matches!(
+                        source.manager,
+                        crate::schema::TaskNodePackageManagerKind::Bun
+                    ) && matches!(
+                        source.mode,
+                        crate::schema::TaskNodePackageManagerHydrationMode::Ci
+                    ) {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` must not use `manager: bun` with `mode: ci`; use `mode: install` and `frozen_lockfile: true` for lockfile-strict Bun hydration"
                         )));
                     }
                     if source.frozen_lockfile
@@ -6507,6 +6518,8 @@ pub enum ContractAdvisory {
     MutatesManagedIsolatedPath(ManagedIsolatedPathMutationAdvisory),
     LegacyNodeRuntimeToolSplit(LegacyNodeRuntimeToolSplitAdvisory),
     LegacyStandalonePoetry(LegacyStandalonePoetryAdvisory),
+    LegacyToolchainProvider(LegacyToolchainProviderAdvisory),
+    LegacyFlatToolchainFulfillment(LegacyFlatToolchainFulfillmentAdvisory),
     LegacyHostServiceLifecycle(LegacyHostServiceLifecycleAdvisory),
     LegacyServiceReadinessRun(LegacyServiceReadinessRunAdvisory),
     ServiceUsesOpaqueShellStart(ServiceUsesOpaqueShellStartAdvisory),
@@ -6568,6 +6581,20 @@ pub struct LegacyNodeRuntimeToolSplitAdvisory {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LegacyStandalonePoetryAdvisory {
     pub locations: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyToolchainProviderAdvisory {
+    pub toolchain_name: String,
+    pub provider: ToolchainProvider,
+    pub location: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyFlatToolchainFulfillmentAdvisory {
+    pub toolchain_name: String,
+    pub mode: ToolchainFulfillmentMode,
+    pub location: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6729,6 +6756,12 @@ impl ContractAdvisory {
             ContractAdvisory::LegacyStandalonePoetry(_) => {
                 "OTA_CONTRACT_ADVISORY_LEGACY_STANDALONE_POETRY"
             }
+            ContractAdvisory::LegacyToolchainProvider(_) => {
+                "OTA_CONTRACT_ADVISORY_LEGACY_TOOLCHAIN_PROVIDER"
+            }
+            ContractAdvisory::LegacyFlatToolchainFulfillment(_) => {
+                "OTA_CONTRACT_ADVISORY_LEGACY_FLAT_TOOLCHAIN_FULFILLMENT"
+            }
             ContractAdvisory::LegacyHostServiceLifecycle(_) => {
                 "OTA_CONTRACT_ADVISORY_LEGACY_HOST_SERVICE_LIFECYCLE"
             }
@@ -6845,6 +6878,14 @@ impl ContractAdvisory {
             ContractAdvisory::LegacyStandalonePoetry(advisory) => format!(
                 "Poetry is modeled as a standalone tool instead of `toolchains.python.package_managers.poetry` ({})",
                 advisory.locations.join(", ")
+            ),
+            ContractAdvisory::LegacyToolchainProvider(advisory) => format!(
+                "toolchain `{}` keeps legacy provider ownership at `{}`",
+                advisory.toolchain_name, advisory.location
+            ),
+            ContractAdvisory::LegacyFlatToolchainFulfillment(advisory) => format!(
+                "toolchain `{}` keeps legacy flat fulfillment ownership at `{}`",
+                advisory.toolchain_name, advisory.location
             ),
             ContractAdvisory::LegacyHostServiceLifecycle(advisory) => format!(
                 "service `{}` keeps host lifecycle ownership on legacy top-level field(s) `{}`",
@@ -6965,6 +7006,21 @@ impl ContractAdvisory {
             ContractAdvisory::LegacyStandalonePoetry(_) => String::from(
                 "Poetry owns Python dependency installation, lockfile semantics, virtualenv behavior, and often task execution through `poetry run`; keeping it as a standalone tool splits Python ecosystem ownership away from `toolchains.python`",
             ),
+            ContractAdvisory::LegacyToolchainProvider(advisory) => format!(
+                "toolchain `{}` still depends on legacy `provider` compatibility at `{}` (`{}`) instead of keeping fulfillment ownership under the canonical structured `fulfillment` surface",
+                advisory.toolchain_name,
+                advisory.location,
+                toolchain_provider_label(advisory.provider)
+            ),
+            ContractAdvisory::LegacyFlatToolchainFulfillment(advisory) => format!(
+                "toolchain `{}` still depends on legacy flat fulfillment compatibility at `{}` (`{}`) instead of the canonical structured `fulfillment.mode` / `fulfillment.source` surface",
+                advisory.toolchain_name,
+                advisory.location,
+                match advisory.mode {
+                    ToolchainFulfillmentMode::None => "none",
+                    ToolchainFulfillmentMode::Run => "run",
+                }
+            ),
             ContractAdvisory::LegacyHostServiceLifecycle(advisory) => format!(
                 "service `{}` keeps host lifecycle truth on legacy top-level field(s) `{}` instead of an explicit `manager.kind: host` owner, which leaves host service ownership less standardized than the canonical lifecycle surface",
                 advisory.service_name,
@@ -7064,6 +7120,8 @@ impl ContractAdvisory {
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::LegacyToolchainProvider(_)
+            | ContractAdvisory::LegacyFlatToolchainFulfillment(_)
             | ContractAdvisory::LegacyHostServiceLifecycle(_)
             | ContractAdvisory::LegacyServiceReadinessRun(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
@@ -7095,6 +7153,8 @@ impl ContractAdvisory {
             | ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::LegacyToolchainProvider(_)
+            | ContractAdvisory::LegacyFlatToolchainFulfillment(_)
             | ContractAdvisory::LegacyHostServiceLifecycle(_)
             | ContractAdvisory::LegacyServiceReadinessRun(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
@@ -7127,6 +7187,8 @@ impl ContractAdvisory {
             ContractAdvisory::MutatesManagedIsolatedPath(_)
             | ContractAdvisory::LegacyNodeRuntimeToolSplit(_)
             | ContractAdvisory::LegacyStandalonePoetry(_)
+            | ContractAdvisory::LegacyToolchainProvider(_)
+            | ContractAdvisory::LegacyFlatToolchainFulfillment(_)
             | ContractAdvisory::LegacyHostServiceLifecycle(_)
             | ContractAdvisory::LegacyServiceReadinessRun(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
@@ -7170,7 +7232,7 @@ impl ContractAdvisory {
                 advisory.isolated_path, advisory.task_name, advisory.context_name
             ),
             ContractAdvisory::LegacyNodeRuntimeToolSplit(advisory) => format!(
-                "migrate to `toolchains.node` ownership: remove `runtimes.node`, add `toolchains.node.provider: corepack` with `toolchains.node.version: {}`, and move {} under `toolchains.node.package_managers`",
+                "migrate to `toolchains.node` ownership: remove `runtimes.node`, add `toolchains.node.version: {}`, and move {} under `toolchains.node.package_managers`",
                 advisory.runtime_version,
                 advisory
                     .package_managers
@@ -7181,6 +7243,20 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::LegacyStandalonePoetry(_) => String::from(
                 "add or widen `toolchains.python`, move Poetry version governance under `toolchains.python.package_managers.poetry`, and remove the standalone Poetry declaration from the listed location(s)",
+            ),
+            ContractAdvisory::LegacyToolchainProvider(advisory) => format!(
+                "remove `{}` and keep toolchain `{}` on structured `fulfillment`; canonical shipped toolchain ownership already implies provider `{}`",
+                advisory.location,
+                advisory.toolchain_name,
+                toolchain_provider_label(advisory.provider)
+            ),
+            ContractAdvisory::LegacyFlatToolchainFulfillment(advisory) => format!(
+                "replace `{}` with structured `fulfillment: {{ mode: {} }}` and add `source` only when this repo truthfully needs a non-default fulfillment source such as `mise`",
+                advisory.location,
+                match advisory.mode {
+                    ToolchainFulfillmentMode::None => "none",
+                    ToolchainFulfillmentMode::Run => "run",
+                }
             ),
             ContractAdvisory::LegacyHostServiceLifecycle(advisory) => format!(
                 "move service `{}` host lifecycle truth under `services.{}.manager.kind: host`, then relocate `{}` to `manager.start` / `manager.stop` so Ota owns host service lifecycle through one canonical surface",
@@ -7347,6 +7423,10 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_managed_isolated_path_mutation_advisories(contract));
     advisories.extend(collect_legacy_node_runtime_tool_split_advisories(contract));
     advisories.extend(collect_legacy_standalone_poetry_advisories(contract));
+    advisories.extend(collect_legacy_toolchain_provider_advisories(contract));
+    advisories.extend(collect_legacy_flat_toolchain_fulfillment_advisories(
+        contract,
+    ));
     advisories.extend(collect_legacy_host_service_lifecycle_advisories(contract));
     advisories.extend(collect_legacy_service_readiness_run_advisories(contract));
     advisories.extend(collect_service_uses_opaque_shell_start_advisories(contract));
@@ -7454,6 +7534,48 @@ fn collect_legacy_standalone_poetry_advisories(contract: &Contract) -> Vec<Contr
     vec![ContractAdvisory::LegacyStandalonePoetry(
         LegacyStandalonePoetryAdvisory { locations },
     )]
+}
+
+fn collect_legacy_toolchain_provider_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (toolchain_name, toolchain) in &contract.toolchains {
+        let Some(provider) = toolchain.provider else {
+            continue;
+        };
+        if declared_toolchain_contract(toolchain_name, toolchain).is_none() {
+            continue;
+        }
+        advisories.push(ContractAdvisory::LegacyToolchainProvider(
+            LegacyToolchainProviderAdvisory {
+                toolchain_name: toolchain_name.clone(),
+                provider,
+                location: format!("toolchains.{toolchain_name}.provider"),
+            },
+        ));
+    }
+    advisories
+}
+
+fn collect_legacy_flat_toolchain_fulfillment_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (toolchain_name, toolchain) in &contract.toolchains {
+        if !toolchain.fulfillment.uses_legacy_mode_shape() {
+            continue;
+        }
+        if declared_toolchain_contract(toolchain_name, toolchain).is_none() {
+            continue;
+        }
+        advisories.push(ContractAdvisory::LegacyFlatToolchainFulfillment(
+            LegacyFlatToolchainFulfillmentAdvisory {
+                toolchain_name: toolchain_name.clone(),
+                mode: toolchain.fulfillment.mode(),
+                location: format!("toolchains.{toolchain_name}.fulfillment"),
+            },
+        ));
+    }
+    advisories
 }
 
 fn collect_legacy_host_service_lifecycle_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
@@ -19848,6 +19970,48 @@ tasks:
     }
 
     #[test]
+    fn accepts_prepare_only_bun_package_manager_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+tools:
+  bun: "1.2.15"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: bun
+        mode: install
+        frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+      tools:
+        bun: "*"
+    effects:
+      writes:
+        - node_modules
+        - bun.lock
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("bun package-manager prepare should validate");
+    }
+
+    #[test]
     fn rejects_yarn_package_manager_prepare_with_ci_mode() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -19888,6 +20052,52 @@ tasks:
             errors
                 .to_string()
                 .contains("must not use `manager: yarn` with `mode: ci`")
+        );
+    }
+
+    #[test]
+    fn rejects_bun_package_manager_prepare_with_ci_mode() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+tools:
+  bun: "1.2.15"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: bun
+        mode: ci
+    requirements:
+      toolchains:
+        - node
+      tools:
+        bun: "*"
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_contract(&contract).expect_err("bun package-manager ci prepare should fail");
+        assert!(
+            errors
+                .to_string()
+                .contains("must not use `manager: bun` with `mode: ci`")
         );
     }
 
@@ -25248,7 +25458,7 @@ tools:
             .collect::<Vec<_>>();
         assert!(
             messages.iter().any(|message| message.contains(
-                "tool `node` acquisition `corepack` is invalid; declare Node under `toolchains.node` with `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks"
+                "tool `node` acquisition `corepack` is invalid; declare Node under `toolchains.node` with structured `fulfillment` when ota should own selected-path activation, or under `runtimes.node` for simple unmanaged checks"
             )),
             "{messages:?}"
         );
@@ -25281,7 +25491,7 @@ tools:
             .collect::<Vec<_>>();
         assert!(
             messages.iter().any(|message| message.contains(
-                "tool `npm` acquisition `corepack` must not declare `package: node`; declare Node under `toolchains.node` with `provider: corepack` (preferred) or `runtimes.node` for simple unmanaged checks"
+                "tool `npm` acquisition `corepack` must not declare `package: node`; declare Node under `toolchains.node` with structured `fulfillment` when ota should own selected-path activation, or under `runtimes.node` for simple unmanaged checks"
             )),
             "{messages:?}"
         );
@@ -27989,6 +28199,105 @@ tasks:
                 .iter()
                 .any(|advisory| matches!(advisory, ContractAdvisory::LegacyStandalonePoetry(_)))
         );
+    }
+
+    #[test]
+    fn collects_legacy_toolchain_provider_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "22"
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LegacyToolchainProvider(value)
+                if value.toolchain_name == "node"
+                    && value.provider == crate::schema::ToolchainProvider::Corepack
+                    && value.location == "toolchains.node.provider"
+        )));
+    }
+
+    #[test]
+    fn skips_legacy_toolchain_provider_advisory_when_provider_is_omitted() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(
+            !advisories
+                .iter()
+                .any(|advisory| matches!(advisory, ContractAdvisory::LegacyToolchainProvider(_)))
+        );
+    }
+
+    #[test]
+    fn collects_legacy_flat_toolchain_fulfillment_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    version: "3.12"
+    fulfillment: run
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LegacyFlatToolchainFulfillment(value)
+                if value.toolchain_name == "python"
+                    && value.mode == crate::schema::ToolchainFulfillmentMode::Run
+                    && value.location == "toolchains.python.fulfillment"
+        )));
+    }
+
+    #[test]
+    fn skips_legacy_flat_toolchain_fulfillment_advisory_for_structured_fulfillment() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    version: "3.12"
+    fulfillment:
+      mode: run
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::LegacyFlatToolchainFulfillment(_)
+        )));
     }
 
     #[test]

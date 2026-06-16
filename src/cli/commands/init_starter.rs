@@ -33,10 +33,12 @@ use crate::detector::{
 use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentBoundaryProvenanceConfig, AgentConfig,
     AgentExceptionsConfig, AgentInferredBoundaryConfig, AgentPosture, EnvSource, EnvSourceKind,
-    FileCheckExpectation, TaskActionSpec, TaskCommandSpec, TaskCopyIfMissingActionSpec,
-    TaskDependencyHydrationMedium, TaskDependencyHydrationPrepareSpec,
-    TaskDependencyHydrationSourceSpec, TaskEffectsSpec, TaskNetworkEffectKind, TaskPrepareSpec,
-    TaskRequirementsSpec, TaskUvHydrationSourceSpec,
+    FileCheckExpectation, TaskActionSpec, TaskBundlerHydrationSourceSpec, TaskCommandSpec,
+    TaskCopyIfMissingActionSpec, TaskDependencyHydrationMedium,
+    TaskDependencyHydrationPrepareSpec, TaskDependencyHydrationSourceSpec, TaskEffectsSpec,
+    TaskGoModulesHydrationSourceSpec, TaskNetworkEffectKind, TaskNodePackageManagerHydrationMode,
+    TaskNodePackageManagerHydrationSourceSpec, TaskNodePackageManagerKind, TaskPrepareSpec,
+    TaskRequirementsSpec, TaskUvHydrationSourceSpec, ToolRequirement,
 };
 
 const INIT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[
@@ -348,15 +350,6 @@ impl NodePackageManager {
             Self::Npm | Self::Bun => None,
             Self::Pnpm => Some(("pnpm", "11")),
             Self::Yarn => Some(("yarn", "4")),
-        }
-    }
-
-    fn setup_command(self) -> &'static str {
-        match self {
-            Self::Npm => "npm install",
-            Self::Pnpm => "corepack pnpm install",
-            Self::Yarn => "corepack yarn install",
-            Self::Bun => "bun install",
         }
     }
 
@@ -2091,14 +2084,72 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     .tools
                     .insert(String::from(tool), String::from(version));
             }
-            contract.tasks.insert(
-                String::from("setup"),
-                pack_task(
+            let setup_task = match package_manager {
+                NodePackageManager::Npm => pack_dependency_hydration_task(
                     "setup",
-                    package_manager.setup_command(),
-                    Some(String::from("Install repo dependencies.")),
+                    "Hydrate Node dependencies through npm.",
+                    TaskDependencyHydrationSourceSpec::NodePackageManager(
+                        TaskNodePackageManagerHydrationSourceSpec {
+                            cwd: String::from("."),
+                            manager: TaskNodePackageManagerKind::Npm,
+                            mode: TaskNodePackageManagerHydrationMode::Install,
+                            frozen_lockfile: false,
+                        },
+                    ),
+                    "node",
+                    vec![String::from("node_modules")],
+                    BTreeMap::new(),
                 ),
-            );
+                NodePackageManager::Pnpm => pack_dependency_hydration_task(
+                    "setup",
+                    "Hydrate Node dependencies through pnpm.",
+                    TaskDependencyHydrationSourceSpec::NodePackageManager(
+                        TaskNodePackageManagerHydrationSourceSpec {
+                            cwd: String::from("."),
+                            manager: TaskNodePackageManagerKind::Pnpm,
+                            mode: TaskNodePackageManagerHydrationMode::Install,
+                            frozen_lockfile: false,
+                        },
+                    ),
+                    "node",
+                    vec![String::from("node_modules")],
+                    BTreeMap::new(),
+                ),
+                NodePackageManager::Yarn => pack_dependency_hydration_task(
+                    "setup",
+                    "Hydrate Node dependencies through Yarn.",
+                    TaskDependencyHydrationSourceSpec::NodePackageManager(
+                        TaskNodePackageManagerHydrationSourceSpec {
+                            cwd: String::from("."),
+                            manager: TaskNodePackageManagerKind::Yarn,
+                            mode: TaskNodePackageManagerHydrationMode::Install,
+                            frozen_lockfile: false,
+                        },
+                    ),
+                    "node",
+                    vec![String::from("node_modules")],
+                    BTreeMap::new(),
+                ),
+                NodePackageManager::Bun => pack_dependency_hydration_task(
+                    "setup",
+                    "Hydrate Node dependencies through Bun.",
+                    TaskDependencyHydrationSourceSpec::NodePackageManager(
+                        TaskNodePackageManagerHydrationSourceSpec {
+                            cwd: String::from("."),
+                            manager: TaskNodePackageManagerKind::Bun,
+                            mode: TaskNodePackageManagerHydrationMode::Install,
+                            frozen_lockfile: false,
+                        },
+                    ),
+                    "node",
+                    vec![String::from("node_modules")],
+                    BTreeMap::from([(
+                        String::from("bun"),
+                        ToolRequirement::Simple(String::from("*")),
+                    )]),
+                ),
+            };
+            contract.tasks.insert(String::from("setup"), setup_task);
             if node_root_package_json_has_script(root, "dev") {
                 contract.tasks.insert(
                     String::from("dev"),
@@ -2137,39 +2188,16 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             );
             contract.tasks.insert(
                 String::from("setup"),
-                DetectTask {
-                    description: Some(String::from("Hydrate Python dependencies through uv.")),
-                    run: String::new(),
-                    command: None,
-                    action: None,
-                    prepare: Some(TaskPrepareSpec::DependencyHydration(
-                        TaskDependencyHydrationPrepareSpec {
-                            medium: TaskDependencyHydrationMedium::PackageDependencies,
-                            source: TaskDependencyHydrationSourceSpec::Uv(
-                                TaskUvHydrationSourceSpec {
-                                    cwd: String::from("."),
-                                },
-                            ),
-                            targets: Vec::new(),
-                        },
-                    )),
-                    requirements: TaskRequirementsSpec {
-                        toolchains: vec![String::from("python")],
-                        ..TaskRequirementsSpec::default()
-                    },
-                    effects: TaskEffectsSpec {
-                        writes: vec![String::from(".venv")],
-                        network: true,
-                        network_kind: Some(TaskNetworkEffectKind::DependencyHydration),
-                        ..TaskEffectsSpec::default()
-                    },
-                    depends_on: Vec::new(),
-                    notes: Some(String::from(
-                        "Run `ota run setup` to execute this task.\nHydrate Python dependencies through uv.",
-                    )),
-                    internal: true,
-                    safe_for_agent: false,
-                },
+                pack_dependency_hydration_task(
+                    "setup",
+                    "Hydrate Python dependencies through uv.",
+                    TaskDependencyHydrationSourceSpec::Uv(TaskUvHydrationSourceSpec {
+                        cwd: String::from("."),
+                    }),
+                    "python",
+                    vec![String::from(".venv")],
+                    BTreeMap::new(),
+                ),
             );
             contract.tasks.insert(
                 String::from("test"),
@@ -2201,10 +2229,16 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             );
             contract.tasks.insert(
                 String::from("setup"),
-                pack_task(
+                pack_dependency_hydration_task(
                     "setup",
-                    "bundle install",
-                    Some(String::from("Install Ruby gem dependencies with Bundler.")),
+                    "Hydrate Ruby gem dependencies through Bundler.",
+                    TaskDependencyHydrationSourceSpec::Bundler(TaskBundlerHydrationSourceSpec {
+                        cwd: String::from("."),
+                        path: String::from("vendor/bundle"),
+                    }),
+                    "ruby",
+                    vec![String::from("vendor/bundle")],
+                    BTreeMap::new(),
                 ),
             );
             contract.tasks.insert(
@@ -2228,10 +2262,17 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
             );
             contract.tasks.insert(
                 String::from("setup"),
-                pack_task(
+                pack_dependency_hydration_task(
                     "setup",
-                    "go mod download",
-                    Some(String::from("Download Go module dependencies.")),
+                    "Hydrate Go module dependencies.",
+                    TaskDependencyHydrationSourceSpec::GoModules(
+                        TaskGoModulesHydrationSourceSpec {
+                            cwd: String::from("."),
+                        },
+                    ),
+                    "go",
+                    Vec::new(),
+                    BTreeMap::new(),
                 ),
             );
             contract.tasks.insert(
@@ -2534,6 +2575,49 @@ fn pack_task_command(
         prepare: None,
         requirements: TaskRequirementsSpec::default(),
         effects: TaskEffectsSpec::default(),
+        depends_on: Vec::new(),
+        notes: Some(notes),
+        internal: task_name == "setup",
+        safe_for_agent: false,
+    }
+}
+
+fn pack_dependency_hydration_task(
+    task_name: &str,
+    description: &str,
+    source: TaskDependencyHydrationSourceSpec,
+    toolchain: &str,
+    writes: Vec<String>,
+    tools: BTreeMap<String, ToolRequirement>,
+) -> DetectTask {
+    let mut notes = String::from("Run `ota run ");
+    notes.push_str(task_name);
+    notes.push_str("` to execute this task.\n");
+    notes.push_str(description);
+
+    DetectTask {
+        description: Some(String::from(description)),
+        run: String::new(),
+        command: None,
+        action: None,
+        prepare: Some(TaskPrepareSpec::DependencyHydration(
+            TaskDependencyHydrationPrepareSpec {
+                medium: TaskDependencyHydrationMedium::PackageDependencies,
+                source,
+                targets: Vec::new(),
+            },
+        )),
+        requirements: TaskRequirementsSpec {
+            toolchains: vec![String::from(toolchain)],
+            tools,
+            ..TaskRequirementsSpec::default()
+        },
+        effects: TaskEffectsSpec {
+            writes,
+            network: true,
+            network_kind: Some(TaskNetworkEffectKind::DependencyHydration),
+            ..TaskEffectsSpec::default()
+        },
         depends_on: Vec::new(),
         notes: Some(notes),
         internal: task_name == "setup",

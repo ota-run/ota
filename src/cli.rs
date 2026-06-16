@@ -25091,7 +25091,7 @@ name = "fastapi"
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: go-service"));
         assert!(written.contains("toolchains:"));
-        assert!(written.contains("go:\n    provider: go"));
+        assert!(!written.contains("provider: go"));
         assert!(
             written.contains("version: 1.24.0"),
             "unexpected starter contract:\n{written}"
@@ -25462,11 +25462,15 @@ name = "fastapi"
             stdout.contains("Policy: explicit pack mode seeds a conventional starter contract")
         );
         assert!(stdout.contains("toolchains:"));
-        assert!(stdout.contains("provider: corepack"));
+        assert!(!stdout.contains("provider: corepack"));
         assert!(stdout.contains("version: '22'"));
         assert!(stdout.contains("package_managers:"));
         assert!(stdout.contains("pnpm: '11'"));
         assert!(!stdout.contains("name: node-installed"));
+        assert!(stdout.contains("prepare:"));
+        assert!(stdout.contains("kind: dependency_hydration"));
+        assert!(stdout.contains("source:"));
+        assert!(stdout.contains("kind: node_package_manager"));
         assert!(stdout.contains("run: corepack pnpm dev"));
         assert!(stdout.contains("run: pytest") == false);
     }
@@ -25502,16 +25506,17 @@ name = "fastapi"
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("project:"));
         assert!(written.contains("toolchains:"));
-        assert!(written.contains("provider: corepack"));
+        assert!(!written.contains("provider: corepack"));
         assert!(written.contains("version: '22'"));
         assert!(written.contains("package_managers:"));
         assert!(written.contains("pnpm: '11'"));
-        assert!(!written.contains("checks:"));
         assert!(!written.contains("name: node-installed"));
         assert!(!written.contains("run: node --version"));
         assert!(written.contains("setup:"));
-        assert!(written.contains("description: Install repo dependencies."));
-        assert!(written.contains("run: corepack pnpm install"));
+        assert!(written.contains("description: Hydrate Node dependencies through pnpm."));
+        assert!(written.contains("prepare:"));
+        assert!(written.contains("kind: dependency_hydration"));
+        assert!(written.contains("kind: node_package_manager"));
         assert!(written.contains("dev:"));
         assert!(written.contains("description: Start the local development loop."));
         assert!(written.contains("run: corepack pnpm dev"));
@@ -25588,20 +25593,94 @@ name = "fastapi"
         assert_eq!(json["pack"], "node");
         assert_eq!(json["pack_options"]["package_manager"], "npm");
         assert!(json["pack_options"]["test_runner"].is_null());
-        assert_eq!(json["config"]["tasks"]["setup"]["run"], "npm install");
+        assert!(json["config"]["tasks"]["setup"]["run"].is_null());
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["kind"],
+            "dependency_hydration"
+        );
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["kind"],
+            "node_package_manager"
+        );
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["manager"],
+            "npm"
+        );
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["mode"],
+            "install"
+        );
         assert_eq!(json["config"]["tasks"]["dev"]["run"], "npm run dev");
         assert_eq!(json["config"]["tasks"]["test"]["run"], "npm test");
         assert!(json["config"]["tools"]["pnpm"].is_null());
         assert_eq!(json["config"]["tools"]["npm"], "*");
-        let task_run = json["provenance"]
+        let task_prepare = json["provenance"]
             .as_array()
             .expect("provenance array")
             .iter()
-            .find(|entry| entry["field"] == "tasks.setup.run")
-            .expect("tasks.setup.run provenance");
+            .find(|entry| entry["field"] == "tasks.setup.prepare.source.manager")
+            .expect("tasks.setup.prepare.source.manager provenance");
         assert_eq!(
-            task_run["source"],
+            task_prepare["source"],
             "ota.init#starter_pack.node.package_manager.npm"
+        );
+    }
+
+    #[test]
+    fn init_pack_node_bun_uses_structured_bun_hydration_and_bun_requirements() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "node-pack-bun",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest"
+  }
+}"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "init",
+            "--pack",
+            "node",
+            "--package-manager",
+            "bun",
+            "--json",
+            "--dry-run",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["pack"], "node");
+        assert_eq!(json["pack_options"]["package_manager"], "bun");
+        assert!(json["config"]["tasks"]["setup"]["run"].is_null());
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["kind"],
+            "node_package_manager"
+        );
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["manager"],
+            "bun"
+        );
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["requirements"]["tools"]["bun"],
+            "*"
+        );
+        assert_eq!(json["config"]["tasks"]["dev"]["run"], "bun run dev");
+        assert_eq!(json["config"]["tasks"]["test"]["run"], "bun run test");
+        assert_eq!(json["config"]["tools"]["bun"], "1.2");
+        let task_prepare = json["provenance"]
+            .as_array()
+            .expect("provenance array")
+            .iter()
+            .find(|entry| entry["field"] == "tasks.setup.prepare.source.manager")
+            .expect("tasks.setup.prepare.source.manager provenance");
+        assert_eq!(
+            task_prepare["source"],
+            "ota.init#starter_pack.node.package_manager.bun"
         );
     }
 
@@ -25628,9 +25707,14 @@ name = "fastapi"
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["pack"], "node");
+        assert!(json["config"]["tasks"]["setup"]["run"].is_null());
         assert_eq!(
-            json["config"]["tasks"]["setup"]["run"],
-            "corepack pnpm install"
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["kind"],
+            "node_package_manager"
+        );
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["source"]["manager"],
+            "pnpm"
         );
         assert!(json["config"]["tasks"]["dev"].is_null());
         assert!(json["config"]["tasks"]["test"].is_null());
@@ -25658,7 +25742,7 @@ name = "fastapi"
         assert_eq!(json["pack"], "python");
         assert!(json["pack_options"].is_null());
         assert_eq!(json["inferred"], json!([]));
-        assert_eq!(json["config"]["toolchains"]["python"]["provider"], "uv");
+        assert!(json["config"]["toolchains"]["python"]["provider"].is_null());
         assert_eq!(json["config"]["toolchains"]["python"]["version"], "3.12");
         assert_eq!(
             json["config"]["toolchains"]["python"]["package_managers"]["uv"],
@@ -26062,7 +26146,7 @@ requires-python = ">=3.12"
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Pack: java-maven"));
         assert!(stdout.contains("toolchains:"));
-        assert!(stdout.contains("provider: sdkman"));
+        assert!(!stdout.contains("provider: sdkman"));
         assert!(stdout.contains("version: '22'") || stdout.contains("version: \"22\""));
         assert!(stdout.contains("maven: '3.9'"));
         assert!(stdout.contains("name: maven-installed"));
@@ -26092,7 +26176,7 @@ requires-python = ">=3.12"
         );
         assert_eq!(json["config"]["tasks"]["build"]["run"], "./mvnw package");
         assert_eq!(json["config"]["tasks"]["test"]["run"], "./mvnw test");
-        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert!(json["config"]["toolchains"]["java"]["provider"].is_null());
         assert_eq!(json["config"]["toolchains"]["java"]["version"], "22");
         assert!(json["config"]["checks"].is_null());
         assert!(json["config"]["tools"]["maven"].is_null());
@@ -26108,10 +26192,12 @@ requires-python = ">=3.12"
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Pack: go"));
         assert!(stdout.contains("toolchains:"));
-        assert!(stdout.contains("provider: go"));
+        assert!(!stdout.contains("provider: go"));
         assert!(stdout.contains("version: '1.24'"));
         assert!(!stdout.contains("name: go-installed"));
-        assert!(stdout.contains("run: go mod download"));
+        assert!(stdout.contains("prepare:"));
+        assert!(stdout.contains("kind: dependency_hydration"));
+        assert!(stdout.contains("kind: go_modules"));
         assert!(stdout.contains("run: go build ./..."));
         assert!(stdout.contains("run: go test ./..."));
     }
@@ -26126,12 +26212,15 @@ requires-python = ">=3.12"
         let stdout = strip_ansi(&output.stdout);
         assert!(stdout.contains("Pack: ruby"));
         assert!(stdout.contains("toolchains:"));
-        assert!(stdout.contains("provider: ruby"));
+        assert!(!stdout.contains("provider: ruby"));
         assert!(stdout.contains("version: 3.3.11"));
         assert!(stdout.contains("package_managers:"));
         assert!(stdout.contains("bundler: '2.5'"));
         assert!(!stdout.contains("name: ruby-installed"));
-        assert!(stdout.contains("run: bundle install"));
+        assert!(stdout.contains("prepare:"));
+        assert!(stdout.contains("kind: dependency_hydration"));
+        assert!(stdout.contains("kind: bundler"));
+        assert!(stdout.contains("path: vendor/bundle"));
         assert!(stdout.contains("run: bundle exec rake test"));
     }
 
@@ -26154,7 +26243,7 @@ requires-python = ">=3.12"
         assert_eq!(json["ok"], true);
         assert_eq!(json["mode"], "pack");
         assert_eq!(json["pack"], "rust");
-        assert_eq!(json["config"]["toolchains"]["rust"]["provider"], "rustup");
+        assert!(json["config"]["toolchains"]["rust"]["provider"].is_null());
         assert_eq!(json["config"]["toolchains"]["rust"]["version"], "1.85");
         assert!(json["config"]["runtimes"].is_null());
         assert!(json["config"]["tools"].is_null());
@@ -26192,7 +26281,7 @@ requires-python = ">=3.12"
         assert_eq!(json["ok"], true);
         assert_eq!(json["mode"], "pack");
         assert_eq!(json["pack"], "dotnet");
-        assert_eq!(json["config"]["toolchains"]["dotnet"]["provider"], "dotnet");
+        assert!(json["config"]["toolchains"]["dotnet"]["provider"].is_null());
         assert_eq!(json["config"]["toolchains"]["dotnet"]["version"], "9.0");
         assert!(json["config"]["toolchains"]["dotnet"]["fulfillment"].is_null());
         assert!(json["config"]["runtimes"].is_null());
@@ -26381,7 +26470,7 @@ requires-python = ">=3.12"
         assert_eq!(json["ok"], true);
         assert_eq!(json["mode"], "pack");
         assert_eq!(json["pack"], "java-gradle");
-        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert!(json["config"]["toolchains"]["java"]["provider"].is_null());
         assert_eq!(json["config"]["toolchains"]["java"]["version"], "22");
         assert_eq!(json["config"]["tools"]["gradle"], "8");
         assert_eq!(json["config"]["checks"][0]["name"], "gradle-installed");
@@ -26424,7 +26513,7 @@ requires-python = ">=3.12"
         );
         assert_eq!(json["config"]["tasks"]["build"]["run"], "./gradlew build");
         assert_eq!(json["config"]["tasks"]["test"]["run"], "./gradlew test");
-        assert_eq!(json["config"]["toolchains"]["java"]["provider"], "sdkman");
+        assert!(json["config"]["toolchains"]["java"]["provider"].is_null());
         assert_eq!(json["config"]["toolchains"]["java"]["version"], "22");
         assert!(json["config"]["checks"].is_null());
         assert!(json["config"]["tools"]["gradle"].is_null());
@@ -31543,12 +31632,11 @@ project:
         assert!(stdout.contains("ota validate"));
         assert!(stdout.contains("ota detect --merge --dry-run"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
-        assert!(written.contains("provider: corepack"));
+        assert!(!written.contains("provider: corepack"));
         assert!(written.contains("version: '22'"));
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("field_ownership:"));
-        assert!(written.contains("toolchains.node.provider: merged"));
         assert!(written.contains("toolchains.node.version: merged"));
         assert!(written.contains("toolchains.node.package_managers.pnpm: merged"));
         assert!(written.contains("tasks.dev.run: merged"));
@@ -31614,8 +31702,6 @@ project:
             "detect",
             "--merge",
             "--apply",
-            "toolchains.node.provider",
-            "--apply",
             "toolchains.node.version",
             "--apply",
             "toolchains.node.package_managers.pnpm",
@@ -31629,7 +31715,7 @@ project:
         assert!(stdout.contains("MERGED"));
         assert!(stdout.contains("Applied selected high-confidence changes:"));
         let written = fs::read_to_string(fixture.file_path()).unwrap();
-        assert!(written.contains("provider: corepack"));
+        assert!(!written.contains("provider: corepack"));
         assert!(written.contains("version: '22'"));
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("run: pnpm dev"));
@@ -32138,7 +32224,7 @@ tasks:
         assert!(written.contains("version: '20'"));
         assert!(written.contains("pnpm: 10.1.0"));
         assert!(written.contains("toolchains:"));
-        assert!(written.contains("provider: corepack"));
+        assert!(!written.contains("provider: corepack"));
         assert!(written.contains("package_managers:"));
         assert!(written.contains("description: Start the local development loop."));
         assert!(written.contains("run: pnpm dev"));

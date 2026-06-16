@@ -223,6 +223,7 @@ pub struct DetectContract {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectToolchainSpec {
+    #[serde(skip_serializing)]
     pub provider: ToolchainProvider,
     pub version: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -524,10 +525,12 @@ impl DetectReport {
                             "run" => Some(ToolchainFulfillmentSpec {
                                 source: None,
                                 mode: ToolchainFulfillmentMode::Run,
+                                legacy_mode: false,
                             }),
                             "none" => Some(ToolchainFulfillmentSpec {
                                 source: None,
                                 mode: ToolchainFulfillmentMode::None,
+                                legacy_mode: false,
                             }),
                             _ => toolchain.fulfillment.clone(),
                         };
@@ -4787,15 +4790,6 @@ fn synthesize_corepack_node_toolchain(
         },
     );
     inferences.insert(
-        String::from("toolchains.node.provider"),
-        Inference::new(
-            String::from("toolchains.node.provider"),
-            String::from("corepack"),
-            String::from("ota.detect#toolchains.node.provider"),
-            confidence,
-        ),
-    );
-    inferences.insert(
         String::from("toolchains.node.version"),
         Inference::new(
             String::from("toolchains.node.version"),
@@ -4848,15 +4842,6 @@ fn synthesize_sdkman_java_toolchain(
         },
     );
     inferences.insert(
-        String::from("toolchains.java.provider"),
-        Inference::new(
-            String::from("toolchains.java.provider"),
-            String::from("sdkman"),
-            String::from("ota.detect#toolchains.java.provider"),
-            confidence,
-        ),
-    );
-    inferences.insert(
         String::from("toolchains.java.version"),
         Inference::new(
             String::from("toolchains.java.version"),
@@ -4900,15 +4885,6 @@ fn synthesize_uv_python_toolchain(
             package_managers: BTreeMap::from([(String::from("uv"), String::from("*"))]),
             fulfillment: None,
         },
-    );
-    inferences.insert(
-        String::from("toolchains.python.provider"),
-        Inference::new(
-            String::from("toolchains.python.provider"),
-            String::from("uv"),
-            String::from("ota.detect#toolchains.python.provider"),
-            confidence,
-        ),
     );
     inferences.insert(
         String::from("toolchains.python.version"),
@@ -4961,15 +4937,6 @@ fn synthesize_go_toolchain(
             package_managers: BTreeMap::new(),
             fulfillment: None,
         },
-    );
-    inferences.insert(
-        String::from("toolchains.go.provider"),
-        Inference::new(
-            String::from("toolchains.go.provider"),
-            String::from("go"),
-            String::from("ota.detect#toolchains.go.provider"),
-            confidence,
-        ),
     );
     inferences.insert(
         String::from("toolchains.go.version"),
@@ -5031,15 +4998,6 @@ fn synthesize_ruby_toolchain(
             package_managers,
             fulfillment: None,
         },
-    );
-    inferences.insert(
-        String::from("toolchains.ruby.provider"),
-        Inference::new(
-            String::from("toolchains.ruby.provider"),
-            String::from("ruby"),
-            String::from("ota.detect#toolchains.ruby.provider"),
-            confidence,
-        ),
     );
     inferences.insert(
         String::from("toolchains.ruby.version"),
@@ -5108,15 +5066,6 @@ fn synthesize_dotnet_toolchain(
             package_managers: BTreeMap::new(),
             fulfillment: None,
         },
-    );
-    inferences.insert(
-        String::from("toolchains.dotnet.provider"),
-        Inference::new(
-            String::from("toolchains.dotnet.provider"),
-            String::from("dotnet"),
-            String::from("ota.detect#toolchains.dotnet.provider"),
-            confidence,
-        ),
     );
     inferences.insert(
         String::from("toolchains.dotnet.version"),
@@ -5648,9 +5597,6 @@ requires-python = ">=3.12"
             Some((ToolchainProvider::Go, "1.24.0"))
         );
         assert!(!report.contract.runtimes.contains_key("go"));
-        assert!(report.inferences.iter().any(|inference| inference.field
-            == "toolchains.go.provider"
-            && inference.value == "go"));
         assert!(
             report
                 .inferences
@@ -7330,14 +7276,6 @@ channel = "1.85.0"
             report
                 .inferences
                 .iter()
-                .any(|inference| inference.field == "toolchains.java.provider"
-                    && inference.value == "sdkman"
-                    && inference.confidence == Confidence::High)
-        );
-        assert!(
-            report
-                .inferences
-                .iter()
                 .any(|inference| inference.field == "toolchains.java.version"
                     && inference.source == ".java-version"
                     && inference.confidence == Confidence::High)
@@ -7371,14 +7309,6 @@ channel = "1.85.0"
         );
         assert!(report.contract.runtimes.get("python").is_none());
         assert!(report.contract.tools.get("uv").is_none());
-        assert!(
-            report
-                .inferences
-                .iter()
-                .any(|inference| inference.field == "toolchains.python.provider"
-                    && inference.value == "uv"
-                    && inference.confidence == Confidence::Medium)
-        );
         assert!(report.inferences.iter().any(|inference| inference.field
             == "toolchains.python.package_managers.uv"
             && inference.value == "*"

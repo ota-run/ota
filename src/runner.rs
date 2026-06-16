@@ -8270,6 +8270,7 @@ fn prepare_task_shell_command(
                     crate::schema::TaskNodePackageManagerKind::Npm => "npm",
                     crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
                     crate::schema::TaskNodePackageManagerKind::Yarn => "yarn",
+                    crate::schema::TaskNodePackageManagerKind::Bun => "bun",
                 };
                 let mode = match source.mode {
                     crate::schema::TaskNodePackageManagerHydrationMode::Install => "install",
@@ -51241,6 +51242,107 @@ policies:
             "{logged}"
         );
         assert!(logged.contains("install --immutable"), "{logged}");
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_executes_bun_install_from_declared_cwd() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+tools:
+  bun: "1.2.15"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: app
+        manager: bun
+        mode: install
+        frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+      tools:
+        bun: "*"
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+        "#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  strict_versions: false
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v24.15.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'v24.15.0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "node", node_body);
+        let bun_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo 1.2.15\r\n  exit /b 0\r\n)\r\n>> \"%OTA_BUN_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '1.2.15\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_BUN_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "bun", bun_body);
+        let log_path = fixture.dir.path().join("bun.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_BUN_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_BUN_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "install")
+            .expect("prepare task should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_BUN_LOG", value) },
+            None => unsafe { env::remove_var("OTA_BUN_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("app")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
+            "{logged}"
+        );
+        assert!(logged.contains("install --frozen-lockfile"), "{logged}");
     }
 
     #[test]

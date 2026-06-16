@@ -39,7 +39,7 @@ The current open maturity program is tracked in
 | `.NET` toolchain parity across init/detect/validator                                             | Closed | Shipped `toolchains.dotnet` (`provider: dotnet`), dotnet pack now toolchain-owned, detect/write converges `.NET` to toolchain ownership, and duplicate split ownership is validated out |
 | Effects governance parity for `network` and `external_state`                                     | Closed | `ota run` and `ota up` now enforce deny decisions pre-execution on selected task/workflow paths (including setup-present `ota up` lanes) and emit effect-governance policy decision lines in receipts via the `policy` surface |
 | Policy-governed run-path fulfillment for Go/Ruby/.NET toolchains                                | Closed | `toolchains.go`, `toolchains.ruby`, and `toolchains.dotnet` now accept `fulfillment: run` and validate as policy-governed fulfillment lanes instead of hard check-only rejects |
-| Policy-governed run-path fulfillment for Corepack/SDKMAN toolchains                              | Closed | `toolchains.node` (`provider: corepack`) and `toolchains.java` (`provider: sdkman`) now accept `fulfillment: run` and validate as policy-governed selected-path fulfillment lanes |
+| Policy-governed run-path fulfillment for Corepack/SDKMAN toolchains                              | Closed | `toolchains.node` and `toolchains.java` now accept structured `fulfillment.mode: run` and validate as policy-governed selected-path fulfillment lanes |
 
 ## Remaining Product-Maturity Work
 

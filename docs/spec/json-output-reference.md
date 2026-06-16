@@ -3035,7 +3035,7 @@ contract. The current catalog includes `node`, `python`, `ruby`, `go`, `rust`, `
   "packs": [
     {
       "name": "node",
-      "summary": "Conventional Node starter with toolchain-owned Node and package-manager-driven setup, dev, and test tasks.",
+      "summary": "Conventional Node starter with toolchain-owned Node and first-class package-manager setup, dev, and test tasks.",
       "when": "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path keeps Node ownership under `toolchains.node` and uses pnpm via Corepack, and you can override the package manager with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
       "command": "ota init --pack node",
       "next": "ota init --pack node --dry-run .",
@@ -3079,8 +3079,8 @@ contract. The current catalog includes `node`, `python`, `ruby`, `go`, `rust`, `
     },
     {
       "name": "go",
-      "summary": "Conventional Go starter with module download, build, and test tasks.",
-      "when": "Use this for Go module repos that should start from the standard `go mod download`, `go build`, and `go test` flow without relying on detector-led init.",
+      "summary": "Conventional Go starter with first-class module hydration, build, and test tasks.",
+      "when": "Use this for Go module repos that should start from toolchain-owned Go module hydration plus the standard `go build` and `go test` flow without relying on detector-led init.",
       "command": "ota init --pack go",
       "next": "ota init --pack go --dry-run .",
       "does_not_infer": [

@@ -1509,9 +1509,9 @@ Choosing an init path:
 - use plain `ota init` only after comparing that detector-led starter against `ota detect --contract`
 - use `ota init --packs` when you want to compare the explicit starter catalog first
 - use `ota init --pack <name> --dry-run` when you want an explicit conventional starter without detector-led selection
-- use `ota init --pack node --package-manager <name> --dry-run` when the repo is intentionally npm-, pnpm-, yarn-, or bun-based and you want the starter to match that package-manager boundary from the first write
+- use `ota init --pack node --package-manager <name> --dry-run` when the repo is intentionally npm-, pnpm-, yarn-, or bun-based and you want the starter to match that package-manager boundary from the first write, including first-class setup hydration for every shipped Node manager lane
 - use `ota init --pack python --test-runner <name> --dry-run` when the repo is intentionally `pytest`- or `unittest`-driven and you want the starter to reflect that test command directly
-- use `ota init --pack ruby --dry-run` when the repo is intentionally Ruby/Bundler-based and the standard `bundle install` plus `bundle exec rake test` loop is the honest first draft, with Bundler version governance seeded under `toolchains.ruby.package_managers.bundler`
+- use `ota init --pack ruby --dry-run` when the repo is intentionally Ruby/Bundler-based and you want the starter to seed first-class Bundler dependency hydration plus the default `bundle exec rake test` loop, with Bundler version governance under `toolchains.ruby.package_managers.bundler`
 - use `ota init --pack dotnet --dry-run` when the repo is intentionally .NET-first and you want `toolchains.dotnet` ownership with the standard `dotnet restore` / `dotnet build` / `dotnet test` loop as the honest first draft
 - use `ota init --pack php-composer --dry-run` when the repo is intentionally Composer-managed PHP and `composer install` plus reuse of an existing `scripts.test` entry is the honest first draft you want to review
 - the Java packs prefer `mvnw` or `gradlew` when those wrappers already exist

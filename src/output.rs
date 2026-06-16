@@ -3665,6 +3665,7 @@ pub fn summarize_task_prepare(
                         crate::schema::TaskNodePackageManagerKind::Npm => "npm",
                         crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
                         crate::schema::TaskNodePackageManagerKind::Yarn => "yarn",
+                        crate::schema::TaskNodePackageManagerKind::Bun => "bun",
                     }),
                     Some(match source.mode {
                         crate::schema::TaskNodePackageManagerHydrationMode::Install => "install",
@@ -3803,6 +3804,7 @@ pub fn summarize_task_prepare_owned(
                         crate::schema::TaskNodePackageManagerKind::Npm => "npm",
                         crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
                         crate::schema::TaskNodePackageManagerKind::Yarn => "yarn",
+                        crate::schema::TaskNodePackageManagerKind::Bun => "bun",
                     }),
                     Some(match source.mode {
                         crate::schema::TaskNodePackageManagerHydrationMode::Install => "install",

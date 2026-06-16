@@ -26,6 +26,18 @@
 
 ## Unreleased
 
+- validate/doctor now explicitly flag legacy toolchain compatibility ownership on
+  `toolchains.<name>.provider` and flat `toolchains.<name>.fulfillment: run|none`, while keeping
+  those shapes parseable as migration lanes; canonical public toolchain truth is now consistently
+  pushed onto structured `fulfillment`
+- `ota init` starter packs and `ota detect --merge` now stop emitting legacy shipped-toolchain
+  `provider` fields for canonical toolchain shapes, so generated contracts align with the
+  structured no-provider public contract model instead of writing migration-lane compatibility
+  fields back into repo truth
+- `ota init --pack` now seeds first-class dependency-hydration setup tasks for shipped Node
+  package-manager lanes (`npm`, `pnpm`, `yarn`, `bun`), Ruby/Bundler, and Go modules instead of
+  defaulting those starter packs back to opaque install shell when Ota already owns the setup
+  path structurally
 - validate/doctor now explicitly flag legacy service readiness shell ownership
   (`services.<name>.readiness.run`) and push canonical modeling onto structured
   `services.<name>.readiness.kind` or named `probe`, so service-readiness ownership stays

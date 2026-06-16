@@ -282,15 +282,6 @@ pub(crate) fn collect_detect_changes(
             Some(existing_toolchain) if !existing_toolchain.active_for_os(current_os()) => continue,
             value => value,
         };
-        let provider = toolchain_provider_name(toolchain.provider);
-        push_detect_change(
-            &mut changes,
-            existing,
-            &inference_index,
-            &format!("toolchains.{name}.provider"),
-            existing_toolchain.and_then(|value| value.provider.map(toolchain_provider_name)),
-            Some(provider),
-        );
         push_detect_change(
             &mut changes,
             existing,
@@ -613,15 +604,15 @@ pub(crate) fn collect_detect_removals(
             continue;
         }
         let detected_toolchain = detected.toolchains.get(name);
+        if let Some(provider) = toolchain.provider {
+            push_detect_removal(
+                &mut removals,
+                existing,
+                format!("toolchains.{name}.provider"),
+                toolchain_provider_name(provider).to_string(),
+            );
+        }
         if detected_toolchain.is_none() {
-            if let Some(provider) = toolchain.provider {
-                push_detect_removal(
-                    &mut removals,
-                    existing,
-                    format!("toolchains.{name}.provider"),
-                    toolchain_provider_name(provider).to_string(),
-                );
-            }
             push_detect_removal(
                 &mut removals,
                 existing,
@@ -1385,12 +1376,6 @@ project:
         };
         let inferences = vec![
             Inference::new(
-                String::from("toolchains.node.provider"),
-                String::from("corepack"),
-                String::from("ota.detect#toolchains.node.provider"),
-                Confidence::High,
-            ),
-            Inference::new(
                 String::from("toolchains.node.version"),
                 String::from("22"),
                 String::from(".nvmrc"),
@@ -1413,7 +1398,6 @@ project:
         assert_eq!(
             fields,
             vec![
-                "toolchains.node.provider",
                 "toolchains.node.version",
                 "toolchains.node.package_managers.pnpm",
             ]
@@ -1425,7 +1409,7 @@ project:
                 .all(|change| change.owner_kind.as_deref() == Some("detected"))
         );
         assert_eq!(
-            changes[2].source.as_deref(),
+            changes[1].source.as_deref(),
             Some("package.json#packageManager")
         );
     }
@@ -1448,7 +1432,6 @@ metadata:
   ota:
     detect:
       field_ownership:
-        toolchains.node.provider: merged
         toolchains.node.version: merged
         toolchains.node.package_managers.pnpm: merged
 "#,
@@ -1472,7 +1455,6 @@ metadata:
         assert_eq!(
             fields,
             vec![
-                "toolchains.node.provider",
                 "toolchains.node.version",
                 "toolchains.node.package_managers.pnpm",
             ]
