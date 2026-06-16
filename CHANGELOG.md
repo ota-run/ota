@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- runtime proof interrupt cleanup now resolves and signals the actual detached `ota up` process
+  group before falling back to direct child termination, so `ota proof runtime` teardown is less
+  likely to leave nested `ota up` or downstream workload processes running after user interruption
 - validate/doctor now explicitly flag legacy toolchain compatibility ownership on
   `toolchains.<name>.provider` and flat `toolchains.<name>.fulfillment: run|none`, while keeping
   those shapes parseable as migration lanes; canonical public toolchain truth is now consistently

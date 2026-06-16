@@ -45540,6 +45540,26 @@ workflows:
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn proof_runtime_process_group_id_resolves_spawned_group_leader() {
+        use std::os::unix::process::CommandExt as _;
+
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 5")
+            .process_group(0)
+            .spawn()
+            .expect("child should spawn");
+
+        let result = super::proof_runtime_process_group_id(child.id())
+            .expect("process group lookup should succeed");
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert_eq!(result, Some(child.id()));
+    }
+
     #[test]
     fn proof_runtime_likely_cause_falls_back_to_detached_run_hint() {
         let fixture = TempDir::new().unwrap();
@@ -78375,9 +78395,10 @@ fn stop_proof_runtime_up_process(up_process: &mut std::process::Child) -> Result
 
 #[cfg(unix)]
 fn signal_process_group(process_id: u32, signal: &str) -> Result<(), String> {
+    let target = proof_runtime_process_group_id(process_id)?.unwrap_or(process_id);
     let output = Command::new("kill")
         .arg(format!("-{signal}"))
-        .arg(format!("-{process_id}"))
+        .arg(format!("-{target}"))
         .output()
         .map_err(|error| format!("could not signal runtime-proof process group: {error}"))?;
     if output.status.success() {
@@ -78389,13 +78410,31 @@ fn signal_process_group(process_id: u32, signal: &str) -> Result<(), String> {
     }
     if stderr.is_empty() {
         Err(format!(
-            "could not signal runtime-proof process group with `kill -{signal} -{process_id}`"
+            "could not signal runtime-proof process group with `kill -{signal} -{target}`"
         ))
     } else {
         Err(format!(
-            "could not signal runtime-proof process group with `kill -{signal} -{process_id}`: {stderr}"
+            "could not signal runtime-proof process group with `kill -{signal} -{target}`: {stderr}"
         ))
     }
+}
+
+#[cfg(unix)]
+fn proof_runtime_process_group_id(process_id: u32) -> Result<Option<u32>, String> {
+    let output = Command::new("ps")
+        .args(["-o", "pgid=", "-p", &process_id.to_string()])
+        .output()
+        .map_err(|error| {
+            format!("could not inspect runtime-proof process group for pid {process_id}: {error}")
+        })?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .ok())
 }
 
 fn proof_runtime_cleanup_failure_message(error: &CleanExecutionError) -> Option<String> {
