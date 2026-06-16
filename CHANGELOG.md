@@ -91,6 +91,9 @@
 - runtime proof can now emit first-class `readiness_target_mismatch` likely-cause evidence and
   failure classification when the declared proof endpoint differs from the runtime endpoint Ota
   observed in proof artifacts
+- runtime proof can now emit first-class `dns_service_name_resolution_failure` likely-cause
+  evidence and failure classification when proof logs show unresolved service-name or host
+  resolution failures
 - policy-backed tool governance now resolves common executable aliases across provisioning and
   strict version policy lanes, so canonical tool names like `bundler` and `maven` can govern the
   executable-facing requirements `bundle` and `mvn` without forcing org policy authors onto

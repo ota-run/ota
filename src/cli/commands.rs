@@ -44786,6 +44786,44 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_dns_resolution_when_likely_cause_is_present() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out"),
+                next: String::from("rerun"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "run",
+            None,
+            Some("timed out while waiting for readiness"),
+            Some(
+                &super::ProofRuntimeLikelyCause::DnsServiceNameResolutionFailure {
+                    artifact: PathBuf::from("./.ota/proof/instant/up-detached-run.log"),
+                    host: Some(String::from("postgres")),
+                    signal: String::from("getaddrinfo ENOTFOUND postgres"),
+                },
+            ),
+            Path::new("./.ota/proof/instant/up.log"),
+        );
+        assert_eq!(
+            class.as_deref(),
+            Some("dns_service_name_resolution_failure")
+        );
+    }
+
+    #[test]
     fn proof_runtime_failure_class_marks_missing_env_when_likely_cause_is_present() {
         let summary = DoctorSummary {
             verdict: DoctorVerdict::NotReady,
@@ -45273,6 +45311,58 @@ workflows:
         let likely_message = likely.message();
         assert!(likely_message.contains("3000"), "{likely_message}");
         assert!(likely_message.contains("3001"), "{likely_message}");
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_surfaces_dns_resolution_failure() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "Error: getaddrinfo ENOTFOUND postgres\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::DnsServiceNameResolutionFailure {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                host: Some(String::from("postgres")),
+                signal: String::from("Error: getaddrinfo ENOTFOUND postgres"),
+            }
+        );
+        let likely_message = likely.message();
+        assert!(likely_message.contains("postgres"), "{likely_message}");
+        assert!(
+            likely_message.contains("service naming"),
+            "{likely_message}"
+        );
     }
 
     #[test]
@@ -46168,6 +46258,54 @@ workflows:
         assert_eq!(
             body["likely_cause_evidence"]["observed_target"].as_str(),
             Some("http://localhost:3001/")
+        );
+    }
+
+    #[test]
+    fn proof_runtime_status_json_includes_dns_resolution_evidence() {
+        let body: serde_json::Value =
+            serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
+                ok: false,
+                path: "./ota.yaml",
+                mode: "runtime-proof",
+                workflow: Some("app"),
+                phase: "run",
+                summary: DoctorSummary::default(),
+                artifacts: Some(crate::output::ProofRuntimeArtifacts {
+                    topology: "topology.json",
+                    doctor: "doctor.json",
+                    up_log: "up.log",
+                }),
+                workflow_env_artifacts: Vec::new(),
+                failure_class: Some(String::from("dns_service_name_resolution_failure")),
+                error: None,
+                cleanup_failure: None,
+                likely_cause: Some(String::from(
+                    "dns/service-name resolution failure: the runtime could not resolve postgres; align the selected runtime network, service naming, or workflow-owned adapter/env inputs before rerunning proof",
+                )),
+                likely_cause_evidence: Some(crate::output::ProofRuntimeLikelyCauseEvidence {
+                    kind: String::from("dns_service_name_resolution_failure"),
+                    artifact: String::from("./.ota/proof/app/up-detached-run.log"),
+                    signal: Some(String::from("getaddrinfo ENOTFOUND postgres")),
+                    listener: None,
+                    variable: None,
+                    service: None,
+                    host: Some(String::from("postgres")),
+                    port: None,
+                    declared_target: None,
+                    observed_target: None,
+                }),
+                next: None,
+            }))
+            .unwrap();
+
+        assert_eq!(
+            body["likely_cause_evidence"]["kind"].as_str(),
+            Some("dns_service_name_resolution_failure")
+        );
+        assert_eq!(
+            body["likely_cause_evidence"]["host"].as_str(),
+            Some("postgres")
         );
     }
 
@@ -78110,6 +78248,11 @@ enum ProofRuntimeLikelyCause {
         observed_target: String,
         signal: String,
     },
+    DnsServiceNameResolutionFailure {
+        artifact: PathBuf,
+        host: Option<String>,
+        signal: String,
+    },
     LoopbackServiceDrift {
         artifact: PathBuf,
         service: String,
@@ -78145,6 +78288,14 @@ impl ProofRuntimeLikelyCause {
             } => format!(
                 "readiness target mismatch: declared readiness target {declared_target} but runtime advertised {observed_target}; align the declared readiness target or the app's published endpoint before rerunning proof"
             ),
+            Self::DnsServiceNameResolutionFailure { host, .. } => match host.as_deref() {
+                Some(host) => format!(
+                    "dns/service-name resolution failure: the runtime could not resolve {host}; align the selected runtime network, service naming, or workflow-owned adapter/env inputs before rerunning proof"
+                ),
+                None => String::from(
+                    "dns/service-name resolution failure: the runtime could not resolve a required host or service name; align the selected runtime network, service naming, or workflow-owned adapter/env inputs before rerunning proof",
+                ),
+            },
             Self::LoopbackServiceDrift {
                 service,
                 host,
@@ -78202,6 +78353,22 @@ impl ProofRuntimeLikelyCause {
                 port: None,
                 declared_target: Some(declared_target.clone()),
                 observed_target: Some(observed_target.clone()),
+            },
+            Self::DnsServiceNameResolutionFailure {
+                artifact,
+                host,
+                signal,
+            } => ProofRuntimeLikelyCauseEvidence {
+                kind: String::from("dns_service_name_resolution_failure"),
+                artifact: compact_repo_path(artifact),
+                signal: Some(signal.clone()),
+                listener: None,
+                variable: None,
+                service: None,
+                host: host.clone(),
+                port: None,
+                declared_target: None,
+                observed_target: None,
             },
             Self::LoopbackServiceDrift {
                 artifact,
@@ -78281,6 +78448,10 @@ impl ProofRuntimeLikelyCause {
         matches!(self, Self::ReadinessTargetMismatch { .. })
     }
 
+    fn is_dns_service_name_resolution_failure(&self) -> bool {
+        matches!(self, Self::DnsServiceNameResolutionFailure { .. })
+    }
+
     fn implies_config_drift(&self) -> bool {
         matches!(self, Self::LoopbackServiceDrift { .. })
     }
@@ -78324,6 +78495,8 @@ fn proof_runtime_failure_class(
 ) -> Option<String> {
     let likely_readiness_target_mismatch =
         likely_cause.is_some_and(ProofRuntimeLikelyCause::is_readiness_target_mismatch);
+    let likely_dns_service_name_resolution_failure =
+        likely_cause.is_some_and(ProofRuntimeLikelyCause::is_dns_service_name_resolution_failure);
     let likely_config_drift =
         likely_cause.is_some_and(ProofRuntimeLikelyCause::implies_config_drift);
     let likely_missing_env = likely_cause.is_some_and(ProofRuntimeLikelyCause::is_missing_env);
@@ -78348,6 +78521,9 @@ fn proof_runtime_failure_class(
         {
             if likely_readiness_target_mismatch {
                 return Some(String::from("readiness_target_mismatch"));
+            }
+            if likely_dns_service_name_resolution_failure {
+                return Some(String::from("dns_service_name_resolution_failure"));
             }
             if likely_missing_env {
                 return Some(String::from("missing_env"));
@@ -78376,6 +78552,9 @@ fn proof_runtime_failure_class(
         if likely_readiness_target_mismatch {
             return Some(String::from("readiness_target_mismatch"));
         }
+        if likely_dns_service_name_resolution_failure {
+            return Some(String::from("dns_service_name_resolution_failure"));
+        }
         if likely_missing_env {
             return Some(String::from("missing_env"));
         }
@@ -78401,6 +78580,9 @@ fn proof_runtime_failure_class(
         if likely_readiness_target_mismatch {
             return Some(String::from("readiness_target_mismatch"));
         }
+        if likely_dns_service_name_resolution_failure {
+            return Some(String::from("dns_service_name_resolution_failure"));
+        }
         if likely_missing_env {
             return Some(String::from("missing_env"));
         }
@@ -78419,6 +78601,9 @@ fn proof_runtime_failure_class(
     {
         if likely_readiness_target_mismatch {
             return Some(String::from("readiness_target_mismatch"));
+        }
+        if likely_dns_service_name_resolution_failure {
+            return Some(String::from("dns_service_name_resolution_failure"));
         }
         if likely_missing_env {
             return Some(String::from("missing_env"));
@@ -78545,6 +78730,10 @@ fn proof_runtime_likely_cause(
         return Some(cause);
     }
 
+    if let Some(cause) = proof_runtime_dns_service_name_resolution_hint(up_log_artifact_path) {
+        return Some(cause);
+    }
+
     if let Some(cause) = proof_runtime_missing_env_hint_from_log(up_log_artifact_path) {
         return Some(cause);
     }
@@ -78639,6 +78828,111 @@ fn proof_runtime_missing_env_hint_from_log(
         }
     }
     None
+}
+
+fn proof_runtime_dns_service_name_resolution_hint(
+    up_log_artifact_path: &Path,
+) -> Option<ProofRuntimeLikelyCause> {
+    let artifact_dir = up_log_artifact_path.parent()?;
+    for candidate in [
+        artifact_dir.join("up-detached-run.log"),
+        up_log_artifact_path.to_path_buf(),
+    ] {
+        let Some(cause) = dns_service_name_resolution_hint_from_log(candidate.as_path()) else {
+            continue;
+        };
+        return Some(cause);
+    }
+    None
+}
+
+fn dns_service_name_resolution_hint_from_log(path: &Path) -> Option<ProofRuntimeLikelyCause> {
+    let contents = fs::read_to_string(path).ok()?;
+    for raw_line in contents.lines() {
+        let line = strip_ansi_codes(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        let lowered = line.to_ascii_lowercase();
+        if !(lowered.contains("enotfound")
+            || lowered.contains("eai_again")
+            || lowered.contains("could not resolve host")
+            || lowered.contains("name or service not known")
+            || lowered.contains("temporary failure in name resolution")
+            || lowered.contains("no such host")
+            || lowered.contains("failed to resolve")
+            || lowered.contains("getaddrinfo"))
+        {
+            continue;
+        }
+        return Some(ProofRuntimeLikelyCause::DnsServiceNameResolutionFailure {
+            artifact: path.to_path_buf(),
+            host: extract_unresolved_host_from_line(&line),
+            signal: line,
+        });
+    }
+    None
+}
+
+fn extract_unresolved_host_from_line(line: &str) -> Option<String> {
+    if let Some(host) = extract_host_after_prefix(line, "getaddrinfo enotfound ") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_after_prefix(line, "lookup ") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_after_prefix(line, "could not resolve host: ") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_before_suffix(line, ": name or service not known") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_before_suffix(line, ": temporary failure in name resolution") {
+        return Some(host);
+    }
+    None
+}
+
+fn extract_host_after_prefix(line: &str, prefix: &str) -> Option<String> {
+    let lowered = line.to_ascii_lowercase();
+    let start = lowered.find(prefix)?;
+    let value = line[start + prefix.len()..]
+        .split(|ch: char| {
+            ch.is_whitespace()
+                || ch == ':'
+                || ch == ','
+                || ch == ';'
+                || ch == '/'
+                || ch == '('
+                || ch == ')'
+        })
+        .next()
+        .unwrap_or_default()
+        .trim_matches('`')
+        .trim();
+    normalized_unresolved_host(value)
+}
+
+fn extract_host_before_suffix(line: &str, suffix: &str) -> Option<String> {
+    let lowered = line.to_ascii_lowercase();
+    let end = lowered.find(suffix)?;
+    let value = line[..end]
+        .split_whitespace()
+        .last()
+        .unwrap_or_default()
+        .trim_matches('`')
+        .trim();
+    normalized_unresolved_host(value)
+}
+
+fn normalized_unresolved_host(value: &str) -> Option<String> {
+    if value.is_empty() {
+        return None;
+    }
+    if value == "localhost" || value == "127.0.0.1" || value == "0.0.0.0" {
+        return None;
+    }
+    Some(value.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
