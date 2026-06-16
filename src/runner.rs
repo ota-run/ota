@@ -26,7 +26,7 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
-use std::io::{self, IsTerminal, Read, Seek, SeekFrom, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Component;
 use std::path::{Path, PathBuf};
@@ -945,12 +945,12 @@ pub enum RunError {
         details: String,
     },
     #[error(
-        "task `{task}` cannot start because another ota execution is already active for this repo (`{path}` is locked)"
+        "task `{task}` cannot start because it conflicts with active ota executions recorded in `{path}`"
     )]
-    RepoExecutionLockBusy {
+    RepoExecutionConflict {
         task: String,
         path: String,
-        owner: Option<RepoExecutionLockOwner>,
+        owners: Vec<RepoExecutionLockOwner>,
     },
     #[error("task `{task}` could not {action} repo execution lock `{path}`: {details}")]
     RepoExecutionLockFailed {
@@ -1698,6 +1698,7 @@ const OTA_OWNERSHIP_ID_FILE: &str = "ownership-id";
 const OTA_MANAGED_ENGINES_FILE: &str = "managed-engines";
 const OTA_ISOLATED_FILE_MOUNTS_DIR: &str = "isolated-file-mounts";
 const OTA_RUN_EXECUTION_LOCK_FILE: &str = "run-execution.lock";
+const OTA_ACTIVE_EXECUTIONS_FILE: &str = "active-executions.json";
 const CONTAINER_AUTO_PUBLICATION_MAX_ATTEMPTS: usize = 5;
 const EPHEMERAL_CONFLICT_RECLAIM_MAX_ATTEMPTS: usize = 5;
 const DEPENDENCY_ISOLATION_VOLUME_REMOVE_MAX_ATTEMPTS: usize = 12;
@@ -1718,6 +1719,10 @@ impl Drop for RepoExecutionLockGuard {
     }
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoExecutionLockOwner {
     pub task: String,
@@ -1728,8 +1733,28 @@ pub struct RepoExecutionLockOwner {
     pub lifecycle: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub host_services: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub service_task: bool,
     pub pid: u32,
     pub started_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ActiveRepoExecutionRecord {
+    id: String,
+    #[serde(flatten)]
+    owner: RepoExecutionLockOwner,
+}
+
+struct ActiveRepoExecutionGuard {
+    working_dir: PathBuf,
+    execution_id: String,
+}
+
+impl Drop for ActiveRepoExecutionGuard {
+    fn drop(&mut self) {
+        let _ = unregister_active_repo_execution(&self.working_dir, self.execution_id.as_str());
+    }
 }
 
 fn format_repo_execution_lock_timestamp(now: OffsetDateTime) -> String {
@@ -1778,32 +1803,14 @@ fn repo_execution_lock_owner_for_backend(
                 .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Host)
         })
         .collect(),
+        service_task: contract
+            .tasks
+            .get(task_name)
+            .and_then(|task| task.service_runtime_for_backend(resolved_execution_backend_kind(backend)))
+            .is_some(),
         pid: std::process::id(),
         started_at: format_repo_execution_lock_timestamp(OffsetDateTime::now_utc()),
     }
-}
-
-fn write_repo_execution_lock_owner(
-    lock_file: &mut File,
-    owner: &RepoExecutionLockOwner,
-) -> io::Result<()> {
-    lock_file.set_len(0)?;
-    lock_file.seek(SeekFrom::Start(0))?;
-    serde_json::to_writer(&mut *lock_file, owner)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
-    lock_file.write_all(b"\n")?;
-    lock_file.flush()?;
-    Ok(())
-}
-
-fn read_repo_execution_lock_owner(lock_file: &mut File) -> Option<RepoExecutionLockOwner> {
-    lock_file.seek(SeekFrom::Start(0)).ok()?;
-    let mut contents = String::new();
-    lock_file.read_to_string(&mut contents).ok()?;
-    if contents.trim().is_empty() {
-        return None;
-    }
-    serde_json::from_str(contents.trim()).ok()
 }
 
 fn clean_engine_timeout_cache() -> &'static Mutex<BTreeMap<String, String>> {
@@ -4127,7 +4134,7 @@ fn clean_execution_report_inner(
 ) -> Result<CleanExecutionReport, RunError> {
     let clean_task_name = OTA_CLEAN_INTERNAL_TASK_NAME;
     let working_dir = contract_working_dir(contract_path);
-    let _repo_execution_lock = acquire_repo_execution_lock(clean_task_name, working_dir, None)?;
+    ensure_no_active_repo_execution_conflicts(clean_task_name, working_dir)?;
     let host_services_to_stop = host_managed_services_for_cleanup(contract, cleanup_scope);
     let cleanup_targets = persistent_cleanup_targets(contract, cleanup_scope)?;
     let repo_ownership_token = repo_ownership_token("clean", contract_path)?;
@@ -5480,8 +5487,8 @@ fn run_task_internal(
     let working_dir = contract_working_dir(contract_path);
     let lock_owner =
         repo_execution_lock_owner_for_backend(contract, task_name, overrides, &backend);
-    let _repo_execution_lock =
-        acquire_repo_execution_lock(task_name, working_dir, Some(&lock_owner))?;
+    let _active_repo_execution =
+        register_active_repo_execution(task_name, working_dir, &lock_owner)?;
     if overrides.skip_deps
         && contract
             .tasks
@@ -24024,10 +24031,14 @@ fn repo_execution_lock_path(working_dir: &Path) -> PathBuf {
     repo_ota_state_file_path(working_dir, OTA_RUN_EXECUTION_LOCK_FILE)
 }
 
+fn repo_active_executions_path(working_dir: &Path) -> PathBuf {
+    repo_ota_state_file_path(working_dir, OTA_ACTIVE_EXECUTIONS_FILE)
+}
+
 fn acquire_repo_execution_lock(
     task_name: &str,
     working_dir: &Path,
-    owner: Option<&RepoExecutionLockOwner>,
+    action: &str,
 ) -> Result<RepoExecutionLockGuard, RunError> {
     let lock_path = repo_execution_lock_path(working_dir);
     fs::create_dir_all(repo_ota_state_dir(working_dir)).map_err(|source| {
@@ -24038,7 +24049,7 @@ fn acquire_repo_execution_lock(
             details: source.to_string(),
         }
     })?;
-    let mut lock_file = fs::OpenOptions::new()
+    let lock_file = fs::OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
@@ -24049,33 +24060,156 @@ fn acquire_repo_execution_lock(
             path: lock_path.display().to_string(),
             details: source.to_string(),
         })?;
-    lock_file.try_lock_exclusive().map_err(|source| {
-        if source.kind() == fs2::lock_contended_error().kind() {
-            RunError::RepoExecutionLockBusy {
-                task: task_name.to_string(),
-                path: lock_path.display().to_string(),
-                owner: read_repo_execution_lock_owner(&mut lock_file),
-            }
-        } else {
-            RunError::RepoExecutionLockFailed {
-                task: task_name.to_string(),
-                action: String::from("lock"),
-                path: lock_path.display().to_string(),
-                details: source.to_string(),
-            }
+    lock_file.lock_exclusive().map_err(|source| RunError::RepoExecutionLockFailed {
+        task: task_name.to_string(),
+        action: action.to_string(),
+        path: lock_path.display().to_string(),
+        details: source.to_string(),
+    })?;
+    Ok(RepoExecutionLockGuard { lock_file })
+}
+
+fn read_active_repo_execution_records(
+    working_dir: &Path,
+) -> io::Result<Vec<ActiveRepoExecutionRecord>> {
+    let path = repo_active_executions_path(working_dir);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let contents = fs::read_to_string(path)?;
+    if contents.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    serde_json::from_str(contents.trim())
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
+}
+
+fn write_active_repo_execution_records(
+    working_dir: &Path,
+    records: &[ActiveRepoExecutionRecord],
+) -> io::Result<()> {
+    let path = repo_active_executions_path(working_dir);
+    if records.is_empty() {
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        return Ok(());
+    }
+    let contents = serde_json::to_string_pretty(records)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+    fs::write(path, format!("{contents}\n"))
+}
+
+fn active_repo_execution_record_alive(record: &ActiveRepoExecutionRecord) -> bool {
+    owner_pid_running(record.owner.pid).unwrap_or(true)
+}
+
+fn execution_conflicts_with_active_owner(
+    candidate: &RepoExecutionLockOwner,
+    active: &RepoExecutionLockOwner,
+) -> bool {
+    candidate.service_task && active.service_task && candidate.task == active.task
+}
+
+fn active_repo_execution_id(owner: &RepoExecutionLockOwner) -> String {
+    format!(
+        "{}-{}-{}",
+        owner.pid,
+        owner.task.replace(':', "_"),
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    )
+}
+
+fn register_active_repo_execution(
+    task_name: &str,
+    working_dir: &Path,
+    owner: &RepoExecutionLockOwner,
+) -> Result<ActiveRepoExecutionGuard, RunError> {
+    let _registry_lock = acquire_repo_execution_lock(task_name, working_dir, "lock")?;
+    let mut records = read_active_repo_execution_records(working_dir).map_err(|source| {
+        RunError::RepoExecutionLockFailed {
+            task: task_name.to_string(),
+            action: String::from("read"),
+            path: repo_active_executions_path(working_dir).display().to_string(),
+            details: source.to_string(),
         }
     })?;
-    if let Some(owner) = owner {
-        write_repo_execution_lock_owner(&mut lock_file, owner).map_err(|source| {
-            RunError::RepoExecutionLockFailed {
-                task: task_name.to_string(),
-                action: String::from("write"),
-                path: lock_path.display().to_string(),
-                details: source.to_string(),
-            }
-        })?;
+    records.retain(active_repo_execution_record_alive);
+    let owners = records
+        .iter()
+        .filter(|record| execution_conflicts_with_active_owner(owner, &record.owner))
+        .map(|record| record.owner.clone())
+        .collect::<Vec<_>>();
+    if !owners.is_empty() {
+        return Err(RunError::RepoExecutionConflict {
+            task: task_name.to_string(),
+            path: repo_active_executions_path(working_dir).display().to_string(),
+            owners,
+        });
     }
-    Ok(RepoExecutionLockGuard { lock_file })
+    let execution_id = active_repo_execution_id(owner);
+    records.push(ActiveRepoExecutionRecord {
+        id: execution_id.clone(),
+        owner: owner.clone(),
+    });
+    write_active_repo_execution_records(working_dir, &records).map_err(|source| {
+        RunError::RepoExecutionLockFailed {
+            task: task_name.to_string(),
+            action: String::from("write"),
+            path: repo_active_executions_path(working_dir).display().to_string(),
+            details: source.to_string(),
+        }
+    })?;
+    Ok(ActiveRepoExecutionGuard {
+        working_dir: working_dir.to_path_buf(),
+        execution_id,
+    })
+}
+
+fn unregister_active_repo_execution(working_dir: &Path, execution_id: &str) -> io::Result<()> {
+    let _registry_lock = acquire_repo_execution_lock(
+        "__ota_unregister_execution__",
+        working_dir,
+        "lock",
+    )
+    .map_err(|error| io::Error::other(error.to_string()))?;
+    let mut records = read_active_repo_execution_records(working_dir)?;
+    records.retain(|record| record.id != execution_id && active_repo_execution_record_alive(record));
+    write_active_repo_execution_records(working_dir, &records)
+}
+
+fn ensure_no_active_repo_execution_conflicts(task_name: &str, working_dir: &Path) -> Result<(), RunError> {
+    let _registry_lock = acquire_repo_execution_lock(task_name, working_dir, "lock")?;
+    let mut records = read_active_repo_execution_records(working_dir).map_err(|source| {
+        RunError::RepoExecutionLockFailed {
+            task: task_name.to_string(),
+            action: String::from("read"),
+            path: repo_active_executions_path(working_dir).display().to_string(),
+            details: source.to_string(),
+        }
+    })?;
+    records.retain(active_repo_execution_record_alive);
+    write_active_repo_execution_records(working_dir, &records).map_err(|source| {
+        RunError::RepoExecutionLockFailed {
+            task: task_name.to_string(),
+            action: String::from("write"),
+            path: repo_active_executions_path(working_dir).display().to_string(),
+            details: source.to_string(),
+        }
+    })?;
+    let owners = records
+        .into_iter()
+        .map(|record| record.owner)
+        .collect::<Vec<_>>();
+    if owners.is_empty() {
+        Ok(())
+    } else {
+        Err(RunError::RepoExecutionConflict {
+            task: task_name.to_string(),
+            path: repo_active_executions_path(working_dir).display().to_string(),
+            owners,
+        })
+    }
 }
 
 fn legacy_repo_ota_state_file_path(working_dir: &Path, file_name: &str) -> PathBuf {
@@ -25013,6 +25147,7 @@ mod tests {
         RuntimeReadinessTarget, StreamLogFile, StreamLogTee, TaskExecutionMode,
         TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
         TaskTargetActivationStatus, TaskTargetResolutionSource, acquire_repo_execution_lock,
+        register_active_repo_execution,
         activation_loader_label, backend_fulfillment_plan, clean_execution, clean_execution_report,
         container_identity_seed, contract_working_dir, current_os, effective_task_env_for_backend,
         effective_task_env_for_selection, effective_task_execution,
@@ -25022,7 +25157,8 @@ mod tests {
         persistent_container_name_for_seed, plan_task_execution,
         preflight_container_host_publications, prepare_container_runtime_projection,
         preparing_loader_label, producer_owned_service_next, ready_runtime_public_endpoint_line,
-        repo_execution_lock_path, resolve_execution_backend,
+        repo_execution_lock_path, repo_ota_state_dir, resolve_execution_backend,
+        write_active_repo_execution_records,
         resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
         resolve_task_env_details_for_task, resolve_task_target_binding_url,
         resolve_task_target_binding_url_with_contract_path, run_task, run_task_captured,
@@ -25069,16 +25205,16 @@ mod tests {
         let fixture = tempdir().expect("tempdir");
         let lock_path = repo_execution_lock_path(fixture.path());
         {
-            let _guard = acquire_repo_execution_lock("build", fixture.path(), None)
+            let _guard = acquire_repo_execution_lock("build", fixture.path(), "lock")
                 .expect("lock should acquire");
             assert!(lock_path.exists(), "{lock_path:?}");
         }
-        let _guard = acquire_repo_execution_lock("build", fixture.path(), None)
+        let _guard = acquire_repo_execution_lock("build", fixture.path(), "lock")
             .expect("lock should reacquire");
     }
 
     #[test]
-    fn repo_execution_lock_busy_surfaces_active_owner_metadata() {
+    fn active_repo_execution_conflict_surfaces_owner_metadata() {
         let fixture = tempdir().expect("tempdir");
         let owner = super::RepoExecutionLockOwner {
             task: String::from("dev"),
@@ -25086,32 +25222,100 @@ mod tests {
             execution_mode: String::from("native"),
             lifecycle: None,
             host_services: vec![String::from("redis")],
-            pid: 48211,
+            service_task: true,
+            pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
         };
-        let _guard = acquire_repo_execution_lock("dev", fixture.path(), Some(&owner))
-            .expect("lock should acquire");
+        let _guard =
+            register_active_repo_execution("dev", fixture.path(), &owner).expect("register owner");
 
-        match acquire_repo_execution_lock("build", fixture.path(), None) {
-            Err(RunError::RepoExecutionLockBusy {
+        match register_active_repo_execution("dev", fixture.path(), &owner) {
+            Err(RunError::RepoExecutionConflict {
                 task,
                 path,
-                owner: Some(active_owner),
+                owners,
             }) => {
-                assert_eq!(task, "build");
+                assert_eq!(task, "dev");
                 assert!(
-                    path.ends_with(".ota/state/run-execution.lock"),
+                    path.ends_with(".ota/state/active-executions.json"),
                     "unexpected lock path: {path}"
                 );
-                assert_eq!(active_owner, owner);
+                assert_eq!(owners, vec![owner]);
             }
-            Ok(_) => panic!("second acquisition should report busy"),
-            Err(other) => panic!("expected busy lock with owner metadata, got {other:?}"),
+            Ok(_) => panic!("duplicate service registration should conflict"),
+            Err(other) => panic!("expected execution conflict with owner metadata, got {other:?}"),
         }
     }
 
     #[test]
-    fn clean_execution_respects_active_repo_execution_lock() {
+    fn active_finite_repo_execution_can_coexist_with_service_owner() {
+        let fixture = tempdir().expect("tempdir");
+        let service_owner = super::RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            service_task: true,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:03Z"),
+        };
+        let finite_owner = super::RepoExecutionLockOwner {
+            task: String::from("test"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            service_task: false,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:04Z"),
+        };
+
+        let _service_guard = register_active_repo_execution("dev", fixture.path(), &service_owner)
+            .expect("service registration should succeed");
+        let _finite_guard = register_active_repo_execution("test", fixture.path(), &finite_owner)
+            .expect("finite execution should coexist with active service");
+    }
+
+    #[test]
+    fn stale_active_repo_execution_record_is_pruned_before_registration() {
+        let fixture = tempdir().expect("tempdir");
+        fs::create_dir_all(repo_ota_state_dir(fixture.path())).expect("state dir");
+        write_active_repo_execution_records(
+            fixture.path(),
+            &[super::ActiveRepoExecutionRecord {
+                id: String::from("stale"),
+                owner: super::RepoExecutionLockOwner {
+                    task: String::from("dev"),
+                    requested_mode: Some(String::from("native")),
+                    execution_mode: String::from("native"),
+                    lifecycle: None,
+                    host_services: vec![],
+                    service_task: true,
+                    pid: u32::MAX,
+                    started_at: String::from("2026-06-05T22:14:03Z"),
+                },
+            }],
+        )
+        .expect("should write stale execution registry");
+
+        let owner = super::RepoExecutionLockOwner {
+            task: String::from("dev"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            service_task: true,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:04Z"),
+        };
+
+        let _guard = register_active_repo_execution("dev", fixture.path(), &owner)
+            .expect("dead owner entry should be pruned before conflicting");
+    }
+
+    #[test]
+    fn clean_execution_respects_active_repo_execution_registry() {
         let fixture = tempdir().expect("tempdir");
         let owner = super::RepoExecutionLockOwner {
             task: String::from("dev"),
@@ -25119,11 +25323,12 @@ mod tests {
             execution_mode: String::from("native"),
             lifecycle: Some(String::from("persistent")),
             host_services: vec![String::from("redis")],
-            pid: 48211,
+            service_task: true,
+            pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
         };
-        let _guard = acquire_repo_execution_lock("dev", fixture.path(), Some(&owner))
-            .expect("lock should acquire");
+        let _guard =
+            register_active_repo_execution("dev", fixture.path(), &owner).expect("register owner");
         let contract = parse_contract_str(
             &fixture.path().join("ota.yaml"),
             r#"
@@ -25144,15 +25349,15 @@ services:
         .expect("contract should parse");
 
         match clean_execution_report(&contract, &fixture.path().join("ota.yaml")) {
-            Err(super::CleanExecutionError::Other(RunError::RepoExecutionLockBusy {
+            Err(super::CleanExecutionError::Other(RunError::RepoExecutionConflict {
                 task,
-                owner: Some(active_owner),
+                owners,
                 ..
             })) => {
                 assert_eq!(task, super::OTA_CLEAN_INTERNAL_TASK_NAME);
-                assert_eq!(active_owner, owner);
+                assert_eq!(owners, vec![owner]);
             }
-            other => panic!("expected clean to honor active repo execution lock, got {other:?}"),
+            other => panic!("expected clean to honor active execution registry, got {other:?}"),
         }
     }
 

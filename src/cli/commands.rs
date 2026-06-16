@@ -62657,10 +62657,10 @@ tasks:
                 skip_deps: true,
             },
             &[],
-            &RunError::RepoExecutionLockBusy {
+            &RunError::RepoExecutionConflict {
                 task: String::from("build"),
-                path: String::from("./.ota/state/run-execution.lock"),
-                owner: None,
+                path: String::from("./.ota/state/active-executions.json"),
+                owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
             None,
@@ -62697,10 +62697,10 @@ tasks:
                 ..ExecutionOverrides::default()
             },
             &[],
-            &RunError::RepoExecutionLockBusy {
+            &RunError::RepoExecutionConflict {
                 task: String::from("deploy:cloudflare"),
-                path: String::from("./.ota/state/run-execution.lock"),
-                owner: None,
+                path: String::from("./.ota/state/active-executions.json"),
+                owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
             None,
@@ -62737,24 +62737,25 @@ tasks:
                 ..ExecutionOverrides::default()
             },
             &[],
-            &RunError::RepoExecutionLockBusy {
+            &RunError::RepoExecutionConflict {
                 task: String::from("build"),
-                path: String::from("./.ota/state/run-execution.lock"),
-                owner: Some(RepoExecutionLockOwner {
+                path: String::from("./.ota/state/active-executions.json"),
+                owners: vec![RepoExecutionLockOwner {
                     task: String::from("dev"),
                     requested_mode: Some(String::from("container")),
                     execution_mode: String::from("container"),
                     lifecycle: Some(String::from("persistent")),
                     host_services: vec![String::from("redis"), String::from("postgres")],
+                    service_task: true,
                     pid: 48211,
                     started_at: String::from("2026-06-05T22:14:03Z"),
-                }),
+                }],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
             None,
         ));
 
-        assert!(rendered.contains("\n\nActive execution:"), "{rendered}");
+        assert!(rendered.contains("\n\nConflicting execution:"), "{rendered}");
         assert!(rendered.contains("task: `dev`"), "{rendered}");
         assert!(
             rendered.contains("requested mode: `container`"),
@@ -62802,10 +62803,10 @@ tasks:
             None,
             ExecutionOverrides::default(),
             &[String::from("--version"), String::from("patch")],
-            &RunError::RepoExecutionLockBusy {
+            &RunError::RepoExecutionConflict {
                 task: String::from("version:bump"),
-                path: String::from("./.ota/state/run-execution.lock"),
-                owner: None,
+                path: String::from("./.ota/state/active-executions.json"),
+                owners: vec![],
             },
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
             None,
@@ -73012,8 +73013,8 @@ fn render_run_structured_error_text(
                 format!("rerun `{}` when ready", rerun_stream_command),
             ],
         ),
-        RunError::RepoExecutionLockBusy { path, owner, .. } => {
-            if let Some(owner) = owner {
+        RunError::RepoExecutionConflict { path, owners, .. } => {
+            if let Some(owner) = owners.first() {
                 detail_lines.push(format!("task: `{}`", owner.task));
                 if let Some(requested_mode) = owner.requested_mode.as_deref() {
                     detail_lines.push(format!("requested mode: `{requested_mode}`"));
@@ -73036,13 +73037,21 @@ fn render_run_structured_error_text(
                 detail_lines.push(format!("pid: `{}`", owner.pid));
                 detail_lines.push(format!("started: `{}`", owner.started_at));
             }
+            if owners.len() > 1 {
+                detail_lines.push(format!(
+                    "additional active executions: `{}`",
+                    owners.len() - 1
+                ));
+            }
             (
-                String::from("Another ota execution is already active"),
+                String::from("Active execution conflict"),
                 vec![format!(
-                    "ota could not acquire repo execution lock `{path}` because another ota run/up command is still running"
+                    "ota could not start this task because active repo executions recorded in `{path}` conflict with it"
                 )],
                 vec![
-                    String::from("wait for the active ota execution to finish"),
+                    String::from(
+                        "wait for the conflicting execution to finish or stop it before retrying",
+                    ),
                     format!("then rerun `{}`", rerun_command),
                 ],
             )
@@ -73769,7 +73778,12 @@ fn render_run_structured_error_text(
         structured_error_text("RUN", &text_path_display, &summary, &why_lines, &next_steps);
     if !detail_lines.is_empty() {
         output.push('\n');
-        append_error_detail_section(&mut output, "Active execution:", &detail_lines, None);
+        let detail_heading = if matches!(error, RunError::RepoExecutionConflict { .. }) {
+            "Conflicting execution:"
+        } else {
+            "Active execution:"
+        };
+        append_error_detail_section(&mut output, detail_heading, &detail_lines, None);
     }
     if let Some(receipt_text) = receipt_text
         && !receipt_text.trim().is_empty()

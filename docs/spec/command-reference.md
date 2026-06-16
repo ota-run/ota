@@ -1221,6 +1221,9 @@ Current behavior:
 - persistent container runs reconcile shape before reuse and recreate when projection/publication drift would make runtime endpoint metadata stale
 - Compose attachment namespace drift also counts as persistent execution-shape drift, so changing `attachments.compose` recreates the persistent backend instead of reusing a container bound to the old Compose network family
 - service tasks with projected listeners classify post-readiness exits as service-stop failures (including `interrupted`) so summaries and receipts stay truthful across both ephemeral and persistent lifecycle modes
+- active repo execution ownership is now tracked in `.ota/state/active-executions.json` instead of a single whole-run lock, so compatible runs can coexist when their execution ownership does not conflict
+- the current shipped conflict rule is intentionally narrow: duplicate long-running service-task ownership still blocks, while finite task paths can run alongside an active service owner
+- stale active-execution records are pruned by owner PID before conflict checks, so interrupted or crashed ota processes do not leave a permanent fake-active barrier behind
 - when `--skip-deps` is used, receipts and run summaries mark the override explicitly and point back to rerunning without it when you need to validate the full declared task flow
 - on success, text output includes the compact `RUN SUMMARY` block with `Status` first for quick scanning, followed by the selected mode, container image when relevant, target when one exists, and task
 - `--receipt` adds the full execution receipt when you need the detailed trail
@@ -2339,6 +2342,7 @@ Current behavior:
 - `ota clean --stale` has its own exit-code contract and is separate from repo-scoped `ota clean`
 - remote backends do not currently define cleanup semantics; they report `No cleanup needed`
 - reports `No cleanup needed` only when no owned cleanup target is found and no relevant-engine discovery failed
+- repo-scoped `ota clean` now treats any live active-execution registry entry as a cleanup barrier; it fails with an execution-conflict report instead of stopping host services or tearing down persistent state underneath an active run
 - does not stop services or perform workspace-wide cleanup
 
 ## `ota detect`

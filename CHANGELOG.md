@@ -87,6 +87,10 @@
   own sibling workspace inputs such as `../task-sdk/schema.json` without falling back to shell
   `test -f ...` glue; validator/doctor/docs/examples now keep repo-bound file checks strict by
   default and use explicit workspace scope only when that broader ownership is real
+- replaced the whole-run repo execution mutex with an active-execution registry, so compatible
+  runs can now coexist in one repo (`ota run dev` plus a finite task path) while `ota clean` and
+  duplicate long-running service ownership still block on first-class execution conflicts instead
+  of a coarse single-command lock
 - made stream-phase loader timing explicit in the runner, so noisy task-output paths now use the
   governed delayed loader policy instead of ad hoc immediate spinner behavior that could dirty
   terminal output handoff before real task logs arrive
