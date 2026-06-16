@@ -3399,6 +3399,8 @@ pub struct TaskPrepareSummary<'a> {
     pub frozen_lockfile: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub no_root: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub skip_tests: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<&'a str>,
 }
@@ -3428,6 +3430,8 @@ pub struct WorkspaceTaskPrepareSummary {
     pub frozen_lockfile: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub no_root: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub skip_tests: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<String>,
 }
@@ -3632,6 +3636,7 @@ pub fn summarize_task_prepare(
             groups: Vec::new(),
             frozen_lockfile: false,
             no_root: false,
+            skip_tests: false,
             targets: Vec::new(),
         }),
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
@@ -3645,6 +3650,7 @@ pub fn summarize_task_prepare(
                 groups,
                 frozen_lockfile,
                 no_root,
+                skip_tests,
             ) = match &spec.source {
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
                     "docker_compose",
@@ -3654,6 +3660,7 @@ pub fn summarize_task_prepare(
                     None,
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                 ),
@@ -3675,6 +3682,7 @@ pub fn summarize_task_prepare(
                     Vec::new(),
                     source.frozen_lockfile,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
                     "bundler",
@@ -3686,6 +3694,7 @@ pub fn summarize_task_prepare(
                     Vec::new(),
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
                     "uv",
@@ -3695,6 +3704,7 @@ pub fn summarize_task_prepare(
                     Some("sync"),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                 ),
@@ -3711,6 +3721,7 @@ pub fn summarize_task_prepare(
                     source.groups.iter().map(String::as_str).collect(),
                     false,
                     source.no_root,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
                     "go_modules",
@@ -3722,17 +3733,19 @@ pub fn summarize_task_prepare(
                     Vec::new(),
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => (
                     "maven",
                     Some(source.cwd.as_str()),
                     None,
                     Some(if source.wrapper { "./mvnw" } else { "mvn" }),
-                    Some("dependency:resolve"),
+                    Some(source.mode.goal()),
                     None,
                     Vec::new(),
                     false,
                     false,
+                    source.skip_tests,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => (
                     "gradle",
@@ -3742,6 +3755,7 @@ pub fn summarize_task_prepare(
                     Some("dependencies"),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                 ),
@@ -3755,6 +3769,7 @@ pub fn summarize_task_prepare(
                     Vec::new(),
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => (
                     "dotnet_restore",
@@ -3764,6 +3779,7 @@ pub fn summarize_task_prepare(
                     Some("restore"),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                 ),
@@ -3788,6 +3804,7 @@ pub fn summarize_task_prepare(
                 groups,
                 frozen_lockfile,
                 no_root,
+                skip_tests,
                 targets: spec.targets.iter().map(String::as_str).collect(),
             })
         }
@@ -3815,6 +3832,7 @@ pub fn summarize_task_prepare_owned(
             groups: Vec::new(),
             frozen_lockfile: false,
             no_root: false,
+            skip_tests: false,
             targets: Vec::new(),
         }),
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
@@ -3828,6 +3846,7 @@ pub fn summarize_task_prepare_owned(
                 groups,
                 frozen_lockfile,
                 no_root,
+                skip_tests,
             ) = match &spec.source {
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
                     "docker_compose",
@@ -3837,6 +3856,7 @@ pub fn summarize_task_prepare_owned(
                     None,
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                 ),
@@ -3858,6 +3878,7 @@ pub fn summarize_task_prepare_owned(
                     Vec::new(),
                     source.frozen_lockfile,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
                     "bundler",
@@ -3869,6 +3890,7 @@ pub fn summarize_task_prepare_owned(
                     Vec::new(),
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
                     "uv",
@@ -3878,6 +3900,7 @@ pub fn summarize_task_prepare_owned(
                     Some("sync"),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                 ),
@@ -3894,6 +3917,7 @@ pub fn summarize_task_prepare_owned(
                     source.groups.clone(),
                     false,
                     source.no_root,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
                     "go_modules",
@@ -3905,17 +3929,19 @@ pub fn summarize_task_prepare_owned(
                     Vec::new(),
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => (
                     "maven",
                     Some(source.cwd.clone()),
                     None,
                     Some(if source.wrapper { "./mvnw" } else { "mvn" }),
-                    Some("dependency:resolve"),
+                    Some(source.mode.goal()),
                     None,
                     Vec::new(),
                     false,
                     false,
+                    source.skip_tests,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => (
                     "gradle",
@@ -3925,6 +3951,7 @@ pub fn summarize_task_prepare_owned(
                     Some("dependencies"),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                 ),
@@ -3938,6 +3965,7 @@ pub fn summarize_task_prepare_owned(
                     Vec::new(),
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => (
                     "dotnet_restore",
@@ -3947,6 +3975,7 @@ pub fn summarize_task_prepare_owned(
                     Some("restore"),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                 ),
@@ -3971,6 +4000,7 @@ pub fn summarize_task_prepare_owned(
                 groups,
                 frozen_lockfile,
                 no_root,
+                skip_tests,
                 targets: spec.targets.clone(),
             })
         }

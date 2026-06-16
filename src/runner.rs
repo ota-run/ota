@@ -8325,9 +8325,11 @@ fn prepare_task_shell_command(
                 shell_quote_command_word(source.cwd.trim(), quote_style)
             )),
             crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => Ok(format!(
-                "cd {} && {} -q dependency:resolve",
+                "cd {} && {} -q{} {}",
                 shell_quote_command_word(source.cwd.trim(), quote_style),
-                shell_quote_command_word(if source.wrapper { "./mvnw" } else { "mvn" }, quote_style)
+                shell_quote_command_word(if source.wrapper { "./mvnw" } else { "mvn" }, quote_style),
+                if source.skip_tests { " -DskipTests" } else { "" },
+                source.mode.goal()
             )),
             crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => Ok(format!(
                 "cd {} && {} dependencies",
@@ -51530,6 +51532,103 @@ tasks:
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
         let logged = fs::read_to_string(log_path).unwrap();
         assert!(logged.contains("dependency:resolve"), "{logged}");
+        assert!(
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("app")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_executes_maven_go_offline_from_declared_cwd() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  java:
+    version: "22"
+tools:
+  maven: "*"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: maven
+        cwd: app
+        mode: go_offline
+        skip_tests: true
+    requirements:
+      toolchains:
+        - java
+      tools:
+        maven: "*"
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("app")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let java_body = if cfg!(windows) {
+            "@echo off\r\necho openjdk version \"22.0.1\"\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'openjdk version \"22.0.1\"\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "java", java_body);
+        let javac_body = if cfg!(windows) {
+            "@echo off\r\n1>&2 echo javac 22.0.1\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'javac 22.0.1\\n' >&2\n"
+        };
+        write_fake_bin(&bin_dir, "javac", javac_body);
+        let mvn_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo Apache Maven 3.9.14\r\n  exit /b 0\r\n)\r\n>> \"%OTA_MAVEN_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'Apache Maven 3.9.14\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_MAVEN_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "mvn", mvn_body);
+        let log_path = fixture.dir.path().join("maven.log");
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_MAVEN_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_MAVEN_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("prepare task should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_MAVEN_LOG", value) },
+            None => unsafe { env::remove_var("OTA_MAVEN_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(logged.contains("-DskipTests"), "{logged}");
+        assert!(logged.contains("dependency:go-offline"), "{logged}");
         assert!(
             logged.contains(
                 fixture

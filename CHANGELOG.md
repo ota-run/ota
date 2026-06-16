@@ -223,6 +223,10 @@
   `prepare.kind: dependency_hydration`, with Java wrapper awareness for `mvnw` / `gradlew`; `ota
   init --pack` now seeds those first-class setup bodies for Java, Rust, and .NET instead of
   falling back to raw shell install commands
+- widened Maven hydration one step further under that same surface: `source.kind: maven` now
+  supports explicit `mode: resolve|go_offline` plus optional `skip_tests`, so real setup lanes
+  like `mvn -q -DskipTests dependency:go-offline` can stay first-class instead of falling back to
+  opaque shell
 - aligned published task inventory truth with the widened setup surface: `ota tasks` text now
   renders structured prepare lanes truthfully, the published `tasks.json` / `workspace-tasks.json`
   schemas now cover additive `prepare`, additive `aggregate`, additive `effects`, task `env` /

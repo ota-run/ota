@@ -1801,7 +1801,9 @@ Task-effect rules:
     - `prepare.source.cwd`: required repo-relative working directory for the `go mod download` invocation
     - `prepare.source.kind: maven`
     - `prepare.source.cwd`: required repo-relative working directory for the Maven invocation
-    - `prepare.source.wrapper`: optional explicit wrapper ownership; when `true`, ota runs `./mvnw -q dependency:resolve`, otherwise it runs `mvn -q dependency:resolve`
+    - `prepare.source.wrapper`: optional explicit wrapper ownership; when `true`, ota runs `./mvnw ...`, otherwise it runs `mvn ...`
+    - `prepare.source.mode`: optional Maven hydration goal; ota currently ships `resolve` and `go_offline`
+    - `prepare.source.skip_tests`: optional `-DskipTests` for hydration lanes that should keep test execution disabled while Maven resolves dependencies
     - `prepare.source.kind: gradle`
     - `prepare.source.cwd`: required repo-relative working directory for the Gradle invocation
     - `prepare.source.wrapper`: optional explicit wrapper ownership; when `true`, ota runs `./gradlew dependencies`, otherwise it runs `gradle dependencies`
@@ -1836,7 +1838,7 @@ Task-effect rules:
 - `prepare.source.kind: uv` currently executes the narrow canonical uv hydration lane: `uv sync`
 - `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
-- `prepare.source.kind: maven` currently executes the narrow canonical Maven hydration lane: `./mvnw -q dependency:resolve` when wrapper-owned, otherwise `mvn -q dependency:resolve`
+- `prepare.source.kind: maven` currently executes the narrow canonical Maven hydration lane: `./mvnw -q dependency:resolve` or `./mvnw -q dependency:go-offline` when wrapper-owned, otherwise `mvn -q dependency:resolve` or `mvn -q dependency:go-offline`
 - `prepare.source.kind: gradle` currently executes the narrow canonical Gradle hydration lane: `./gradlew dependencies` when wrapper-owned, otherwise `gradle dependencies`
 - `prepare.source.kind: cargo` currently executes the narrow canonical Cargo hydration lane: `cargo fetch`
 - `prepare.source.kind: dotnet_restore` currently executes the narrow canonical .NET hydration lane: `dotnet restore`

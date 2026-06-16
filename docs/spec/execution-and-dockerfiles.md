@@ -71,13 +71,30 @@ RUN ./mvnw -q dependency:go-offline
 version: 1
 project:
   name: qredex-core
-runtimes:
-  java: ">=21"
+toolchains:
+  java:
+    version: "21"
 tools:
   maven: "*"
 tasks:
   setup:
-    run: mvn -q dependency:go-offline
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: maven
+        cwd: .
+        mode: go_offline
+    requirements:
+      toolchains:
+        - java
+      tools:
+        maven: "*"
+    effects:
+      writes:
+        - .m2
+      network: true
+      network_kind: dependency_hydration
   test:
     run: mvn test
 execution:

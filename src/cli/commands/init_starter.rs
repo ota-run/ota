@@ -2451,6 +2451,8 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     TaskDependencyHydrationSourceSpec::Maven(TaskMavenHydrationSourceSpec {
                         cwd: String::from("."),
                         wrapper: uses_wrapper,
+                        mode: Default::default(),
+                        skip_tests: false,
                     }),
                     "java",
                     Vec::new(),

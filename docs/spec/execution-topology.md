@@ -253,7 +253,24 @@ tasks:
 
   setup:
     context: app
-    run: mvn -q -DskipTests dependency:go-offline
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: maven
+        cwd: .
+        mode: go_offline
+        skip_tests: true
+    requirements:
+      toolchains:
+        - java
+      tools:
+        maven: "*"
+    effects:
+      writes:
+        - .m2
+      network: true
+      network_kind: dependency_hydration
 
   db:integration:
     context: app
@@ -573,6 +590,10 @@ version: 1
 project:
   name: qredex-core
 
+toolchains:
+  java:
+    version: "21"
+
 execution:
   default_context: app
   contexts:
@@ -620,7 +641,24 @@ tasks:
     run: docker compose down -v
   setup:
     context: app
-    run: mvn -q -DskipTests dependency:go-offline
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: maven
+        cwd: .
+        mode: go_offline
+        skip_tests: true
+    requirements:
+      toolchains:
+        - java
+      tools:
+        maven: "*"
+    effects:
+      writes:
+        - .m2
+      network: true
+      network_kind: dependency_hydration
   test:
     context: app
     run: mvn test
@@ -683,7 +721,24 @@ services:
 tasks:
   setup:
     context: app
-    run: mvn -q -DskipTests dependency:go-offline
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: maven
+        cwd: .
+        mode: go_offline
+        skip_tests: true
+    requirements:
+      toolchains:
+        - java
+      tools:
+        maven: "*"
+    effects:
+      writes:
+        - .m2
+      network: true
+      network_kind: dependency_hydration
   test:
     context: app
     run: mvn test

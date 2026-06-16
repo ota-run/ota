@@ -34430,6 +34430,12 @@ fn collect_prepare_field_paths(
                     if source.wrapper {
                         fields.push(format!("{prefix}.source.wrapper"));
                     }
+                    if !matches!(source.mode, crate::schema::TaskMavenHydrationMode::Resolve) {
+                        fields.push(format!("{prefix}.source.mode"));
+                    }
+                    if source.skip_tests {
+                        fields.push(format!("{prefix}.source.skip_tests"));
+                    }
                 }
                 TaskDependencyHydrationSourceSpec::Gradle(source) => {
                     fields.push(format!("{prefix}.source.cwd"));
@@ -35668,6 +35674,7 @@ fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> 
             &prepare.groups,
             prepare.frozen_lockfile,
             prepare.no_root,
+            prepare.skip_tests,
             &prepare.targets,
         ),
         _ => String::from("-"),
@@ -35722,6 +35729,7 @@ fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> 
             &prepare.groups,
             prepare.frozen_lockfile,
             prepare.no_root,
+            prepare.skip_tests,
             &prepare.targets,
         ),
         _ => String::from("-"),
@@ -35739,6 +35747,7 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
     groups: &[T],
     frozen_lockfile: bool,
     no_root: bool,
+    skip_tests: bool,
     targets: &[T],
 ) -> String {
     let medium = medium.unwrap_or("dependencies").replace('_', " ");
@@ -35810,7 +35819,13 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
         Some("maven") => {
             let cwd = cwd.unwrap_or(".");
             let manager = manager.unwrap_or("mvn");
-            format!("hydrate {medium} with `{manager} -q dependency:resolve` in `{cwd}`")
+            let goal = mode.unwrap_or("dependency:resolve");
+            let command = if skip_tests {
+                format!("{manager} -q -DskipTests {goal}")
+            } else {
+                format!("{manager} -q {goal}")
+            };
+            format!("hydrate {medium} with `{command}` in `{cwd}`")
         }
         Some("gradle") => {
             let cwd = cwd.unwrap_or(".");
@@ -46032,6 +46047,7 @@ tasks:
                         groups: Vec::new(),
                         frozen_lockfile: true,
                         no_root: false,
+                        skip_tests: false,
                         targets: Vec::new(),
                     },
                     crate::output::TaskPrepareSummary {
@@ -46047,6 +46063,7 @@ tasks:
                         groups: Vec::new(),
                         frozen_lockfile: false,
                         no_root: false,
+                        skip_tests: false,
                         targets: Vec::new(),
                     },
                 ],
@@ -46060,6 +46077,7 @@ tasks:
                 groups: Vec::new(),
                 frozen_lockfile: false,
                 no_root: false,
+                skip_tests: false,
                 targets: Vec::new(),
             }),
             aggregate: None,
@@ -46127,6 +46145,7 @@ tasks:
                 groups: Vec::new(),
                 frozen_lockfile: true,
                 no_root: false,
+                skip_tests: false,
                 targets: Vec::new(),
             }),
             aggregate: None,
@@ -46174,6 +46193,7 @@ tasks:
                 groups: Vec::new(),
                 frozen_lockfile: true,
                 no_root: false,
+                skip_tests: false,
                 targets: Vec::new(),
             }),
             aggregate: None,

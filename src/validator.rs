@@ -20231,6 +20231,44 @@ tasks:
     }
 
     #[test]
+    fn accepts_prepare_only_maven_go_offline_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  java:
+    version: "22"
+tools:
+  maven: "*"
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: maven
+        cwd: .
+        mode: go_offline
+        skip_tests: true
+    requirements:
+      toolchains:
+        - java
+      tools:
+        maven: "*"
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("maven go-offline hydration should validate");
+    }
+
+    #[test]
     fn accepts_prepare_only_cargo_hydration_task() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),

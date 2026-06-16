@@ -4946,15 +4946,25 @@ pub struct TaskMavenHydrationSourceSpec {
     pub cwd: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub wrapper: bool,
+    #[serde(default, skip_serializing_if = "is_default_task_maven_hydration_mode")]
+    pub mode: TaskMavenHydrationMode,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub skip_tests: bool,
 }
 
 impl TaskMavenHydrationSourceSpec {
     pub fn command_preview(&self) -> String {
-        if self.wrapper {
-            String::from("./mvnw -q dependency:resolve")
+        let mut parts = vec![if self.wrapper {
+            String::from("./mvnw")
         } else {
-            String::from("mvn -q dependency:resolve")
+            String::from("mvn")
+        }];
+        parts.push(String::from("-q"));
+        if self.skip_tests {
+            parts.push(String::from("-DskipTests"));
         }
+        parts.push(self.mode.goal().to_string());
+        parts.join(" ")
     }
 }
 
@@ -5019,6 +5029,27 @@ impl TaskPoetryHydrationGroupMode {
 
 const fn is_default_poetry_group_mode(value: &TaskPoetryHydrationGroupMode) -> bool {
     matches!(value, TaskPoetryHydrationGroupMode::With)
+}
+
+const fn is_default_task_maven_hydration_mode(value: &TaskMavenHydrationMode) -> bool {
+    matches!(value, TaskMavenHydrationMode::Resolve)
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskMavenHydrationMode {
+    #[default]
+    Resolve,
+    GoOffline,
+}
+
+impl TaskMavenHydrationMode {
+    pub const fn goal(self) -> &'static str {
+        match self {
+            Self::Resolve => "dependency:resolve",
+            Self::GoOffline => "dependency:go-offline",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
