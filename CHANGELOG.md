@@ -26,6 +26,23 @@
 
 ## Unreleased
 
+- `ota detect` write modes now publish first-class field-admission rationale alongside detect
+  ownership metadata: written contracts and JSON output record
+  `metadata.ota.detect.field_admission` as `direct` for high-confidence detector-owned fields and
+  `promoted` for the narrow conservative detect-write starter fields admitted by policy
+- tightened the conservative `ota detect --write` lane without broadening it into a full starter
+  rewrite path: sparse Node repos can now still seed `toolchains.node` plus starter-owned npm
+  dependency hydration from repo-root markers, and solution-backed .NET repos now treat
+  `.sln`-derived `project.name` as high-confidence so the high-confidence write lane can proceed
+- unified the detect-write policy surface across repo and workspace onboarding: repo
+  `ota detect --write`, workspace auto-provision, and workspace rewrite now all build from the
+  same conservative detect-write candidate instead of mixing stricter raw high-confidence writes
+  with widened repo-local detect-write behavior
+- detector-led `ota init` now widens strong starter signals onto current first-class contract
+  surfaces instead of leaving obvious setup and finite task bodies in raw shell: supported Node,
+  Ruby, Java, and .NET starter drafts now prefer `toolchains.*`, `prepare.kind:
+  dependency_hydration` for `setup`, and `command` for simple modeled task execution, while `ota
+  init --pack` now emits those same command-owned task bodies for shipped simple starter lanes
 - runtime proof interrupt cleanup now resolves and signals the actual detached `ota up` process
   group before falling back to direct child termination, so `ota proof runtime` teardown is less
   likely to leave nested `ota up` or downstream workload processes running after user interruption

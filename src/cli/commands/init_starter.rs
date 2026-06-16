@@ -37,8 +37,8 @@ use crate::schema::{
     TaskCargoHydrationSourceSpec, TaskCommandSpec, TaskCopyIfMissingActionSpec,
     TaskDependencyHydrationMedium, TaskDependencyHydrationPrepareSpec,
     TaskDependencyHydrationSourceSpec, TaskDotnetRestoreHydrationSourceSpec, TaskEffectsSpec,
-    TaskGoModulesHydrationSourceSpec, TaskGradleHydrationSourceSpec, TaskMavenHydrationSourceSpec,
-    TaskNetworkEffectKind, TaskNodePackageManagerHydrationMode,
+    TaskGoModulesHydrationSourceSpec, TaskGradleHydrationSourceSpec, TaskMavenHydrationMode,
+    TaskMavenHydrationSourceSpec, TaskNetworkEffectKind, TaskNodePackageManagerHydrationMode,
     TaskNodePackageManagerHydrationSourceSpec, TaskNodePackageManagerKind, TaskPrepareSpec,
     TaskRequirementsSpec, TaskUvHydrationSourceSpec, ToolRequirement,
 };
@@ -178,7 +178,7 @@ impl StarterPack {
             Self::Node => StarterPackCatalogEntry {
                 pack: self,
                 summary: "Conventional Node starter with toolchain-owned Node plus package-manager-driven setup and script-aware dev/test tasks.",
-                when: "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path keeps Node ownership under `toolchains.node` and uses pnpm via Corepack, and you can override the package manager with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based. `dev` and `test` are seeded only when the root `package.json` declares those scripts.",
+                when: "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path keeps Node ownership under `toolchains.node`, seeds first-class package-manager hydration for `setup`, and you can override the package manager with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based. `dev` and `test` are seeded only when the root `package.json` declares those scripts.",
                 toolchains: &["node"],
                 runtimes: &[],
                 tools: &[],
@@ -358,8 +358,8 @@ impl NodePackageManager {
     fn dev_command(self) -> &'static str {
         match self {
             Self::Npm => "npm run dev",
-            Self::Pnpm => "corepack pnpm dev",
-            Self::Yarn => "corepack yarn dev",
+            Self::Pnpm => "pnpm dev",
+            Self::Yarn => "yarn dev",
             Self::Bun => "bun run dev",
         }
     }
@@ -367,9 +367,30 @@ impl NodePackageManager {
     fn test_command(self) -> &'static str {
         match self {
             Self::Npm => "npm test",
-            Self::Pnpm => "corepack pnpm test",
-            Self::Yarn => "corepack yarn test",
+            Self::Pnpm => "pnpm test",
+            Self::Yarn => "yarn test",
             Self::Bun => "bun run test",
+        }
+    }
+
+    fn script_command_spec(self, script_name: &str) -> TaskCommandSpec {
+        match self {
+            Self::Npm => TaskCommandSpec {
+                exe: String::from("npm"),
+                args: vec![String::from("run"), script_name.to_string()],
+            },
+            Self::Pnpm => TaskCommandSpec {
+                exe: String::from("pnpm"),
+                args: vec![script_name.to_string()],
+            },
+            Self::Yarn => TaskCommandSpec {
+                exe: String::from("yarn"),
+                args: vec![script_name.to_string()],
+            },
+            Self::Bun => TaskCommandSpec {
+                exe: String::from("bun"),
+                args: vec![String::from("run"), script_name.to_string()],
+            },
         }
     }
 
@@ -688,6 +709,7 @@ pub(super) fn apply_detected_starter_contract_defaults(
     contract: &mut DetectContract,
     report: &DetectReport,
 ) {
+    normalize_detected_starter_surfaces(contract, &report.root);
     add_detected_env_copy_setup(contract, &report.root);
     mark_setup_task_internal(contract);
     if contract.project.is_none()
@@ -701,6 +723,508 @@ pub(super) fn apply_detected_starter_contract_defaults(
         }
     } else {
         contract.agent = starter_agent_from_detected_candidate(contract, report);
+    }
+}
+
+fn normalize_detected_starter_surfaces(contract: &mut DetectContract, root: &Path) {
+    normalize_detected_node_starter(contract, root);
+    normalize_detected_ruby_starter(contract, root);
+    normalize_detected_java_starter(contract, root);
+    normalize_detected_dotnet_starter(contract, root);
+    normalize_detected_simple_hydration_tasks(contract);
+    normalize_detected_simple_command_tasks(contract);
+}
+
+fn normalize_detected_node_starter(contract: &mut DetectContract, root: &Path) {
+    if !root.join("package.json").exists() {
+        return;
+    }
+    let package_manager = detected_node_package_manager(contract, root);
+    let Some(package_manager) = package_manager else {
+        return;
+    };
+
+    let version = contract
+        .runtimes
+        .remove("node")
+        .unwrap_or_else(|| String::from("*"));
+    let mut package_managers = BTreeMap::new();
+    match package_manager {
+        NodePackageManager::Pnpm => {
+            package_managers.insert(
+                String::from("pnpm"),
+                contract
+                    .tools
+                    .remove("pnpm")
+                    .unwrap_or_else(|| String::from("*")),
+            );
+        }
+        NodePackageManager::Yarn => {
+            package_managers.insert(
+                String::from("yarn"),
+                contract
+                    .tools
+                    .remove("yarn")
+                    .unwrap_or_else(|| String::from("*")),
+            );
+        }
+        NodePackageManager::Npm | NodePackageManager::Bun => {}
+    }
+
+    contract.toolchains.insert(
+        String::from("node"),
+        DetectToolchainSpec {
+            provider: crate::schema::ToolchainProvider::Corepack,
+            version,
+            package_managers,
+            fulfillment: None,
+        },
+    );
+
+    if !contract.tasks.contains_key("setup") {
+        contract.tasks.insert(
+            String::from("setup"),
+            pack_dependency_hydration_task(
+                "setup",
+                &format!(
+                    "Hydrate Node dependencies through {}.",
+                    package_manager.as_str()
+                ),
+                TaskDependencyHydrationSourceSpec::NodePackageManager(
+                    TaskNodePackageManagerHydrationSourceSpec {
+                        cwd: String::from("."),
+                        manager: match package_manager {
+                            NodePackageManager::Npm => TaskNodePackageManagerKind::Npm,
+                            NodePackageManager::Pnpm => TaskNodePackageManagerKind::Pnpm,
+                            NodePackageManager::Yarn => TaskNodePackageManagerKind::Yarn,
+                            NodePackageManager::Bun => TaskNodePackageManagerKind::Bun,
+                        },
+                        mode: TaskNodePackageManagerHydrationMode::Install,
+                        frozen_lockfile: false,
+                    },
+                ),
+                "node",
+                vec![String::from("node_modules")],
+                match package_manager {
+                    NodePackageManager::Bun => BTreeMap::from([(
+                        String::from("bun"),
+                        ToolRequirement::Simple(String::from("*")),
+                    )]),
+                    _ => BTreeMap::new(),
+                },
+            ),
+        );
+    }
+
+    for (task_name, task) in &mut contract.tasks {
+        if task.command.is_some() || task.prepare.is_some() || task.action.is_some() {
+            continue;
+        }
+        if task.run == package_manager.dev_command() || task.run == package_manager.test_command() {
+            task.command = Some(package_manager.script_command_spec(task_name));
+            task.run.clear();
+        }
+    }
+}
+
+fn normalize_detected_ruby_starter(contract: &mut DetectContract, root: &Path) {
+    if !root.join("Gemfile").exists() {
+        return;
+    }
+    let bundler_version = contract.tools.remove("bundler");
+    let Some(bundler_version) = bundler_version else {
+        return;
+    };
+
+    contract.toolchains.insert(
+        String::from("ruby"),
+        DetectToolchainSpec {
+            provider: crate::schema::ToolchainProvider::Ruby,
+            version: contract
+                .runtimes
+                .remove("ruby")
+                .unwrap_or_else(|| String::from("*")),
+            package_managers: BTreeMap::from([(String::from("bundler"), bundler_version)]),
+            fulfillment: None,
+        },
+    );
+
+    if !contract.tasks.contains_key("setup") {
+        contract.tasks.insert(
+            String::from("setup"),
+            pack_dependency_hydration_task(
+                "setup",
+                "Hydrate Ruby gem dependencies through Bundler.",
+                TaskDependencyHydrationSourceSpec::Bundler(TaskBundlerHydrationSourceSpec {
+                    cwd: String::from("."),
+                    path: String::from("vendor/bundle"),
+                }),
+                "ruby",
+                vec![String::from("vendor/bundle")],
+                BTreeMap::new(),
+            ),
+        );
+    }
+}
+
+fn normalize_detected_java_starter(contract: &mut DetectContract, root: &Path) {
+    let uses_maven = root.join("pom.xml").exists();
+    let uses_gradle = [
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+    ]
+    .iter()
+    .any(|path| root.join(path).exists());
+    if !uses_maven && !uses_gradle {
+        return;
+    }
+
+    contract.toolchains.insert(
+        String::from("java"),
+        DetectToolchainSpec {
+            provider: crate::schema::ToolchainProvider::Sdkman,
+            version: contract
+                .runtimes
+                .remove("java")
+                .unwrap_or_else(|| String::from("*")),
+            package_managers: BTreeMap::new(),
+            fulfillment: None,
+        },
+    );
+
+    if uses_gradle && !contract.tasks.contains_key("setup") {
+        let wrapper = root.join("gradlew").exists();
+        contract.tasks.insert(
+            String::from("setup"),
+            pack_dependency_hydration_task(
+                "setup",
+                if wrapper {
+                    "Hydrate Gradle dependencies through the repo wrapper."
+                } else {
+                    "Hydrate Gradle dependencies for the repo."
+                },
+                TaskDependencyHydrationSourceSpec::Gradle(TaskGradleHydrationSourceSpec {
+                    cwd: String::from("."),
+                    wrapper,
+                }),
+                "java",
+                vec![String::from(".gradle")],
+                if wrapper {
+                    BTreeMap::new()
+                } else {
+                    BTreeMap::from([(
+                        String::from("gradle"),
+                        ToolRequirement::Simple(String::from("*")),
+                    )])
+                },
+            ),
+        );
+    }
+}
+
+fn normalize_detected_dotnet_starter(contract: &mut DetectContract, root: &Path) {
+    let has_dotnet_project = root
+        .read_dir()
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| matches!(ext, "sln" | "csproj"))
+        });
+    if !has_dotnet_project {
+        return;
+    }
+    if contract.tools.remove("dotnet").is_none() && !contract.runtimes.contains_key("dotnet") {
+        return;
+    }
+
+    contract.toolchains.insert(
+        String::from("dotnet"),
+        DetectToolchainSpec {
+            provider: crate::schema::ToolchainProvider::Dotnet,
+            version: contract
+                .runtimes
+                .remove("dotnet")
+                .unwrap_or_else(|| String::from("*")),
+            package_managers: BTreeMap::new(),
+            fulfillment: None,
+        },
+    );
+}
+
+fn normalize_detected_simple_hydration_tasks(contract: &mut DetectContract) {
+    for task in contract.tasks.values_mut() {
+        if task.command.is_some() || task.prepare.is_some() || task.action.is_some() {
+            continue;
+        }
+        let Some((prepare, requirements, effects)) = detect_prepare_from_run(task.run.as_str())
+        else {
+            continue;
+        };
+        task.run.clear();
+        task.prepare = Some(prepare);
+        task.requirements = requirements;
+        task.effects = effects;
+    }
+}
+
+fn normalize_detected_simple_command_tasks(contract: &mut DetectContract) {
+    for task in contract.tasks.values_mut() {
+        if task.command.is_some() || task.prepare.is_some() || task.action.is_some() {
+            continue;
+        }
+        let Some(command) = simple_command_spec(task.run.as_str()) else {
+            continue;
+        };
+        task.run.clear();
+        task.command = Some(command);
+    }
+}
+
+fn detect_prepare_from_run(
+    run: &str,
+) -> Option<(TaskPrepareSpec, TaskRequirementsSpec, TaskEffectsSpec)> {
+    match run {
+        "uv sync" => Some(hydration_shape(
+            TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
+                medium: TaskDependencyHydrationMedium::PackageDependencies,
+                source: TaskDependencyHydrationSourceSpec::Uv(TaskUvHydrationSourceSpec {
+                    cwd: String::from("."),
+                }),
+                targets: Vec::new(),
+            }),
+            "python",
+            vec![String::from(".venv")],
+            BTreeMap::new(),
+        )),
+        "go mod download" => Some(hydration_shape(
+            TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
+                medium: TaskDependencyHydrationMedium::PackageDependencies,
+                source: TaskDependencyHydrationSourceSpec::GoModules(
+                    TaskGoModulesHydrationSourceSpec {
+                        cwd: String::from("."),
+                    },
+                ),
+                targets: Vec::new(),
+            }),
+            "go",
+            Vec::new(),
+            BTreeMap::new(),
+        )),
+        "cargo fetch" => Some(hydration_shape(
+            TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
+                medium: TaskDependencyHydrationMedium::PackageDependencies,
+                source: TaskDependencyHydrationSourceSpec::Cargo(TaskCargoHydrationSourceSpec {
+                    cwd: String::from("."),
+                }),
+                targets: Vec::new(),
+            }),
+            "rust",
+            Vec::new(),
+            BTreeMap::new(),
+        )),
+        "dotnet restore" => Some(hydration_shape(
+            TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
+                medium: TaskDependencyHydrationMedium::PackageDependencies,
+                source: TaskDependencyHydrationSourceSpec::DotnetRestore(
+                    TaskDotnetRestoreHydrationSourceSpec {
+                        cwd: String::from("."),
+                    },
+                ),
+                targets: Vec::new(),
+            }),
+            "dotnet",
+            vec![String::from("obj")],
+            BTreeMap::new(),
+        )),
+        "./mvnw -q -DskipTests dependency:go-offline" => Some(hydration_shape(
+            TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
+                medium: TaskDependencyHydrationMedium::PackageDependencies,
+                source: TaskDependencyHydrationSourceSpec::Maven(TaskMavenHydrationSourceSpec {
+                    cwd: String::from("."),
+                    wrapper: true,
+                    mode: TaskMavenHydrationMode::GoOffline,
+                    skip_tests: true,
+                }),
+                targets: Vec::new(),
+            }),
+            "java",
+            Vec::new(),
+            BTreeMap::new(),
+        )),
+        "mvn -q -DskipTests dependency:go-offline" => Some(hydration_shape(
+            TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
+                medium: TaskDependencyHydrationMedium::PackageDependencies,
+                source: TaskDependencyHydrationSourceSpec::Maven(TaskMavenHydrationSourceSpec {
+                    cwd: String::from("."),
+                    wrapper: false,
+                    mode: TaskMavenHydrationMode::GoOffline,
+                    skip_tests: true,
+                }),
+                targets: Vec::new(),
+            }),
+            "java",
+            Vec::new(),
+            BTreeMap::from([(
+                String::from("maven"),
+                ToolRequirement::Simple(String::from("*")),
+            )]),
+        )),
+        "gradle dependencies" => Some(hydration_shape(
+            TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
+                medium: TaskDependencyHydrationMedium::PackageDependencies,
+                source: TaskDependencyHydrationSourceSpec::Gradle(TaskGradleHydrationSourceSpec {
+                    cwd: String::from("."),
+                    wrapper: false,
+                }),
+                targets: Vec::new(),
+            }),
+            "java",
+            vec![String::from(".gradle")],
+            BTreeMap::from([(
+                String::from("gradle"),
+                ToolRequirement::Simple(String::from("*")),
+            )]),
+        )),
+        "./gradlew dependencies" => Some(hydration_shape(
+            TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
+                medium: TaskDependencyHydrationMedium::PackageDependencies,
+                source: TaskDependencyHydrationSourceSpec::Gradle(TaskGradleHydrationSourceSpec {
+                    cwd: String::from("."),
+                    wrapper: true,
+                }),
+                targets: Vec::new(),
+            }),
+            "java",
+            vec![String::from(".gradle")],
+            BTreeMap::new(),
+        )),
+        "npm install" => Some(node_hydration_shape(TaskNodePackageManagerKind::Npm, false)),
+        "npm ci" => Some(node_hydration_shape(TaskNodePackageManagerKind::Npm, true)),
+        "pnpm install" => Some(node_hydration_shape(
+            TaskNodePackageManagerKind::Pnpm,
+            false,
+        )),
+        "yarn install" => Some(node_hydration_shape(
+            TaskNodePackageManagerKind::Yarn,
+            false,
+        )),
+        "bun install" => Some(node_hydration_shape(TaskNodePackageManagerKind::Bun, false)),
+        _ => return None,
+    }
+}
+
+fn node_hydration_shape(
+    manager: TaskNodePackageManagerKind,
+    ci: bool,
+) -> (TaskPrepareSpec, TaskRequirementsSpec, TaskEffectsSpec) {
+    hydration_shape(
+        TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
+            medium: TaskDependencyHydrationMedium::PackageDependencies,
+            source: TaskDependencyHydrationSourceSpec::NodePackageManager(
+                TaskNodePackageManagerHydrationSourceSpec {
+                    cwd: String::from("."),
+                    manager,
+                    mode: if ci {
+                        TaskNodePackageManagerHydrationMode::Ci
+                    } else {
+                        TaskNodePackageManagerHydrationMode::Install
+                    },
+                    frozen_lockfile: false,
+                },
+            ),
+            targets: Vec::new(),
+        }),
+        "node",
+        vec![String::from("node_modules")],
+        if matches!(manager, TaskNodePackageManagerKind::Bun) {
+            BTreeMap::from([(
+                String::from("bun"),
+                ToolRequirement::Simple(String::from("*")),
+            )])
+        } else {
+            BTreeMap::new()
+        },
+    )
+}
+
+fn hydration_shape(
+    prepare: TaskPrepareSpec,
+    toolchain: &str,
+    writes: Vec<String>,
+    tools: BTreeMap<String, ToolRequirement>,
+) -> (TaskPrepareSpec, TaskRequirementsSpec, TaskEffectsSpec) {
+    (
+        prepare,
+        TaskRequirementsSpec {
+            toolchains: vec![String::from(toolchain)],
+            tools,
+            ..TaskRequirementsSpec::default()
+        },
+        TaskEffectsSpec {
+            writes,
+            network: true,
+            network_kind: Some(TaskNetworkEffectKind::DependencyHydration),
+            ..TaskEffectsSpec::default()
+        },
+    )
+}
+
+fn simple_command_spec(run: &str) -> Option<TaskCommandSpec> {
+    let trimmed = run.trim();
+    if trimmed.is_empty()
+        || trimmed.contains(['|', '&', ';', '<', '>', '$', '`', '\n', '\r', '"', '\''])
+    {
+        return None;
+    }
+    let parts = trimmed
+        .split_whitespace()
+        .map(String::from)
+        .collect::<Vec<_>>();
+    let (exe, args) = parts.split_first()?;
+    Some(TaskCommandSpec {
+        exe: exe.clone(),
+        args: args.to_vec(),
+    })
+}
+
+fn detected_node_package_manager(
+    contract: &DetectContract,
+    root: &Path,
+) -> Option<NodePackageManager> {
+    if contract.tools.contains_key("pnpm") {
+        Some(NodePackageManager::Pnpm)
+    } else if contract.tools.contains_key("yarn") {
+        Some(NodePackageManager::Yarn)
+    } else if contract.tools.contains_key("bun") {
+        Some(NodePackageManager::Bun)
+    } else if contract.tools.contains_key("npm") {
+        Some(NodePackageManager::Npm)
+    } else if contract
+        .tasks
+        .values()
+        .any(|task| task.run.starts_with("npm run ") || task.run == "npm test")
+    {
+        Some(NodePackageManager::Npm)
+    } else if root.join("pnpm-workspace.yaml").exists() || root.join("pnpm-lock.yaml").exists() {
+        Some(NodePackageManager::Pnpm)
+    } else if root.join("yarn.lock").exists() {
+        Some(NodePackageManager::Yarn)
+    } else if root.join("bun.lock").exists() || root.join("bun.lockb").exists() {
+        Some(NodePackageManager::Bun)
+    } else if root.join("package-lock.json").exists() || root.join("npm-shrinkwrap.json").exists() {
+        Some(NodePackageManager::Npm)
+    } else if root.join("package.json").exists() {
+        Some(NodePackageManager::Npm)
+    } else {
+        None
     }
 }
 
@@ -2576,8 +3100,8 @@ fn pack_task(task_name: &str, run: &str, description: Option<String>) -> DetectT
 
     DetectTask {
         description,
-        run: String::from(run),
-        command: None,
+        run: String::new(),
+        command: simple_command_spec(run),
         action: None,
         prepare: None,
         requirements: TaskRequirementsSpec::default(),
@@ -2695,7 +3219,10 @@ mod tests {
         starter_agent_exceptions_for_boundary, starter_pack_contract,
     };
     use crate::detector::{DetectContract, DetectReport, DetectTask};
-    use crate::schema::{AgentPosture, EnvSource, EnvSourceKind};
+    use crate::schema::{
+        AgentPosture, EnvSource, EnvSourceKind, TaskDependencyHydrationSourceSpec,
+        TaskMavenHydrationMode, TaskNodePackageManagerKind, TaskPrepareSpec,
+    };
     use std::collections::BTreeMap;
     use tempfile::TempDir;
 
@@ -2734,6 +3261,207 @@ mod tests {
         assert_eq!(
             contract.tasks.get("setup").map(|task| task.internal),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn bootstrap_contract_normalizes_detected_node_starter_surfaces() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::write(
+            fixture.path().join("package.json"),
+            r#"{
+  "name": "demo-node",
+  "packageManager": "pnpm@10.1.0",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest"
+  }
+}"#,
+        )
+        .expect("write package.json");
+
+        let report = crate::detector::detect_repo(fixture.path()).expect("detect report");
+        let contract = bootstrap_init_contract(&report);
+
+        let node = contract.toolchains.get("node").expect("node toolchain");
+        assert_eq!(node.version, "*");
+        assert_eq!(
+            node.package_managers.get("pnpm").map(String::as_str),
+            Some("10.1.0")
+        );
+        assert!(
+            !contract.tools.contains_key("pnpm"),
+            "detected init should not keep pnpm as a standalone tool when node toolchain ownership exists"
+        );
+
+        let setup = contract.tasks.get("setup").expect("setup task");
+        match setup.prepare.as_ref() {
+            Some(TaskPrepareSpec::DependencyHydration(prepare)) => match &prepare.source {
+                TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
+                    assert_eq!(source.manager, TaskNodePackageManagerKind::Pnpm);
+                }
+                other => panic!("expected node package-manager hydration, got {other:?}"),
+            },
+            other => panic!("expected dependency hydration setup, got {other:?}"),
+        }
+        assert!(setup.command.is_none());
+        assert!(setup.run.is_empty());
+
+        let dev = contract.tasks.get("dev").expect("dev task");
+        assert_eq!(dev.run, "");
+        assert_eq!(
+            dev.command
+                .as_ref()
+                .map(|command| command.preview())
+                .as_deref(),
+            Some("pnpm dev")
+        );
+        let test = contract.tasks.get("test").expect("test task");
+        assert_eq!(
+            test.command
+                .as_ref()
+                .map(|command| command.preview())
+                .as_deref(),
+            Some("pnpm test")
+        );
+    }
+
+    #[test]
+    fn bootstrap_contract_normalizes_detected_npm_script_repo_to_toolchain_and_setup() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::write(
+            fixture.path().join("package.json"),
+            r#"{
+  "name": "demo-node",
+  "scripts": {
+    "dev": "vite",
+    "check": "tsc --noEmit"
+  }
+}"#,
+        )
+        .expect("write package.json");
+
+        let report = crate::detector::detect_repo(fixture.path()).expect("detect report");
+        let contract = bootstrap_init_contract(&report);
+
+        let node = contract.toolchains.get("node").expect("node toolchain");
+        assert_eq!(node.version, "*");
+
+        let setup = contract.tasks.get("setup").expect("setup task");
+        match setup.prepare.as_ref() {
+            Some(TaskPrepareSpec::DependencyHydration(prepare)) => match &prepare.source {
+                TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
+                    assert_eq!(source.manager, TaskNodePackageManagerKind::Npm);
+                }
+                other => panic!("expected node package-manager hydration, got {other:?}"),
+            },
+            other => panic!("expected dependency hydration setup, got {other:?}"),
+        }
+
+        let dev = contract.tasks.get("dev").expect("dev task");
+        assert_eq!(
+            dev.command
+                .as_ref()
+                .map(|command| command.preview())
+                .as_deref(),
+            Some("npm run dev")
+        );
+        let check = contract.tasks.get("check").expect("check task");
+        assert_eq!(
+            check
+                .command
+                .as_ref()
+                .map(|command| command.preview())
+                .as_deref(),
+            Some("npm run check")
+        );
+    }
+
+    #[test]
+    fn bootstrap_contract_normalizes_detected_maven_setup_to_dependency_hydration() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::write(
+            fixture.path().join("pom.xml"),
+            r#"<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion><groupId>com.example</groupId><artifactId>demo-java</artifactId><version>1.0.0</version></project>"#,
+        )
+        .expect("write pom.xml");
+
+        let report = crate::detector::detect_repo(fixture.path()).expect("detect report");
+        let contract = bootstrap_init_contract(&report);
+
+        let java = contract.toolchains.get("java").expect("java toolchain");
+        assert_eq!(java.version, "*");
+
+        let setup = contract.tasks.get("setup").expect("setup task");
+        match setup.prepare.as_ref() {
+            Some(TaskPrepareSpec::DependencyHydration(prepare)) => match &prepare.source {
+                TaskDependencyHydrationSourceSpec::Maven(source) => {
+                    assert!(!source.wrapper);
+                    assert_eq!(source.mode, TaskMavenHydrationMode::GoOffline);
+                    assert!(source.skip_tests);
+                }
+                other => panic!("expected maven hydration, got {other:?}"),
+            },
+            other => panic!("expected dependency hydration setup, got {other:?}"),
+        }
+        assert_eq!(
+            contract
+                .tasks
+                .get("build")
+                .and_then(|task| task.command.as_ref())
+                .map(|command| command.preview())
+                .as_deref(),
+            Some("mvn package")
+        );
+        assert_eq!(
+            contract
+                .tasks
+                .get("test")
+                .and_then(|task| task.command.as_ref())
+                .map(|command| command.preview())
+                .as_deref(),
+            Some("mvn test")
+        );
+    }
+
+    #[test]
+    fn bootstrap_contract_normalizes_detected_gradle_setup_to_dependency_hydration() {
+        let fixture = TempDir::new().expect("fixture");
+        std::fs::write(
+            fixture.path().join("build.gradle.kts"),
+            r#"plugins { java }
+
+java {
+  toolchain {
+    languageVersion.set(JavaLanguageVersion.of(21))
+  }
+}
+"#,
+        )
+        .expect("write build.gradle.kts");
+        std::fs::write(fixture.path().join("gradlew"), "#!/bin/sh\n").expect("write gradlew");
+
+        let report = crate::detector::detect_repo(fixture.path()).expect("detect report");
+        let contract = bootstrap_init_contract(&report);
+
+        let setup = contract.tasks.get("setup").expect("setup task");
+        match setup.prepare.as_ref() {
+            Some(TaskPrepareSpec::DependencyHydration(prepare)) => match &prepare.source {
+                TaskDependencyHydrationSourceSpec::Gradle(source) => {
+                    assert!(source.wrapper);
+                }
+                other => panic!("expected gradle hydration, got {other:?}"),
+            },
+            other => panic!("expected dependency hydration setup, got {other:?}"),
+        }
+        assert_eq!(
+            contract
+                .tasks
+                .get("build")
+                .and_then(|task| task.command.as_ref())
+                .map(|command| command.preview())
+                .as_deref(),
+            Some("gradle build")
         );
     }
 
@@ -2821,6 +3549,24 @@ mod tests {
         assert!(contract.tasks.contains_key("setup"));
         assert!(contract.tasks.contains_key("dev"));
         assert!(contract.tasks.contains_key("test"));
+        assert_eq!(
+            contract
+                .tasks
+                .get("dev")
+                .and_then(|task| task.command.as_ref())
+                .map(|command| command.preview())
+                .as_deref(),
+            Some("pnpm dev")
+        );
+        assert_eq!(
+            contract
+                .tasks
+                .get("test")
+                .and_then(|task| task.command.as_ref())
+                .map(|command| command.preview())
+                .as_deref(),
+            Some("pnpm test")
+        );
     }
 
     #[test]

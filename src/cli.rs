@@ -31964,12 +31964,24 @@ tasks:
             "merged"
         );
         assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["project.name"],
+            "direct"
+        );
+        assert_eq!(
             json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tools.pnpm"],
             "merged"
         );
         assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tools.pnpm"],
+            "direct"
+        );
+        assert_eq!(
             json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.dev.run"],
             "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tasks.dev.run"],
+            "direct"
         );
     }
 
@@ -32076,6 +32088,7 @@ metadata:
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("ota: legacy"));
         assert!(!written.contains("field_ownership:"));
+        assert!(!written.contains("field_admission:"));
     }
 
     #[test]
@@ -32108,8 +32121,16 @@ project:
             "merged"
         );
         assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tools.pnpm"],
+            "direct"
+        );
+        assert_eq!(
             json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.dev.run"],
             "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tasks.dev.run"],
+            "direct"
         );
         assert!(
             json["comparison"]["changes"]
@@ -32675,8 +32696,16 @@ tasks:
             "merged"
         );
         assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["project.name"],
+            "direct"
+        );
+        assert_eq!(
             json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tools.pnpm"],
             "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tools.pnpm"],
+            "direct"
         );
         assert_eq!(
             json["config"]["tasks"]["dev"]["description"],
@@ -32687,8 +32716,108 @@ tasks:
             "merged"
         );
         assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tasks.dev.description"],
+            "direct"
+        );
+        assert_eq!(
             json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.dev.run"],
             "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tasks.dev.run"],
+            "direct"
+        );
+    }
+
+    #[test]
+    fn detect_write_promotes_finite_node_script_tasks_only() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-web",
+  "scripts": {
+    "build": "next build",
+    "check": "tsc --noEmit",
+    "dev": "vite"
+  }
+}"#,
+        );
+
+        let output = run_with(["ota", "detect", "--json", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["kind"],
+            "dependency_hydration"
+        );
+        assert_eq!(json["config"]["tasks"]["build"]["command"]["exe"], "npm");
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.build.run"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tasks.build.run"],
+            "promoted"
+        );
+        assert_eq!(json["config"]["tasks"]["check"]["command"]["exe"], "npm");
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.check.run"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tasks.check.run"],
+            "promoted"
+        );
+        assert!(json["config"]["tasks"]["dev"].is_null());
+    }
+
+    #[test]
+    fn detect_write_promotes_gradle_build_and_test_tasks() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "build.gradle.kts",
+            r#"plugins { java }
+
+java {
+  toolchain {
+    languageVersion.set(JavaLanguageVersion.of(21))
+  }
+}
+"#,
+        );
+        fixture.write(
+            "settings.gradle.kts",
+            r#"rootProject.name = "airflow-java-sdk""#,
+        );
+        fixture.write("gradlew", "#!/bin/sh\n");
+
+        let output = run_with(["ota", "detect", "--json", "--write", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["kind"],
+            "dependency_hydration"
+        );
+        assert_eq!(json["config"]["tasks"]["build"]["command"]["exe"], "gradle");
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.build.run"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tasks.build.run"],
+            "promoted"
+        );
+        assert_eq!(json["config"]["tasks"]["test"]["command"]["exe"], "gradle");
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_ownership"]["tasks.test.run"],
+            "merged"
+        );
+        assert_eq!(
+            json["config"]["metadata"]["ota"]["detect"]["field_admission"]["tasks.test.run"],
+            "promoted"
         );
     }
 

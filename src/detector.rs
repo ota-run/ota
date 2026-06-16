@@ -1725,7 +1725,15 @@ fn detect_dotnet_markers(root: &Path, builder: &mut DetectBuilder) -> Result<(),
     if let Some(name) = project_name
         && !name.trim().is_empty()
     {
-        builder.set_project_name(name, source.clone(), Confidence::Medium);
+        builder.set_project_name(
+            name,
+            source.clone(),
+            if source.ends_with(".sln") {
+                Confidence::High
+            } else {
+                Confidence::Medium
+            },
+        );
     }
 
     builder.set_task(
@@ -8162,6 +8170,35 @@ name = "ota-api"
         assert_eq!(
             contract.tasks.get("setup").map(|task| task.internal),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn treats_solution_file_project_name_as_high_confidence() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "NopCommerce.sln",
+            "Microsoft Visual Studio Solution File, Format Version 12.00\n",
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "project.name"
+                    && inference.source == "NopCommerce.sln"
+                    && inference.confidence == Confidence::High
+            }),
+            "expected solution-file project name to project as high confidence"
+        );
+
+        let contract = report.high_confidence_contract();
+        assert_eq!(
+            contract
+                .project
+                .as_ref()
+                .map(|project| project.name.as_str()),
+            Some("NopCommerce")
         );
     }
 

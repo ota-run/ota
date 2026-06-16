@@ -3103,7 +3103,7 @@ contract. The current catalog includes `node`, `python`, `ruby`, `go`, `rust`, `
     {
       "name": "node",
       "summary": "Conventional Node starter with toolchain-owned Node and first-class package-manager setup, dev, and test tasks.",
-      "when": "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path keeps Node ownership under `toolchains.node` and uses pnpm via Corepack, and you can override the package manager with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
+      "when": "Use this for repo-level Node apps or services that need an explicit JavaScript starter instead of detector-led init. The default path keeps Node ownership under `toolchains.node`, seeds first-class package-manager hydration for `setup`, and you can override the package manager with `--package-manager` when the repo is intentionally npm-, yarn-, or bun-based.",
       "command": "ota init --pack node",
       "next": "ota init --pack node --dry-run .",
       "does_not_infer": [
@@ -3973,7 +3973,8 @@ shape used by `ota clean --json` instead of this success shape.
 
 - `written: true` when additive high-confidence fields were applied
 - `written: false` when there was nothing eligible to add
-- `config` is the detected candidate contract for preview-only results; when a detect write mode succeeds (`--write`, `--merge`, or `--rewrite` with `written: true`), `config` is the exact contract ota wrote to disk, including `metadata.ota.detect.field_ownership`
+- `config` is the detected candidate contract for preview-only results; when a detect write mode succeeds (`--write`, `--merge`, or `--rewrite` with `written: true`), `config` is the exact contract ota wrote to disk, including `metadata.ota.detect.field_ownership` and `metadata.ota.detect.field_admission`
+- `config.metadata.ota.detect.field_admission[*]` is `direct` when ota wrote the field from direct high-confidence detector evidence and `promoted` when ota admitted the field through the conservative detect-write promotion policy
 - `comparison` describing detected adds and updates against the existing contract
 - `comparison.removals` describing stale contract fields that are no longer detected in the repo
 - `comparison.changes[*].ownership` is `repo_signals` for add candidates and `repo_contract` for updates against existing fields

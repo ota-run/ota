@@ -29586,8 +29586,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
         };
     }
 
-    let detected_candidate = report.high_confidence_contract();
-    if detected_candidate.project.is_none() {
+    let Some(detected_candidate) = build_detect_write_candidate(&report) else {
         let stderr = render_detect_write_blocked_error(&report);
         let next = command_for_repo("ota detect --dry-run", &report.root);
         return match format {
@@ -29600,16 +29599,19 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 next: Some(&next),
             })),
         };
-    }
-
+    };
     let mut candidate = detected_candidate.clone();
     apply_detected_starter_contract_defaults(&mut candidate, &report);
     apply_detected_agent_boundary(&mut candidate, &report);
+    let detect_field_paths = detect_field_paths(&detected_candidate);
+    let detect_field_admission = detect_field_admission_for_write(&report, &detected_candidate);
     let mut document = serde_yaml::to_value(&candidate)
         .expect("serializing detected write candidate should not fail");
-    if let Err(error) =
-        record_detect_owned_fields(&mut document, detect_field_paths(&detected_candidate))
-    {
+    if let Err(error) = record_detect_owned_fields(
+        &mut document,
+        &detect_field_paths,
+        Some(&detect_field_admission),
+    ) {
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
             OutputFormat::Json => CommandOutput::failure(to_json(&DetectFailure {
@@ -29666,7 +29668,7 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
             OutputFormat::Text => {
                 let highlighted_written = paint_code(&compact_path_display);
                 let mut stdout = format!(
-                    "{}\n\n{}\nPolicy: only high-confidence fields are written automatically{}",
+                    "{}\n\n{}\nPolicy: only the conservative detect-write candidate is written automatically{}",
                     format_command_header("DETECT WRITE", &compact_root_display),
                     format_result_line(&format!("wrote {highlighted_written}")),
                     format_next_timeline(&repo_contract_write_next_steps(&contract_path))
@@ -29705,6 +29707,91 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
                 })),
             }
         }
+    }
+}
+
+fn build_detect_write_candidate(report: &DetectReport) -> Option<DetectContract> {
+    let mut detected_candidate = report.high_confidence_contract();
+    if detected_candidate.project.is_none() {
+        return None;
+    }
+    widen_detect_write_candidate(report, &mut detected_candidate);
+    Some(detected_candidate)
+}
+
+fn widen_detect_write_candidate(report: &DetectReport, candidate: &mut DetectContract) {
+    promote_detect_write_node_tasks(report, candidate);
+    promote_detect_write_java_tasks(report, candidate);
+}
+
+fn promote_detect_write_node_tasks(report: &DetectReport, candidate: &mut DetectContract) {
+    if !report.root.join("package.json").exists() {
+        return;
+    }
+
+    for (name, task) in &report.contract.tasks {
+        if candidate.tasks.contains_key(name) || !is_promotable_node_detect_write_task(name, task) {
+            continue;
+        }
+        candidate.tasks.insert(name.clone(), task.clone());
+    }
+}
+
+fn is_promotable_node_detect_write_task(name: &str, task: &DetectTask) -> bool {
+    if name.eq_ignore_ascii_case("setup") || task.run.is_empty() {
+        return false;
+    }
+    let package_manager_script = task.run.starts_with("npm run ")
+        || task.run.starts_with("pnpm ")
+        || task.run.starts_with("yarn ")
+        || task.run.starts_with("bun run ");
+    if !package_manager_script {
+        return false;
+    }
+
+    task.safe_for_agent || name == "build"
+}
+
+fn promote_detect_write_java_tasks(report: &DetectReport, candidate: &mut DetectContract) {
+    let has_java_ecosystem = candidate.toolchains.contains_key("java")
+        || report.root.join("pom.xml").exists()
+        || report.root.join("build.gradle").exists()
+        || report.root.join("build.gradle.kts").exists();
+    if !has_java_ecosystem {
+        return;
+    }
+
+    for task_name in ["build", "test"] {
+        let Some(task) = report.contract.tasks.get(task_name) else {
+            continue;
+        };
+        if candidate.tasks.contains_key(task_name)
+            || !is_promotable_java_detect_write_task(task_name, task)
+        {
+            continue;
+        }
+        candidate.tasks.insert(task_name.to_string(), task.clone());
+    }
+}
+
+fn is_promotable_java_detect_write_task(name: &str, task: &DetectTask) -> bool {
+    if task.run.is_empty() {
+        return false;
+    }
+    match name {
+        "build" => {
+            task.run == "gradle build"
+                || task.run == "./gradlew build"
+                || task.run == "mvn package"
+                || task.run == "./mvnw package"
+        }
+        "test" => {
+            task.run == "gradle test"
+                || task.run == "./gradlew test"
+                || task.run == "mvn test"
+                || task.run == "./mvnw test"
+        }
+        _ => false,
     }
 }
 
@@ -29938,8 +30025,10 @@ fn write_detected_merge(
     let mut applied = Vec::new();
     for change in selected_changes {
         if apply_detect_change(&mut document, change) {
+            let owned_fields = vec![change.field.clone()];
+            let field_admission = direct_detect_field_admission(&owned_fields);
             if let Err(error) =
-                record_detect_owned_fields(&mut document, vec![change.field.clone()])
+                record_detect_owned_fields(&mut document, &owned_fields, Some(&field_admission))
             {
                 let error = format!(
                     "{}{}",
@@ -30176,8 +30265,10 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
             };
         }
     };
+    let owned_fields = detect_field_paths(&report.contract);
+    let field_admission = direct_detect_field_admission(&owned_fields);
     if let Err(error) =
-        record_detect_owned_fields(&mut document, detect_field_paths(&report.contract))
+        record_detect_owned_fields(&mut document, &owned_fields, Some(&field_admission))
     {
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -32082,7 +32173,7 @@ fn render_init(
                             "run `ota init --bootstrap` to write the fuller starter contract, including lower-confidence fields",
                         ),
                         String::from(
-                            "run `ota detect --write` for the high-confidence contract path",
+                            "run `ota detect --write` for the conservative detect-write candidate path",
                         ),
                     ]),
                 );
@@ -34510,6 +34601,37 @@ fn detect_field_paths(contract: &DetectContract) -> Vec<String> {
     fields
 }
 
+const DETECT_FIELD_ADMISSION_DIRECT: &str = "direct";
+const DETECT_FIELD_ADMISSION_PROMOTED: &str = "promoted";
+
+fn detect_field_admission_for_write(
+    report: &DetectReport,
+    detected_candidate: &DetectContract,
+) -> BTreeMap<String, &'static str> {
+    let direct_fields = detect_field_paths(&report.high_confidence_contract())
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    detect_field_paths(detected_candidate)
+        .into_iter()
+        .map(|field| {
+            let admission = if direct_fields.contains(&field) {
+                DETECT_FIELD_ADMISSION_DIRECT
+            } else {
+                DETECT_FIELD_ADMISSION_PROMOTED
+            };
+            (field, admission)
+        })
+        .collect()
+}
+
+fn direct_detect_field_admission(fields: &[String]) -> BTreeMap<String, &'static str> {
+    fields
+        .iter()
+        .cloned()
+        .map(|field| (field, DETECT_FIELD_ADMISSION_DIRECT))
+        .collect()
+}
+
 fn detect_task_field_paths(name: &str, task: &DetectTask) -> Vec<String> {
     let mut fields = Vec::new();
     let prefix = format!("tasks.{name}");
@@ -34647,7 +34769,11 @@ fn collect_prepare_field_paths(
     }
 }
 
-fn record_detect_owned_fields(document: &mut YamlValue, fields: Vec<String>) -> Result<(), String> {
+fn record_detect_owned_fields(
+    document: &mut YamlValue,
+    fields: &[String],
+    field_admission: Option<&BTreeMap<String, &'static str>>,
+) -> Result<(), String> {
     if fields.is_empty() {
         return Ok(());
     }
@@ -34657,16 +34783,55 @@ fn record_detect_owned_fields(document: &mut YamlValue, fields: Vec<String>) -> 
             "cannot record detect ownership because the contract document is not a mapping",
         ));
     };
-    let field_ownership =
-        ensure_mapping_path(root, &["metadata", "ota", "detect", "field_ownership"])?;
-
-    for field in fields {
-        field_ownership.insert(
-            YamlValue::String(field),
-            YamlValue::String(String::from(DETECT_OWNER_KIND_MERGED)),
-        );
+    let ownership_entries = fields
+        .iter()
+        .cloned()
+        .map(|field| {
+            (
+                YamlValue::String(field),
+                YamlValue::String(String::from(DETECT_OWNER_KIND_MERGED)),
+            )
+        })
+        .collect::<Vec<_>>();
+    insert_mapping_entries(
+        root,
+        &["metadata", "ota", "detect", "field_ownership"],
+        &ownership_entries,
+    )?;
+    if let Some(field_admission) = field_admission {
+        let admission_entries = fields
+            .iter()
+            .cloned()
+            .map(|field| {
+                let admission = field_admission
+                    .get(&field)
+                    .copied()
+                    .unwrap_or(DETECT_FIELD_ADMISSION_DIRECT);
+                (
+                    YamlValue::String(field),
+                    YamlValue::String(admission.to_string()),
+                )
+            })
+            .collect::<Vec<_>>();
+        insert_mapping_entries(
+            root,
+            &["metadata", "ota", "detect", "field_admission"],
+            &admission_entries,
+        )?;
     }
 
+    Ok(())
+}
+
+fn insert_mapping_entries(
+    root: &mut Mapping,
+    path: &[&str],
+    entries: &[(YamlValue, YamlValue)],
+) -> Result<(), String> {
+    let mapping = ensure_mapping_path(root, path)?;
+    for (key, value) in entries {
+        mapping.insert(key.clone(), value.clone());
+    }
     Ok(())
 }
 
@@ -34683,7 +34848,8 @@ fn ensure_mapping_path<'a>(
             .or_insert_with(|| YamlValue::Mapping(Mapping::new()));
         if !entry.is_mapping() {
             return Err(format!(
-                "cannot record detect ownership under `metadata.ota.detect.field_ownership` because `{}` is not a mapping",
+                "cannot record detect ownership under `{}` because `{}` is not a mapping",
+                segments.join("."),
                 path_segments.join(".")
             ));
         }
@@ -70888,8 +71054,25 @@ fn auto_provision_workspace_repo_contracts(
             }
         };
 
-        let high_confidence = report.high_confidence_contract();
-        let high_confidence_yaml = match serde_yaml::to_string(&high_confidence) {
+        let Some(candidate) = build_detect_write_candidate(&report) else {
+            match minimal_repo_contract_yaml(&repo.name) {
+                Ok(yaml) => {
+                    if let Err(error) = fs::write(&contract_path, yaml) {
+                        result
+                            .skipped
+                            .push((repo.clone(), format!("write failed: {error}")));
+                        continue;
+                    }
+                    result.provisioned.push(repo.clone());
+                    continue;
+                }
+                Err(error) => {
+                    result.skipped.push((repo.clone(), error));
+                    continue;
+                }
+            }
+        };
+        let candidate_yaml = match serde_yaml::to_string(&candidate) {
             Ok(yaml) => yaml,
             Err(error) => {
                 result
@@ -70899,8 +71082,8 @@ fn auto_provision_workspace_repo_contracts(
             }
         };
 
-        let yaml_to_write = if contract_yaml_valid(&contract_path, &high_confidence_yaml) {
-            high_confidence_yaml
+        let yaml_to_write = if contract_yaml_valid(&contract_path, &candidate_yaml) {
+            candidate_yaml
         } else {
             match minimal_repo_contract_yaml(&repo.name) {
                 Ok(yaml) => yaml,
@@ -70951,8 +71134,33 @@ fn rewrite_workspace_repo_contracts(
             }
         };
 
-        let high_confidence = report.high_confidence_contract();
-        let high_confidence_yaml = match serde_yaml::to_string(&high_confidence) {
+        let Some(candidate) = build_detect_write_candidate(&report) else {
+            match minimal_repo_contract_yaml(&repo.name) {
+                Ok(yaml) => {
+                    if contract_path.is_file()
+                        && let Err(error) = create_timestamped_backup(&contract_path)
+                    {
+                        result
+                            .skipped
+                            .push((repo.clone(), format!("backup failed: {error}")));
+                        continue;
+                    }
+                    if let Err(error) = fs::write(&contract_path, yaml) {
+                        result
+                            .skipped
+                            .push((repo.clone(), format!("write failed: {error}")));
+                        continue;
+                    }
+                    result.rewritten.push(repo);
+                    continue;
+                }
+                Err(error) => {
+                    result.skipped.push((repo.clone(), error));
+                    continue;
+                }
+            }
+        };
+        let candidate_yaml = match serde_yaml::to_string(&candidate) {
             Ok(yaml) => yaml,
             Err(error) => {
                 result
@@ -70962,8 +71170,8 @@ fn rewrite_workspace_repo_contracts(
             }
         };
 
-        let yaml_to_write = if contract_yaml_valid(&contract_path, &high_confidence_yaml) {
-            high_confidence_yaml
+        let yaml_to_write = if contract_yaml_valid(&contract_path, &candidate_yaml) {
+            candidate_yaml
         } else {
             match minimal_repo_contract_yaml(&repo.name) {
                 Ok(yaml) => yaml,

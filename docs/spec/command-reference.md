@@ -1484,7 +1484,7 @@ Current behavior:
 - writes by default
 - `--bootstrap` writes the fuller detected starter contract when it is safe to do so
 - `--pack <node|python|ruby|go|rust|dotnet|php-composer|java-maven|java-gradle>` skips detector-led starter selection and seeds an explicit conventional starter contract pack, including short task `description` fields on the seeded starter tasks
-- `--pack node --package-manager <npm|pnpm|yarn|bun>` keeps pack mode explicit while swapping the conventional Node starter commands and seeded tool requirement to the selected package manager
+- `--pack node --package-manager <npm|pnpm|yarn|bun>` keeps pack mode explicit while swapping the conventional Node starter setup hydration and script command bodies to the selected package manager
 - `--pack python --test-runner <pytest|unittest>` keeps pack mode explicit while swapping the conventional Python test entrypoint to the selected runner
 - `--packs` lists the built-in starter packs, what they seed, the exact `ota init --pack ...` selection command, the safe dry-run preview command to use next, and any explicit starter knobs exposed by that pack
 - when no stronger project identity is inferred, `--bootstrap` can fall back to the repo directory name for `project.name`
@@ -1494,6 +1494,7 @@ Current behavior:
 - keeps JSON output stable while using text output to guide review, write, and first validation steps
 - in `detected` mode, plain `ota init` writes the smallest valid starter contract for the repo
 - in `detected` mode, `ota init --bootstrap` can include lower-confidence fields when they are needed to capture the fuller starter contract
+- when detector-led init has strong ecosystem signals, it normalizes shipped starter truth onto current first-class surfaces instead of leaving obvious setup and task bodies in raw shell: supported Node, Ruby, Java, and .NET starters now prefer `toolchains.*`, `prepare.kind: dependency_hydration` for `setup`, and `command` for simple finite task execution where ota can model the body directly
 - when standard env source files already exist, detector-led init can declare them as explicit `env.sources` in the starter contract: `.env.local`, `.env`, `src/main/resources/application.properties`, `src/main/resources/application.yml`, `src/main/resources/application.yaml`, `appsettings.json`, and `appsettings.Development.json`; explicit `--pack` mode does not infer env sources from repo files
 - runtime support for declared `env.sources` also includes curated `yaml` and `toml`; detector-led init auto-infers the explicit standard dotenv, Spring properties/yaml, and .NET JSON files listed above, but does not yet auto-suggest standard TOML paths
 - when `project.name` is still missing in bootstrap mode, ota falls back to the repo directory name rather than leaving the contract invalid
@@ -2441,7 +2442,9 @@ Contract preview behavior:
 
 Current write behavior:
 
-- `ota detect --write` writes using only `high` confidence fields
+- `ota detect --write` writes a conservative detect-write candidate: high-confidence detected
+  fields plus a narrow starter-owned subset ota can model structurally without broadening into a
+  full starter rewrite
 - `ota detect --write` remains conservative even when `ota init` can write a valid starter
 - versioned `pnpm`/`yarn` package-manager-backed `package.json#engines.node` is high confidence
   for detect write, merge, rewrite, ownership metadata, and drift comparison, and is written as
@@ -2454,6 +2457,10 @@ Current write behavior:
 - Docker Compose service `start`, `stop`, and declared `healthcheck.test` commands are high
   confidence and can be written with the inferred service block
 - detect preview, exact starter preview, and detect write now keep the same derived starter `agent` block that init uses, while detect-owned field metadata remains scoped to actually inferred fields and writable-path inference can include broader common directories plus bounded custom source roots
+- detect write metadata now distinguishes direct high-confidence writes from conservative promotion:
+  written contracts record `metadata.ota.detect.field_admission` with `direct` for detector-owned
+  fields and `promoted` for the narrow starter-owned fields admitted by the conservative
+  detect-write lane
 - validates the generated contract before writing
 - refuses to overwrite an existing `ota.yaml`
 - when no `ota.yaml` exists yet, preview guidance stays compare-first: `ota detect --contract` for exact detected text, `ota init --dry-run` for the conservative starter path, then `ota detect --write` for the first detected write
@@ -2533,7 +2540,8 @@ Current precedence is conservative:
 
 Write behavior:
 
-- `ota detect --write` writes only `high` confidence fields
+- `ota detect --write` writes only the conservative detect-write candidate, not the full detected
+  starter contract
 - validates the projected contract before writing
 - refuses to overwrite an existing `ota.yaml`
 - when `ota.yaml` already exists, points the user at `ota detect --merge --dry-run` and `ota detect --rewrite --dry-run`
