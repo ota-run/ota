@@ -4096,7 +4096,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "java") {
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "java")
+                    {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: maven` must declare `requirements.toolchains: [java]`"
                         )));
@@ -4144,7 +4148,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "java") {
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "java")
+                    {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: gradle` must declare `requirements.toolchains: [java]`"
                         )));
@@ -4192,7 +4200,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements.toolchains.iter().any(|toolchain| toolchain == "rust") {
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "rust")
+                    {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: cargo` must declare `requirements.toolchains: [rust]`"
                         )));
@@ -6721,6 +6733,7 @@ pub enum ContractAdvisory {
     DuplicateWorkflowAdapterInputOwnership(DuplicateWorkflowAdapterInputOwnershipAdvisory),
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
     SensitiveWriteException(SensitiveWriteExceptionAdvisory),
+    NonCanonicalExternalStateToken(NonCanonicalExternalStateTokenAdvisory),
     AgentBootstrapUnpinned(AgentBootstrapUnpinnedAdvisory),
     AgentSafeTaskNetwork(AgentSafeTaskNetworkAdvisory),
     AgentSafeTaskExternalState(AgentSafeTaskExternalStateAdvisory),
@@ -6899,6 +6912,13 @@ pub struct SensitiveWriteExceptionAdvisory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NonCanonicalExternalStateTokenAdvisory {
+    pub task_name: String,
+    pub token: String,
+    pub canonical_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentBootstrapUnpinnedAdvisory {
     pub field: String,
 }
@@ -7004,6 +7024,9 @@ impl ContractAdvisory {
             }
             ContractAdvisory::SensitiveWriteException(_) => {
                 "OTA_CONTRACT_ADVISORY_SENSITIVE_WRITE_EXCEPTION"
+            }
+            ContractAdvisory::NonCanonicalExternalStateToken(_) => {
+                "OTA_CONTRACT_ADVISORY_EXTERNAL_STATE_TOKEN_CANONICAL"
             }
             ContractAdvisory::AgentBootstrapUnpinned(_) => {
                 "OTA_CONTRACT_ADVISORY_AGENT_BOOTSTRAP_UNPINNED"
@@ -7143,6 +7166,10 @@ impl ContractAdvisory {
                 "`agent.exceptions.sensitive_writes` includes unnecessary path `{}`",
                 advisory.path
             ),
+            ContractAdvisory::NonCanonicalExternalStateToken(advisory) => format!(
+                "task `{}` uses non-canonical external-state token `{}`",
+                advisory.task_name, advisory.token
+            ),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
                 format!("`{}` should pin the ota release version", advisory.field)
             }
@@ -7281,6 +7308,12 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::SensitiveAgentWritablePath(advisory) => advisory.reason.clone(),
             ContractAdvisory::SensitiveWriteException(advisory) => advisory.reason.clone(),
+            ContractAdvisory::NonCanonicalExternalStateToken(advisory) => format!(
+                "`effects.external_state` participates in policy, doctor, and agent-safety governance; `{}` is a repo-local alias for the shipped canonical token `{}`, so keeping the canonical token improves cross-repo policy reuse and makes side-effect review more consistent (shipped examples: {})",
+                advisory.token,
+                advisory.canonical_token,
+                shipped_external_state_token_examples()
+            ),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
                 "`{}` installs ota from a moving target without an explicit version pin",
                 advisory.field
@@ -7323,6 +7356,7 @@ impl ContractAdvisory {
             | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
+            | ContractAdvisory::NonCanonicalExternalStateToken(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
@@ -7356,6 +7390,7 @@ impl ContractAdvisory {
             | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
+            | ContractAdvisory::NonCanonicalExternalStateToken(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
@@ -7390,6 +7425,7 @@ impl ContractAdvisory {
             | ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(_)
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
+            | ContractAdvisory::NonCanonicalExternalStateToken(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
@@ -7520,6 +7556,10 @@ impl ContractAdvisory {
                 "remove `{}` from `agent.exceptions.sensitive_writes`, or move it to `agent.protected_paths` / tighten `agent.writable_paths` if this path should stay guarded",
                 advisory.path
             ),
+            ContractAdvisory::NonCanonicalExternalStateToken(advisory) => format!(
+                "replace `effects.external_state: [{}]` with canonical token `{}` unless this task truly mutates a distinct external system not covered by the shipped vocabulary",
+                advisory.token, advisory.canonical_token
+            ),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
                 "set `{}` to an explicit ota install pin, for example by pinning `OTA_VERSION=vX.Y.Z` (or a `--version`/`-Version` flag), or by using `OTA_GIT_REV=<exact-commit>` for unreleased source pressure tests, to keep agent bootstrap deterministic",
                 advisory.field
@@ -7632,6 +7672,9 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_duplicate_workflow_adapter_input_ownership_advisories(contract));
     advisories.extend(collect_sensitive_agent_writable_path_advisories(contract));
     advisories.extend(collect_sensitive_write_exception_advisories(contract));
+    advisories.extend(collect_non_canonical_external_state_token_advisories(
+        contract,
+    ));
     advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
     advisories.extend(collect_agent_safe_task_effect_advisories(contract));
     advisories
@@ -9363,6 +9406,62 @@ fn collect_sensitive_write_exception_advisories(contract: &Contract) -> Vec<Cont
                     reason: String::from(
                         "this exception is redundant for the declared `agent.posture`; the posture already permits that sensitive category",
                     ),
+                },
+            ));
+        }
+    }
+    advisories
+}
+
+const SHIPPED_EXTERNAL_STATE_TOKENS: &[&str] = &[
+    "docker",
+    "postgres",
+    "redis",
+    "mysql",
+    "mariadb",
+    "kafka",
+    "rabbitmq",
+    "elasticsearch",
+    "opensearch",
+    "s3",
+    "gcs",
+    "azure_blob",
+    "cloudflare",
+    "kubernetes",
+    "terraform",
+];
+
+fn canonical_external_state_token_alias(token: &str) -> Option<&'static str> {
+    match token {
+        "docker-compose" | "docker_compose" => Some("docker"),
+        "postgresql" => Some("postgres"),
+        "k8s" => Some("kubernetes"),
+        "aws_s3" => Some("s3"),
+        "google_cloud_storage" => Some("gcs"),
+        "azure_blob_storage" => Some("azure_blob"),
+        _ => None,
+    }
+}
+
+fn shipped_external_state_token_examples() -> String {
+    SHIPPED_EXTERNAL_STATE_TOKENS.join(", ")
+}
+
+fn collect_non_canonical_external_state_token_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        for token in &task.effects.external_state {
+            let trimmed = token.trim();
+            let Some(canonical_token) = canonical_external_state_token_alias(trimmed) else {
+                continue;
+            };
+            advisories.push(ContractAdvisory::NonCanonicalExternalStateToken(
+                NonCanonicalExternalStateTokenAdvisory {
+                    task_name: task_name.clone(),
+                    token: trimmed.to_string(),
+                    canonical_token: canonical_token.to_string(),
                 },
             ));
         }
@@ -20491,8 +20590,9 @@ tasks:
         )
         .unwrap();
 
-        let errors = validate_contract(&contract)
-            .expect_err("tool-backed gradle hydration without requirements.tools.gradle should fail");
+        let errors = validate_contract(&contract).expect_err(
+            "tool-backed gradle hydration without requirements.tools.gradle should fail",
+        );
         assert!(
             errors
                 .to_string()
@@ -28225,6 +28325,48 @@ tasks:
             )),
             "{rendered:?}"
         );
+    }
+
+    #[test]
+    fn collects_non_canonical_external_state_token_advisories() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  services:up:
+    run: docker compose up -d
+    effects:
+      external_state:
+        - docker_compose
+        - postgresql
+        - vendor_api
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::NonCanonicalExternalStateToken(value)
+                if value.task_name == "services:up"
+                    && value.token == "docker_compose"
+                    && value.canonical_token == "docker"
+        )));
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::NonCanonicalExternalStateToken(value)
+                if value.task_name == "services:up"
+                    && value.token == "postgresql"
+                    && value.canonical_token == "postgres"
+        )));
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::NonCanonicalExternalStateToken(value)
+                if value.token == "vendor_api"
+        )));
     }
 
     #[test]

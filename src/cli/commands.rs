@@ -1533,6 +1533,18 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::NonCanonicalExternalStateToken(value) => format!(
+            "{} task `{}` token `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            value.token,
+            paint_key("Canonical:"),
+            render_validate_warning_detail(&value.canonical_token),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::AgentBootstrapUnpinned(value) => format!(
             "{} field `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -46212,7 +46224,8 @@ tasks:
             supports_native_mode_override: false,
         };
 
-        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[yarn_task, bun_task]));
+        let rendered =
+            strip_ansi_codes(&render_tasks_text(".", None, None, &[yarn_task, bun_task]));
 
         assert!(
             rendered.contains(

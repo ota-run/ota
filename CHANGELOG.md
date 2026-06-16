@@ -77,6 +77,12 @@
 - org policy validation now rejects unsupported provisioning sources instead of letting doctor/up
   plan unimplemented backends as if they were actionable, so provisioning truth stays aligned to
   the shipped mutating adapter set
+- validate/doctor now flag non-canonical `effects.external_state` aliases like `docker_compose`,
+  `postgresql`, and `k8s`, pushing repo contracts and policy packs onto the shipped canonical
+  token vocabulary so cross-repo effect governance stays reusable
+- fixed container-mode doctor precondition scoping across mixed container contexts, so runtime,
+  tool, and toolchain probes only evaluate the selected workflow/task container images instead of
+  leaking failures from unrelated container contexts
 - made stream-phase loader timing explicit in the runner, so noisy task-output paths now use the
   governed delayed loader policy instead of ad hoc immediate spinner behavior that could dirty
   terminal output handoff before real task logs arrive

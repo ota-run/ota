@@ -1750,6 +1750,12 @@ Task-effect rules:
 - keep entries relative, normalized, and free of `..` segments
 - keep `effects.external_state` entries as lowercase tokens so the side-effect surface stays
   machine-readable instead of turning into prose
+- prefer shipped canonical `effects.external_state` tokens when they fit:
+  `docker`, `postgres`, `redis`, `mysql`, `mariadb`, `kafka`, `rabbitmq`, `elasticsearch`,
+  `opensearch`, `s3`, `gcs`, `azure_blob`, `cloudflare`, `kubernetes`, `terraform`
+- avoid obvious repo-local aliases when a shipped token already exists; for example use `docker`
+  instead of `docker_compose`, `postgres` instead of `postgresql`, and `kubernetes` instead of
+  `k8s`
 - `effects.writes` is contract truth for agent-safety review, not a log of every transient scratch file
 - when a task is agent-safe, declared writes should stay inside `agent.writable_paths` when that boundary is declared
 - agent-safe task writes must not overlap `agent.protected_paths`

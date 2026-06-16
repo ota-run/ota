@@ -3751,7 +3751,11 @@ pub fn summarize_task_prepare(
                     "gradle",
                     Some(source.cwd.as_str()),
                     None,
-                    Some(if source.wrapper { "./gradlew" } else { "gradle" }),
+                    Some(if source.wrapper {
+                        "./gradlew"
+                    } else {
+                        "gradle"
+                    }),
                     Some("dependencies"),
                     None,
                     Vec::new(),
@@ -3947,7 +3951,11 @@ pub fn summarize_task_prepare_owned(
                     "gradle",
                     Some(source.cwd.clone()),
                     None,
-                    Some(if source.wrapper { "./gradlew" } else { "gradle" }),
+                    Some(if source.wrapper {
+                        "./gradlew"
+                    } else {
+                        "gradle"
+                    }),
                     Some("dependencies"),
                     None,
                     Vec::new(),

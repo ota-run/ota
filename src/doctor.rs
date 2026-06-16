@@ -399,6 +399,7 @@ fn merge_effective_launch_command_tool_requirement(
 #[derive(Debug, Clone)]
 struct BackendPreconditionSelection {
     backend: Backend,
+    context_name: Option<String>,
     requirement_surface: RequirementSurface,
     toolchain_names: BTreeSet<String>,
     native_names: BTreeSet<String>,
@@ -465,22 +466,28 @@ fn selected_backend_precondition_selections(
             continue;
         };
         let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
-        let selection =
-            if let Some(existing) = selections.iter_mut().find(|item| item.backend == backend) {
-                existing
-            } else {
-                selections.push(BackendPreconditionSelection {
-                    backend,
-                    requirement_surface: RequirementSurface::default(),
-                    toolchain_names: BTreeSet::new(),
-                    native_names: BTreeSet::new(),
-                    env_names: BTreeSet::new(),
-                    env_scoped: scoped_env,
-                });
-                selections.last_mut().expect("selection was just pushed")
-            };
-
         let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+        let selection_context_name = matches!(backend, Backend::Container)
+            .then(|| context_name.map(str::to_string))
+            .flatten();
+        let selection = if let Some(existing) = selections
+            .iter_mut()
+            .find(|item| item.backend == backend && item.context_name == selection_context_name)
+        {
+            existing
+        } else {
+            selections.push(BackendPreconditionSelection {
+                backend,
+                context_name: selection_context_name.clone(),
+                requirement_surface: RequirementSurface::default(),
+                toolchain_names: BTreeSet::new(),
+                native_names: BTreeSet::new(),
+                env_names: BTreeSet::new(),
+                env_scoped: scoped_env,
+            });
+            selections.last_mut().expect("selection was just pushed")
+        };
+
         let scoped_surface = task.scoped_requirement_surface_for_execution(backend, context_name);
         for (name, requirement) in &scoped_surface.runtimes {
             selection.requirement_surface.runtimes.insert(
@@ -599,14 +606,17 @@ fn selected_task_backend_precondition_selections(
             continue;
         };
         let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-        let selection = if let Some(existing) = selections
-            .iter_mut()
-            .find(|item| item.backend == effective.backend)
-        {
+        let selection_context_name = matches!(effective.backend, Backend::Container)
+            .then(|| effective.context_name.map(str::to_string))
+            .flatten();
+        let selection = if let Some(existing) = selections.iter_mut().find(|item| {
+            item.backend == effective.backend && item.context_name == selection_context_name
+        }) {
             existing
         } else {
             selections.push(BackendPreconditionSelection {
                 backend: effective.backend,
+                context_name: selection_context_name.clone(),
                 requirement_surface: RequirementSurface::default(),
                 toolchain_names: BTreeSet::new(),
                 native_names: BTreeSet::new(),
@@ -3021,6 +3031,11 @@ impl Finding {
             {
                 "OTA_CONTRACT_ADVISORY_SENSITIVE_WRITE_EXCEPTION"
             }
+            s if s.starts_with("task `")
+                && s.contains(" uses non-canonical external-state token `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_EXTERNAL_STATE_TOKEN_CANONICAL"
+            }
             s if s.starts_with("`agent.bootstrap.ota.")
                 && s.ends_with("` should pin the ota release version") =>
             {
@@ -3635,23 +3650,20 @@ fn diagnose_contract_with_scope(
             mode,
             selected_lifecycle,
             overrides,
+            None,
         );
         let declared_env_sources = load_declared_env_sources(contract, contract_path);
         diagnose_env_sources(&declared_env_sources, &mut findings);
-        if matches!(mode, DoctorMode::Native | DoctorMode::Container) {
+        if mode == DoctorMode::Native {
             diagnose_env(
                 contract,
                 loaded_policy
                     .as_ref()
                     .map(|loaded| loaded.pack.env_values()),
                 &declared_env_sources,
-                if mode == DoctorMode::Container && !precondition_selection.env_scoped {
-                    Some(&empty_env_names)
-                } else {
-                    precondition_selection
-                        .env_scoped
-                        .then_some(&precondition_selection.env_names)
-                },
+                precondition_selection
+                    .env_scoped
+                    .then_some(&precondition_selection.env_names),
                 &mut findings,
             );
         }
@@ -3661,6 +3673,7 @@ fn diagnose_contract_with_scope(
         {
             findings.push(container_mode_scope_note_finding(contract));
         }
+        let mut container_execution_target_probe = container_probe.clone();
         let container_probe_started = if mode == DoctorMode::Remote {
             if let Some(note) = remote_mode_host_scope_note_finding(contract) {
                 findings.push(note);
@@ -3737,6 +3750,128 @@ fn diagnose_contract_with_scope(
                 &mut findings,
             );
             false
+        } else if mode == DoctorMode::Container {
+            let active_container_selections: Vec<&BackendPreconditionSelection> =
+                backend_precondition_selections
+                    .iter()
+                    .filter(|selection| selection.backend == Backend::Container)
+                    .collect();
+            let container_selections = if active_container_selections.is_empty() {
+                vec![BackendPreconditionSelection {
+                    backend: Backend::Container,
+                    context_name: None,
+                    requirement_surface: requirement_surface.clone(),
+                    toolchain_names: precondition_selection.toolchain_names.clone(),
+                    native_names: precondition_selection.native_names.clone(),
+                    env_names: precondition_selection.env_names.clone(),
+                    env_scoped: precondition_selection.env_scoped,
+                }]
+            } else {
+                active_container_selections.into_iter().cloned().collect()
+            };
+            let mut any_probe_started = false;
+            for selection in &container_selections {
+                let selection_container_probe = diagnose_execution_backend(
+                    contract,
+                    &mut findings,
+                    mode,
+                    selected_lifecycle,
+                    ExecutionOverrides {
+                        backend: Some(Backend::Container),
+                        ..overrides
+                    },
+                    selection.context_name.as_deref(),
+                );
+                let selection_provisioning_actions = loaded_policy
+                    .as_ref()
+                    .map(|loaded| {
+                        let policy_requirement_surface = policy_requirement_surface_for_toolchains(
+                            contract,
+                            &selection.requirement_surface,
+                            &selection.toolchain_names,
+                            policy_target_os_for_mode(mode),
+                        );
+                        loaded
+                            .pack
+                            .selected_provisioning_actions_for_requirement_surface_os(
+                                policy_target_os_for_mode(mode),
+                                &policy_requirement_surface,
+                            )
+                    })
+                    .unwrap_or_default();
+                diagnose_env(
+                    contract,
+                    loaded_policy
+                        .as_ref()
+                        .map(|loaded| loaded.pack.env_values()),
+                    &declared_env_sources,
+                    if !selection.env_scoped {
+                        Some(&empty_env_names)
+                    } else {
+                        Some(&selection.env_names)
+                    },
+                    &mut findings,
+                );
+                let runtime_probe_started = diagnose_runtimes(
+                    &selection.requirement_surface.runtimes,
+                    policy_target_os_for_mode(mode),
+                    contract_path,
+                    loaded_policy.as_ref(),
+                    mode,
+                    selected_lifecycle,
+                    selection_container_probe.as_ref(),
+                    None,
+                    None,
+                    &selection_provisioning_actions,
+                    &mut findings,
+                );
+                let required_tools = selection
+                    .requirement_surface
+                    .tools
+                    .keys()
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                let tool_probe_started = diagnose_tools(
+                    contract,
+                    &selection.toolchain_names,
+                    &requirement_surface_with_toolchain_owned_tools_for_required_tools(
+                        contract,
+                        &selection.requirement_surface,
+                        &selection.toolchain_names,
+                        policy_target_os_for_mode(mode),
+                        Some(&required_tools),
+                    )
+                    .tools,
+                    policy_target_os_for_mode(mode),
+                    contract_path,
+                    loaded_policy.as_ref(),
+                    mode,
+                    selected_lifecycle,
+                    selection_container_probe.as_ref(),
+                    None,
+                    None,
+                    &selection_provisioning_actions,
+                    &mut findings,
+                );
+                let toolchain_probe_started = diagnose_toolchains(
+                    contract,
+                    &selection.toolchain_names,
+                    policy_target_os_for_mode(mode),
+                    contract_path,
+                    mode,
+                    selection_container_probe.as_ref(),
+                    None,
+                    None,
+                    &mut findings,
+                );
+                if container_execution_target_probe.is_none() && selection_container_probe.is_some()
+                {
+                    container_execution_target_probe = selection_container_probe.clone();
+                }
+                any_probe_started |=
+                    runtime_probe_started || tool_probe_started || toolchain_probe_started;
+            }
+            any_probe_started
         } else {
             let runtime_probe_started = diagnose_runtimes(
                 &requirement_surface.runtimes,
@@ -3822,6 +3957,7 @@ fn diagnose_contract_with_scope(
                             backend: Some(Backend::Container),
                             ..overrides
                         },
+                        additional_selection.context_name.as_deref(),
                     )
                 } else {
                     None
@@ -3931,7 +4067,7 @@ fn diagnose_contract_with_scope(
         }
         if mode == DoctorMode::Container
             && container_probe_started
-            && let Some(container_probe) = container_probe.as_ref()
+            && let Some(container_probe) = container_execution_target_probe.as_ref()
         {
             execution_target = Some(match selected_lifecycle {
                 Some(Lifecycle::Persistent) => crate::runner::persistent_container_name(
@@ -4139,6 +4275,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::SensitiveWriteException(advisory) => {
                 ContractAdvisory::SensitiveWriteException(advisory)
             }
+            ContractAdvisory::NonCanonicalExternalStateToken(advisory) => {
+                ContractAdvisory::NonCanonicalExternalStateToken(advisory)
+            }
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
                 ContractAdvisory::AgentBootstrapUnpinned(advisory)
             }
@@ -4224,6 +4363,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::SensitiveWriteException(advisory) => format!(
             "`agent.exceptions.sensitive_writes` includes unnecessary path `{}`",
             advisory.path
+        ),
+        ContractAdvisory::NonCanonicalExternalStateToken(advisory) => format!(
+            "Task `{}` uses non-canonical external-state token `{}`",
+            advisory.task_name, advisory.token
         ),
         ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
             format!("`{}` should pin the ota release version", advisory.field)
@@ -4479,6 +4622,7 @@ fn diagnose_execution_backend(
     mode: DoctorMode,
     lifecycle: Option<Lifecycle>,
     overrides: ExecutionOverrides,
+    context_name_override: Option<&str>,
 ) -> Option<ContainerProbeContext> {
     let Some(execution) = contract.execution.as_ref() else {
         if mode == DoctorMode::Container {
@@ -4490,8 +4634,11 @@ fn diagnose_execution_backend(
     };
 
     if mode == DoctorMode::Container {
-        if let Some((_, context)) =
-            execution_context_for_backend(contract, Backend::Container, lifecycle)
+        if let Some((_, context)) = context_name_override
+            .and_then(|context_name| execution.contexts.get_key_value(context_name))
+            .map(|(name, context)| (name.as_str(), context))
+            .filter(|(_, context)| context.backend == Backend::Container)
+            .or_else(|| execution_context_for_backend(contract, Backend::Container, lifecycle))
             && let Some(container) = context.container.as_ref()
         {
             let Some(engine) = selected_container_engine_from_backend(Some(container)) else {
@@ -20871,6 +21018,12 @@ tasks:
                 provenance_key_surface: "repo_contract",
             },
             DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_EXTERNAL_STATE_TOKEN_CANONICAL",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
                 code: "OTA_CONTRACT_ADVISORY_DEPENDS_ON_BOUNDARY",
                 category: "contract",
                 owner_surface: "repo_contract",
@@ -22593,6 +22746,116 @@ workflows:
                 .findings
                 .iter()
                 .all(|finding| finding.summary != "Version mismatch for runtime: python"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn doctor_scopes_container_toolchain_probes_to_selected_context_images() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nif \"%1\"==\"info\" exit /b 0\r\nif \"%1\"==\"run\" (\r\n  echo %* | findstr /C:\"maven:3.9.14-eclipse-temurin-21-noble\" >nul && (\r\n    echo %* | findstr /C:\"command -v 'java'\" >nul && (\r\n      echo openjdk 21.0.7\r\n      echo {started} 1>&2\r\n      echo {path}/usr/bin/java 1>&2\r\n      exit /b 0\r\n    )\r\n  )\r\n  echo %* | findstr /C:\"mcr.microsoft.com/devcontainers/javascript-node:24-bookworm\" >nul && (\r\n    echo %* | findstr /C:\"command -v 'node'\" >nul && (\r\n      echo v24.11.0\r\n      echo {started} 1>&2\r\n      echo {path}/usr/local/bin/node 1>&2\r\n      exit /b 0\r\n    )\r\n  )\r\n  echo {started} 1>&2\r\n  exit /b 127\r\n)\r\necho unsupported 1>&2\r\nexit /b 1\r\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER,
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"info\" ]; then\n  exit 0\nfi\nif [ \"$1\" = \"run\" ]; then\n  case \"$*\" in\n    *\"maven:3.9.14-eclipse-temurin-21-noble\"*\"command -v 'java'\"*) echo 'openjdk 21.0.7'; echo '{started}' >&2; echo '{path}/usr/bin/java' >&2; exit 0 ;;\n    *\"mcr.microsoft.com/devcontainers/javascript-node:24-bookworm\"*\"command -v 'node'\"*) echo 'v24.11.0'; echo '{started}' >&2; echo '{path}/usr/local/bin/node' >&2; exit 0 ;;\n    *) echo '{started}' >&2; exit 127 ;;\n  esac\nfi\necho unsupported >&2\nexit 1\n",
+                started = super::CONTAINER_PROBE_STARTED_MARKER,
+                path = super::CONTAINER_PROBE_PATH_MARKER,
+            )
+        };
+        write_fake_command(&bin_dir, "docker", &docker_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: scoped-container-doctor
+execution:
+  default_context: tooling
+  contexts:
+    application:
+      backend: container
+      container:
+        image: maven:3.9.14-eclipse-temurin-21-noble
+        engines: [docker]
+    tooling:
+      backend: container
+      container:
+        image: mcr.microsoft.com/devcontainers/javascript-node:24-bookworm
+        engines: [docker]
+toolchains:
+  java:
+    provider: sdkman
+    version: "21"
+tasks:
+  setup:
+    context: application
+    run: echo setup
+    requirements:
+      toolchains:
+        - java
+  contract:
+    context: tooling
+    run: node --version
+    depends_on:
+      - setup
+    requirements:
+      runtimes:
+        node: "24"
+workflows:
+  default: verify
+  verify:
+    run:
+      task: contract
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Container,
+            Some("verify"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing runtime: java"),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing runtime: node"),
             "{report:?}"
         );
     }

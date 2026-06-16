@@ -8327,15 +8327,26 @@ fn prepare_task_shell_command(
             crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => Ok(format!(
                 "cd {} && {} -q{} {}",
                 shell_quote_command_word(source.cwd.trim(), quote_style),
-                shell_quote_command_word(if source.wrapper { "./mvnw" } else { "mvn" }, quote_style),
-                if source.skip_tests { " -DskipTests" } else { "" },
+                shell_quote_command_word(
+                    if source.wrapper { "./mvnw" } else { "mvn" },
+                    quote_style
+                ),
+                if source.skip_tests {
+                    " -DskipTests"
+                } else {
+                    ""
+                },
                 source.mode.goal()
             )),
             crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => Ok(format!(
                 "cd {} && {} dependencies",
                 shell_quote_command_word(source.cwd.trim(), quote_style),
                 shell_quote_command_word(
-                    if source.wrapper { "./gradlew" } else { "gradle" },
+                    if source.wrapper {
+                        "./gradlew"
+                    } else {
+                        "gradle"
+                    },
                     quote_style
                 )
             )),

@@ -33,15 +33,14 @@ use crate::detector::{
 use crate::schema::{
     AgentBootstrapConfig, AgentBootstrapTargetConfig, AgentBoundaryProvenanceConfig, AgentConfig,
     AgentExceptionsConfig, AgentInferredBoundaryConfig, AgentPosture, EnvSource, EnvSourceKind,
-    FileCheckExpectation, TaskActionSpec, TaskBundlerHydrationSourceSpec, TaskCommandSpec,
-    TaskCopyIfMissingActionSpec, TaskDependencyHydrationMedium,
-    TaskDependencyHydrationPrepareSpec, TaskDependencyHydrationSourceSpec, TaskEffectsSpec,
-    TaskDotnetRestoreHydrationSourceSpec, TaskCargoHydrationSourceSpec,
-    TaskGoModulesHydrationSourceSpec, TaskGradleHydrationSourceSpec,
-    TaskMavenHydrationSourceSpec, TaskNetworkEffectKind,
-    TaskNodePackageManagerHydrationMode, TaskNodePackageManagerHydrationSourceSpec,
-    TaskNodePackageManagerKind, TaskPrepareSpec, TaskRequirementsSpec,
-    TaskUvHydrationSourceSpec, ToolRequirement,
+    FileCheckExpectation, TaskActionSpec, TaskBundlerHydrationSourceSpec,
+    TaskCargoHydrationSourceSpec, TaskCommandSpec, TaskCopyIfMissingActionSpec,
+    TaskDependencyHydrationMedium, TaskDependencyHydrationPrepareSpec,
+    TaskDependencyHydrationSourceSpec, TaskDotnetRestoreHydrationSourceSpec, TaskEffectsSpec,
+    TaskGoModulesHydrationSourceSpec, TaskGradleHydrationSourceSpec, TaskMavenHydrationSourceSpec,
+    TaskNetworkEffectKind, TaskNodePackageManagerHydrationMode,
+    TaskNodePackageManagerHydrationSourceSpec, TaskNodePackageManagerKind, TaskPrepareSpec,
+    TaskRequirementsSpec, TaskUvHydrationSourceSpec, ToolRequirement,
 };
 
 const INIT_ENV_SOURCE_CANDIDATES: &[(EnvSourceKind, &str)] = &[

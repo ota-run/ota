@@ -221,6 +221,9 @@ That makes the value visible immediately:
 - `effects.tasks.external_state_default` sets the default decision for selected-task
   external-state targets when no target-specific override is declared.
 - `effects.tasks.external_state.<target>` overrides external-state decisions per target token.
+- prefer the same shipped canonical tokens in policy and task contracts so effect governance stays
+  reusable across repos; for example use `docker`, `postgres`, `redis`, `s3`, `cloudflare`, or
+  `kubernetes` instead of repo-local aliases like `docker_compose`, `postgresql`, or `k8s`
 - `effects.safe_tasks` governs the same effect lanes for agent-safe task closures and falls
   back to `effects.tasks` when the safe-task scope does not declare a more specific rule.
 - `effects.safe_tasks.network` controls broad network lanes for safe-task paths.
