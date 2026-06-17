@@ -90,6 +90,16 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "const": "ensure_container_network" },
+            "provider": { "enum": ["docker"] },
+            "name": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind"],
           "properties": {
             "kind": { "const": "ensure_bundle" }
@@ -213,7 +223,7 @@
               "required": ["name", "kind", "depends_on"],
               "properties": {
                 "name": { "type": "string" },
-                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
+                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_container_network", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
                 "description": { "type": "string" },
                 "run": { "type": "string" },
                 "script": { "type": "string" },

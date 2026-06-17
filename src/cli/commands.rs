@@ -10867,6 +10867,7 @@ fn build_assist_service_proposal(
             AssistServiceManagerArg::Compose => crate::schema::ServiceManagerKind::Compose,
             AssistServiceManagerArg::Host => crate::schema::ServiceManagerKind::Host,
         },
+        engine: crate::schema::ComposeCliEngine::Docker,
         name: manager_name_value.clone(),
         file: compose_file_value.clone(),
         env_file: None,
@@ -34696,6 +34697,9 @@ fn collect_prepare_field_paths(
                 TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
                     fields.push(format!("{prefix}.source.cwd"));
                     fields.push(format!("{prefix}.source.file"));
+                    if source.engine != crate::schema::ComposeCliEngine::Docker {
+                        fields.push(format!("{prefix}.source.engine"));
+                    }
                     for (index, target) in spec.targets.iter().enumerate() {
                         if !target.trim().is_empty() {
                             fields.push(format!("{prefix}.targets.{index}"));
@@ -87084,8 +87088,9 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         .map(|dotenv| dotenv.path.clone());
     let compose_env_file_services =
         contract.selected_workflow_compose_env_file_service_names(workflow_name);
-    let mut workflow_adapter_inputs =
-        contract.selected_workflow_effective_adapter_inputs(workflow_name);
+    let mut workflow_adapter_inputs = contract
+        .selected_workflow_adapter_overlay(workflow_name)
+        .into_task_adapter_inputs();
     if let Some(path) = rendered_dotenv_path.as_ref() {
         let compose = workflow_adapter_inputs
             .compose

@@ -8275,6 +8275,7 @@ fn prepare_task_shell_command(
             crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
                 let cwd = source.cwd.trim();
                 let file = source.file.trim();
+                let engine = source.engine.as_str();
                 let targets = spec
                     .targets
                     .iter()
@@ -8282,8 +8283,9 @@ fn prepare_task_shell_command(
                     .collect::<Vec<_>>()
                     .join(" ");
                 Ok(format!(
-                    "cd {} && docker compose -f {} pull {}",
+                    "cd {} && {} compose -f {} pull {}",
                     shell_quote_command_word(cwd, quote_style),
+                    shell_quote_command_word(engine, quote_style),
                     shell_quote_command_word(file, quote_style),
                     targets
                 ))
@@ -52884,6 +52886,7 @@ tasks:
                     crate::schema::TaskDockerComposeHydrationSourceSpec {
                         cwd: String::from("docker dir"),
                         file: String::from("docker compose.dev.yml"),
+                        engine: crate::schema::ComposeCliEngine::Docker,
                     },
                 ),
                 targets: vec![String::from("redis cache"), String::from("database")],
@@ -52896,6 +52899,35 @@ tasks:
         assert_eq!(
             command,
             r#"cd "docker dir" && docker compose -f "docker compose.dev.yml" pull "redis cache" database"#
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn dependency_hydration_prepare_can_use_podman_compose_pull() {
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let prepare = crate::schema::TaskPrepareSpec::DependencyHydration(
+            crate::schema::TaskDependencyHydrationPrepareSpec {
+                medium: crate::schema::TaskDependencyHydrationMedium::ContainerImages,
+                source: crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(
+                    crate::schema::TaskDockerComposeHydrationSourceSpec {
+                        cwd: String::from("docker"),
+                        file: String::from("compose.dev.yml"),
+                        engine: crate::schema::ComposeCliEngine::Podman,
+                    },
+                ),
+                targets: vec![String::from("redis"), String::from("database")],
+            },
+        );
+
+        let command =
+            super::prepare_task_shell_command("setup:docker:images", &prepare, &backend).unwrap();
+
+        assert_eq!(
+            command,
+            "cd 'docker' && 'podman' compose -f 'compose.dev.yml' pull 'redis' 'database'"
         );
     }
 

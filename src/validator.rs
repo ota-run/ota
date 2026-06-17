@@ -7539,11 +7539,11 @@ impl ContractAdvisory {
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "move compose adapter input ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.compose.*` when the task owns compose cwd, interpolation, compose file selection, compose profiles, or project naming, `workflows.<name>.adapter_inputs.compose.*` when one selected workflow owns the shared adapter overlay, or `services.<name>.manager.env_file` / `.profiles` when one managed compose service owns those inputs",
+                "move compose adapter input ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.compose.*` when the task owns compose cwd, interpolation, compose file selection, compose profiles, or project naming, `workflows.<name>.adapter_inputs.compose.*` when one selected workflow owns the shared workflow adapter overlay, or `services.<name>.manager.env_file` / `.profiles` when one managed compose service owns those inputs",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
-                "move Bake adapter ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.bake.*` when the task owns `docker buildx bake` cwd or file selection truth, or `workflows.<name>.adapter_inputs.bake.*` when one selected workflow owns the shared adapter overlay",
+                "move Bake adapter ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.bake.*` when the task owns `docker buildx bake` cwd or file selection truth, or `workflows.<name>.adapter_inputs.bake.*` when one selected workflow owns the shared workflow adapter overlay",
                 advisory.task_name
             ),
             ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory) => format!(
@@ -7568,7 +7568,7 @@ impl ContractAdvisory {
                 advisory.path
             ),
             ContractAdvisory::DuplicateWorkflowAdapterInputOwnership(advisory) => format!(
-                "remove `{}` from task `{}` or keep workflow-owned {} `{}` on `{}`; selected-path adapter ownership should be owned by one declarative surface",
+                "remove `{}` from task `{}` or keep workflow-owned {} `{}` on `{}`; selected-path adapter ownership should stay on one shared workflow adapter overlay or one task-local declarative surface",
                 advisory.location,
                 advisory.task_name,
                 advisory.adapter_family,
@@ -8539,10 +8539,10 @@ fn collect_duplicate_workflow_adapter_input_ownership_advisories(
     let mut advisories = Vec::new();
     let mut seen = BTreeSet::new();
     for (workflow_name, _) in &workflows.items {
-        let effective_adapter_inputs =
-            contract.selected_workflow_effective_adapter_inputs(Some(workflow_name.as_str()));
+        let effective_adapter_overlay =
+            contract.selected_workflow_adapter_overlay(Some(workflow_name.as_str()));
         for field in ADAPTER_INPUT_FIELDS {
-            let Some(field_value) = field.workflow_value(&effective_adapter_inputs) else {
+            let Some(field_value) = effective_adapter_overlay.workflow_value(field) else {
                 continue;
             };
             let workflow_location = field.workflow_location(workflow_name);
@@ -8655,7 +8655,7 @@ fn obvious_container_network_command(command: &TaskCommandSpec) -> bool {
 
 fn obvious_compose_env_file_shell(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
-    (lower.contains("docker compose")
+    ((lower.contains("docker compose") || lower.contains("podman compose"))
         && (lower.contains("--env-file")
             || lower.contains(" -f ")
             || lower.contains(" --file ")
@@ -8664,11 +8664,15 @@ fn obvious_compose_env_file_shell(command: &str) -> bool {
             || lower.contains(" -p ")
             || lower.contains(" --project-name ")))
         || (lower.trim_start().starts_with("cd ")
-            && (lower.contains("&& docker compose") || lower.contains("; docker compose")))
+            && (lower.contains("&& docker compose")
+                || lower.contains("; docker compose")
+                || lower.contains("&& podman compose")
+                || lower.contains("; podman compose")))
 }
 
 fn obvious_compose_env_file_command(command: &TaskCommandSpec) -> bool {
-    command.exe.trim().eq_ignore_ascii_case("docker")
+    (command.exe.trim().eq_ignore_ascii_case("docker")
+        || command.exe.trim().eq_ignore_ascii_case("podman"))
         && command
             .args
             .first()
@@ -8810,7 +8814,9 @@ fn adapter_shell_uses_family(command: Option<&str>, family: AdapterInputFamily) 
         return false;
     };
     match family {
-        AdapterInputFamily::Compose => value.contains("docker compose"),
+        AdapterInputFamily::Compose => {
+            value.contains("docker compose") || value.contains("podman compose")
+        }
         AdapterInputFamily::Bake => value.contains("docker buildx bake"),
     }
 }
@@ -8819,25 +8825,27 @@ fn adapter_command_uses_family(
     command: Option<&TaskCommandSpec>,
     family: AdapterInputFamily,
 ) -> bool {
-    command.is_some_and(|command| {
-        if !command.exe.trim().eq_ignore_ascii_case("docker") {
-            return false;
-        }
-        match family {
-            AdapterInputFamily::Compose => command
-                .args
-                .first()
-                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose")),
-            AdapterInputFamily::Bake => {
-                command
+    command.is_some_and(|command| match family {
+        AdapterInputFamily::Compose => {
+            (command.exe.trim().eq_ignore_ascii_case("docker")
+                || command.exe.trim().eq_ignore_ascii_case("podman"))
+                && command
                     .args
                     .first()
-                    .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
-                    && command
-                        .args
-                        .get(1)
-                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
+                    .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose"))
+        }
+        AdapterInputFamily::Bake => {
+            if !command.exe.trim().eq_ignore_ascii_case("docker") {
+                return false;
             }
+            command
+                .args
+                .first()
+                .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
+                && command
+                    .args
+                    .get(1)
+                    .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
         }
     })
 }
@@ -10612,6 +10620,11 @@ fn validate_services(
                     }
                 }
                 crate::schema::ServiceManagerKind::Host => {
+                    if manager.engine != crate::schema::ComposeCliEngine::Docker {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` host manager must not declare non-default `manager.engine`"
+                        )));
+                    }
                     if manager
                         .name
                         .as_deref()
@@ -11692,6 +11705,8 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
         if workflow.env.is_some() || !workflow.adapter_inputs.is_empty() {
             let empty_env = crate::schema::WorkflowEnvSpec::default();
             let env = workflow.env.as_ref().unwrap_or(&empty_env);
+            let effective_workflow_adapter_overlay =
+                crate::adapter_inputs::WorkflowAdapterOverlay::from_workflow(workflow);
             let selected_workflow_tasks = contract
                 .selected_workflow_run_task_closure_names(Some(name.as_str()))
                 .iter()
@@ -11699,7 +11714,7 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 .collect::<Vec<_>>();
             let selected_workflow_supports_adapter_inputs =
                 ADAPTER_INPUT_FAMILIES.iter().copied().all(|family| {
-                    !family.workflow_requires_support(workflow)
+                    !family.workflow_requires_support(&effective_workflow_adapter_overlay)
                         || selected_workflow_tasks
                             .iter()
                             .copied()
@@ -11759,8 +11774,9 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     "`workflows.{name}.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.{name}.adapter_inputs.compose.*` and ensure the selected workflow run path includes at least one compose-running task path or declared compose adapter input"
                 )));
             }
-            let effective_workflow_adapter_inputs =
-                crate::adapter_inputs::effective_workflow_adapter_inputs(workflow);
+            let effective_workflow_adapter_inputs = effective_workflow_adapter_overlay
+                .clone()
+                .into_task_adapter_inputs();
             if let Some(profile_name) = env
                 .profile
                 .as_deref()
@@ -13865,7 +13881,7 @@ workflows:
         ));
         assert!(error.contains("`workflows.app.env.compose_project_name` must not be empty"));
         assert!(error.contains(
-            "`workflows.app.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.app.adapter_inputs.compose.*` and ensure the selected workflow task closure includes at least one compose-running task path or declared compose adapter input"
+            "`workflows.app.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.app.adapter_inputs.compose.*` and ensure the selected workflow run path includes at least one compose-running task path or declared compose adapter input"
         ));
     }
 
@@ -29346,6 +29362,39 @@ tasks:
             advisory,
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(value)
                 if value.task_name == "docker-build"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_podman_compose_env_file_ownership_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  docker-build:
+    command:
+      exe: podman
+      args:
+        - compose
+        - --env-file
+        - .env.compose
+        - -f
+        - compose.yaml
+        - up
+        - -d
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableComposeEnvFileOwnership(value)
+                if value.task_name == "docker-build"
+                    && value.command == "podman compose --env-file .env.compose -f compose.yaml up -d"
         )));
     }
 

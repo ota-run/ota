@@ -89,6 +89,8 @@ fn tasks_schema_includes_agent_and_variant_fields() {
     assert!(task_properties.get("inputs").is_some());
     assert!(task_properties.get("modes").is_some());
     assert!(task_properties.get("adapter_inputs").is_some());
+    assert!(task_prepare.get("source").is_some());
+    assert!(task_prepare.get("engine").is_some());
     assert!(task_properties.get("command").is_some());
     assert!(
         task_properties["variants"]["items"]["properties"]
@@ -206,6 +208,7 @@ fn services_schema_covers_published_service_summary_fields() {
     assert!(success.get("members").is_some());
     assert!(service.get("producer").is_some());
     assert!(service.get("manager").is_some());
+    assert!(manager.get("engine").is_some());
     assert!(service.get("provider").is_some());
     assert!(service.get("start").is_some());
     assert!(service.get("stop").is_some());

@@ -297,6 +297,8 @@ pub struct DetectService {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DetectServiceManagerSpec {
     pub kind: ServiceManagerKind,
+    #[serde(skip_serializing_if = "crate::schema::is_default_compose_cli_engine")]
+    pub engine: crate::schema::ComposeCliEngine,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -317,6 +319,7 @@ impl Default for DetectServiceManagerSpec {
     fn default() -> Self {
         Self {
             kind: ServiceManagerKind::Compose,
+            engine: crate::schema::ComposeCliEngine::Docker,
             name: None,
             file: None,
             env_file: None,

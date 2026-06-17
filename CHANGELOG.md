@@ -26,9 +26,16 @@
 
 ## Unreleased
 
+- added first-class `podman compose` ownership across the shipped Compose-family surfaces:
+  compose-managed services can now declare `services.<name>.manager.engine: podman`, docker-compose
+  dependency hydration can declare `prepare.source.engine: podman`, and adapter governance/doctor
+  now recognize replaceable Compose truth in both `docker compose` and `podman compose` task bodies
 - runtime proof now short-circuits fast terminal `ota up --stream` failures from captured
   `up.log`, emits the stronger failure text into proof output and `doctor.json`, and avoids the
   previous long full-diagnosis stall when readiness proof was already terminally blocked
+- workflow-owned adapter truth now flows through one internal shared overlay model before task
+  projection, so Compose and Bake both bind through the same workflow overlay path and governance
+  now points authors at that shared workflow adapter surface more explicitly
 - generalized workflow-owned adapter overlays onto a workflow-level canonical surface:
   `workflows.<name>.adapter_inputs.*` now owns cross-adapter Compose/Bake overlay truth, while
   `workflows.<name>.env.adapter_inputs.*` stays accepted only as a compatibility lane and legacy

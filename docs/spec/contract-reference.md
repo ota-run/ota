@@ -599,6 +599,7 @@ Fields:
 - `producer.address_view`: optional reachable address shape; the current shipped cross-repo service slice supports `host` only and defaults to `host`
 - `manager`: optional object with:
   - `kind: compose|host`
+  - `engine`: optional compose CLI engine for `kind: compose`; `docker` by default, `podman` also supported
   - `name`: compose project name (`compose` required)
   - `service`: compose service name when `kind: compose`
   - `file`: optional compose file path when `kind: compose`
@@ -1598,6 +1599,7 @@ tasks:
       medium: container_images
       source:
         kind: docker_compose
+        engine: docker
         cwd: docker
         file: docker-compose.dev.yml
       targets:
@@ -1784,6 +1786,7 @@ Task-effect rules:
 - `prepare.kind: dependency_hydration`
   - `prepare.medium: container_images`
     - `prepare.source.kind: docker_compose`
+    - `prepare.source.engine`: optional compose CLI engine; `docker` by default, `podman` also supported
     - `prepare.source.cwd`: required repo-relative working directory for the compose invocation
     - `prepare.source.file`: required compose file path relative to `prepare.source.cwd`
     - `prepare.targets`: required non-empty list of concrete dependencies ota should hydrate
@@ -2965,6 +2968,7 @@ Fields:
 Service manager fields:
 
 - `services.<name>.manager.kind`: `compose` or `host`
+- `services.<name>.manager.engine`: optional compose CLI engine for `kind: compose`; `docker` by default, `podman` also supported
 - `services.<name>.manager.name`: optional manager/project name; required today for `kind: compose`
 - `services.<name>.manager.file`: optional compose file path for `kind: compose`
 - `services.<name>.manager.env_file`: optional repo-relative compose env-file path for `kind: compose`
@@ -2975,6 +2979,9 @@ Workflow env adapter rules:
 
 - use `<name>.env.compose_env_file_services` when the workflow owns one rendered dotenv artifact
   and named compose services should consume that exact file
+- treat `<name>.adapter_inputs.*` as the shared workflow adapter overlay surface: declare the
+  base adapter-owned truth there once, then let task-local adapter inputs carry only the narrower
+  additions that are specific to one selected path
 - use `<name>.adapter_inputs.compose.*` when one workflow owns adapter-scoped compose input
   truth for the selected runnable path and task-local compose adapter inputs should only carry
   narrower path-specific additions

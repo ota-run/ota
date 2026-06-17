@@ -1256,6 +1256,7 @@ execution:
                 DetectService {
                     manager: Some(crate::detector::DetectServiceManagerSpec {
                         kind: crate::schema::ServiceManagerKind::Compose,
+                        engine: crate::schema::ComposeCliEngine::Docker,
                         name: Some(String::from("ota")),
                         file: Some(String::from("docker-compose.yml")),
                         env_file: None,

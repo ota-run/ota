@@ -5499,10 +5499,14 @@ fn run_service_readiness(
         .manager
         .as_ref()
         .and_then(|manager| manager.compose_ps_command_argv(name))
+        && let Some(engine) = service
+            .manager
+            .as_ref()
+            .and_then(crate::schema::ServiceManagerSpec::compose_cli_exe)
     {
         match run_backend_argv_command_captured(
             &format!("service-manager:{name}"),
-            "docker",
+            engine,
             &args,
             working_dir,
             &backend,
@@ -19493,6 +19497,107 @@ tasks:
 
     #[test]
     #[cfg(not(windows))]
+    fn diagnose_service_supports_structured_podman_compose_health_readiness() {
+        struct EnvPathGuard {
+            original: Option<std::ffi::OsString>,
+        }
+
+        impl Drop for EnvPathGuard {
+            fn drop(&mut self) {
+                match &self.original {
+                    Some(path) => unsafe {
+                        env::set_var("PATH", path);
+                    },
+                    None => unsafe {
+                        env::remove_var("PATH");
+                    },
+                }
+            }
+        }
+
+        let _guard = env_mutex_lock();
+        let temp_dir = TempDir::new().unwrap();
+        let bin_dir = temp_dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let original_path = env::var_os("PATH");
+        let path_separator = ':';
+        let new_path = match &original_path {
+            Some(path) => {
+                format!(
+                    "{}{}{}",
+                    bin_dir.display(),
+                    path_separator,
+                    path.to_string_lossy()
+                )
+            }
+            None => bin_dir.display().to_string(),
+        };
+        let _path_guard = EnvPathGuard {
+            original: original_path,
+        };
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        write_fake_command(
+            &bin_dir,
+            "podman",
+            "#!/bin/sh\n\
+if [ \"$1\" = \"compose\" ]; then\n\
+  shift\n\
+  while [ $# -gt 0 ]; do\n\
+    if [ \"$1\" = \"ps\" ]; then\n\
+      shift\n\
+      if [ \"$1\" = \"-q\" ]; then\n\
+        echo worker-container\n\
+        exit 0\n\
+      fi\n\
+    fi\n\
+    shift\n\
+  done\n\
+  exit 1\n\
+fi\n\
+if [ \"$1\" = \"inspect\" ]; then\n\
+  echo healthy\n\
+  exit 0\n\
+fi\n\
+exit 1\n",
+        );
+
+        let contract_path = temp_dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  worker:
+    required: true
+    manager:
+      kind: compose
+      engine: podman
+      name: local
+      file: compose.yaml
+      service: worker
+    readiness:
+      kind: compose_health
+      interval: 10ms
+      retries: 1
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_service(&contract, synthetic_contract_path(), "worker");
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
     fn diagnose_service_compose_manager_fails_fast_when_service_is_not_running() {
         struct EnvPathGuard {
             original: Option<std::ffi::OsString>,
@@ -20115,6 +20220,7 @@ tasks:
         let service = ServiceSpec {
             manager: Some(crate::schema::ServiceManagerSpec {
                 kind: crate::schema::ServiceManagerKind::Compose,
+                engine: crate::schema::ComposeCliEngine::Docker,
                 name: Some(String::from("local")),
                 file: Some(String::from("compose.yaml")),
                 env_file: None,
@@ -20141,6 +20247,7 @@ tasks:
         let service = ServiceSpec {
             manager: Some(crate::schema::ServiceManagerSpec {
                 kind: crate::schema::ServiceManagerKind::Host,
+                engine: crate::schema::ComposeCliEngine::Docker,
                 name: Some(String::from("local-postgres")),
                 file: None,
                 env_file: None,

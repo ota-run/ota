@@ -26342,7 +26342,8 @@ requires-python = ">=3.12"
         assert_eq!(json["config"]["tools"]["composer"], "*");
         assert_eq!(json["config"]["checks"][0]["name"], "php-installed");
         assert_eq!(json["config"]["checks"][1]["name"], "composer-installed");
-        assert_eq!(json["config"]["tasks"]["setup"]["run"], "composer install");
+        assert_eq!(json["config"]["tasks"]["setup"]["command"]["exe"], "composer");
+        assert_eq!(json["config"]["tasks"]["setup"]["command"]["args"][0], "install");
         assert!(json["config"]["tasks"]["test"].is_null());
         let setup_description = json["provenance"]
             .as_array()
@@ -26381,7 +26382,9 @@ requires-python = ">=3.12"
 
         assert_eq!(output.exit_code, 0);
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert_eq!(json["config"]["tasks"]["test"]["run"], "composer run test");
+        assert_eq!(json["config"]["tasks"]["test"]["command"]["exe"], "composer");
+        assert_eq!(json["config"]["tasks"]["test"]["command"]["args"][0], "run");
+        assert_eq!(json["config"]["tasks"]["test"]["command"]["args"][1], "test");
         assert_eq!(
             json["config"]["tasks"]["test"]["description"],
             "Run the existing Composer test script."

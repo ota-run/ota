@@ -178,6 +178,16 @@
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "const": "ensure_container_network" },
+            "provider": { "enum": ["docker"] },
+            "name": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind"],
           "properties": {
             "kind": { "const": "ensure_bundle" }
@@ -196,6 +206,7 @@
           "items": { "$ref": "#/$defs/taskPrepare" }
         },
         "medium": { "enum": ["container_images", "package_dependencies"] },
+        "source": { "$ref": "#/$defs/taskPrepareSource" },
         "source_kind": {
           "enum": [
             "docker_compose",
@@ -208,6 +219,7 @@
         },
         "cwd": { "type": "string" },
         "file": { "type": "string" },
+        "engine": { "enum": ["docker", "podman"] },
         "manager": { "enum": ["npm", "pnpm", "yarn", "bundle", "uv", "poetry"] },
         "mode": { "enum": ["install", "ci", "sync", "download"] },
         "group_mode": { "enum": ["with", "only"] },
@@ -341,7 +353,7 @@
                 "type": "object",
                 "additionalProperties": { "$ref": "#/$defs/taskInput" }
               },
-              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
+              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_container_network", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
               "command": { "$ref": "#/$defs/taskCommand" },
@@ -407,7 +419,7 @@
                     },
                     "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
                     "lifecycle": { "enum": ["persistent", "ephemeral"] },
-                    "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration", "ensure_container_network"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "command": { "$ref": "#/$defs/taskCommand" },
@@ -496,7 +508,7 @@
                       "type": "object",
                       "additionalProperties": { "$ref": "#/$defs/taskInput" }
                     },
-                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_container_network", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "command": { "$ref": "#/$defs/taskCommand" },
@@ -562,7 +574,7 @@
                           },
                           "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
                           "lifecycle": { "enum": ["persistent", "ephemeral"] },
-                          "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration"] },
+                          "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration", "ensure_container_network"] },
                           "run": { "type": "string" },
                           "script": { "type": "string" },
                           "command": { "$ref": "#/$defs/taskCommand" },

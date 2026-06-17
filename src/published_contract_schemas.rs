@@ -644,6 +644,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "required": ["kind"],
       "properties": {
         "kind": { "enum": ["compose", "host"] },
+        "engine": { "enum": ["docker", "podman"] },
         "name": { "type": "string" },
         "file": { "type": "string" },
         "env_file": { "type": "string" },
@@ -1002,7 +1003,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "properties": {
             "kind": { "const": "docker_compose" },
             "cwd": { "type": "string" },
-            "file": { "type": "string" }
+            "file": { "type": "string" },
+            "engine": { "enum": ["docker", "podman"] }
           }
         },
         {

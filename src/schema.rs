@@ -481,12 +481,14 @@ impl Contract {
             .filter(|value| !value.is_empty())
     }
 
-    pub fn selected_workflow_effective_adapter_inputs(
+    pub(crate) fn selected_workflow_adapter_overlay(
         &self,
         workflow_name: Option<&str>,
-    ) -> TaskAdapterInputsSpec {
+    ) -> crate::adapter_inputs::WorkflowAdapterOverlay {
         self.selected_workflow(workflow_name)
-            .map(|(_, workflow)| crate::adapter_inputs::effective_workflow_adapter_inputs(workflow))
+            .map(|(_, workflow)| {
+                crate::adapter_inputs::WorkflowAdapterOverlay::from_workflow(workflow)
+            })
             .unwrap_or_default()
     }
 
@@ -3308,6 +3310,8 @@ impl ServiceReadinessKind {
 #[serde(deny_unknown_fields)]
 pub struct ServiceManagerSpec {
     pub kind: ServiceManagerKind,
+    #[serde(default, skip_serializing_if = "is_default_compose_cli_engine")]
+    pub engine: ComposeCliEngine,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3328,8 +3332,10 @@ impl ServiceManagerSpec {
     pub fn display_label(&self) -> String {
         match self.kind {
             ServiceManagerKind::Compose => match self.name.as_deref() {
-                Some(name) if !name.trim().is_empty() => format!("compose ({name})"),
-                _ => String::from("compose"),
+                Some(name) if !name.trim().is_empty() => {
+                    format!("compose:{} ({name})", self.engine.as_str())
+                }
+                _ => format!("compose:{}", self.engine.as_str()),
             },
             ServiceManagerKind::Host => match self.name.as_deref() {
                 Some(name) if !name.trim().is_empty() => format!("host ({name})"),
@@ -3377,14 +3383,20 @@ impl ServiceManagerSpec {
             return None;
         }
         let compose_service = shell_single_quote(self.compose_service(service_name));
+        let inspect_engine = self.engine.as_str();
         Some(format!(
             "cid=$({prefix} ps -q {service} 2>/dev/null | head -n 1); \
 [ -n \"$cid\" ] || exit 1; \
-health=$(docker inspect --format '{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' \"$cid\" 2>/dev/null || true); \
+health=$({inspect_engine} inspect --format '{{{{if .State.Health}}}}{{{{.State.Health.Status}}}}{{{{else}}}}none{{{{end}}}}' \"$cid\" 2>/dev/null || true); \
 [ \"$health\" = healthy ]",
             prefix = self.compose_command_prefix(),
-            service = compose_service
+            service = compose_service,
+            inspect_engine = inspect_engine
         ))
+    }
+
+    pub fn compose_cli_exe(&self) -> Option<&'static str> {
+        (self.kind == ServiceManagerKind::Compose).then_some(self.engine.as_str())
     }
 
     pub fn compose_ps_command_argv(&self, service_name: &str) -> Option<Vec<String>> {
@@ -3440,7 +3452,7 @@ health=$(docker inspect --format '{{{{if .State.Health}}}}{{{{.State.Health.Stat
     }
 
     fn compose_command_prefix(&self) -> String {
-        let mut command = String::from("docker compose");
+        let mut command = format!("{} compose", self.engine.as_str());
         if let Some(file) = self.file.as_deref().filter(|file| !file.trim().is_empty()) {
             command.push_str(" -f ");
             command.push_str(&shell_single_quote(file));
@@ -3485,6 +3497,27 @@ impl ServiceManagerKind {
             Self::Host => "host",
         }
     }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ComposeCliEngine {
+    #[default]
+    Docker,
+    Podman,
+}
+
+impl ComposeCliEngine {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Docker => "docker",
+            Self::Podman => "podman",
+        }
+    }
+}
+
+pub(crate) const fn is_default_compose_cli_engine(value: &ComposeCliEngine) -> bool {
+    matches!(value, ComposeCliEngine::Docker)
 }
 
 fn shell_single_quote(input: &str) -> String {
@@ -4713,8 +4746,9 @@ impl TaskPrepareSpec {
                 TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
                     let targets = spec.targets.join(", ");
                     format!(
-                        "hydrate {} from docker compose `{}` for {}",
+                        "hydrate {} from {} compose `{}` for {}",
                         spec.medium.label(),
+                        source.engine.as_str(),
                         source.display_path(),
                         targets
                     )
@@ -4837,6 +4871,8 @@ pub enum TaskDependencyHydrationSourceSpec {
 pub struct TaskDockerComposeHydrationSourceSpec {
     pub cwd: String,
     pub file: String,
+    #[serde(default, skip_serializing_if = "is_default_compose_cli_engine")]
+    pub engine: ComposeCliEngine,
 }
 
 impl TaskDockerComposeHydrationSourceSpec {
@@ -6248,8 +6284,8 @@ mod tests {
     use crate::validator::validate_contract;
 
     use super::{
-        Backend, ServiceManagerKind, ServiceManagerSpec, ServiceSpec, TaskCommandSpec,
-        TaskRuntimeHostPortMode, TaskRuntimePortMode, TaskRuntimeProtocol,
+        Backend, ComposeCliEngine, ServiceManagerKind, ServiceManagerSpec, ServiceSpec,
+        TaskCommandSpec, TaskRuntimeHostPortMode, TaskRuntimePortMode, TaskRuntimeProtocol,
     };
 
     #[test]
@@ -6351,10 +6387,52 @@ services:
     }
 
     #[test]
+    fn compose_service_manager_can_target_podman_compose() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    manager:
+      kind: compose
+      engine: podman
+      name: local
+      file: compose.yaml
+      env_file: .env.compose
+      service: redis
+    healthcheck: redis-cli ping
+"#,
+        )
+        .unwrap();
+
+        let manager = contract.services["redis"].manager.as_ref().unwrap();
+        assert_eq!(
+            manager.start_command("redis").as_deref(),
+            Some(
+                "podman compose -f 'compose.yaml' --env-file '.env.compose' -p 'local' up -d 'redis'"
+            )
+        );
+        assert_eq!(manager.compose_cli_exe(), Some("podman"));
+        assert_eq!(
+            manager.compose_health_status_command("redis").as_deref(),
+            Some(
+                "cid=$(podman compose -f 'compose.yaml' --env-file '.env.compose' -p 'local' ps -q 'redis' 2>/dev/null | head -n 1); \
+[ -n \"$cid\" ] || exit 1; \
+health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \"$cid\" 2>/dev/null || true); \
+[ \"$health\" = healthy ]"
+            )
+        );
+    }
+
+    #[test]
     fn host_service_manager_exposes_structured_lifecycle_commands() {
         let service = ServiceSpec {
             manager: Some(ServiceManagerSpec {
                 kind: ServiceManagerKind::Host,
+                engine: ComposeCliEngine::Docker,
                 name: Some(String::from("local-postgres")),
                 file: None,
                 env_file: None,

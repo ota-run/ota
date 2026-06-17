@@ -27,6 +27,55 @@ use crate::schema::{
 };
 use std::collections::BTreeMap;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct WorkflowAdapterOverlay {
+    adapter_inputs: TaskAdapterInputsSpec,
+}
+
+impl WorkflowAdapterOverlay {
+    pub(crate) fn from_workflow(workflow: &WorkflowSpec) -> Self {
+        let mut adapter_inputs = workflow.adapter_inputs.clone();
+        let Some(env) = workflow.env.as_ref() else {
+            return Self { adapter_inputs };
+        };
+        merge_legacy_workflow_adapter_inputs(&mut adapter_inputs, &env.adapter_inputs);
+        if !env.compose_files.is_empty() {
+            let compose = adapter_inputs
+                .compose
+                .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
+            if compose.files.is_empty() {
+                compose.files = env.compose_files.clone();
+            }
+        }
+        if let Some(project_name) = env
+            .compose_project_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let compose = adapter_inputs
+                .compose
+                .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
+            if compose.project_name.is_none() {
+                compose.project_name = Some(project_name.to_string());
+            }
+        }
+        Self { adapter_inputs }
+    }
+
+    pub(crate) fn as_task_adapter_inputs(&self) -> &TaskAdapterInputsSpec {
+        &self.adapter_inputs
+    }
+
+    pub(crate) fn into_task_adapter_inputs(self) -> TaskAdapterInputsSpec {
+        self.adapter_inputs
+    }
+
+    pub(crate) fn workflow_value(&self, field: AdapterInputField) -> Option<String> {
+        field.workflow_value(&self.adapter_inputs)
+    }
+}
+
 trait WorkflowOverlaySpec: Clone {
     fn workflow_slot(adapter_inputs: &TaskAdapterInputsSpec) -> Option<&Self>;
     fn task_slot(task: &TaskSpec) -> Option<&Self>;
@@ -486,36 +535,6 @@ impl AdapterInputField {
     }
 }
 
-pub(crate) fn effective_workflow_adapter_inputs(workflow: &WorkflowSpec) -> TaskAdapterInputsSpec {
-    let mut adapter_inputs = workflow.adapter_inputs.clone();
-    let Some(env) = workflow.env.as_ref() else {
-        return adapter_inputs;
-    };
-    merge_legacy_workflow_adapter_inputs(&mut adapter_inputs, &env.adapter_inputs);
-    if !env.compose_files.is_empty() {
-        let compose = adapter_inputs
-            .compose
-            .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
-        if compose.files.is_empty() {
-            compose.files = env.compose_files.clone();
-        }
-    }
-    if let Some(project_name) = env
-        .compose_project_name
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        let compose = adapter_inputs
-            .compose
-            .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
-        if compose.project_name.is_none() {
-            compose.project_name = Some(project_name.to_string());
-        }
-    }
-    adapter_inputs
-}
-
 fn merge_legacy_workflow_adapter_inputs(
     target: &mut TaskAdapterInputsSpec,
     legacy: &TaskAdapterInputsSpec,
@@ -624,37 +643,18 @@ impl AdapterInputFamily {
         }
     }
 
-    pub(crate) fn workflow_requires_support(self, workflow: &WorkflowSpec) -> bool {
+    pub(crate) fn workflow_requires_support(self, overlay: &WorkflowAdapterOverlay) -> bool {
         match self {
-            Self::Compose => {
-                workflow
-                    .adapter_inputs
-                    .compose
-                    .as_ref()
-                    .is_some_and(|compose| !compose.is_empty())
-                    || workflow.env.as_ref().is_some_and(|env| {
-                        workflow_declares_compose_file_alias(env)
-                            || workflow_declares_compose_project_name_alias(env)
-                            || env
-                                .adapter_inputs
-                                .compose
-                                .as_ref()
-                                .is_some_and(|compose| !compose.is_empty())
-                    })
-            }
-            Self::Bake => {
-                workflow
-                    .adapter_inputs
-                    .bake
-                    .as_ref()
-                    .is_some_and(|bake| !bake.is_empty())
-                    || workflow.env.as_ref().is_some_and(|env| {
-                        env.adapter_inputs
-                            .bake
-                            .as_ref()
-                            .is_some_and(|bake| !bake.is_empty())
-                    })
-            }
+            Self::Compose => overlay
+                .as_task_adapter_inputs()
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.is_empty()),
+            Self::Bake => overlay
+                .as_task_adapter_inputs()
+                .bake
+                .as_ref()
+                .is_some_and(|bake| !bake.is_empty()),
         }
     }
 
@@ -758,31 +758,33 @@ impl AdapterInputFamily {
             return false;
         };
         match self {
-            Self::Compose => value.contains("docker compose"),
+            Self::Compose => value.contains("docker compose") || value.contains("podman compose"),
             Self::Bake => value.contains("docker buildx bake"),
         }
     }
 
     fn command_uses_adapter(self, command: Option<&TaskCommandSpec>) -> bool {
-        command.is_some_and(|command| {
-            if !command.exe.trim().eq_ignore_ascii_case("docker") {
-                return false;
-            }
-            match self {
-                Self::Compose => command
-                    .args
-                    .first()
-                    .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose")),
-                Self::Bake => {
-                    command
+        command.is_some_and(|command| match self {
+            Self::Compose => {
+                (command.exe.trim().eq_ignore_ascii_case("docker")
+                    || command.exe.trim().eq_ignore_ascii_case("podman"))
+                    && command
                         .args
                         .first()
-                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
-                        && command
-                            .args
-                            .get(1)
-                            .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
+                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose"))
+            }
+            Self::Bake => {
+                if !command.exe.trim().eq_ignore_ascii_case("docker") {
+                    return false;
                 }
+                command
+                    .args
+                    .first()
+                    .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
+                    && command
+                        .args
+                        .get(1)
+                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
             }
         })
     }
@@ -942,12 +944,13 @@ fn render_adapter_input_value_list(values: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ADAPTER_INPUT_FIELDS, AdapterInputField, task_adapter_env_bindings,
+        ADAPTER_INPUT_FIELDS, AdapterInputField, WorkflowAdapterOverlay, task_adapter_env_bindings,
         task_effective_adapter_cwd,
     };
     use crate::schema::{
-        Backend, TaskComposeAdapterInputsSpec, TaskExecutionWhenSpec, TaskRequirementsSpec,
-        TaskSpec,
+        Backend, TaskAdapterInputsSpec, TaskComposeAdapterInputsSpec, TaskExecutionWhenSpec,
+        TaskRequirementsSpec, TaskSpec, WorkflowEnvSpec, WorkflowPrepareSpec,
+        WorkflowReadinessSpec, WorkflowServicesSpec, WorkflowSpec,
     };
     use std::collections::BTreeMap;
 
@@ -1107,5 +1110,50 @@ mod tests {
             task_effective_adapter_cwd(&task, Backend::Native),
             Some("ops/compose")
         );
+    }
+
+    #[test]
+    fn workflow_adapter_overlay_merges_canonical_and_compat_compose_truth() {
+        let workflow = WorkflowSpec {
+            intent: None,
+            description: None,
+            notes: None,
+            adapter_inputs: TaskAdapterInputsSpec {
+                compose: Some(TaskComposeAdapterInputsSpec {
+                    cwd: Some(String::from("ops/compose")),
+                    env_files: vec![String::from(".env.workflow")],
+                    files: Vec::new(),
+                    profiles: vec![String::from("web")],
+                    project_name: None,
+                    workflow_overlay_bound: false,
+                }),
+                bake: None,
+            },
+            env: Some(WorkflowEnvSpec {
+                profile: None,
+                compose_env_file_services: Vec::new(),
+                adapter_inputs: TaskAdapterInputsSpec::default(),
+                compose_files: vec![String::from("compose.base.yaml")],
+                compose_project_name: Some(String::from("workflow-app")),
+            }),
+            prepare: None::<WorkflowPrepareSpec>,
+            setup: None,
+            run: None,
+            services: WorkflowServicesSpec::default(),
+            readiness: WorkflowReadinessSpec::default(),
+            exposes: Vec::new(),
+        };
+
+        let overlay = WorkflowAdapterOverlay::from_workflow(&workflow);
+        let compose = overlay
+            .as_task_adapter_inputs()
+            .compose
+            .as_ref()
+            .expect("compose overlay should exist");
+        assert_eq!(compose.cwd.as_deref(), Some("ops/compose"));
+        assert_eq!(compose.env_files, vec![String::from(".env.workflow")]);
+        assert_eq!(compose.files, vec![String::from("compose.base.yaml")]);
+        assert_eq!(compose.profiles, vec![String::from("web")]);
+        assert_eq!(compose.project_name.as_deref(), Some("workflow-app"));
     }
 }

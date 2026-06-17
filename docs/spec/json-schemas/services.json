@@ -20,6 +20,7 @@
       "required": ["kind"],
       "properties": {
         "kind": { "type": "string" },
+        "engine": { "enum": ["docker", "podman"] },
         "name": { "type": "string" },
         "file": { "type": "string" },
         "env_file": { "type": "string" },
