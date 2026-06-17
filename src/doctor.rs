@@ -72,7 +72,7 @@ use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     NativePrerequisiteActivationShell, ReadinessProbeSpec, RequirementSurface, RuntimeRequirement,
     ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec, TaskNetworkEffectKind,
-    ToolAcquisitionProvider, ToolAcquisitionSpec, ToolRequirement, ToolchainFulfillmentSource,
+    ToolAcquisitionProvider, ToolAcquisitionSpec, ToolchainFulfillmentSource,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{
@@ -389,10 +389,7 @@ fn merge_effective_launch_command_tool_requirement(
     backend: Backend,
 ) {
     if let Some(exe) = task.effective_command_launch_executable_for_backend(backend, current_os()) {
-        surface
-            .tools
-            .entry(exe)
-            .or_insert(ToolRequirement::Simple(String::from("*")));
+        surface.presence_only_tools.insert(exe);
     }
 }
 
@@ -542,6 +539,7 @@ fn selected_backend_precondition_selections(
             selection.requirement_surface.merge(&RequirementSurface {
                 runtimes: context.requirements.runtimes.clone(),
                 tools: context.requirements.tools.clone(),
+                presence_only_tools: BTreeSet::new(),
             });
         }
     }
@@ -687,6 +685,7 @@ fn selected_task_backend_precondition_selections(
             selection.requirement_surface.merge(&RequirementSurface {
                 runtimes: context.requirements.runtimes.clone(),
                 tools: context.requirements.tools.clone(),
+                presence_only_tools: BTreeSet::new(),
             });
         }
     }
@@ -796,6 +795,7 @@ fn scoped_precondition_selection(
             selection.requirement_surface.merge(&RequirementSurface {
                 runtimes: context.requirements.runtimes.clone(),
                 tools: context.requirements.tools.clone(),
+                presence_only_tools: BTreeSet::new(),
             });
         }
     }
@@ -1196,10 +1196,12 @@ fn remote_doctor_probe_contexts(
             .unwrap_or_else(|| RequirementSurface {
                 runtimes: contract.runtimes.clone(),
                 tools: contract.tools.clone(),
+                presence_only_tools: BTreeSet::new(),
             });
         requirement_surface.merge(&RequirementSurface {
             runtimes: context.requirements.runtimes.clone(),
             tools: context.requirements.tools.clone(),
+            presence_only_tools: BTreeSet::new(),
         });
         let selected_toolchain_names = selected_task_surface
             .map(|selection| selection.toolchain_names.clone())
@@ -1293,6 +1295,7 @@ fn remote_doctor_probe_contexts(
         .unwrap_or_else(|| RequirementSurface {
             runtimes: contract.runtimes.clone(),
             tools: contract.tools.clone(),
+            presence_only_tools: BTreeSet::new(),
         });
     let selected_toolchain_names = selected_task_requirements
         .as_ref()
@@ -3716,8 +3719,7 @@ fn diagnose_contract_with_scope(
                             &precondition_selection.toolchain_names,
                             &remote_probe.target_os,
                             Some(&required_tools),
-                        )
-                        .tools,
+                        ),
                         &remote_probe.target_os,
                         contract_path,
                         loaded_policy.as_ref(),
@@ -3840,8 +3842,7 @@ fn diagnose_contract_with_scope(
                         &selection.toolchain_names,
                         policy_target_os_for_mode(mode),
                         Some(&required_tools),
-                    )
-                    .tools,
+                    ),
                     policy_target_os_for_mode(mode),
                     contract_path,
                     loaded_policy.as_ref(),
@@ -3900,8 +3901,7 @@ fn diagnose_contract_with_scope(
                     &precondition_selection.toolchain_names,
                     policy_target_os_for_mode(mode),
                     Some(&required_tools),
-                )
-                .tools,
+                ),
                 policy_target_os_for_mode(mode),
                 contract_path,
                 loaded_policy.as_ref(),
@@ -4026,8 +4026,7 @@ fn diagnose_contract_with_scope(
                         &additional_selection.toolchain_names,
                         policy_target_os_for_mode(additional_mode),
                         Some(&required_tools),
-                    )
-                    .tools,
+                    ),
                     policy_target_os_for_mode(additional_mode),
                     contract_path,
                     loaded_policy.as_ref(),
@@ -4251,11 +4250,8 @@ fn diagnose_contract_advisories(
             ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => {
                 ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory)
             }
-            ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => {
-                ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory)
-            }
-            ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => {
-                ContractAdvisory::ReplaceableBakeFileOwnership(advisory)
+            ContractAdvisory::ReplaceableAdapterInputOwnership(advisory) => {
+                ContractAdvisory::ReplaceableAdapterInputOwnership(advisory)
             }
             ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory) => {
                 ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory)
@@ -4353,8 +4349,7 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         | ContractAdvisory::ReplaceableShellEnvMutation(_)
         | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
         | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
-        | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
-        | ContractAdvisory::ReplaceableBakeFileOwnership(_)
+        | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
         | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
         | ContractAdvisory::MixedNativePackageOwnership(_)
         | ContractAdvisory::EmptyAdapterInputMarker(_)
@@ -6313,6 +6308,7 @@ fn diagnose_runtimes(
             &executable_candidates,
             requirement.version_for_os(target_os),
             required,
+            false,
             runtime_provider_hint(requirement, target_os),
             None,
             mode,
@@ -6334,7 +6330,7 @@ fn diagnose_runtimes(
 fn diagnose_tools(
     contract: &Contract,
     selected_toolchains: &BTreeSet<String>,
-    tools: &BTreeMap<String, ToolRequirement>,
+    requirement_surface: &RequirementSurface,
     target_os: &str,
     contract_path: &Path,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
@@ -6351,7 +6347,7 @@ fn diagnose_tools(
     }
 
     let mut container_probe_started = false;
-    for (name, requirement) in tools {
+    for (name, requirement) in &requirement_surface.tools {
         if !requirement.active_for_os(target_os) {
             continue;
         }
@@ -6370,6 +6366,7 @@ fn diagnose_tools(
             &executable_candidates,
             requirement.version_for_os(target_os),
             required,
+            false,
             run_path_fulfillment_source.map(toolchain_fulfillment_source_label),
             requirement.acquisition(),
             mode,
@@ -6381,6 +6378,30 @@ fn diagnose_tools(
             loaded_policy,
             target_os,
             run_path_fulfillment_source.is_some(),
+            provisioning_actions,
+            findings,
+        );
+    }
+    for name in &requirement_surface.presence_only_tools {
+        let executable_candidates = vec![name.to_string()];
+        container_probe_started |= diagnose_command_version(
+            "tool",
+            name,
+            &executable_candidates,
+            "*",
+            true,
+            true,
+            None,
+            None,
+            mode,
+            selected_lifecycle,
+            container_probe,
+            remote_probe,
+            remote_context_name,
+            contract_path,
+            loaded_policy,
+            target_os,
+            false,
             provisioning_actions,
             findings,
         );
@@ -6459,6 +6480,7 @@ fn diagnose_toolchains(
             &executable_candidates,
             toolchain.version_for_os(target_os),
             toolchain.required_for_os(target_os),
+            false,
             Some(declared_toolchain_source_label(toolchain_name, toolchain)),
             None,
             mode,
@@ -8086,6 +8108,7 @@ fn diagnose_command_version(
     executable_candidates: &[String],
     requirement: &str,
     required: bool,
+    presence_only: bool,
     provider_hint: Option<&str>,
     tool_acquisition: Option<&ToolAcquisitionSpec>,
     mode: DoctorMode,
@@ -8187,6 +8210,16 @@ fn diagnose_command_version(
     };
 
     let Some(actual) = actual else {
+        if presence_only && let Some(probe) = version_probe.as_ref() {
+            match &probe.outcome {
+                CommandVersionProbeOutcome::Unparseable => return probe_started,
+                CommandVersionProbeOutcome::ProbeFailed {
+                    exit_code: Some(_),
+                    error: None,
+                } => return probe_started,
+                _ => {}
+            }
+        }
         if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
             let provider_requirement = tool_acquisition_provider_requirement(acquisition);
             findings.push(Finding::identified(
@@ -8224,6 +8257,7 @@ fn diagnose_command_version(
                 &corepack_activation_provider_probe_candidates(),
                 "*",
                 required,
+                false,
                 None,
                 None,
                 mode,
@@ -8249,6 +8283,7 @@ fn diagnose_command_version(
                 &[String::from("mise")],
                 "*",
                 required,
+                false,
                 None,
                 None,
                 mode,
@@ -8277,6 +8312,7 @@ fn diagnose_command_version(
                 &corepack_activation_provider_probe_candidates(),
                 "*",
                 required,
+                false,
                 None,
                 None,
                 mode,
@@ -8665,6 +8701,7 @@ fn diagnose_command_version(
             &corepack_activation_provider_probe_candidates(),
             "*",
             required,
+            false,
             None,
             None,
             mode,
@@ -8693,6 +8730,7 @@ fn diagnose_command_version(
             &[String::from("mise")],
             "*",
             required,
+            false,
             None,
             None,
             mode,
@@ -13687,6 +13725,145 @@ tasks:
         );
         #[cfg(not(windows))]
         assert_eq!(finding.evidence().path, npm_path.display().to_string());
+    }
+
+    #[test]
+    fn presence_only_command_executable_does_not_fail_doctor_when_version_probe_exits_nonzero() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "svcctl",
+            if cfg!(windows) {
+                "@echo off\r\nif \"%1\"==\"check\" exit /b 0\r\nexit /b 2\r\n"
+            } else {
+                "#!/bin/sh\nif [ \"$1\" = \"check\" ]; then\n  exit 0\nfi\nexit 2\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  verify:
+    command:
+      exe: svcctl
+      args: [check]
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(report.ok, "{report:?}");
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Tool probe failed: svcctl"),
+            "{report:?}"
+        );
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Unparseable version for tool: svcctl"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_tool_requirement_still_fails_when_version_probe_exits_nonzero() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "svcctl",
+            if cfg!(windows) {
+                "@echo off\r\nif \"%1\"==\"check\" exit /b 0\r\nexit /b 2\r\n"
+            } else {
+                "#!/bin/sh\nif [ \"$1\" = \"check\" ]; then\n  exit 0\nfi\nexit 2\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  svcctl: "*"
+tasks:
+  verify:
+    command:
+      exe: svcctl
+      args: [check]
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(!report.ok, "{report:?}");
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Tool probe failed: svcctl"),
+            "{report:?}"
+        );
     }
 
     #[test]

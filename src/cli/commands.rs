@@ -41,8 +41,8 @@ use time::OffsetDateTime;
 use time::macros::format_description;
 
 use super::{
-    AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistNormalizeIntoArg,
-    AssistHostScopeArg, AssistReadinessStyleArg, AssistServiceManagerArg, AssistTaskKindArg,
+    AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistHostScopeArg,
+    AssistNormalizeIntoArg, AssistReadinessStyleArg, AssistServiceManagerArg, AssistTaskKindArg,
     AssistTaskListenerProtocolArg, AssistTaskTargetActivationModeArg,
     AssistTaskTargetAddressViewArg,
 };
@@ -662,7 +662,9 @@ fn render_container_engine_unavailable_failure_text(
     );
     out.push_str(&format!(
         "\n{}",
-        stylize_inline_text(&format!("`{failed_step_name}` could not use container engine `{engine}`"))
+        stylize_inline_text(&format!(
+            "`{failed_step_name}` could not use container engine `{engine}`"
+        ))
     ));
     if let Some(requested_task_name) = requested_task_name
         && requested_task_name != failed_step_name
@@ -1509,23 +1511,19 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
-        ContractAdvisory::ReplaceableComposeEnvFileOwnership(value) => format!(
+        ContractAdvisory::ReplaceableAdapterInputOwnership(value) => format!(
             "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
             value.task_name,
             paint_key("Risk:"),
-            render_validate_warning_detail("hard-coded compose env-file ownership"),
-            paint_key("Why:"),
-            render_validate_warning_detail(&advisory.why()),
-            paint_key("Next:"),
-            render_validate_warning_detail(&advisory.next()),
-        ),
-        ContractAdvisory::ReplaceableBakeFileOwnership(value) => format!(
-            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
-            list_bullet(),
-            value.task_name,
-            paint_key("Risk:"),
-            render_validate_warning_detail("hard-coded Bake file selection"),
+            render_validate_warning_detail(match value.family {
+                crate::adapter_inputs::AdapterInputFamily::Compose => {
+                    "hard-coded compose env-file ownership"
+                }
+                crate::adapter_inputs::AdapterInputFamily::Bake => {
+                    "hard-coded Bake file selection"
+                }
+            }),
             paint_key("Why:"),
             render_validate_warning_detail(&advisory.why()),
             paint_key("Next:"),
@@ -4994,10 +4992,7 @@ impl AssistServiceProposal {
         }
         if let Some(scope) = self.host_scope {
             if scope != AssistHostScopeArg::System {
-                command.push_str(&format!(
-                    " --host-scope {}",
-                    assist_host_scope_name(scope)
-                ));
+                command.push_str(&format!(" --host-scope {}", assist_host_scope_name(scope)));
             }
         }
         if let Some(style) = self.style {
@@ -10898,7 +10893,9 @@ fn build_assist_service_proposal(
             String::from(
                 "`--style systemd-active` requires `--manager host` (or an existing host manager)",
             ),
-            String::from("rerun with `--manager host --host-unit <unit>`, or choose `--style tcp|http`"),
+            String::from(
+                "rerun with `--manager host --host-unit <unit>`, or choose `--style tcp|http`",
+            ),
         ));
     }
 
@@ -11074,11 +11071,15 @@ fn build_assist_service_proposal(
         env_file: None,
         profiles: Vec::new(),
         service: compose_service_value.clone(),
-        host: host_unit_value.as_ref().map(|unit| crate::schema::HostServiceManagerSpec {
-            kind: crate::schema::HostServiceManagerKind::Systemd,
-            unit: unit.clone(),
-            scope: assist_host_scope_spec(host_scope_value.unwrap_or(AssistHostScopeArg::System)),
-        }),
+        host: host_unit_value
+            .as_ref()
+            .map(|unit| crate::schema::HostServiceManagerSpec {
+                kind: crate::schema::HostServiceManagerKind::Systemd,
+                unit: unit.clone(),
+                scope: assist_host_scope_spec(
+                    host_scope_value.unwrap_or(AssistHostScopeArg::System),
+                ),
+            }),
         start: None,
         stop: None,
     });
@@ -16358,6 +16359,7 @@ fn selected_task_requirement_surface(
         surface.merge(&RequirementSurface {
             runtimes: context.requirements.runtimes.clone(),
             tools: context.requirements.tools.clone(),
+            presence_only_tools: BTreeSet::new(),
         });
     }
     if matches!(effective.backend, Backend::Native) {
@@ -66604,7 +66606,10 @@ tasks:
             "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
         ));
 
-        assert!(rendered.contains("Container engine unavailable"), "{rendered}");
+        assert!(
+            rendered.contains("Container engine unavailable"),
+            "{rendered}"
+        );
         assert!(
             rendered.contains(
                 "task `selfhost:compose:down` launches `podman`, but the selected container engine backend is unavailable"
@@ -85576,6 +85581,7 @@ fn selected_workflow_task_requirement_surface(
             surface.merge(&RequirementSurface {
                 runtimes: context.requirements.runtimes.clone(),
                 tools: context.requirements.tools.clone(),
+                presence_only_tools: BTreeSet::new(),
             });
         }
         if matches!(effective.backend, Backend::Native) {
@@ -85648,6 +85654,7 @@ fn up_requirement_surface(
     let mut surface = RequirementSurface {
         runtimes: contract.runtimes.clone(),
         tools: contract.tools.clone(),
+        presence_only_tools: BTreeSet::new(),
     };
     let (backend, _) = effective_execution(contract, overrides);
     surface.merge(&contract.context_requirement_surface_for_backend(backend));

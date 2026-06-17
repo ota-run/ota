@@ -10445,6 +10445,7 @@ fn shared_local_backend_requirement_versions(
                 &crate::schema::RequirementSurface {
                     runtimes: context.requirements.runtimes.clone(),
                     tools: context.requirements.tools.clone(),
+                    presence_only_tools: BTreeSet::new(),
                 },
                 &context.requirements.toolchains.iter().cloned().collect(),
                 target_os,
@@ -10518,6 +10519,7 @@ fn direct_context_requirement_versions(
         &crate::schema::RequirementSurface {
             runtimes: context.requirements.runtimes.clone(),
             tools: context.requirements.tools.clone(),
+            presence_only_tools: BTreeSet::new(),
         },
         &context.requirements.toolchains.iter().cloned().collect(),
         target_os,

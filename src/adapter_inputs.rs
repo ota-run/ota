@@ -622,6 +622,134 @@ pub(crate) fn workflow_duplicates_canonical_compose_project_name_alias(
 }
 
 impl AdapterInputFamily {
+    pub(crate) const fn family_name(self) -> &'static str {
+        match self {
+            Self::Compose => "compose",
+            Self::Bake => "bake",
+        }
+    }
+
+    pub(crate) const fn replaceable_ownership_code(self) -> &'static str {
+        match self {
+            Self::Compose => "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP",
+            Self::Bake => "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP",
+        }
+    }
+
+    pub(crate) const fn empty_marker_code(self) -> &'static str {
+        match self {
+            Self::Compose => "OTA_CONTRACT_ADVISORY_EMPTY_COMPOSE_ADAPTER_INPUT_MARKER",
+            Self::Bake => "OTA_CONTRACT_ADVISORY_EMPTY_BAKE_ADAPTER_INPUT_MARKER",
+        }
+    }
+
+    pub(crate) fn uses_shell(self, command: &str) -> bool {
+        let lower = command.to_ascii_lowercase();
+        match self {
+            Self::Compose => lower.contains("docker compose") || lower.contains("podman compose"),
+            Self::Bake => lower.contains("docker buildx bake"),
+        }
+    }
+
+    pub(crate) fn uses_command(self, command: &TaskCommandSpec) -> bool {
+        match self {
+            Self::Compose => {
+                (command.exe.trim().eq_ignore_ascii_case("docker")
+                    || command.exe.trim().eq_ignore_ascii_case("podman"))
+                    && command
+                        .args
+                        .first()
+                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose"))
+            }
+            Self::Bake => {
+                command.exe.trim().eq_ignore_ascii_case("docker")
+                    && command
+                        .args
+                        .first()
+                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
+                    && command
+                        .args
+                        .get(1)
+                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
+            }
+        }
+    }
+
+    pub(crate) fn uses_launch(self, launch: Option<&TaskLaunchSpec>) -> bool {
+        match launch {
+            Some(TaskLaunchSpec::Command(command)) => self.uses_command(command),
+            Some(TaskLaunchSpec::Container(_)) | None => false,
+        }
+    }
+
+    pub(crate) fn obvious_replaceable_shell(self, command: &str) -> bool {
+        let lower = command.to_ascii_lowercase();
+        match self {
+            Self::Compose => {
+                ((lower.contains("docker compose") || lower.contains("podman compose"))
+                    && (lower.contains("--env-file")
+                        || lower.contains(" -f ")
+                        || lower.contains(" --file ")
+                        || lower.contains(" --project-directory ")
+                        || lower.contains(" --profile ")
+                        || lower.contains(" -p ")
+                        || lower.contains(" --project-name ")))
+                    || (lower.trim_start().starts_with("cd ")
+                        && (lower.contains("&& docker compose")
+                            || lower.contains("; docker compose")
+                            || lower.contains("&& podman compose")
+                            || lower.contains("; podman compose")))
+            }
+            Self::Bake => {
+                (lower.contains("docker buildx bake")
+                    && (lower.contains(" -f ") || lower.contains(" --file ")))
+                    || (lower.trim_start().starts_with("cd ")
+                        && (lower.contains("&& docker buildx bake")
+                            || lower.contains("; docker buildx bake")))
+            }
+        }
+    }
+
+    pub(crate) fn obvious_replaceable_command(self, command: &TaskCommandSpec) -> bool {
+        match self {
+            Self::Compose => {
+                (command.exe.trim().eq_ignore_ascii_case("docker")
+                    || command.exe.trim().eq_ignore_ascii_case("podman"))
+                    && command
+                        .args
+                        .first()
+                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose"))
+                    && command.args.iter().any(|arg| {
+                        matches!(
+                            arg.trim(),
+                            "--env-file"
+                                | "-f"
+                                | "--file"
+                                | "--project-directory"
+                                | "--profile"
+                                | "-p"
+                                | "--project-name"
+                        )
+                    })
+            }
+            Self::Bake => {
+                command.exe.trim().eq_ignore_ascii_case("docker")
+                    && command
+                        .args
+                        .first()
+                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
+                    && command
+                        .args
+                        .get(1)
+                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
+                    && command
+                        .args
+                        .iter()
+                        .any(|arg| matches!(arg.trim(), "-f" | "--file"))
+            }
+        }
+    }
+
     pub(crate) fn effective_cwd(self, task: &TaskSpec, backend: Backend) -> Option<&str> {
         match self {
             Self::Compose => task.compose_adapter_cwd_for_backend(backend),
@@ -750,50 +878,18 @@ impl AdapterInputFamily {
     }
 
     fn shell_uses_adapter(self, command: Option<&str>) -> bool {
-        let Some(value) = command
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_ascii_lowercase)
-        else {
+        let Some(value) = command.map(str::trim).filter(|value| !value.is_empty()) else {
             return false;
         };
-        match self {
-            Self::Compose => value.contains("docker compose") || value.contains("podman compose"),
-            Self::Bake => value.contains("docker buildx bake"),
-        }
+        self.uses_shell(value)
     }
 
     fn command_uses_adapter(self, command: Option<&TaskCommandSpec>) -> bool {
-        command.is_some_and(|command| match self {
-            Self::Compose => {
-                (command.exe.trim().eq_ignore_ascii_case("docker")
-                    || command.exe.trim().eq_ignore_ascii_case("podman"))
-                    && command
-                        .args
-                        .first()
-                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("compose"))
-            }
-            Self::Bake => {
-                if !command.exe.trim().eq_ignore_ascii_case("docker") {
-                    return false;
-                }
-                command
-                    .args
-                    .first()
-                    .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("buildx"))
-                    && command
-                        .args
-                        .get(1)
-                        .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
-            }
-        })
+        command.is_some_and(|command| self.uses_command(command))
     }
 
     fn launch_uses_adapter(self, launch: Option<&TaskLaunchSpec>) -> bool {
-        match launch {
-            Some(TaskLaunchSpec::Command(command)) => self.command_uses_adapter(Some(command)),
-            Some(TaskLaunchSpec::Container(_)) | None => false,
-        }
+        self.uses_launch(launch)
     }
 }
 

@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- `ota doctor` now treats inferred task-command and launch-command executables as presence-owned
+  prerequisites instead of strict versioned tools, so valid command surfaces no longer fail
+  diagnosis just because their executable does not support `--version`; explicit `tools:` contract
+  requirements remain strict and still fail on broken or unparseable version probes
 - added a first-class typed `systemd` host-service manager lane on top of the existing
   `manager.kind: host` surface: services can now declare `manager.host.kind: systemd` plus a unit
   and optional scope so ota derives host lifecycle and supports structured

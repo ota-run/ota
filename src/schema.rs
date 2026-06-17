@@ -1230,11 +1230,12 @@ fn backend_label(backend: Backend) -> &'static str {
 pub struct RequirementSurface {
     pub runtimes: BTreeMap<String, RuntimeRequirement>,
     pub tools: BTreeMap<String, ToolRequirement>,
+    pub presence_only_tools: BTreeSet<String>,
 }
 
 impl RequirementSurface {
     pub fn is_empty(&self) -> bool {
-        self.runtimes.is_empty() && self.tools.is_empty()
+        self.runtimes.is_empty() && self.tools.is_empty() && self.presence_only_tools.is_empty()
     }
 
     pub fn merge(&mut self, other: &RequirementSurface) {
@@ -1254,6 +1255,8 @@ impl RequirementSurface {
                 .unwrap_or_else(|| requirement.clone());
             self.tools.insert(name.clone(), merged);
         }
+        self.presence_only_tools
+            .extend(other.presence_only_tools.iter().cloned());
     }
 }
 
@@ -1391,7 +1394,7 @@ impl Contract {
             if !scoped_surface.runtimes.is_empty() {
                 scoped_runtimes = true;
             }
-            if !scoped_surface.tools.is_empty() {
+            if !scoped_surface.tools.is_empty() || !scoped_surface.presence_only_tools.is_empty() {
                 scoped_tools = true;
             }
             for (name, requirement) in &scoped_surface.runtimes {
@@ -1406,6 +1409,9 @@ impl Contract {
                     self.resolve_scoped_tool_requirement(name, requirement),
                 );
             }
+            surface
+                .presence_only_tools
+                .extend(scoped_surface.presence_only_tools.iter().cloned());
         }
 
         if !saw_task {
@@ -1448,6 +1454,7 @@ impl Contract {
         let mut surface = RequirementSurface {
             runtimes: self.runtimes.clone(),
             tools: self.tools.clone(),
+            presence_only_tools: BTreeSet::new(),
         };
 
         if let Some(execution) = self.execution.as_ref() {
@@ -1466,6 +1473,7 @@ impl Contract {
         let mut surface = RequirementSurface {
             runtimes: self.runtimes.clone(),
             tools: self.tools.clone(),
+            presence_only_tools: BTreeSet::new(),
         };
         surface.merge(&self.context_requirement_surface_for_backend(backend));
         surface
@@ -4146,6 +4154,7 @@ impl TaskSpec {
     ) -> RequirementSurface {
         let mut runtimes = self.requirements.runtimes.clone();
         let mut tools = self.requirements.tools.clone();
+        let presence_only_tools = self.inferred_command_presence_only_tools();
         if let Some(selected_any_of) = self.requirements.selected_any_of(backend, context_name) {
             for (name, requirement) in &selected_any_of.runtimes {
                 let merged = runtimes
@@ -4162,15 +4171,16 @@ impl TaskSpec {
                 tools.insert(name.clone(), merged);
             }
         }
-        for (name, requirement) in self.inferred_command_tool_requirements() {
-            tools.entry(name).or_insert(requirement);
-        }
         if let Some(orchestrator) = self.orchestrator_for_backend(backend) {
             tools
                 .entry(orchestrator.ref_name.clone())
                 .or_insert(ToolRequirement::Simple(String::from("*")));
         }
-        RequirementSurface { runtimes, tools }
+        RequirementSurface {
+            runtimes,
+            tools,
+            presence_only_tools,
+        }
     }
 
     pub fn scoped_toolchain_requirements_for_execution(
@@ -4353,8 +4363,8 @@ impl TaskSpec {
         self.effective_command_executable_for_backend(backend, os)
     }
 
-    fn inferred_command_tool_requirements(&self) -> BTreeMap<String, ToolRequirement> {
-        let mut tools = BTreeMap::new();
+    fn inferred_command_presence_only_tools(&self) -> BTreeSet<String> {
+        let mut tools = BTreeSet::new();
         if let Some(exe) = self
             .command
             .as_ref()
@@ -4371,7 +4381,7 @@ impl TaskSpec {
                     .and_then(inferred_shell_command_executable)
             })
         {
-            tools.insert(exe, ToolRequirement::Simple(String::from("*")));
+            tools.insert(exe);
         }
         tools
     }
@@ -6374,9 +6384,9 @@ mod tests {
     use crate::validator::validate_contract;
 
     use super::{
-        Backend, ComposeCliEngine, HostServiceManagerKind, HostServiceManagerSpec, ServiceManagerKind,
-        ServiceManagerSpec, ServiceSpec, SystemdScope, TaskCommandSpec, TaskRuntimeHostPortMode,
-        TaskRuntimePortMode, TaskRuntimeProtocol,
+        Backend, ComposeCliEngine, HostServiceManagerKind, HostServiceManagerSpec,
+        ServiceManagerKind, ServiceManagerSpec, ServiceSpec, SystemdScope, TaskCommandSpec,
+        TaskRuntimeHostPortMode, TaskRuntimePortMode, TaskRuntimeProtocol,
     };
 
     #[test]
@@ -7161,11 +7171,10 @@ workflows:
             .selected_workflow_task_requirement_surface(Some("instant"))
             .expect("workflow requirement surface should resolve");
 
-        assert!(surface.tools.contains_key("npx"), "{surface:?}");
-        assert_eq!(
-            surface.tools["npx"].version(),
-            "*",
-            "implicit launch tool should default to wildcard version"
+        assert!(surface.presence_only_tools.contains("npx"), "{surface:?}");
+        assert!(
+            !surface.tools.contains_key("npx"),
+            "implicit launch tool should stay presence-only unless the contract explicitly declares it"
         );
         assert!(
             !surface.tools.contains_key("docker"),
@@ -7200,8 +7209,11 @@ workflows:
             .selected_workflow_task_requirement_surface(Some("verify"))
             .expect("workflow requirement surface should resolve");
 
-        assert!(surface.tools.contains_key("uv"), "{surface:?}");
-        assert_eq!(surface.tools["uv"].version(), "*");
+        assert!(surface.presence_only_tools.contains("uv"), "{surface:?}");
+        assert!(
+            !surface.tools.contains_key("uv"),
+            "implicit run-command tool should stay presence-only unless the contract explicitly declares it"
+        );
         assert!(!surface.tools.contains_key("docker"));
     }
 
