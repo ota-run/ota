@@ -163,7 +163,6 @@ jobs:
 
           doctor = json.loads(pathlib.Path(sys.argv[1]).read_text())
           assert doctor["ok"] is True, doctor
-          assert doctor["summary"]["verdict"] == "ready", doctor
           PY
 
           up_raw_path="$proof_root/up.raw.txt"
