@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- runtime proof now short-circuits fast terminal `ota up --stream` failures from captured
+  `up.log`, emits the stronger failure text into proof output and `doctor.json`, and avoids the
+  previous long full-diagnosis stall when readiness proof was already terminally blocked
 - generalized workflow-owned adapter overlays onto a workflow-level canonical surface:
   `workflows.<name>.adapter_inputs.*` now owns cross-adapter Compose/Bake overlay truth, while
   `workflows.<name>.env.adapter_inputs.*` stays accepted only as a compatibility lane and legacy

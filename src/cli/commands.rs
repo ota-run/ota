@@ -2257,6 +2257,7 @@ pub fn proof_runtime(
                         overrides,
                         &mut up_process,
                         "ota up --stream",
+                        &up_log_artifact_path,
                         ready_timeout,
                     ) {
                         Ok(result) => result,
@@ -2270,35 +2271,6 @@ pub fn proof_runtime(
                     crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
                 );
                 let up_process_failure = up_process_failure.as_deref();
-
-                let member_args = member.into_iter().map(str::to_string).collect::<Vec<_>>();
-                let doctor_output = doctor(
-                    Some(resolved_path.as_path()),
-                    file_override,
-                    &member_args,
-                    workflow_name,
-                    false,
-                    false,
-                    overrides,
-                    OutputFormat::Json,
-                    false,
-                );
-                if doctor_output.stdout.trim().is_empty() {
-                    let _ = stop_proof_runtime_up_process(&mut up_process);
-                    return CommandOutput::failure(command_message_failure_text(
-                        "PROOF",
-                        &text_path_display,
-                        "Doctor artifact could not be captured",
-                        "ota did not produce `doctor --json` output for this proof",
-                        &[],
-                    ));
-                }
-                if let Err(error) =
-                    write_proof_artifact(&doctor_artifact_path, &doctor_output.stdout)
-                {
-                    let _ = stop_proof_runtime_up_process(&mut up_process);
-                    return CommandOutput::failure(error);
-                }
 
                 let repo_cleanup_error = if proof_runtime_selected_workflow_uses_container_backend(
                     contract,
@@ -2332,6 +2304,29 @@ pub fn proof_runtime(
                     &up_log_artifact_display,
                 ) {
                     proof_summary_for_output.primary_blocker = Some(overridden_blocker);
+                }
+                let proof_doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
+                let doctor_artifact_json = match proof_runtime_doctor_artifact_json(
+                    contract,
+                    &target.contract_path,
+                    &text_path_display,
+                    workflow_name,
+                    proof_doctor_mode,
+                    overrides,
+                    &proof_report,
+                    &proof_summary_for_output,
+                ) {
+                    Ok(body) => body,
+                    Err(error) => {
+                        let _ = stop_proof_runtime_up_process(&mut up_process);
+                        return CommandOutput::failure(error);
+                    }
+                };
+                if let Err(error) =
+                    write_proof_artifact(&doctor_artifact_path, &doctor_artifact_json)
+                {
+                    let _ = stop_proof_runtime_up_process(&mut up_process);
+                    return CommandOutput::failure(error);
                 }
                 let up_process_failure = proof_runtime_effective_up_process_failure(
                     &proof_summary_for_output,
@@ -43614,6 +43609,7 @@ workflows:
             ExecutionOverrides::default(),
             &mut child,
             "ota up --stream",
+            &contract_path,
             None,
         )
         .unwrap();
@@ -43626,6 +43622,182 @@ workflows:
 
         let exit = child.wait().unwrap();
         assert!(!exit.success());
+    }
+
+    #[test]
+    fn wait_for_proof_runtime_readiness_prefers_terminal_up_failure_before_doctor() {
+        let _guard = cwd_mutex_lock();
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        let up_log_path = contract_dir.path().join("up.log");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: proof-runtime-regression
+checks:
+  - name: failing-check
+    kind: precondition
+    severity: error
+    run: missing-check-command
+    timeout: 10
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &up_log_path,
+            "🦦 UP ./ota.yaml\n\n◉ ERROR  Listener bind conflict\nWhy: port 3000 is in use\n",
+        )
+        .unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let mut child = if cfg!(windows) {
+            Command::new("cmd").args(["/C", "exit 1"]).spawn().unwrap()
+        } else {
+            Command::new("sh").args(["-c", "exit 1"]).spawn().unwrap()
+        };
+
+        let started = Instant::now();
+        let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
+            &contract,
+            &contract_path,
+            None,
+            ExecutionOverrides::default(),
+            &mut child,
+            "ota up --stream",
+            &up_log_path,
+            None,
+        )
+        .unwrap();
+
+        assert!(started.elapsed() < Duration::from_secs(4));
+        assert!(!proof_ok);
+        assert_eq!(phase, "run");
+        assert_eq!(
+            report
+                .findings
+                .first()
+                .map(|finding| finding.summary.as_str()),
+            Some("Run task exited before readiness")
+        );
+        assert!(
+            report
+                .findings
+                .first()
+                .map(|finding| finding.why.contains("Listener bind conflict"))
+                .unwrap_or(false),
+            "{report:?}"
+        );
+        assert!(
+            up_failure
+                .as_deref()
+                .map(|failure| failure.contains("Listener bind conflict"))
+                .unwrap_or(false)
+        );
+
+        let exit = child.wait().unwrap();
+        assert!(!exit.success());
+    }
+
+    #[test]
+    fn wait_for_proof_runtime_readiness_observes_terminal_up_log_during_startup_grace() {
+        let _guard = cwd_mutex_lock();
+        let contract_dir = TempDir::new().unwrap();
+        let contract_path = contract_dir.path().join("ota.yaml");
+        let up_log_path = contract_dir.path().join("up.log");
+        let slow_failing_check = if cfg!(windows) {
+            "cmd /C ping -n 6 127.0.0.1 >NUL && exit 1"
+        } else {
+            "sh -c 'sleep 5; exit 1'"
+        };
+        fs::write(
+            &contract_path,
+            format!(
+                r#"
+version: 1
+project:
+  name: proof-runtime-regression
+checks:
+  - name: slow-failing-check
+    kind: precondition
+    severity: error
+    run: {slow_failing_check}
+tasks:
+  app:
+    run: echo ok
+workflows:
+  default: app
+"#
+            ),
+        )
+        .unwrap();
+        fs::write(&up_log_path, "").unwrap();
+
+        let contract =
+            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
+                .unwrap();
+
+        let log_path = up_log_path.clone();
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(200));
+            fs::write(
+                &log_path,
+                "🦦 UP ./ota.yaml\n\n◉ ERROR  Listener bind conflict\nWhy: port 3000 is in use\n",
+            )
+            .unwrap();
+        });
+
+        let mut child = if cfg!(windows) {
+            Command::new("cmd")
+                .args(["/C", "ping -n 30 127.0.0.1 >NUL"])
+                .spawn()
+                .unwrap()
+        } else {
+            Command::new("sh").args(["-c", "sleep 30"]).spawn().unwrap()
+        };
+
+        let started = Instant::now();
+        let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
+            &contract,
+            &contract_path,
+            None,
+            ExecutionOverrides::default(),
+            &mut child,
+            "ota up --stream",
+            &up_log_path,
+            Some(Duration::from_secs(5)),
+        )
+        .unwrap();
+
+        let _ = child.kill();
+        let _ = child.wait();
+        writer.join().unwrap();
+
+        assert!(started.elapsed() < Duration::from_secs(4));
+        assert!(!proof_ok);
+        assert_eq!(phase, "run");
+        assert_eq!(
+            report
+                .findings
+                .first()
+                .map(|finding| finding.summary.as_str()),
+            Some("Run task exited before readiness")
+        );
+        assert!(
+            up_failure
+                .as_deref()
+                .map(|failure| failure.contains("Listener bind conflict"))
+                .unwrap_or(false)
+        );
     }
 
     #[test]
@@ -43708,6 +43880,7 @@ workflows:
             ExecutionOverrides::default(),
             &mut child,
             "ota up --stream",
+            &contract_path,
             None,
         )
         .unwrap();
@@ -43806,6 +43979,7 @@ workflows:
             ExecutionOverrides::default(),
             &mut child,
             "ota up --stream",
+            &contract_path,
             None,
         )
         .unwrap();
@@ -43895,6 +44069,7 @@ workflows:
             ExecutionOverrides::default(),
             &mut child,
             "ota up --stream",
+            &contract_path,
             None,
         )
         .unwrap();
@@ -43991,6 +44166,7 @@ readiness:
             ExecutionOverrides::default(),
             &mut child,
             "ota up --stream",
+            &contract_path,
             None,
         )
         .unwrap();
@@ -44066,6 +44242,7 @@ readiness:
             ExecutionOverrides::default(),
             &mut child,
             "ota run dev --stream",
+            &contract_path,
             Some(Duration::from_secs(3)),
         )
         .unwrap();
@@ -44184,6 +44361,7 @@ workflows:
             ExecutionOverrides::default(),
             &mut child,
             "ota run dev --stream",
+            &contract_path,
             Some(Duration::from_secs(3)),
         )
         .unwrap();
@@ -44297,6 +44475,7 @@ readiness:
             ExecutionOverrides::default(),
             &mut child,
             "ota run dev --stream",
+            &contract_path,
             Some(Duration::from_secs(5)),
         )
         .unwrap();
@@ -45136,6 +45315,25 @@ workflows:
             Path::new("./.ota/proof/instant/up.log"),
         );
         assert_eq!(class.as_deref(), Some("interrupted"));
+    }
+
+    #[test]
+    fn proof_runtime_terminal_failure_from_up_log_recovers_error_title() {
+        let fixture = TempDir::new().unwrap();
+        let up_log = fixture.path().join("up.log");
+        fs::write(
+            &up_log,
+            "UP ./ota.yaml\n\nERROR  Listener bind conflict\nWhy: port 3000 is in use\n",
+        )
+        .unwrap();
+
+        let failure = super::proof_runtime_terminal_failure_from_up_log(up_log.as_path());
+        assert_eq!(
+            failure.as_deref(),
+            Some(
+                "`ota up --stream` reported terminal failure before readiness (Listener bind conflict)"
+            )
+        );
     }
 
     #[test]
@@ -78506,6 +78704,7 @@ const PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET: u64 = 30;
 const PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS: u64 = 60;
 const PROOF_RUNTIME_SUCCESSFUL_SERVICE_EXIT_GRACE_SECS: u64 = 20;
 const PROOF_RUNTIME_EXIT_OBSERVATION_GRACE_MILLIS: u64 = 250;
+const PROOF_RUNTIME_FULL_DIAG_STARTUP_GRACE_MILLIS: u64 = 3_000;
 static PROOF_RUNTIME_INTERRUPT_FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 
 fn proof_runtime_interrupt_flag() -> Arc<AtomicBool> {
@@ -78579,6 +78778,61 @@ fn proof_runtime_doctor_report(
     )
 }
 
+fn proof_runtime_doctor_artifact_json(
+    contract: &Contract,
+    contract_path: &Path,
+    path_display: &str,
+    workflow_name: Option<&str>,
+    doctor_mode: DoctorMode,
+    overrides: ExecutionOverrides,
+    report: &DoctorReport,
+    summary: &DoctorSummary,
+) -> Result<String, String> {
+    let rewritten_findings = rewrite_doctor_findings_for_contract(
+        &report.findings,
+        contract_path,
+        Some(doctor_mode),
+        None,
+    );
+    let workflow_summary =
+        resolve_selected_workflow_summary(contract, contract_path, workflow_name)?;
+    let agent_summary = contract.agent.as_ref().and_then(AgentSummary::from_config);
+    let required_env_names = contract.selected_workflow_required_env_names(workflow_name);
+    let execution_summary = ExecutionSummary::from_contract_with_required_env_names(
+        contract,
+        contract_path,
+        (!required_env_names.is_empty()).then_some(&required_env_names),
+    );
+    let selected_toolchains = selected_workflow_toolchain_summaries(
+        contract,
+        overrides,
+        workflow_name,
+        toolchain_summary_backend_for_mode(doctor_mode),
+    );
+
+    Ok(to_json(&DoctorSuccess {
+        ok: report.ok,
+        path: path_display,
+        mode: doctor_mode.as_str(),
+        summary: summary.clone(),
+        finding_groups: doctor_finding_group_summaries(
+            &rewritten_findings,
+            Some(doctor_mode),
+            None,
+        ),
+        workflow: workflow_summary,
+        agent: agent_summary,
+        execution: execution_summary,
+        provisioning: report.provisioning.as_ref().map(|value| &value.plan),
+        provisioning_request: report.provisioning.as_ref().map(|value| &value.request),
+        adapter_bootstrap: report.adapter_bootstrap.as_ref(),
+        extensions: &contract.extensions,
+        fix: None,
+        toolchains: selected_toolchains,
+        findings: &rewritten_findings,
+    }))
+}
+
 fn wait_for_proof_runtime_readiness(
     contract: &Contract,
     contract_path: &Path,
@@ -78586,6 +78840,7 @@ fn wait_for_proof_runtime_readiness(
     overrides: ExecutionOverrides,
     up_process: &mut std::process::Child,
     process_label: &str,
+    up_log_artifact_path: &Path,
     wait_budget_override: Option<Duration>,
 ) -> Result<(DoctorReport, &'static str, bool, Option<String>), String> {
     let interrupted = proof_runtime_interrupt_flag();
@@ -78595,6 +78850,8 @@ fn wait_for_proof_runtime_readiness(
         proof_runtime_readiness_strategy(contract, contract_path, workflow_name, overrides);
     let deadline = Instant::now()
         + wait_budget_override.unwrap_or_else(|| proof_runtime_wait_budget(&readiness_strategy));
+    let full_diagnosis_startup_deadline =
+        Instant::now() + Duration::from_millis(PROOF_RUNTIME_FULL_DIAG_STARTUP_GRACE_MILLIS);
     let _agent_verdict = crate::workspace::agent_verdict_from_agent(contract.agent.as_ref());
     let mut deferred_service_run_exit_failure = None;
     let mut service_exit_grace_deadline = None;
@@ -78602,6 +78859,19 @@ fn wait_for_proof_runtime_readiness(
         if deferred_service_run_exit_failure.is_none() {
             match up_process.try_wait() {
                 Ok(Some(exit_status)) => {
+                    if let Some(terminal_failure) =
+                        proof_runtime_terminal_failure_from_up_log(up_log_artifact_path)
+                    {
+                        return Ok((
+                            proof_runtime_terminal_failure_report(
+                                up_log_artifact_path,
+                                terminal_failure.clone(),
+                            ),
+                            "run",
+                            false,
+                            Some(terminal_failure),
+                        ));
+                    }
                     let latest_report = proof_runtime_doctor_report(
                         contract,
                         contract_path,
@@ -78710,6 +78980,25 @@ fn wait_for_proof_runtime_readiness(
             readiness_strategy,
             ProofRuntimeReadinessStrategy::FullDiagnosis
         ) {
+            if let Some(terminal_failure) =
+                proof_runtime_terminal_failure_from_up_log(up_log_artifact_path)
+            {
+                return Ok((
+                    proof_runtime_terminal_failure_report(
+                        up_log_artifact_path,
+                        terminal_failure.clone(),
+                    ),
+                    "run",
+                    false,
+                    Some(terminal_failure),
+                ));
+            }
+            if deferred_service_run_exit_failure.is_none()
+                && Instant::now() < full_diagnosis_startup_deadline
+            {
+                thread::sleep(Duration::from_millis(100));
+                continue;
+            }
             let latest_report = proof_runtime_doctor_report(
                 contract,
                 contract_path,
@@ -78799,6 +79088,52 @@ fn proof_runtime_process_exit_failure(
         String::from(format!(
             "`{process_label}` was terminated before readiness could be observed"
         ))
+    }
+}
+
+fn proof_runtime_terminal_failure_from_up_log(up_log_artifact_path: &Path) -> Option<String> {
+    let log = fs::read_to_string(up_log_artifact_path).ok()?;
+    for raw_line in log.lines() {
+        let line = strip_ansi_codes(raw_line);
+        let trimmed = line.trim();
+        let Some(title) = trimmed
+            .strip_prefix("◉ ERROR")
+            .or_else(|| trimmed.strip_prefix("ERROR"))
+        else {
+            continue;
+        };
+        let title = title.trim();
+        if title.is_empty() {
+            return Some(String::from(
+                "`ota up --stream` reported terminal failure before readiness",
+            ));
+        }
+        return Some(format!(
+            "`ota up --stream` reported terminal failure before readiness ({title})"
+        ));
+    }
+    None
+}
+
+fn proof_runtime_terminal_failure_report(
+    up_log_artifact_path: &Path,
+    failure: String,
+) -> DoctorReport {
+    DoctorReport {
+        ok: false,
+        provisioning: None,
+        adapter_bootstrap: None,
+        execution_target: None,
+        findings: vec![Finding {
+            identity: None,
+            severity: FindingSeverity::Error,
+            summary: String::from("Run task exited before readiness"),
+            why: failure,
+            next: format!(
+                "inspect {} and rerun `ota proof runtime`",
+                compact_repo_path(up_log_artifact_path)
+            ),
+        }],
     }
 }
 
@@ -86349,6 +86684,7 @@ fn run_up_task_detached_until_ready(
         overrides,
         &mut run_process,
         &format!("ota run {task_name} --stream"),
+        &run_log_artifact_path,
         ready_timeout,
     )?;
 
