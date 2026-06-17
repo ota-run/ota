@@ -1,0 +1,132 @@
+# Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+
+version: 1
+project:
+  name: podman-compose-adapter-inputs
+  description: Canonical Podman compose adapter ownership example for workflow-owned overlays plus task-owned compose inputs
+  type: application
+
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          podman: "*"
+
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+  profiles:
+    runtime:
+      sources:
+        - kind: dotenv
+          path: .env.local
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.compose
+          template: .env.example
+          include:
+            - DATABASE_URL
+
+services:
+  api:
+    manager:
+      kind: compose
+      engine: podman
+      name: local
+      file: compose/compose.yml
+      service: api
+  postgres:
+    manager:
+      kind: compose
+      engine: podman
+      name: local
+      file: compose/compose.yml
+      service: postgres
+
+tasks:
+  compose:up:
+    description: Start the Podman compose stack with task-owned adapter truth
+    category: dev
+    context: host
+    adapter_inputs:
+      compose:
+        cwd: compose
+        env_files:
+          - compose/.env.task
+    launch:
+      kind: command
+      exe: podman
+      args:
+        - compose
+        - up
+    requirements:
+      tools:
+        podman: "*"
+
+  compose:down:
+    description: Stop the Podman compose stack with task-owned file and profile truth
+    category: setup
+    context: host
+    adapter_inputs:
+      compose:
+        cwd: compose
+        env_files:
+          - compose/.env.task
+        files:
+          - compose/compose.yml
+        profiles:
+          - app
+    command:
+      exe: podman
+      args:
+        - compose
+        - down
+    requirements:
+      tools:
+        podman: "*"
+
+  compose:workflow:up:
+    description: Start the Podman compose stack with workflow-owned adapter root and overlays
+    category: dev
+    context: host
+    launch:
+      kind: command
+      exe: podman
+      args:
+        - compose
+        - up
+    requirements:
+      tools:
+        podman: "*"
+
+workflows:
+  default: runtime
+  runtime:
+    intent: packaged_runtime
+    description: Render workflow-owned dotenv truth and prepend Podman compose overlays into the selected compose task path
+    adapter_inputs:
+      compose:
+        cwd: compose
+        files:
+          - compose/compose.override.yml
+        profiles:
+          - runtime
+        project_name: podman-compose-adapter-inputs
+    env:
+      profile: runtime
+      compose_env_file_services:
+        - api
+        - postgres
+    run:
+      task: compose:workflow:up
+
+metadata:
+  ota:
+    minimum_version: "1.6.21"

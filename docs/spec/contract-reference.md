@@ -1895,8 +1895,8 @@ tasks:
 - `modes.<mode>.context`: optional context override for that mode
 - `modes.<mode>.lifecycle`: optional lifecycle override for that mode (container mode only)
 - `env_files`: optional ordered repo-relative dotenv overlays injected into the task process before task-level `env`
-- `adapter_inputs.compose.cwd`: optional repo-relative adapter working directory ota should enter before executing the selected `docker compose` task path; declared compose env files and compose files stay repo-relative in the contract and are projected relative to this adapter root at runtime
-- `adapter_inputs.compose.env_files`: optional ordered repo-relative compose interpolation files projected to the selected task mode through `COMPOSE_ENV_FILES`; use this for task-owned `docker compose` adapter input truth rather than process dotenv injection
+- `adapter_inputs.compose.cwd`: optional repo-relative adapter working directory ota should enter before executing the selected `docker compose` or `podman compose` task path; declared compose env files and compose files stay repo-relative in the contract and are projected relative to this adapter root at runtime
+- `adapter_inputs.compose.env_files`: optional ordered repo-relative compose interpolation files projected to the selected task mode through `COMPOSE_ENV_FILES`; use this for task-owned `docker compose` or `podman compose` adapter input truth rather than process dotenv injection
 - `adapter_inputs.compose.files`: optional ordered repo-relative compose file list projected to the selected task mode through `COMPOSE_FILE`
 - `adapter_inputs.compose.profiles`: optional ordered compose profile list projected to the selected task mode through `COMPOSE_PROFILES`
 - `adapter_inputs.compose.project_name`: optional compose project name projected to the selected task mode through `COMPOSE_PROJECT_NAME`
@@ -2968,7 +2968,7 @@ Fields:
 Service manager fields:
 
 - `services.<name>.manager.kind`: `compose` or `host`
-- `services.<name>.manager.engine`: optional compose CLI engine for `kind: compose`; `docker` by default, `podman` also supported
+- `services.<name>.manager.engine`: optional compose CLI engine for `kind: compose`; `docker` by default, `podman` also supported. Keep task `command.exe` / `launch.exe` aligned to the same engine when the task body directly executes the compose CLI.
 - `services.<name>.manager.name`: optional manager/project name; required today for `kind: compose`
 - `services.<name>.manager.file`: optional compose file path for `kind: compose`
 - `services.<name>.manager.env_file`: optional repo-relative compose env-file path for `kind: compose`
