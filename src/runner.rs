@@ -9862,10 +9862,21 @@ fn corepack_activation_command_specs(
     toolchain: &ToolchainSpec,
     target_os: &str,
 ) -> Vec<ToolchainCommandSpec> {
-    let mut commands = vec![ToolchainCommandSpec {
+    let mut commands = Vec::new();
+    if !crate::doctor::command_available("corepack") && crate::doctor::command_available("npm") {
+        commands.push(ToolchainCommandSpec {
+            program: "npm",
+            args: vec![
+                String::from("install"),
+                String::from("-g"),
+                String::from("corepack"),
+            ],
+        });
+    }
+    commands.push(ToolchainCommandSpec {
         program: "corepack",
         args: vec![String::from("enable")],
-    }];
+    });
     commands.extend(
         toolchain
             .package_managers_for_os(target_os)
@@ -53193,6 +53204,101 @@ tasks:
         assert_eq!(
             lines,
             vec!["enable", "prepare pnpm@10.24.0 --activate"],
+            "{log}"
+        );
+    }
+
+    #[test]
+    fn run_path_corepack_activation_bootstraps_provider_with_npm_when_missing() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let log_path = fixture.dir.path().join("commands.log");
+        let corepack_path = if cfg!(windows) {
+            bin_dir.join("corepack.cmd")
+        } else {
+            bin_dir.join("corepack")
+        };
+        let npm_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\necho npm %*>>\"{}\"\r\n(\r\necho @echo off\r\necho echo corepack %%*^>^>\"{}\"\r\necho exit /b 0\r\n)>\"{}\"\r\nexit /b 0\r\n",
+                log_path.display(),
+                log_path.display(),
+                corepack_path.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf 'npm %s\\n' \"$*\" >> '{}'\ncat <<'EOF' > '{}'\n#!/bin/sh\nprintf 'corepack %s\\n' \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\n",
+                log_path.display(),
+                corepack_path.display(),
+                log_path.display(),
+                corepack_path.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "npm", &npm_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let mut state = TaskRunState::default();
+        super::maybe_activate_corepack_shims_on_run_path(
+            &fixture.contract,
+            fixture.file_path(),
+            "setup",
+            fixture.contract.tasks.get("setup").unwrap(),
+            &backend,
+            &BTreeMap::new(),
+            current_os(),
+            &mut state,
+        )
+        .unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let log = fs::read_to_string(&log_path).unwrap();
+        let lines = log.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "npm install -g corepack",
+                "corepack enable",
+                "corepack prepare pnpm@10.24.0 --activate",
+            ],
             "{log}"
         );
     }
