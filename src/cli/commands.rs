@@ -45566,6 +45566,52 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_likely_cause_recovers_dns_host_from_lookup_style_logs() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "dial tcp: lookup postgres on 127.0.0.11:53: no such host\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::DnsServiceNameResolutionFailure {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                host: Some(String::from("postgres")),
+                signal: String::from("dial tcp: lookup postgres on 127.0.0.11:53: no such host"),
+            }
+        );
+    }
+
+    #[test]
     fn proof_runtime_likely_cause_surfaces_auth_credential_failure() {
         let fixture = TempDir::new().unwrap();
         let artifact_dir = fixture.path().join(".ota/proof/app");
@@ -45702,6 +45748,55 @@ workflows:
                 service: Some(String::from("Postgres")),
                 host: Some(String::from("db.internal")),
                 signal: String::from("authentication failed for postgres://db.internal:5432/app"),
+            }
+        );
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_recovers_auth_host_from_addr_style_logs() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "redis authentication error addr=redis.internal:6379 invalid password\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::AuthCredentialFailure {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                service: Some(String::from("Redis")),
+                host: Some(String::from("redis.internal")),
+                signal: String::from(
+                    "redis authentication error addr=redis.internal:6379 invalid password"
+                ),
             }
         );
     }
@@ -46619,6 +46714,82 @@ workflows:
         assert_eq!(
             body["likely_cause_evidence"]["observed_target"].as_str(),
             Some("http://localhost:3001/")
+        );
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_surfaces_readiness_target_path_mismatch_from_live_endpoint() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("topology.json"),
+            r#"{
+  "tasks": [
+    {
+      "runtime": {
+        "readiness": {
+          "kind": "http",
+          "listener": "backend",
+          "path": "/health"
+        },
+        "listeners": {
+          "backend": {
+            "protocol": "http",
+            "bind_address": "0.0.0.0",
+            "bind_port_value": 3000,
+            "host_projection": {
+              "address": "127.0.0.1",
+              "port_value": 3000
+            }
+          }
+        }
+      }
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "Ready: http://127.0.0.1:3000/readyz\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::ReadinessTargetMismatch {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                listener: Some(String::from("backend")),
+                declared_target: String::from("http://127.0.0.1:3000/health"),
+                observed_target: String::from("http://127.0.0.1:3000/readyz"),
+                signal: String::from("Ready: http://127.0.0.1:3000/readyz"),
+            }
         );
     }
 
@@ -79491,6 +79662,12 @@ fn extract_auth_failure_host(line: &str) -> Option<String> {
     if let Some(host) = extract_host_after_prefix(line, "server=") {
         return Some(host);
     }
+    if let Some(host) = extract_host_after_prefix(line, "hostname=") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_after_prefix(line, "addr=") {
+        return Some(host);
+    }
     if let Some(host) = extract_host_after_prefix(line, "on host ") {
         return Some(host);
     }
@@ -79529,10 +79706,19 @@ fn extract_unresolved_host_from_line(line: &str) -> Option<String> {
     if let Some(host) = extract_host_after_prefix(line, "getaddrinfo enotfound ") {
         return Some(host);
     }
+    if let Some(host) = extract_host_after_prefix(line, "getaddrinfo eai_again ") {
+        return Some(host);
+    }
     if let Some(host) = extract_host_after_prefix(line, "lookup ") {
         return Some(host);
     }
     if let Some(host) = extract_host_after_prefix(line, "could not resolve host: ") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_after_prefix(line, "failed to resolve ") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_after_prefix(line, "no such host ") {
         return Some(host);
     }
     if let Some(host) = extract_host_before_suffix(line, ": name or service not known") {
@@ -79541,7 +79727,22 @@ fn extract_unresolved_host_from_line(line: &str) -> Option<String> {
     if let Some(host) = extract_host_before_suffix(line, ": temporary failure in name resolution") {
         return Some(host);
     }
+    if let Some(host) = extract_lookup_host_from_line(line) {
+        return Some(host);
+    }
     None
+}
+
+fn extract_lookup_host_from_line(line: &str) -> Option<String> {
+    let lowered = line.to_ascii_lowercase();
+    let start = lowered.find("lookup ")? + "lookup ".len();
+    let remainder = line.get(start..)?.trim_start();
+    let candidate = remainder
+        .split(|ch: char| ch.is_whitespace() || ch == ':' || ch == ',' || ch == ';')
+        .next()
+        .unwrap_or_default()
+        .trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | '(' | ')' | '[' | ']'));
+    normalized_unresolved_host(candidate)
 }
 
 fn extract_host_after_prefix(line: &str, prefix: &str) -> Option<String> {
@@ -79798,10 +79999,7 @@ fn proof_runtime_targets_materially_differ(declared: &str, observed: &str) -> bo
     }
     let declared_path = declared.path.trim_end_matches('/');
     let observed_path = observed.path.trim_end_matches('/');
-    !observed_path.is_empty()
-        && !declared_path.is_empty()
-        && declared_path != observed_path
-        && observed_path != "/"
+    !observed_path.is_empty() && declared_path != observed_path
 }
 
 fn extract_missing_env_variable_from_line(line: &str) -> Option<String> {

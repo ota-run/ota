@@ -31,6 +31,10 @@
   `workflows.<name>.env.adapter_inputs.*` stays accepted only as a compatibility lane and legacy
   `env.compose_files` / `compose_project_name` aliases now resolve toward the workflow-level
   surface
+- sharpened runtime-proof root-cause recovery without widening the schema surface: DNS/service-name
+  failures now recover lookup-style unresolved hosts more reliably, auth/credential failures can
+  recover endpoint-style and `addr=` / `hostname=` host evidence, and readiness-target mismatch
+  now catches path drift when the app advertises a live endpoint in proof artifacts
 - `ota detect` write modes now publish first-class field-admission rationale alongside detect
   ownership metadata: written contracts and JSON output record
   `metadata.ota.detect.field_admission` as `direct` for high-confidence detector-owned fields and
