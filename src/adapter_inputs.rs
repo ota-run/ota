@@ -283,6 +283,7 @@ impl AdapterInputField {
         self.descriptor().field_name
     }
 
+    #[cfg(test)]
     pub(crate) fn from_family_and_field_names(
         adapter_family: &str,
         field_name: &str,
