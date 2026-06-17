@@ -899,6 +899,12 @@ enum AssistCommands {
         /// Optional compose service override when using `--manager compose`.
         #[arg(long = "compose-service")]
         compose_service: Option<String>,
+        /// Typed systemd unit name when using `--manager host`.
+        #[arg(long = "host-unit")]
+        host_unit: Option<String>,
+        /// Typed systemd scope when using `--manager host`.
+        #[arg(long = "host-scope", value_enum)]
+        host_scope: Option<AssistHostScopeArg>,
         /// Endpoint name to declare or refine. Defaults to `host` when safe.
         #[arg(long)]
         endpoint: Option<String>,
@@ -918,7 +924,7 @@ enum AssistCommands {
         #[arg(long, value_enum)]
         style: Option<AssistReadinessStyleArg>,
         /// Producer task selector in `<task>` or `<task>:<listener>` form for a workspace-owned service.
-        #[arg(long, conflicts_with_all = ["manager", "manager_name", "compose_file", "compose_service", "endpoint", "endpoint_context", "address", "port", "style"])]
+        #[arg(long, conflicts_with_all = ["manager", "manager_name", "compose_file", "compose_service", "host_unit", "host_scope", "endpoint", "endpoint_context", "address", "port", "style"])]
         producer: Option<String>,
         /// Workspace repo that owns the producer task.
         #[arg(long = "producer-repo", add = ArgValueCompleter::new(complete_workspace_repo_candidates), requires = "producer")]
@@ -1118,6 +1124,7 @@ enum AssistReadinessStyleArg {
     Http,
     Tcp,
     ComposeHealth,
+    SystemdActive,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -1130,6 +1137,12 @@ enum TasksViaBackend {
 enum AssistServiceManagerArg {
     Compose,
     Host,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum AssistHostScopeArg {
+    System,
+    User,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -4678,6 +4691,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     manager_name,
                     compose_file,
                     compose_service,
+                    host_unit,
+                    host_scope,
                     endpoint,
                     endpoint_context,
                     address,
@@ -4697,6 +4712,8 @@ fn dispatch(cli: Cli) -> CommandOutput {
             manager_name.as_deref(),
             compose_file.as_deref(),
             compose_service.as_deref(),
+            host_unit.as_deref(),
+            host_scope,
             endpoint.as_deref(),
             endpoint_context.as_deref(),
             address.as_deref(),
@@ -17312,6 +17329,8 @@ tasks:
                         manager_name: None,
                         compose_file: None,
                         compose_service: None,
+                        host_unit: None,
+                        host_scope: None,
                         endpoint: None,
                         endpoint_context: None,
                         address: None,
@@ -43988,8 +44007,10 @@ execution:
             "cache",
             "--manager",
             "host",
-            "--port",
-            "6379",
+            "--host-unit",
+            "redis.service",
+            "--style",
+            "systemd-active",
             fixture.path(),
         ]);
 
@@ -44000,12 +44021,60 @@ execution:
         assert_eq!(json["operation"], "declare-service");
         assert_eq!(json["subject"]["service"], "cache");
         assert_eq!(json["inputs"]["manager"], "host");
+        assert_eq!(json["inputs"]["host_unit"], "redis.service");
+        assert_eq!(json["inputs"]["style"], "systemd-active");
         assert_eq!(json["changes"][0]["path"], "services.cache");
         assert_eq!(json["changes"][0]["after"]["manager"]["kind"], "host");
         assert_eq!(
-            json["changes"][0]["after"]["endpoints"]["host"]["port"],
-            6379
+            json["changes"][0]["after"]["manager"]["host"]["kind"],
+            "systemd"
         );
+        assert_eq!(
+            json["changes"][0]["after"]["manager"]["host"]["unit"],
+            "redis.service"
+        );
+        assert_eq!(
+            json["changes"][0]["after"]["readiness"]["kind"],
+            "systemd_active"
+        );
+        assert_eq!(
+            json["changes"][0]["after"]["readiness"]["from"],
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn assist_declare_service_refuses_host_manager_without_host_unit() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: assist-demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "assist",
+            "declare-service",
+            "--name",
+            "cache",
+            "--manager",
+            "host",
+            "--style",
+            "systemd-active",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1, "{output:?}");
+        let stderr =
+            normalize_inline_whitespace(&strip_ansi(output.stderr.as_deref().unwrap_or_default()));
+        assert!(stderr.contains("--host-unit"));
     }
 
     #[test]

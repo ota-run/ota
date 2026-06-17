@@ -210,6 +210,16 @@ If you want repo-local agent guidance from the same contract after the core loop
 ota agents
 ```
 
+## Maintainer Note
+
+The Linux native systemd proof workflow in
+[`/.github/workflows/linux-systemd-native-proof.yml`](.github/workflows/linux-systemd-native-proof.yml)
+is intended for an OrbStack-backed self-hosted Linux runner labeled `linux`, `orbstack`, and
+`systemd`.
+
+That proof lane exists because GitHub-hosted Ubuntu runners are not honest host-systemd runtime
+truth for `manager.host.kind: systemd` plus `readiness.kind: systemd_active`.
+
 ### Repo without `ota.yaml`
 
 Use the authoring path first:

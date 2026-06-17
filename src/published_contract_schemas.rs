@@ -650,6 +650,16 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "env_file": { "type": "string" },
         "profiles": { "$ref": "#/$defs/stringArray" },
         "service": { "type": "string" },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "unit"],
+          "properties": {
+            "kind": { "enum": ["systemd"] },
+            "unit": { "type": "string" },
+            "scope": { "enum": ["system", "user"] }
+          }
+        },
         "start": { "$ref": "#/$defs/taskCommand" },
         "stop": { "$ref": "#/$defs/taskCommand" }
       }
@@ -662,7 +672,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "endpoint": { "type": "string" },
         "run": { "type": "string" },
         "probe": { "type": "string" },
-        "kind": { "enum": ["http", "tcp", "compose_health"] },
+        "kind": { "enum": ["http", "tcp", "compose_health", "systemd_active"] },
         "method": { "$ref": "#/$defs/httpMethod" },
         "path": { "type": "string" },
         "headers": { "$ref": "#/$defs/stringMap" },
@@ -1512,6 +1522,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "run": { "type": "string" },
         "probe": { "type": "string" },
         "path": { "type": "string" },
+        "scope": { "enum": ["repo", "workspace"] },
         "expect": { "enum": ["exists", "file", "directory", "missing"] },
         "timeout": { "type": "integer", "minimum": 0 },
         "changed_files": { "$ref": "#/$defs/changedFilesCheck" },

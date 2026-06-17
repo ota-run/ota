@@ -42,7 +42,7 @@ use time::macros::format_description;
 
 use super::{
     AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistNormalizeIntoArg,
-    AssistReadinessStyleArg, AssistServiceManagerArg, AssistTaskKindArg,
+    AssistHostScopeArg, AssistReadinessStyleArg, AssistServiceManagerArg, AssistTaskKindArg,
     AssistTaskListenerProtocolArg, AssistTaskTargetActivationModeArg,
     AssistTaskTargetAddressViewArg,
 };
@@ -1482,6 +1482,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             value.task_name,
             paint_key("Risk:"),
             render_validate_warning_detail("replaceable shell env-file mutation"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
+        ContractAdvisory::ReplaceableSystemdServiceOwnership(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("hard-coded systemd service ownership"),
             paint_key("Why:"),
             render_validate_warning_detail(&advisory.why()),
             paint_key("Next:"),
@@ -4375,6 +4386,7 @@ enum ResolvedAssistReadinessTarget {
         from: Option<String>,
         endpoint: Option<String>,
         compose_managed: bool,
+        systemd_managed: bool,
         existing: Option<ServiceReadinessSpec>,
     },
 }
@@ -4853,6 +4865,8 @@ struct AssistServiceProposal {
     manager_name: Option<String>,
     compose_file: Option<String>,
     compose_service: Option<String>,
+    host_unit: Option<String>,
+    host_scope: Option<AssistHostScopeArg>,
     endpoint: Option<String>,
     endpoint_context: Option<String>,
     address: Option<String>,
@@ -4905,6 +4919,12 @@ impl AssistServiceProposal {
         }
         if let Some(service) = &self.compose_service {
             inputs.insert("compose_service", service.clone());
+        }
+        if let Some(unit) = &self.host_unit {
+            inputs.insert("host_unit", unit.clone());
+        }
+        if let Some(scope) = self.host_scope {
+            inputs.insert("host_scope", assist_host_scope_name(scope).to_string());
         }
         if let Some(producer) = &self.producer_task {
             let selector = match self.producer_listener.as_deref() {
@@ -4968,6 +4988,17 @@ impl AssistServiceProposal {
         }
         if let Some(service) = &self.compose_service {
             command.push_str(&format!(" --compose-service {}", shell_quote(service)));
+        }
+        if let Some(unit) = &self.host_unit {
+            command.push_str(&format!(" --host-unit {}", shell_quote(unit)));
+        }
+        if let Some(scope) = self.host_scope {
+            if scope != AssistHostScopeArg::System {
+                command.push_str(&format!(
+                    " --host-scope {}",
+                    assist_host_scope_name(scope)
+                ));
+            }
         }
         if let Some(style) = self.style {
             command.push_str(&format!(" --style {}", assist_readiness_style_name(style)));
@@ -5498,6 +5529,10 @@ fn is_compose_health_readiness_style(style: AssistReadinessStyleArg) -> bool {
     matches!(style, AssistReadinessStyleArg::ComposeHealth)
 }
 
+fn is_systemd_active_readiness_style(style: AssistReadinessStyleArg) -> bool {
+    matches!(style, AssistReadinessStyleArg::SystemdActive)
+}
+
 fn assist_subject_map<'a>(
     task: Option<&'a str>,
     service: Option<&'a str>,
@@ -5518,6 +5553,7 @@ fn assist_readiness_style_name(style: AssistReadinessStyleArg) -> &'static str {
         AssistReadinessStyleArg::Http => "http",
         AssistReadinessStyleArg::Tcp => "tcp",
         AssistReadinessStyleArg::ComposeHealth => "compose-health",
+        AssistReadinessStyleArg::SystemdActive => "systemd-active",
     }
 }
 
@@ -5525,6 +5561,27 @@ fn assist_service_manager_name(manager: AssistServiceManagerArg) -> &'static str
     match manager {
         AssistServiceManagerArg::Compose => "compose",
         AssistServiceManagerArg::Host => "host",
+    }
+}
+
+fn assist_host_scope_name(scope: AssistHostScopeArg) -> &'static str {
+    match scope {
+        AssistHostScopeArg::System => "system",
+        AssistHostScopeArg::User => "user",
+    }
+}
+
+fn assist_host_scope_spec(scope: AssistHostScopeArg) -> crate::schema::SystemdScope {
+    match scope {
+        AssistHostScopeArg::System => crate::schema::SystemdScope::System,
+        AssistHostScopeArg::User => crate::schema::SystemdScope::User,
+    }
+}
+
+fn assist_host_scope_arg(scope: crate::schema::SystemdScope) -> AssistHostScopeArg {
+    match scope {
+        crate::schema::SystemdScope::System => AssistHostScopeArg::System,
+        crate::schema::SystemdScope::User => AssistHostScopeArg::User,
     }
 }
 
@@ -6236,6 +6293,8 @@ pub fn assist_declare_service(
     manager_name: Option<&str>,
     compose_file: Option<&str>,
     compose_service: Option<&str>,
+    host_unit: Option<&str>,
+    host_scope: Option<AssistHostScopeArg>,
     endpoint: Option<&str>,
     endpoint_context: Option<&str>,
     address: Option<&str>,
@@ -6286,6 +6345,15 @@ pub fn assist_declare_service(
     }
     if let Some(endpoint) = endpoint {
         debug_lines.push(format!("DEBUG endpoint={endpoint}"));
+    }
+    if let Some(host_unit) = host_unit {
+        debug_lines.push(format!("DEBUG host_unit={host_unit}"));
+    }
+    if let Some(host_scope) = host_scope {
+        debug_lines.push(format!(
+            "DEBUG host_scope={}",
+            assist_host_scope_name(host_scope)
+        ));
     }
     if let Some(endpoint_context) = endpoint_context {
         debug_lines.push(format!("DEBUG endpoint_context={endpoint_context}"));
@@ -6413,6 +6481,8 @@ pub fn assist_declare_service(
                     manager_name,
                     compose_file,
                     compose_service,
+                    host_unit,
+                    host_scope,
                     endpoint,
                     endpoint_context,
                     address,
@@ -10726,6 +10796,8 @@ fn build_assist_service_proposal(
     manager_name: Option<&str>,
     compose_file: Option<&str>,
     compose_service: Option<&str>,
+    host_unit: Option<&str>,
+    host_scope: Option<AssistHostScopeArg>,
     endpoint: Option<&str>,
     endpoint_context: Option<&str>,
     address: Option<&str>,
@@ -10777,6 +10849,23 @@ fn build_assist_service_proposal(
             ));
         }
     }
+    if host_unit.is_some() || host_scope.is_some() {
+        let effective_manager = manager.or_else(|| {
+            existing
+                .as_ref()
+                .and_then(|service| service.manager.as_ref())
+                .map(|manager| match manager.kind {
+                    crate::schema::ServiceManagerKind::Compose => AssistServiceManagerArg::Compose,
+                    crate::schema::ServiceManagerKind::Host => AssistServiceManagerArg::Host,
+                })
+        });
+        if !matches!(effective_manager, Some(AssistServiceManagerArg::Host)) {
+            return Err((
+                String::from("`--host-unit` and `--host-scope` require `--manager host`"),
+                String::from("rerun with `--manager host`, or drop the host-specific flags"),
+            ));
+        }
+    }
 
     let manager_kind = manager
         .or_else(|| {
@@ -10795,12 +10884,21 @@ fn build_assist_service_proposal(
             )
         })?;
     let compose_health_style = matches!(style, Some(AssistReadinessStyleArg::ComposeHealth));
+    let systemd_active_style = matches!(style, Some(AssistReadinessStyleArg::SystemdActive));
     if compose_health_style && !matches!(manager_kind, AssistServiceManagerArg::Compose) {
         return Err((
             String::from(
                 "`--style compose-health` requires `--manager compose` (or an existing compose manager)",
             ),
             String::from("rerun with `--manager compose`, or choose `--style tcp|http`"),
+        ));
+    }
+    if systemd_active_style && !matches!(manager_kind, AssistServiceManagerArg::Host) {
+        return Err((
+            String::from(
+                "`--style systemd-active` requires `--manager host` (or an existing host manager)",
+            ),
+            String::from("rerun with `--manager host --host-unit <unit>`, or choose `--style tcp|http`"),
         ));
     }
 
@@ -10813,6 +10911,16 @@ fn build_assist_service_proposal(
 
     let endpoint_inputs_present =
         endpoint.is_some() || endpoint_context.is_some() || address.is_some() || port.is_some();
+    if systemd_active_style && endpoint_inputs_present {
+        return Err((
+            String::from(
+                "`--endpoint`, `--endpoint-context`, `--address`, and `--port` do not apply to `--style systemd-active`",
+            ),
+            String::from(
+                "rerun without endpoint flags, or choose `--style tcp|http` when endpoint reachability is the real readiness gate",
+            ),
+        ));
+    }
     let endpoint_name = if compose_health_style && !endpoint_inputs_present {
         existing.as_ref().and_then(|service| {
             service
@@ -10829,6 +10937,8 @@ fn build_assist_service_proposal(
                     }
                 })
         })
+    } else if systemd_active_style && !endpoint_inputs_present {
+        None
     } else {
         Some(resolve_assist_service_endpoint_name(
             existing.as_ref(),
@@ -10886,6 +10996,7 @@ fn build_assist_service_proposal(
     let existing_manager = existing
         .as_ref()
         .and_then(|service| service.manager.as_ref());
+    let existing_host_manager = existing_manager.and_then(|manager| manager.host.as_ref());
     let manager_name_value = manager_name
         .map(str::to_string)
         .or_else(|| existing_manager.and_then(|manager| manager.name.clone()));
@@ -10913,6 +11024,30 @@ fn build_assist_service_proposal(
         }
         AssistServiceManagerArg::Host => None,
     };
+    let host_unit_value = match manager_kind {
+        AssistServiceManagerArg::Compose => None,
+        AssistServiceManagerArg::Host => host_unit
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| existing_host_manager.map(|host| host.unit.clone())),
+    };
+    let host_scope_value = match manager_kind {
+        AssistServiceManagerArg::Compose => None,
+        AssistServiceManagerArg::Host => Some(
+            host_scope
+                .or_else(|| existing_host_manager.map(|host| assist_host_scope_arg(host.scope)))
+                .unwrap_or(AssistHostScopeArg::System),
+        ),
+    };
+    if matches!(manager_kind, AssistServiceManagerArg::Host) && host_unit_value.is_none() {
+        return Err((
+            format!("service `{name}` needs `--host-unit <unit>` for typed host ownership"),
+            String::from(
+                "rerun with `--manager host --host-unit <systemd-unit>` so ota can own the systemd service declaratively",
+            ),
+        ));
+    }
 
     let readiness = match style {
         Some(style) => Some(build_assist_service_readiness(
@@ -10939,6 +11074,11 @@ fn build_assist_service_proposal(
         env_file: None,
         profiles: Vec::new(),
         service: compose_service_value.clone(),
+        host: host_unit_value.as_ref().map(|unit| crate::schema::HostServiceManagerSpec {
+            kind: crate::schema::HostServiceManagerKind::Systemd,
+            unit: unit.clone(),
+            scope: assist_host_scope_spec(host_scope_value.unwrap_or(AssistHostScopeArg::System)),
+        }),
         start: None,
         stop: None,
     });
@@ -10966,7 +11106,10 @@ fn build_assist_service_proposal(
             == Some(endpoint_name.as_str())
             || (readiness.endpoint.is_none() && after.endpoints.len() == 1);
         if targets_selected_endpoint
-            && !matches!(readiness.kind, Some(ServiceReadinessKind::ComposeHealth))
+            && !matches!(
+                readiness.kind,
+                Some(ServiceReadinessKind::ComposeHealth | ServiceReadinessKind::SystemdActive)
+            )
         {
             readiness.from = Some(endpoint_context.clone());
         }
@@ -11015,11 +11158,20 @@ fn build_assist_service_proposal(
         "manager `{}` is the service owner",
         assist_service_manager_name(manager_kind)
     ));
+    if let Some(unit) = host_unit_value.as_ref() {
+        assumptions.push(format!(
+            "systemd unit `{unit}` is the canonical host service owner"
+        ));
+    }
     if let Some(style) = style {
         if let Some(endpoint_name) = endpoint_name.as_ref() {
             assumptions.push(format!(
                 "structured readiness will anchor to endpoint `{endpoint_name}` with style `{}`",
                 assist_readiness_style_name(style)
+            ));
+        } else if matches!(style, AssistReadinessStyleArg::SystemdActive) {
+            assumptions.push(String::from(
+                "structured readiness will follow systemd active state instead of endpoint probing",
             ));
         } else {
             assumptions.push(format!(
@@ -11035,6 +11187,8 @@ fn build_assist_service_proposal(
         manager_name: manager_name_value,
         compose_file: compose_file_value,
         compose_service: compose_service_value,
+        host_unit: host_unit_value,
+        host_scope: host_scope_value,
         endpoint: endpoint_name,
         endpoint_context: stored_endpoint_context,
         address: endpoint_address,
@@ -11167,6 +11321,8 @@ fn build_assist_workspace_service_producer_proposal(
         manager_name: None,
         compose_file: None,
         compose_service: None,
+        host_unit: None,
+        host_scope: None,
         endpoint: None,
         endpoint_context: None,
         address: None,
@@ -11329,6 +11485,22 @@ fn build_assist_service_readiness(
             retries: Some(5),
             start_period: Some(String::from("10s")),
         },
+        AssistReadinessStyleArg::SystemdActive => crate::schema::ServiceReadinessSpec {
+            from: None,
+            endpoint: None,
+            run: None,
+            probe: None,
+            kind: Some(ServiceReadinessKind::SystemdActive),
+            method: None,
+            path: None,
+            headers: BTreeMap::new(),
+            success: None,
+            body: None,
+            interval: Some(String::from("5s")),
+            timeout: None,
+            retries: Some(5),
+            start_period: Some(String::from("2s")),
+        },
     }
 }
 
@@ -11418,6 +11590,9 @@ fn build_assist_readiness_proposal(
                 AssistReadinessStyleArg::ComposeHealth => unreachable!(
                     "compose-health style is service-only and rejected for task targets"
                 ),
+                AssistReadinessStyleArg::SystemdActive => unreachable!(
+                    "systemd-active style is service-only and rejected for task targets"
+                ),
             };
             let before_value = existing
                 .as_ref()
@@ -11461,12 +11636,14 @@ fn build_assist_readiness_proposal(
             from,
             endpoint,
             compose_managed,
+            systemd_managed,
             existing,
         }) => {
             let style = resolve_assist_style_for_service(
                 existing.as_ref(),
                 requested_style,
                 compose_managed,
+                systemd_managed,
             )?;
             let endpoint_from = from.unwrap_or_else(|| String::from("host"));
             let after = match style {
@@ -11539,6 +11716,22 @@ fn build_assist_readiness_proposal(
                     retries: Some(5),
                     start_period: Some(String::from("10s")),
                 },
+                AssistReadinessStyleArg::SystemdActive => ServiceReadinessSpec {
+                    from: None,
+                    endpoint: None,
+                    run: None,
+                    probe: None,
+                    kind: Some(ServiceReadinessKind::SystemdActive),
+                    method: None,
+                    path: None,
+                    headers: BTreeMap::new(),
+                    success: None,
+                    body: None,
+                    interval: Some(String::from("5s")),
+                    timeout: None,
+                    retries: Some(5),
+                    start_period: Some(String::from("2s")),
+                },
             };
             let before_value = existing
                 .as_ref()
@@ -11609,10 +11802,12 @@ fn resolve_assist_style_for_task(
 ) -> Result<AssistReadinessStyleArg, (String, String)> {
     if matches!(
         requested_style,
-        Some(AssistReadinessStyleArg::ComposeHealth)
+        Some(AssistReadinessStyleArg::ComposeHealth | AssistReadinessStyleArg::SystemdActive)
     ) {
         return Err((
-            String::from("`--style compose-health` is only valid for `--service` targets"),
+            String::from(
+                "`--style compose-health` and `--style systemd-active` are only valid for `--service` targets",
+            ),
             String::from("rerun with `--task` and `--style tcp|http|spring-http`"),
         ));
     }
@@ -11672,6 +11867,7 @@ fn resolve_assist_style_for_service(
     existing: Option<&ServiceReadinessSpec>,
     requested_style: Option<AssistReadinessStyleArg>,
     compose_managed: bool,
+    systemd_managed: bool,
 ) -> Result<AssistReadinessStyleArg, (String, String)> {
     if let Some(style) = requested_style {
         if is_compose_health_readiness_style(style) && !compose_managed {
@@ -11684,6 +11880,16 @@ fn resolve_assist_style_for_service(
                 ),
             ));
         }
+        if is_systemd_active_readiness_style(style) && !systemd_managed {
+            return Err((
+                String::from(
+                    "`--style systemd-active` requires a host-managed systemd service (`manager.kind: host` with `manager.host.kind: systemd`)",
+                ),
+                String::from(
+                    "set `services.<name>.manager.kind: host` with `manager.host.kind: systemd`, or choose `--style tcp` / `--style http`",
+                ),
+            ));
+        }
         return Ok(style);
     }
 
@@ -11691,12 +11897,13 @@ fn resolve_assist_style_for_service(
         Some(ServiceReadinessKind::Tcp) => Ok(AssistReadinessStyleArg::Tcp),
         Some(ServiceReadinessKind::Http) => Ok(AssistReadinessStyleArg::Http),
         Some(ServiceReadinessKind::ComposeHealth) => Ok(AssistReadinessStyleArg::ComposeHealth),
+        Some(ServiceReadinessKind::SystemdActive) => Ok(AssistReadinessStyleArg::SystemdActive),
         None => Err((
             String::from(
                 "managed service readiness style is ambiguous without an explicit `--style`",
             ),
             String::from(
-                "rerun with `--style compose-health` for compose health state, `--style tcp` for raw port checks, or `--style http` / `spring-http` for HTTP health endpoints",
+                "rerun with `--style compose-health` for compose health state, `--style systemd-active` for systemd-managed host services, `--style tcp` for raw port checks, or `--style http` / `spring-http` for HTTP health endpoints",
             ),
         )),
     }
@@ -11749,6 +11956,15 @@ fn resolve_assist_readiness_target(
         .manager
         .as_ref()
         .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Compose);
+    let systemd_managed = spec
+        .manager
+        .as_ref()
+        .and_then(|manager| {
+            (manager.kind == crate::schema::ServiceManagerKind::Host)
+                .then_some(manager.host.as_ref())
+                .flatten()
+        })
+        .is_some_and(|host| host.kind == crate::schema::HostServiceManagerKind::Systemd);
     let wants_compose_health = matches!(
         requested_style,
         Some(AssistReadinessStyleArg::ComposeHealth)
@@ -11758,13 +11974,24 @@ fn resolve_assist_readiness_target(
             .and_then(ServiceReadinessSpec::structured_kind),
         Some(ServiceReadinessKind::ComposeHealth)
     );
-    if wants_compose_health && requested_endpoint.is_some() {
+    let wants_systemd_active = matches!(
+        requested_style,
+        Some(AssistReadinessStyleArg::SystemdActive)
+    ) || matches!(
+        spec.readiness
+            .as_ref()
+            .and_then(ServiceReadinessSpec::structured_kind),
+        Some(ServiceReadinessKind::SystemdActive)
+    );
+    if (wants_compose_health || wants_systemd_active) && requested_endpoint.is_some() {
         return Err((
-            String::from("`--endpoint` does not apply to `--style compose-health`"),
+            String::from(
+                "`--endpoint` does not apply to `--style compose-health` or `--style systemd-active`",
+            ),
             String::from("rerun without `--endpoint`, or choose `--style tcp|http|spring-http`"),
         ));
     }
-    let endpoint = if wants_compose_health {
+    let endpoint = if wants_compose_health || wants_systemd_active {
         None
     } else if let Some(endpoint) = requested_endpoint {
         let endpoint = endpoint.trim();
@@ -11790,7 +12017,7 @@ fn resolve_assist_readiness_target(
     } else {
         None
     };
-    let from = if wants_compose_health {
+    let from = if wants_compose_health || wants_systemd_active {
         None
     } else if let Some(endpoint_name) = endpoint.as_deref() {
         Some(
@@ -11833,6 +12060,7 @@ fn resolve_assist_readiness_target(
         from,
         endpoint,
         compose_managed,
+        systemd_managed,
         existing: spec.readiness.clone(),
     })
 }

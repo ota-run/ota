@@ -1,0 +1,216 @@
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#   You may not use this file except in compliance with that License.
+#   Unless required by applicable law or agreed to in writing, software distributed under the
+#   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#   either express or implied. See the License for the specific language governing permissions
+#   and limitations under the License.
+#
+#   If you need additional information or have any questions, please email: os@ota.run
+
+name: linux-systemd-native-proof
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "docs/spec/**"
+      - ".github/workflows/linux-systemd-native-proof.yml"
+  push:
+    branches:
+      - main
+      - "**"
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "src/**"
+      - "docs/spec/**"
+      - ".github/workflows/linux-systemd-native-proof.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref_name || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  native-systemd-proof:
+    runs-on:
+      - self-hosted
+      - linux
+      - orbstack
+      - systemd
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Hydrate cargo dependencies
+        shell: bash
+        run: cargo fetch --locked
+
+      - name: Build release binary
+        shell: bash
+        run: cargo build --locked --offline --release --quiet
+
+      - name: Run native systemd proof
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # This workflow is meant for an OrbStack-backed self-hosted Linux runner where
+          # PID 1 is real systemd and `systemctl --user` is available to the job user.
+          ota="$PWD/target/release/ota"
+          unit="ota-systemd-native-proof.service"
+          unit_dir="$HOME/.config/systemd/user"
+          unit_path="$unit_dir/$unit"
+          proof_root="${RUNNER_TEMP}/ota-linux-systemd-native-proof"
+
+          mkdir -p "$unit_dir"
+          rm -rf "$proof_root"
+          mkdir -p "$proof_root"
+
+          systemctl --user show-environment >/dev/null
+
+          cleanup() {
+            systemctl --user stop "$unit" >/dev/null 2>&1 || true
+            rm -f "$unit_path"
+            systemctl --user daemon-reload >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          cat > "$unit_path" <<'EOF'
+          [Unit]
+          Description=Ota native systemd proof fixture
+
+          [Service]
+          Type=simple
+          ExecStart=/bin/sh -lc 'trap "exit 0" TERM INT; while :; do sleep 30; done'
+          Restart=no
+
+          [Install]
+          WantedBy=default.target
+          EOF
+
+          systemctl --user daemon-reload
+          systemctl --user reset-failed "$unit" >/dev/null 2>&1 || true
+
+          cat > "$proof_root/ota.yaml" <<EOF
+          version: 1
+          project:
+            name: linux-systemd-native-proof
+            type: application
+          execution:
+            default_context: host
+            contexts:
+              host:
+                backend: native
+          services:
+            fixture:
+              manager:
+                kind: host
+                host:
+                  kind: systemd
+                  unit: $unit
+                  scope: user
+              readiness:
+                kind: systemd_active
+                interval: 1s
+                retries: 10
+          tasks:
+            setup:
+              run: systemctl --user is-active --quiet $unit
+              requirements:
+                tools:
+                  - systemctl
+          workflows:
+            default: app
+            app:
+              setup:
+                task: setup
+          EOF
+
+          "$ota" validate "$proof_root" --plain
+
+          doctor_raw_path="$proof_root/doctor.raw.txt"
+          "$ota" doctor --json "$proof_root" >"$doctor_raw_path"
+          cp "$doctor_raw_path" "$proof_root/doctor.json"
+          python - <<'PY' "$proof_root/doctor.json"
+          import json
+          import pathlib
+          import sys
+
+          doctor = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert doctor["ok"] is True, doctor
+          assert doctor["summary"]["verdict"] == "ready", doctor
+          PY
+
+          up_raw_path="$proof_root/up.raw.txt"
+          "$ota" up --json "$proof_root" >"$up_raw_path"
+          cp "$up_raw_path" "$proof_root/up.json"
+          python - <<'PY' "$proof_root/up.json"
+          import json
+          import pathlib
+          import sys
+
+          up = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert up["ok"] is True, up
+          PY
+
+          systemctl --user is-active --quiet "$unit"
+
+          proof_raw_path="$proof_root/proof.raw.txt"
+          "$ota" proof runtime --json "$proof_root" >"$proof_raw_path"
+          cp "$proof_raw_path" "$proof_root/proof.json"
+          python - <<'PY' "$proof_root/proof.json"
+          import json
+          import pathlib
+          import sys
+
+          proof = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert proof["ok"] is True, proof
+          assert proof["mode"] == "runtime-proof", proof
+          assert proof["workflow"] == "app", proof
+          assert proof["summary"]["verdict"] == "ready", proof
+          for key in ("topology", "doctor", "up_log"):
+            assert proof["artifacts"].get(key), proof
+          PY
+
+      - name: Upload proof artifacts
+        id: upload-proof-artifacts
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-systemd-native-proof-artifacts
+          path: ${{ runner.temp }}/ota-linux-systemd-native-proof
+          if-no-files-found: ignore
+
+      - name: Warn when artifact upload flakes
+        if: always() && steps.upload-proof-artifacts.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "::warning::proof artifacts failed to upload, but the Linux systemd native proof itself completed"
+          {
+            echo "### Artifact upload warning"
+            echo
+            echo "- workflow: linux-systemd-native-proof"
+            echo "- job: native-systemd-proof"
+            echo "- note: diagnostic artifact upload failed after proof execution"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -26,6 +26,16 @@
 
 ## Unreleased
 
+- added a first-class typed `systemd` host-service manager lane on top of the existing
+  `manager.kind: host` surface: services can now declare `manager.host.kind: systemd` plus a unit
+  and optional scope so ota derives host lifecycle and supports structured
+  `readiness.kind: systemd_active` without shell `systemctl` glue
+- validate/doctor now warn when task bodies still shell `systemctl start`, `stop`, or
+  `is-active` directly instead of keeping that host-service ownership on the typed `manager.host`
+  plus `readiness.kind: systemd_active` surface
+- added a dedicated self-hosted Linux native proof workflow for the typed systemd lane, using a
+  temporary user-scoped systemd unit on an OrbStack-backed runner instead of pretending
+  GitHub-hosted Ubuntu provides honest host-systemd runtime truth
 - improved native run-path failure trust for command-owned Compose tasks: when a native task launches
   `podman` or `docker` and the selected engine backend is unavailable, `ota run` now reports
   first-class `Container engine unavailable` guidance with engine-specific repair steps instead of

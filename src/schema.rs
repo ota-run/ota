@@ -3294,6 +3294,7 @@ pub enum ServiceReadinessKind {
     Http,
     Tcp,
     ComposeHealth,
+    SystemdActive,
 }
 
 impl ServiceReadinessKind {
@@ -3302,6 +3303,7 @@ impl ServiceReadinessKind {
             Self::Http => "http",
             Self::Tcp => "tcp",
             Self::ComposeHealth => "compose_health",
+            Self::SystemdActive => "systemd_active",
         }
     }
 }
@@ -3323,6 +3325,8 @@ pub struct ServiceManagerSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<HostServiceManagerSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<TaskCommandSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop: Option<TaskCommandSpec>,
@@ -3337,10 +3341,15 @@ impl ServiceManagerSpec {
                 }
                 _ => format!("compose:{}", self.engine.as_str()),
             },
-            ServiceManagerKind::Host => match self.name.as_deref() {
-                Some(name) if !name.trim().is_empty() => format!("host ({name})"),
-                _ => String::from("host"),
-            },
+            ServiceManagerKind::Host => {
+                if let Some(host) = &self.host {
+                    return host.display_label();
+                }
+                match self.name.as_deref() {
+                    Some(name) if !name.trim().is_empty() => format!("host ({name})"),
+                    _ => String::from("host"),
+                }
+            }
         }
     }
 
@@ -3351,7 +3360,11 @@ impl ServiceManagerSpec {
                 self.compose_command_prefix(),
                 shell_single_quote(self.compose_service(service_name))
             )),
-            ServiceManagerKind::Host => self.start.as_ref().map(TaskCommandSpec::preview),
+            ServiceManagerKind::Host => self
+                .host
+                .as_ref()
+                .and_then(HostServiceManagerSpec::start_command)
+                .or_else(|| self.start.as_ref().map(TaskCommandSpec::preview)),
         }
     }
 
@@ -3362,7 +3375,11 @@ impl ServiceManagerSpec {
                 self.compose_command_prefix(),
                 shell_single_quote(self.compose_service(service_name))
             )),
-            ServiceManagerKind::Host => self.stop.as_ref().map(TaskCommandSpec::preview),
+            ServiceManagerKind::Host => self
+                .host
+                .as_ref()
+                .and_then(HostServiceManagerSpec::stop_command)
+                .or_else(|| self.stop.as_ref().map(TaskCommandSpec::preview)),
         }
     }
 
@@ -3393,6 +3410,13 @@ health=$({inspect_engine} inspect --format '{{{{if .State.Health}}}}{{{{.State.H
             service = compose_service,
             inspect_engine = inspect_engine
         ))
+    }
+
+    pub fn systemd_active_command(&self) -> Option<String> {
+        (self.kind == ServiceManagerKind::Host)
+            .then_some(self.host.as_ref())
+            .flatten()
+            .and_then(HostServiceManagerSpec::systemd_active_command)
     }
 
     pub fn compose_cli_exe(&self) -> Option<&'static str> {
@@ -3481,6 +3505,72 @@ health=$({inspect_engine} inspect --format '{{{{if .State.Health}}}}{{{{.State.H
         }
         command
     }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HostServiceManagerSpec {
+    pub kind: HostServiceManagerKind,
+    pub unit: String,
+    #[serde(default, skip_serializing_if = "is_default_systemd_scope")]
+    pub scope: SystemdScope,
+}
+
+impl HostServiceManagerSpec {
+    pub fn display_label(&self) -> String {
+        match self.kind {
+            HostServiceManagerKind::Systemd => {
+                format!("host:systemd ({})", self.unit.trim())
+            }
+        }
+    }
+
+    pub fn start_command(&self) -> Option<String> {
+        match self.kind {
+            HostServiceManagerKind::Systemd => Some(self.systemctl_command("start")),
+        }
+    }
+
+    pub fn stop_command(&self) -> Option<String> {
+        match self.kind {
+            HostServiceManagerKind::Systemd => Some(self.systemctl_command("stop")),
+        }
+    }
+
+    pub fn systemd_active_command(&self) -> Option<String> {
+        match self.kind {
+            HostServiceManagerKind::Systemd => Some(self.systemctl_command("is-active --quiet")),
+        }
+    }
+
+    fn systemctl_command(&self, verb: &str) -> String {
+        let mut command = String::from("systemctl ");
+        if self.scope == SystemdScope::User {
+            command.push_str("--user ");
+        }
+        command.push_str(verb);
+        command.push(' ');
+        command.push_str(&shell_single_quote(self.unit.trim()));
+        command
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HostServiceManagerKind {
+    Systemd,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemdScope {
+    #[default]
+    System,
+    User,
+}
+
+const fn is_default_systemd_scope(value: &SystemdScope) -> bool {
+    matches!(value, SystemdScope::System)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -6284,8 +6374,9 @@ mod tests {
     use crate::validator::validate_contract;
 
     use super::{
-        Backend, ComposeCliEngine, ServiceManagerKind, ServiceManagerSpec, ServiceSpec,
-        TaskCommandSpec, TaskRuntimeHostPortMode, TaskRuntimePortMode, TaskRuntimeProtocol,
+        Backend, ComposeCliEngine, HostServiceManagerKind, HostServiceManagerSpec, ServiceManagerKind,
+        ServiceManagerSpec, ServiceSpec, SystemdScope, TaskCommandSpec, TaskRuntimeHostPortMode,
+        TaskRuntimePortMode, TaskRuntimeProtocol,
     };
 
     #[test]
@@ -6438,6 +6529,7 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
                 env_file: None,
                 profiles: Vec::new(),
                 service: None,
+                host: None,
                 start: Some(TaskCommandSpec {
                     exe: String::from("brew"),
                     args: vec![
@@ -6480,6 +6572,46 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
                 .as_deref(),
             Some("brew services stop postgresql@17")
         );
+    }
+
+    #[test]
+    fn systemd_host_manager_derives_lifecycle_commands() {
+        let service = ServiceSpec {
+            manager: Some(ServiceManagerSpec {
+                kind: ServiceManagerKind::Host,
+                engine: ComposeCliEngine::Docker,
+                name: None,
+                file: None,
+                env_file: None,
+                profiles: Vec::new(),
+                service: None,
+                host: Some(HostServiceManagerSpec {
+                    kind: HostServiceManagerKind::Systemd,
+                    unit: String::from("redis.service"),
+                    scope: SystemdScope::User,
+                }),
+                start: None,
+                stop: None,
+            }),
+            ..ServiceSpec::default()
+        };
+
+        let manager = service.manager.as_ref().expect("manager");
+        assert_eq!(manager.display_label(), "host:systemd (redis.service)");
+        assert_eq!(
+            service.start_command("redis").as_deref(),
+            Some("systemctl --user start 'redis.service'")
+        );
+        assert_eq!(
+            service.stop_command("redis").as_deref(),
+            Some("systemctl --user stop 'redis.service'")
+        );
+        assert_eq!(
+            manager.systemd_active_command().as_deref(),
+            Some("systemctl --user is-active --quiet 'redis.service'")
+        );
+        assert_eq!(service.start_command_spec(), None);
+        assert_eq!(service.stop_command_spec(), None);
     }
 
     #[test]

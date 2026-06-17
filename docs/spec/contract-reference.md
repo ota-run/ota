@@ -644,6 +644,7 @@ Current behavior:
 - `ota doctor` evaluates manager-owned service readiness through the declared control plane and endpoint topology
 - for `manager.kind: compose`, `ota doctor` derives compose lifecycle commands from manager metadata
 - for `manager.kind: host`, canonical lifecycle ownership lives on `manager.start` / `manager.stop`; legacy top-level `start` / `stop` still parse for compatibility, but new authoring should keep host service lifecycle under the manager block
+- for `manager.kind: host` with `manager.host.kind: systemd`, ota derives lifecycle from the declared unit instead of requiring shell `systemctl` glue
 - for `manager.kind: host`, `ota doctor` runs readiness checks in the resolved host command context
 - legacy `services.<name>.readiness.run` still parses for compatibility, but new authoring should keep service readiness on structured `readiness.kind` or reusable `readiness.probe`
 - `services.<name>.readiness.from` selects the execution context for service readiness
@@ -652,7 +653,9 @@ Current behavior:
 - structured `services.<name>.readiness.kind: http` probes the declared endpoint with the same request/response model shipped for task runtime readiness
 - structured `services.<name>.readiness.kind: tcp` probes the declared endpoint for listener reachability from the declared context
 - structured `services.<name>.readiness.kind: compose_health` reads the compose-managed container health status directly (`healthy`) and does not require `readiness.from` or `services.<name>.endpoints`
+- structured `services.<name>.readiness.kind: systemd_active` reads systemd unit state directly (`systemctl is-active --quiet`) and does not require `readiness.from` or `services.<name>.endpoints`
 - `kind: compose_health` requires `services.<name>.manager.kind: compose` and must not declare endpoint-probe fields such as `from`, `endpoint`, `method`, `path`, `headers`, `success`, `body`, or `timeout`
+- `kind: systemd_active` requires `services.<name>.manager.kind: host` together with `services.<name>.manager.host.kind: systemd` and must not declare endpoint-probe fields such as `from`, `endpoint`, `method`, `path`, `headers`, `success`, `body`, or `timeout`
 - reusable and structured top-level service readiness use the same default wait model as task runtime readiness: when `retries` is omitted, Ota uses the default bounded budget and reports failure after the limit is reached; declaring `retries` makes that budget explicit and tuned for the service
 - `services.<name>.endpoints.<name>` declares one named endpoint projection:
   - `context`: optional execution context for that projection; when omitted, the endpoint name is also the context name for backward compatibility
@@ -2974,6 +2977,13 @@ Service manager fields:
 - `services.<name>.manager.env_file`: optional repo-relative compose env-file path for `kind: compose`
 - `services.<name>.manager.profiles`: optional compose profile list for `kind: compose`
 - `services.<name>.manager.service`: optional compose service name override; required today for `kind: compose`
+- `services.<name>.manager.host`: optional typed host-manager owner for `kind: host`
+  - `kind`: `systemd`
+  - `unit`: required systemd unit name ota should start/stop/check
+  - `scope`: optional `system` or `user`; defaults to `system`
+- `ota assist declare-service --manager host --host-unit <unit> --style systemd-active` is the canonical authoring path when ota should own one systemd-managed host service directly
+- `services.<name>.manager.start` / `manager.stop`: optional explicit host lifecycle commands for `kind: host`; do not combine these with typed `manager.host` ownership because ota derives lifecycle from the typed host manager
+- validate/doctor warn when tasks still shell `systemctl start`, `stop`, or `is-active` directly for service ownership that should live on the typed `manager.host` + `readiness.kind: systemd_active` surface
 
 Workflow env adapter rules:
 

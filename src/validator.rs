@@ -6749,6 +6749,7 @@ pub enum ContractAdvisory {
     ServiceUsesOpaqueShellStart(ServiceUsesOpaqueShellStartAdvisory),
     ReplaceableShellCheck(ReplaceableShellCheckAdvisory),
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
+    ReplaceableSystemdServiceOwnership(ReplaceableSystemdServiceOwnershipAdvisory),
     ReplaceableContainerNetworkOwnership(ReplaceableContainerNetworkOwnershipAdvisory),
     ReplaceableComposeEnvFileOwnership(ReplaceableComposeEnvFileOwnershipAdvisory),
     ReplaceableBakeFileOwnership(ReplaceableBakeFileOwnershipAdvisory),
@@ -6853,6 +6854,12 @@ pub struct ReplaceableShellCheckAdvisory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceableShellEnvMutationAdvisory {
+    pub task_name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableSystemdServiceOwnershipAdvisory {
     pub task_name: String,
     pub command: String,
 }
@@ -7014,6 +7021,9 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableShellEnvMutation(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_MUTATION"
             }
+            ContractAdvisory::ReplaceableSystemdServiceOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_SYSTEMD_SERVICE_OWNERSHIP"
+            }
             ContractAdvisory::ReplaceableContainerNetworkOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_CONTAINER_NETWORK_OWNERSHIP"
             }
@@ -7147,6 +7157,10 @@ impl ContractAdvisory {
             },
             ContractAdvisory::ReplaceableShellEnvMutation(advisory) => format!(
                 "task `{}` uses replaceable shell env-file mutation",
+                advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableSystemdServiceOwnership(advisory) => format!(
+                "task `{}` hard-codes systemd service ownership in its task body",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => format!(
@@ -7290,6 +7304,10 @@ impl ContractAdvisory {
                 "task `{}` rewrites one env file through shell mutation (`{}`), which is less portable and less governable than `action.kind: ensure_env_file` with deterministic `mode: replace` keys",
                 advisory.task_name, advisory.command
             ),
+            ContractAdvisory::ReplaceableSystemdServiceOwnership(advisory) => format!(
+                "task `{}` hard-codes systemd service lifecycle or readiness shell (`{}`), which hides host service ownership from Ota instead of declaring it under `services.<name>.manager.kind: host`, `manager.host.kind: systemd`, and `readiness.kind: systemd_active`",
+                advisory.task_name, advisory.command
+            ),
             ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => format!(
                 "task `{}` hard-codes container network bootstrap inside its task body (`{}`), which hides Docker network ownership from Ota instead of declaring it under `action.kind: ensure_container_network`",
                 advisory.task_name, advisory.command
@@ -7372,6 +7390,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
@@ -7406,6 +7425,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
@@ -7441,6 +7461,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
             | ContractAdvisory::ReplaceableBakeFileOwnership(_)
@@ -7533,6 +7554,10 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableShellEnvMutation(advisory) => format!(
                 "replace shell env-file mutation in task `{}` with `action.kind: ensure_env_file` (or `ensure_bundle`) and explicit `mode: replace` keys",
                 advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableSystemdServiceOwnership(advisory) => format!(
+                "move systemd service ownership out of task `{}` body: declare `services.<name>.manager.kind: host`, `manager.host.kind: systemd`, and `readiness.kind: systemd_active` instead of shelling `{}`",
+                advisory.task_name, advisory.command
             ),
             ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => format!(
                 "move container network ownership out of task `{}` body: use `action.kind: ensure_container_network` so Ota owns Docker network bootstrap declaratively",
@@ -7684,6 +7709,9 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_service_uses_opaque_shell_start_advisories(contract));
     advisories.extend(collect_replaceable_shell_check_advisories(contract));
     advisories.extend(collect_replaceable_shell_env_mutation_advisories(contract));
+    advisories.extend(collect_replaceable_systemd_service_ownership_advisories(
+        contract,
+    ));
     advisories.extend(collect_replaceable_container_network_ownership_advisories(
         contract,
     ));
@@ -8080,6 +8108,80 @@ fn collect_replaceable_shell_env_mutation_advisories(contract: &Contract) -> Vec
                     command: command.to_string(),
                 },
             ));
+        }
+    }
+    advisories
+}
+
+fn collect_replaceable_systemd_service_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.aggregate.is_some() {
+            continue;
+        }
+
+        let task_shell_command = task
+            .run
+            .as_deref()
+            .or(task.script.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(command) = task_shell_command
+            && obvious_systemd_service_shell(command)
+        {
+            advisories.push(ContractAdvisory::ReplaceableSystemdServiceOwnership(
+                ReplaceableSystemdServiceOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: command.to_string(),
+                },
+            ));
+            continue;
+        }
+        if let Some(command) = task.command.as_ref()
+            && obvious_systemd_service_command(command)
+        {
+            advisories.push(ContractAdvisory::ReplaceableSystemdServiceOwnership(
+                ReplaceableSystemdServiceOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: render_task_command_preview(command),
+                },
+            ));
+            continue;
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                let branch_shell_command = branch
+                    .run
+                    .as_deref()
+                    .or(branch.script.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if let Some(command) = branch_shell_command
+                    && obvious_systemd_service_shell(command)
+                {
+                    advisories.push(ContractAdvisory::ReplaceableSystemdServiceOwnership(
+                        ReplaceableSystemdServiceOwnershipAdvisory {
+                            task_name: task_name.clone(),
+                            command: command.to_string(),
+                        },
+                    ));
+                    break;
+                }
+                let Some(command) = branch.command.as_ref() else {
+                    continue;
+                };
+                if obvious_systemd_service_command(command) {
+                    advisories.push(ContractAdvisory::ReplaceableSystemdServiceOwnership(
+                        ReplaceableSystemdServiceOwnershipAdvisory {
+                            task_name: task_name.clone(),
+                            command: render_task_command_preview(command),
+                        },
+                    ));
+                    break;
+                }
+            }
         }
     }
     advisories
@@ -8634,6 +8736,24 @@ fn obvious_env_mutation_shell(command: &str) -> bool {
     let mutates_with_perl =
         lower.contains("perl ") && lower.contains("-pi") && lower.contains(".env");
     touches_env && (mutates_with_sed || mutates_with_perl)
+}
+
+fn obvious_systemd_service_shell(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    lower.contains("systemctl ")
+        && (lower.contains(" start ")
+            || lower.contains(" stop ")
+            || lower.contains(" is-active "))
+}
+
+fn obvious_systemd_service_command(command: &TaskCommandSpec) -> bool {
+    command.exe.trim().eq_ignore_ascii_case("systemctl")
+        && command.args.iter().any(|arg| {
+            let trimmed = arg.trim();
+            trimmed.eq_ignore_ascii_case("start")
+                || trimmed.eq_ignore_ascii_case("stop")
+                || trimmed.eq_ignore_ascii_case("is-active")
+        })
 }
 
 fn obvious_container_network_shell(command: &str) -> bool {
@@ -10654,6 +10774,28 @@ fn validate_services(
                             "service `{name}` host manager must not declare `manager.service`"
                         )));
                     }
+                    if let Some(host) = manager.host.as_ref() {
+                        if host.unit.trim().is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` host manager `manager.host.unit` must not be empty"
+                            )));
+                        }
+                        if host.unit.contains('\n') {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` host manager `manager.host.unit` must not contain newline characters"
+                            )));
+                        }
+                        if manager.start.is_some() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` typed host manager must not declare `manager.start`; lifecycle is derived from `manager.host`"
+                            )));
+                        }
+                        if manager.stop.is_some() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` typed host manager must not declare `manager.stop`; lifecycle is derived from `manager.host`"
+                            )));
+                        }
+                    }
                     if service.start.is_some() && manager.start.is_some() {
                         errors.push(ValidationError::new(format!(
                             "service `{name}` must not declare both top-level `start` and `manager.start`; keep one owner for host service startup"
@@ -10718,7 +10860,10 @@ fn validate_services(
             let requires_from = !uses_named_probe
                 && !matches!(
                     structured_kind,
-                    Some(crate::schema::ServiceReadinessKind::ComposeHealth)
+                    Some(
+                        crate::schema::ServiceReadinessKind::ComposeHealth
+                            | crate::schema::ServiceReadinessKind::SystemdActive
+                    )
                 );
 
             if from.is_empty() && requires_from {
@@ -10729,11 +10874,19 @@ fn validate_services(
             if !endpoint_name.is_empty()
                 && matches!(
                     structured_kind,
-                    Some(crate::schema::ServiceReadinessKind::ComposeHealth)
+                    Some(
+                        crate::schema::ServiceReadinessKind::ComposeHealth
+                            | crate::schema::ServiceReadinessKind::SystemdActive
+                    )
                 )
             {
                 errors.push(ValidationError::new(format!(
-                    "service `{name}` structured compose health readiness must not declare `readiness.endpoint`"
+                    "service `{name}` structured {} readiness must not declare `readiness.endpoint`",
+                    match structured_kind.expect("structured readiness kind") {
+                        crate::schema::ServiceReadinessKind::ComposeHealth => "compose health",
+                        crate::schema::ServiceReadinessKind::SystemdActive => "systemd active",
+                        _ => unreachable!("only compose health and systemd active reach this branch"),
+                    }
                 )));
             }
             if readiness
@@ -10946,6 +11099,41 @@ fn validate_services(
                         if !compose_manager {
                             errors.push(ValidationError::new(format!(
                                 "service `{name}` structured compose health readiness requires `manager.kind: compose`"
+                            )));
+                        }
+                        validate_service_readiness_timing(name, readiness, errors);
+                    }
+                    crate::schema::ServiceReadinessKind::SystemdActive => {
+                        if !from.is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured systemd active readiness must not declare `readiness.from`"
+                            )));
+                        }
+                        for (field_name, present) in [
+                            ("endpoint", readiness.endpoint.is_some()),
+                            ("method", readiness.method.is_some()),
+                            ("path", readiness.path.is_some()),
+                            ("headers", !readiness.headers.is_empty()),
+                            ("success", readiness.success.is_some()),
+                            ("body", readiness.body.is_some()),
+                            ("timeout", readiness.timeout.is_some()),
+                        ] {
+                            if present {
+                                errors.push(ValidationError::new(format!(
+                                    "service `{name}` structured systemd active readiness must not declare `readiness.{field_name}`"
+                                )));
+                            }
+                        }
+                        let systemd_managed = service.manager.as_ref().and_then(|manager| {
+                            (manager.kind == crate::schema::ServiceManagerKind::Host)
+                                .then_some(manager.host.as_ref())
+                                .flatten()
+                        }).is_some_and(|host| {
+                            host.kind == crate::schema::HostServiceManagerKind::Systemd
+                        });
+                        if !systemd_managed {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` structured systemd active readiness requires `manager.kind: host` with `manager.host.kind: systemd`"
                             )));
                         }
                         validate_service_readiness_timing(name, readiness, errors);
@@ -19097,6 +19285,69 @@ tasks:
             )),
             "{rendered:?}"
         );
+    }
+
+    #[test]
+    fn validates_systemd_active_readiness_for_typed_host_manager() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: redis.service
+        scope: user
+    readiness:
+      kind: systemd_active
+      interval: 2s
+      retries: 5
+      start_period: 1s
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn rejects_systemd_active_readiness_without_typed_systemd_manager() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    manager:
+      kind: host
+      start:
+        exe: brew
+        args: [services, start, redis]
+    readiness:
+      kind: systemd_active
+tasks:
+  test:
+    run: cargo test
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "service `redis` structured systemd active readiness requires `manager.kind: host` with `manager.host.kind: systemd`",
+            )
+        }));
     }
 
     #[test]
@@ -29316,6 +29567,60 @@ tasks:
             advisory,
             ContractAdvisory::ReplaceableShellEnvMutation(value)
                 if value.task_name == "normalize-env"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_systemd_service_ownership_advisory_for_shell_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  redis:start:
+    run: systemctl start redis.service
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableSystemdServiceOwnership(value)
+                if value.task_name == "redis:start"
+                    && value.command == "systemctl start redis.service"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_systemd_service_ownership_advisory_for_command_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  redis:wait:
+    command:
+      exe: systemctl
+      args:
+        - --user
+        - is-active
+        - --quiet
+        - redis.service
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableSystemdServiceOwnership(value)
+                if value.task_name == "redis:wait"
+                    && value.command == "systemctl --user is-active --quiet redis.service"
         )));
     }
 

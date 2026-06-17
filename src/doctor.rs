@@ -4245,6 +4245,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::ReplaceableShellEnvMutation(advisory) => {
                 ContractAdvisory::ReplaceableShellEnvMutation(advisory)
             }
+            ContractAdvisory::ReplaceableSystemdServiceOwnership(advisory) => {
+                ContractAdvisory::ReplaceableSystemdServiceOwnership(advisory)
+            }
             ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => {
                 ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory)
             }
@@ -4348,6 +4351,7 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::ServiceUsesOpaqueShellStart(_)
         | ContractAdvisory::ReplaceableShellCheck(_)
         | ContractAdvisory::ReplaceableShellEnvMutation(_)
+        | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
         | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
         | ContractAdvisory::ReplaceableComposeEnvFileOwnership(_)
         | ContractAdvisory::ReplaceableBakeFileOwnership(_)
@@ -5141,6 +5145,15 @@ fn service_finding(
             .manager
             .as_ref()
             .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Compose);
+        let systemd_managed = service
+            .manager
+            .as_ref()
+            .and_then(|manager| {
+                (manager.kind == crate::schema::ServiceManagerKind::Host)
+                    .then_some(manager.host.as_ref())
+                    .flatten()
+            })
+            .is_some_and(|host| host.kind == crate::schema::HostServiceManagerKind::Systemd);
         let can_anchor_structured_readiness = service
             .readiness
             .as_ref()
@@ -5148,7 +5161,8 @@ fn service_finding(
             .is_some()
             || service.has_endpoint_for_context("host")
             || service.endpoints.len() == 1
-            || compose_managed;
+            || compose_managed
+            || systemd_managed;
 
         let why = if can_anchor_structured_readiness {
             format!(
@@ -5164,6 +5178,10 @@ fn service_finding(
             if compose_managed {
                 format!(
                     "declare readiness with `ota assist declare-readiness --service {name} --style compose-health` (or `--style tcp` / `--style http`), then rerun `ota doctor`"
+                )
+            } else if systemd_managed {
+                format!(
+                    "declare readiness with `ota assist declare-readiness --service {name} --style systemd-active` (or `--style tcp` / `--style http`), then rerun `ota doctor`"
                 )
             } else {
                 format!(
@@ -5484,6 +5502,12 @@ fn run_service_readiness(
     ) {
         return run_service_compose_health_readiness(name, service, working_dir, readiness);
     }
+    if matches!(
+        readiness.structured_kind(),
+        Some(crate::schema::ServiceReadinessKind::SystemdActive)
+    ) {
+        return run_service_systemd_active_readiness(name, service, working_dir, readiness);
+    }
 
     let Some(from_context) = readiness.from_context() else {
         return Ok(CheckStatus::Failed);
@@ -5702,6 +5726,9 @@ fn run_service_readiness(
                 crate::schema::ServiceReadinessKind::ComposeHealth => {
                     unreachable!("compose health readiness is handled before endpoint projection")
                 }
+                crate::schema::ServiceReadinessKind::SystemdActive => {
+                    unreachable!("systemd active readiness is handled before endpoint projection")
+                }
             }
         } else {
             let command = structured_service_readiness_command(readiness, endpoint, kind);
@@ -5772,6 +5799,9 @@ fn structured_service_readiness_command(
         crate::schema::ServiceReadinessKind::ComposeHealth => {
             unreachable!("compose health readiness does not use endpoint probing commands")
         }
+        crate::schema::ServiceReadinessKind::SystemdActive => {
+            unreachable!("systemd active readiness does not use endpoint probing commands")
+        }
     }
 }
 
@@ -5785,6 +5815,49 @@ fn run_service_compose_health_readiness(
         .manager
         .as_ref()
         .and_then(|manager| manager.compose_health_status_command(name));
+    let Some(command) = command else {
+        return Ok(CheckStatus::Failed);
+    };
+
+    let timing = service_readiness_timing_policy(readiness);
+    if !timing.start_period.is_zero() {
+        thread::sleep(timing.start_period);
+    }
+
+    let backend = ResolvedExecutionBackend::Native {
+        shared_local_backend: None,
+    };
+    let mut failed_attempts = 0u32;
+    loop {
+        match run_backend_command_captured(
+            &format!("readiness:{name}"),
+            command.as_str(),
+            working_dir,
+            &backend,
+        ) {
+            Ok(output) if output.exit_code == 0 => return Ok(CheckStatus::Passed),
+            Ok(_) => {
+                failed_attempts = failed_attempts.saturating_add(1);
+                if failed_attempts >= timing.retries {
+                    return Ok(CheckStatus::Failed);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+        thread::sleep(timing.interval);
+    }
+}
+
+fn run_service_systemd_active_readiness(
+    name: &str,
+    service: &ServiceSpec,
+    working_dir: &Path,
+    readiness: &crate::schema::ServiceReadinessSpec,
+) -> Result<CheckStatus, RunError> {
+    let command = service
+        .manager
+        .as_ref()
+        .and_then(crate::schema::ServiceManagerSpec::systemd_active_command);
     let Some(command) = command else {
         return Ok(CheckStatus::Failed);
     };
@@ -19598,6 +19671,87 @@ tasks:
 
     #[test]
     #[cfg(not(windows))]
+    fn diagnose_service_supports_structured_systemd_active_readiness() {
+        struct EnvPathGuard {
+            original: Option<std::ffi::OsString>,
+        }
+
+        impl Drop for EnvPathGuard {
+            fn drop(&mut self) {
+                match &self.original {
+                    Some(path) => unsafe {
+                        env::set_var("PATH", path);
+                    },
+                    None => unsafe {
+                        env::remove_var("PATH");
+                    },
+                }
+            }
+        }
+
+        let _guard = env_mutex_lock();
+        let temp_dir = TempDir::new().unwrap();
+        let bin_dir = temp_dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let original_path = env::var_os("PATH");
+        let new_path = match &original_path {
+            Some(path) => format!("{}:{}", bin_dir.display(), path.to_string_lossy()),
+            None => bin_dir.display().to_string(),
+        };
+        let _path_guard = EnvPathGuard {
+            original: original_path,
+        };
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        write_fake_command(
+            &bin_dir,
+            "systemctl",
+            "#!/bin/sh\n\
+if [ \"$1\" = \"--user\" ]; then\n\
+  shift\n\
+fi\n\
+if [ \"$1\" = \"is-active\" ] && [ \"$2\" = \"--quiet\" ] && [ \"$3\" = \"redis.service\" ]; then\n\
+  exit 0\n\
+fi\n\
+exit 1\n",
+        );
+
+        let contract_path = temp_dir.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  redis:
+    required: true
+    manager:
+      kind: host
+      host:
+        kind: systemd
+        unit: redis.service
+        scope: user
+    readiness:
+      kind: systemd_active
+      interval: 10ms
+      retries: 1
+tasks:
+  setup:
+    run: printf ready
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_service(&contract, synthetic_contract_path(), "redis");
+        assert!(report.ok, "{report:?}");
+        assert!(report.findings.is_empty(), "{report:?}");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
     fn diagnose_service_compose_manager_fails_fast_when_service_is_not_running() {
         struct EnvPathGuard {
             original: Option<std::ffi::OsString>,
@@ -20226,6 +20380,7 @@ tasks:
                 env_file: None,
                 profiles: Vec::new(),
                 service: Some(String::from("postgres")),
+                host: None,
                 start: None,
                 stop: None,
             }),
@@ -20253,6 +20408,7 @@ tasks:
                 env_file: None,
                 profiles: Vec::new(),
                 service: None,
+                host: None,
                 start: None,
                 stop: None,
             }),
