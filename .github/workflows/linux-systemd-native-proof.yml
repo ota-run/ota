@@ -151,7 +151,7 @@ jobs:
           doctor_raw_path="$proof_root/doctor.raw.txt"
           "$ota" doctor --json "$proof_root" >"$doctor_raw_path"
           cp "$doctor_raw_path" "$proof_root/doctor.json"
-          python - <<'PY' "$proof_root/doctor.json"
+          python3 - <<'PY' "$proof_root/doctor.json"
           import json
           import pathlib
           import sys
@@ -164,7 +164,7 @@ jobs:
           up_raw_path="$proof_root/up.raw.txt"
           "$ota" up --json "$proof_root" >"$up_raw_path"
           cp "$up_raw_path" "$proof_root/up.json"
-          python - <<'PY' "$proof_root/up.json"
+          python3 - <<'PY' "$proof_root/up.json"
           import json
           import pathlib
           import sys
@@ -178,7 +178,7 @@ jobs:
           proof_raw_path="$proof_root/proof.raw.txt"
           "$ota" proof runtime --json "$proof_root" >"$proof_raw_path"
           cp "$proof_raw_path" "$proof_root/proof.json"
-          python - <<'PY' "$proof_root/proof.json"
+          python3 - <<'PY' "$proof_root/proof.json"
           import json
           import pathlib
           import sys
