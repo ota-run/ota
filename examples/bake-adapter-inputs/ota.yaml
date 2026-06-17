@@ -87,13 +87,12 @@ workflows:
   release:
     intent: release
     description: Prepend workflow-owned Bake file truth into the selected task path instead of hard-coding shell `docker buildx bake -f` flags
-    env:
-      adapter_inputs:
-        bake:
-          cwd: docker
-          files:
-            - docker/docker-bake.hcl
-            - docker/docker-bake.platform.hcl
-            - docker/docker-bake.release.hcl
+    adapter_inputs:
+      bake:
+        cwd: docker
+        files:
+          - docker/docker-bake.hcl
+          - docker/docker-bake.platform.hcl
+          - docker/docker-bake.release.hcl
     run:
       task: bake:workflow

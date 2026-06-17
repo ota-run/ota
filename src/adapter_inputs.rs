@@ -23,6 +23,7 @@
 use crate::schema::{
     Backend, TaskAdapterInputsSpec, TaskBakeAdapterInputsSpec, TaskCommandSpec,
     TaskComposeAdapterInputsSpec, TaskLaunchSpec, TaskModeBranchSpec, TaskSpec, WorkflowEnvSpec,
+    WorkflowSpec,
 };
 use std::collections::BTreeMap;
 
@@ -247,7 +248,7 @@ impl AdapterInputField {
 
     pub(crate) fn workflow_location(self, workflow_name: &str) -> String {
         format!(
-            "workflows.{workflow_name}.env.adapter_inputs.{}.{}",
+            "workflows.{workflow_name}.adapter_inputs.{}.{}",
             self.family_name(),
             self.field_name()
         )
@@ -485,8 +486,12 @@ impl AdapterInputField {
     }
 }
 
-pub(crate) fn effective_workflow_adapter_inputs(env: &WorkflowEnvSpec) -> TaskAdapterInputsSpec {
-    let mut adapter_inputs = env.adapter_inputs.clone();
+pub(crate) fn effective_workflow_adapter_inputs(workflow: &WorkflowSpec) -> TaskAdapterInputsSpec {
+    let mut adapter_inputs = workflow.adapter_inputs.clone();
+    let Some(env) = workflow.env.as_ref() else {
+        return adapter_inputs;
+    };
+    merge_legacy_workflow_adapter_inputs(&mut adapter_inputs, &env.adapter_inputs);
     if !env.compose_files.is_empty() {
         let compose = adapter_inputs
             .compose
@@ -511,6 +516,43 @@ pub(crate) fn effective_workflow_adapter_inputs(env: &WorkflowEnvSpec) -> TaskAd
     adapter_inputs
 }
 
+fn merge_legacy_workflow_adapter_inputs(
+    target: &mut TaskAdapterInputsSpec,
+    legacy: &TaskAdapterInputsSpec,
+) {
+    if let Some(legacy_compose) = legacy.compose.as_ref() {
+        let compose = target
+            .compose
+            .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
+        if compose.cwd.is_none() {
+            compose.cwd = legacy_compose.cwd.clone();
+        }
+        if compose.env_files.is_empty() {
+            compose.env_files = legacy_compose.env_files.clone();
+        }
+        if compose.files.is_empty() {
+            compose.files = legacy_compose.files.clone();
+        }
+        if compose.profiles.is_empty() {
+            compose.profiles = legacy_compose.profiles.clone();
+        }
+        if compose.project_name.is_none() {
+            compose.project_name = legacy_compose.project_name.clone();
+        }
+    }
+    if let Some(legacy_bake) = legacy.bake.as_ref() {
+        let bake = target
+            .bake
+            .get_or_insert_with(TaskBakeAdapterInputsSpec::default);
+        if bake.cwd.is_none() {
+            bake.cwd = legacy_bake.cwd.clone();
+        }
+        if bake.files.is_empty() {
+            bake.files = legacy_bake.files.clone();
+        }
+    }
+}
+
 pub(crate) fn workflow_declares_compose_file_alias(env: &WorkflowEnvSpec) -> bool {
     !env.compose_files.is_empty()
 }
@@ -522,24 +564,42 @@ pub(crate) fn workflow_declares_compose_project_name_alias(env: &WorkflowEnvSpec
         .is_some_and(|value| !value.is_empty())
 }
 
-pub(crate) fn workflow_duplicates_canonical_compose_file_alias(env: &WorkflowEnvSpec) -> bool {
-    env.adapter_inputs
-        .compose
-        .as_ref()
-        .is_some_and(|compose| !compose.files.is_empty())
-        && workflow_declares_compose_file_alias(env)
+pub(crate) fn workflow_duplicates_canonical_compose_file_alias(workflow: &WorkflowSpec) -> bool {
+    workflow.env.as_ref().is_some_and(|env| {
+        workflow_declares_compose_file_alias(env)
+            && (workflow
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.files.is_empty())
+                || env
+                    .adapter_inputs
+                    .compose
+                    .as_ref()
+                    .is_some_and(|compose| !compose.files.is_empty()))
+    })
 }
 
 pub(crate) fn workflow_duplicates_canonical_compose_project_name_alias(
-    env: &WorkflowEnvSpec,
+    workflow: &WorkflowSpec,
 ) -> bool {
-    env.adapter_inputs
-        .compose
-        .as_ref()
-        .and_then(|compose| compose.project_name.as_deref())
-        .map(str::trim)
-        .is_some_and(|value| !value.is_empty())
-        && workflow_declares_compose_project_name_alias(env)
+    workflow.env.as_ref().is_some_and(|env| {
+        workflow_declares_compose_project_name_alias(env)
+            && (workflow
+                .adapter_inputs
+                .compose
+                .as_ref()
+                .and_then(|compose| compose.project_name.as_deref())
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+                || env
+                    .adapter_inputs
+                    .compose
+                    .as_ref()
+                    .and_then(|compose| compose.project_name.as_deref())
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty()))
+    })
 }
 
 impl AdapterInputFamily {
@@ -564,22 +624,37 @@ impl AdapterInputFamily {
         }
     }
 
-    pub(crate) fn workflow_requires_support(self, env: &WorkflowEnvSpec) -> bool {
+    pub(crate) fn workflow_requires_support(self, workflow: &WorkflowSpec) -> bool {
         match self {
             Self::Compose => {
-                workflow_declares_compose_file_alias(env)
-                    || workflow_declares_compose_project_name_alias(env)
-                    || env
-                        .adapter_inputs
-                        .compose
-                        .as_ref()
-                        .is_some_and(|compose| !compose.is_empty())
+                workflow
+                    .adapter_inputs
+                    .compose
+                    .as_ref()
+                    .is_some_and(|compose| !compose.is_empty())
+                    || workflow.env.as_ref().is_some_and(|env| {
+                        workflow_declares_compose_file_alias(env)
+                            || workflow_declares_compose_project_name_alias(env)
+                            || env
+                                .adapter_inputs
+                                .compose
+                                .as_ref()
+                                .is_some_and(|compose| !compose.is_empty())
+                    })
             }
-            Self::Bake => env
-                .adapter_inputs
-                .bake
-                .as_ref()
-                .is_some_and(|bake| !bake.is_empty()),
+            Self::Bake => {
+                workflow
+                    .adapter_inputs
+                    .bake
+                    .as_ref()
+                    .is_some_and(|bake| !bake.is_empty())
+                    || workflow.env.as_ref().is_some_and(|env| {
+                        env.adapter_inputs
+                            .bake
+                            .as_ref()
+                            .is_some_and(|bake| !bake.is_empty())
+                    })
+            }
         }
     }
 

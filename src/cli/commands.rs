@@ -54440,17 +54440,16 @@ project:
 workflows:
   default: app
   app:
-    env:
-      adapter_inputs:
-        compose:
-          cwd: docker
-          env_files:
-            - .env.compose
-          files:
-            - compose.base.yaml
-          profiles:
-            - base
-          project_name: workflow-app
+    adapter_inputs:
+      compose:
+        cwd: docker
+        env_files:
+          - .env.compose
+        files:
+          - compose.base.yaml
+        profiles:
+          - base
+        project_name: workflow-app
     run:
       task: dev
 tasks:
@@ -54487,13 +54486,12 @@ project:
 workflows:
   default: app
   app:
-    env:
-      adapter_inputs:
-        compose:
-          env_files:
-            - .env.compose
-          files:
-            - compose.base.yaml
+    adapter_inputs:
+      compose:
+        env_files:
+          - .env.compose
+        files:
+          - compose.base.yaml
     run:
       task: dev
 tasks:
@@ -54530,12 +54528,11 @@ project:
 workflows:
   default: image
   image:
-    env:
-      adapter_inputs:
-        bake:
-          cwd: docker
-          files:
-            - docker-bake.hcl
+    adapter_inputs:
+      bake:
+        cwd: docker
+        files:
+          - docker-bake.hcl
     run:
       task: image:build
 tasks:
@@ -54579,11 +54576,10 @@ project:
 workflows:
   default: image
   image:
-    env:
-      adapter_inputs:
-        bake:
-          files:
-            - docker-bake.hcl
+    adapter_inputs:
+      bake:
+        files:
+          - docker-bake.hcl
     run:
       task: image:build
 tasks:
@@ -54622,14 +54618,13 @@ project:
 workflows:
   default: verify
   verify:
-    env:
-      adapter_inputs:
-        compose:
-          profiles:
-            - web
-        bake:
-          files:
-            - docker-bake.hcl
+    adapter_inputs:
+      compose:
+        profiles:
+          - web
+      bake:
+        files:
+          - docker-bake.hcl
     run:
       task: verify
 tasks:
@@ -54702,14 +54697,13 @@ workflows:
   devenv:
     prepare:
       task: infra:up
-    env:
-      adapter_inputs:
-        compose:
-          env_files:
-            - docker/devenv/defaults.env
-          files:
-            - docker/devenv/docker-compose.main.yml
-          project_name: penpotdev-ws0
+    adapter_inputs:
+      compose:
+        env_files:
+          - docker/devenv/defaults.env
+        files:
+          - docker/devenv/docker-compose.main.yml
+        project_name: penpotdev-ws0
     run:
       task: devenv:up
 "#,
@@ -86511,9 +86505,12 @@ fn contract_adjusted_for_selected_workflow_env_profile(
     contract: &Contract,
     workflow_name: Option<&str>,
 ) -> Option<Contract> {
-    contract
+    let has_workflow_env_or_adapter_inputs = contract
         .selected_workflow(workflow_name)
-        .and_then(|(_, workflow)| workflow.env.as_ref())?;
+        .is_some_and(|(_, workflow)| workflow.env.is_some() || !workflow.adapter_inputs.is_empty());
+    if !has_workflow_env_or_adapter_inputs {
+        return None;
+    }
     let profile = contract
         .selected_workflow_env_profile(workflow_name)
         .cloned()
@@ -86635,12 +86632,11 @@ fn materialize_selected_workflow_env_profile_for_task(
     task_name: &str,
 ) -> Result<(), String> {
     let task_name = canonical_declared_task_name(&target.contract, task_name);
-    let has_workflow_env = target
+    let has_workflow_env_or_adapter_inputs = target
         .contract
         .selected_workflow(workflow_name)
-        .and_then(|(_, workflow)| workflow.env.as_ref())
-        .is_some();
-    if !has_workflow_env
+        .is_some_and(|(_, workflow)| workflow.env.is_some() || !workflow.adapter_inputs.is_empty());
+    if !has_workflow_env_or_adapter_inputs
         || !workflow_env_profile_applies_to_task(
             &target.contract,
             workflow_name,

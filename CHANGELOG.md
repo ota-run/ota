@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- generalized workflow-owned adapter overlays onto a workflow-level canonical surface:
+  `workflows.<name>.adapter_inputs.*` now owns cross-adapter Compose/Bake overlay truth, while
+  `workflows.<name>.env.adapter_inputs.*` stays accepted only as a compatibility lane and legacy
+  `env.compose_files` / `compose_project_name` aliases now resolve toward the workflow-level
+  surface
 - `ota detect` write modes now publish first-class field-admission rationale alongside detect
   ownership metadata: written contracts and JSON output record
   `metadata.ota.detect.field_admission` as `direct` for high-confidence detector-owned fields and

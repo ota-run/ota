@@ -2923,24 +2923,24 @@ Fields:
 - `<name>.intent`: optional workflow classification such as `local_development`
 - `<name>.description`: optional operator-facing summary
 - `<name>.notes`: optional multiline notes shown during `ota workflows` and `ota tasks --workflow` summaries
+- `<name>.adapter_inputs.compose.cwd`: optional repo-relative adapter working directory the
+  workflow should project into selected compose task paths when that path does not already declare one
+- `<name>.adapter_inputs.compose.env_files`: optional ordered repo-relative adapter-owned
+  compose interpolation files the workflow should project into selected compose task paths
+- `<name>.adapter_inputs.compose.files`: optional ordered repo-relative adapter-owned compose
+  file overlays the workflow should project into selected compose task paths
+- `<name>.adapter_inputs.compose.profiles`: optional ordered adapter-owned compose profile list
+  the workflow should project into selected compose task paths
+- `<name>.adapter_inputs.compose.project_name`: optional adapter-owned compose project name the
+  workflow should project into selected compose task paths when that path does not already declare
+  one
+- `<name>.adapter_inputs.bake.cwd`: optional repo-relative adapter working directory the
+  workflow should project into selected `docker buildx bake` task paths when that path does not already declare one
+- `<name>.adapter_inputs.bake.files`: optional ordered repo-relative adapter-owned Bake file
+  overlays the workflow should project into selected `docker buildx bake` task paths
 - `<name>.env.profile`: optional env profile name from `env.profiles`
 - `<name>.env.compose_env_file_services`: optional compose-managed services that should consume the
   selected workflow profile's rendered dotenv artifact as `services.<service>.manager.env_file`
-- `<name>.env.adapter_inputs.compose.cwd`: optional repo-relative adapter working directory the
-  workflow should project into selected compose task paths when that path does not already declare one
-- `<name>.env.adapter_inputs.compose.env_files`: optional ordered repo-relative adapter-owned
-  compose interpolation files the workflow should project into selected compose task paths
-- `<name>.env.adapter_inputs.compose.files`: optional ordered repo-relative adapter-owned compose
-  file overlays the workflow should project into selected compose task paths
-- `<name>.env.adapter_inputs.compose.profiles`: optional ordered adapter-owned compose profile list
-  the workflow should project into selected compose task paths
-- `<name>.env.adapter_inputs.compose.project_name`: optional adapter-owned compose project name the
-  workflow should project into selected compose task paths when that path does not already declare
-  one
-- `<name>.env.adapter_inputs.bake.cwd`: optional repo-relative adapter working directory the
-  workflow should project into selected `docker buildx bake` task paths when that path does not already declare one
-- `<name>.env.adapter_inputs.bake.files`: optional ordered repo-relative adapter-owned Bake file
-  overlays the workflow should project into selected `docker buildx bake` task paths
 - `<name>.prepare.task`: optional native finite task ota should run first as explicit host preparation for that workflow
   - must reference a declared task with one finite body: `run`, `script`, `command`, `prepare`, or `action`
   - must not reference a `launch` task or a task with `runtime`
@@ -2975,52 +2975,52 @@ Workflow env adapter rules:
 
 - use `<name>.env.compose_env_file_services` when the workflow owns one rendered dotenv artifact
   and named compose services should consume that exact file
-- use `<name>.env.adapter_inputs.compose.*` when one workflow owns adapter-scoped compose input
+- use `<name>.adapter_inputs.compose.*` when one workflow owns adapter-scoped compose input
   truth for the selected runnable path and task-local compose adapter inputs should only carry
   narrower path-specific additions
-- use `<name>.env.adapter_inputs.bake.*` when one workflow owns the base Bake adapter root or file stack for
+- use `<name>.adapter_inputs.bake.*` when one workflow owns the base Bake adapter root or file stack for
   selected `docker buildx bake` task paths and task-local adapter inputs should only carry narrower
   additions
-- this keeps compose adapter input ownership on the workflow env surface instead of duplicating
+- this keeps compose adapter input ownership on the workflow surface instead of duplicating
   the same `manager.env_file` path across services
 - when the selected workflow run path includes a compose-running task, ota also projects that
   rendered dotenv artifact into `tasks.<name>.adapter_inputs.compose.env_files` instead of
   misrouting it through process `env_files`
-- ota applies `<name>.env.adapter_inputs.compose.cwd` only when the selected compose task path
+- ota applies `<name>.adapter_inputs.compose.cwd` only when the selected compose task path
   does not already declare one; this lets one workflow own `docker/` or similar adapter roots
   without forcing shell `cd ... && docker compose ...` glue back into task bodies
-- ota prepends `<name>.env.adapter_inputs.compose.files` ahead of task-local
+- ota prepends `<name>.adapter_inputs.compose.files` ahead of task-local
   `adapter_inputs.compose.files`, preserving declared task additions without letting workflow-owned
   base compose files drift back into shell `docker compose -f` flags
-- ota prepends `<name>.env.adapter_inputs.compose.profiles` ahead of task-local
+- ota prepends `<name>.adapter_inputs.compose.profiles` ahead of task-local
   `adapter_inputs.compose.profiles`, preserving narrower task additions without forcing workflow
   profile truth back into shell `docker compose --profile ...` flags
-- ota applies `<name>.env.adapter_inputs.compose.project_name` only when the selected task path
+- ota applies `<name>.adapter_inputs.compose.project_name` only when the selected task path
   does not already declare one; validate/doctor warn if task-local compose project naming
   duplicates workflow truth
-- ota applies `<name>.env.adapter_inputs.bake.cwd` only when the selected Bake task path does not
+- ota applies `<name>.adapter_inputs.bake.cwd` only when the selected Bake task path does not
   already declare one; this lets one workflow own a subdirectory-rooted Bake lane without forcing
   shell `cd ... && docker buildx bake ...` glue back into task bodies
-- ota prepends `<name>.env.adapter_inputs.bake.files` ahead of task-local
+- ota prepends `<name>.adapter_inputs.bake.files` ahead of task-local
   `adapter_inputs.bake.files`, preserving narrower Bake file additions without forcing workflow
   truth back into shell `docker buildx bake -f` flags
 - every referenced service must declare `manager.kind: compose`
 - the selected profile must declare `render.dotenv`
 - if a referenced service also declares `manager.env_file`, it must match the workflow-owned
   rendered dotenv path exactly
-- `<name>.env.adapter_inputs.compose.env_files` / `.files` must stay repo-relative and must not
+- `<name>.adapter_inputs.compose.env_files` / `.files` must stay repo-relative and must not
   escape the repo
-- `<name>.env.adapter_inputs.compose.profiles[*]` must not be empty
-- `<name>.env.adapter_inputs.bake.files` must stay repo-relative and must not escape the repo
-- `<name>.env.adapter_inputs` requires the selected workflow run path to include task paths
+- `<name>.adapter_inputs.compose.profiles[*]` must not be empty
+- `<name>.adapter_inputs.bake.files` must stay repo-relative and must not escape the repo
+- `<name>.adapter_inputs` requires the selected workflow run path to include task paths
   that support each declared adapter input family
 
 Compatibility:
 
+- `<name>.env.adapter_inputs.*` remains accepted as a compatibility lane for older contracts
 - `<name>.env.compose_files` and `<name>.env.compose_project_name` remain accepted as compatibility
   aliases for existing contracts
-- new and updated contracts should use only `<name>.env.adapter_inputs.compose.files` and
-  `.project_name`
+- new and updated contracts should use `<name>.adapter_inputs.*` for workflow-owned adapter truth
 - do not declare the compatibility aliases together with the canonical
   `adapter_inputs.compose.files` / `.project_name` fields
 

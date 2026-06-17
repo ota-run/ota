@@ -7295,11 +7295,11 @@ impl ContractAdvisory {
                 advisory.task_name, advisory.command
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "task `{}` hard-codes compose adapter flags or adapter-root shell glue inside its task body (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under `adapter_inputs.compose.*` or `services.<name>.manager.env_file`",
+                "task `{}` hard-codes compose adapter flags or adapter-root shell glue inside its task body (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under task or workflow `adapter_inputs.compose.*` or `services.<name>.manager.env_file`",
                 advisory.task_name, advisory.command
             ),
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
-                "task `{}` hard-codes Bake file selection or adapter-root shell glue inside its task body (`{}`), which hides `docker buildx bake` adapter input ownership from Ota instead of declaring it under `adapter_inputs.bake.*`",
+                "task `{}` hard-codes Bake file selection or adapter-root shell glue inside its task body (`{}`), which hides `docker buildx bake` adapter input ownership from Ota instead of declaring it under task or workflow `adapter_inputs.bake.*`",
                 advisory.task_name, advisory.command
             ),
             ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory) => format!(
@@ -7539,11 +7539,11 @@ impl ContractAdvisory {
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableComposeEnvFileOwnership(advisory) => format!(
-                "move compose adapter input ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.compose.*` when the task owns compose cwd, interpolation, compose file selection, compose profiles, or project naming, or `services.<name>.manager.env_file` / `.profiles` when one managed compose service owns those inputs",
+                "move compose adapter input ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.compose.*` when the task owns compose cwd, interpolation, compose file selection, compose profiles, or project naming, `workflows.<name>.adapter_inputs.compose.*` when one selected workflow owns the shared adapter overlay, or `services.<name>.manager.env_file` / `.profiles` when one managed compose service owns those inputs",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableBakeFileOwnership(advisory) => format!(
-                "move Bake adapter ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.bake.*` when the task owns `docker buildx bake` cwd or file selection truth",
+                "move Bake adapter ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.bake.*` when the task owns `docker buildx bake` cwd or file selection truth, or `workflows.<name>.adapter_inputs.bake.*` when one selected workflow owns the shared adapter overlay",
                 advisory.task_name
             ),
             ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory) => format!(
@@ -11689,7 +11689,9 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 )));
             }
         }
-        if let Some(env) = workflow.env.as_ref() {
+        if workflow.env.is_some() || !workflow.adapter_inputs.is_empty() {
+            let empty_env = crate::schema::WorkflowEnvSpec::default();
+            let env = workflow.env.as_ref().unwrap_or(&empty_env);
             let selected_workflow_tasks = contract
                 .selected_workflow_run_task_closure_names(Some(name.as_str()))
                 .iter()
@@ -11697,7 +11699,7 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 .collect::<Vec<_>>();
             let selected_workflow_supports_adapter_inputs =
                 ADAPTER_INPUT_FAMILIES.iter().copied().all(|family| {
-                    !family.workflow_requires_support(env)
+                    !family.workflow_requires_support(workflow)
                         || selected_workflow_tasks
                             .iter()
                             .copied()
@@ -11705,18 +11707,24 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 });
             validate_workflow_adapter_inputs(
                 name,
+                &format!("workflows.{name}.adapter_inputs"),
+                &workflow.adapter_inputs,
+                errors,
+            );
+            validate_workflow_adapter_inputs(
+                name,
                 &format!("workflows.{name}.env.adapter_inputs"),
                 &env.adapter_inputs,
                 errors,
             );
-            if workflow_duplicates_canonical_compose_file_alias(env) {
+            if workflow_duplicates_canonical_compose_file_alias(workflow) {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.compose_files` duplicates `workflows.{name}.env.adapter_inputs.compose.files`; keep workflow-owned compose file overlays on the canonical `adapter_inputs` surface"
+                    "`workflows.{name}.env.compose_files` duplicates canonical workflow adapter ownership; keep workflow-owned compose file overlays on `workflows.{name}.adapter_inputs.compose.files`"
                 )));
             }
-            if workflow_duplicates_canonical_compose_project_name_alias(env) {
+            if workflow_duplicates_canonical_compose_project_name_alias(workflow) {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.compose_project_name` duplicates `workflows.{name}.env.adapter_inputs.compose.project_name`; keep workflow-owned compose project naming on the canonical `adapter_inputs` surface"
+                    "`workflows.{name}.env.compose_project_name` duplicates canonical workflow adapter ownership; keep workflow-owned compose project naming on `workflows.{name}.adapter_inputs.compose.project_name`"
                 )));
             }
             for (index, path) in env.compose_files.iter().enumerate() {
@@ -11736,9 +11744,11 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     "`workflows.{name}.env.compose_project_name` must not be empty"
                 )));
             }
-            if !env.adapter_inputs.is_empty() && !selected_workflow_supports_adapter_inputs {
+            if (!workflow.adapter_inputs.is_empty() || !env.adapter_inputs.is_empty())
+                && !selected_workflow_supports_adapter_inputs
+            {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.adapter_inputs` requires the selected workflow run path to include task paths that support each declared adapter input family"
+                    "`workflows.{name}.adapter_inputs` requires the selected workflow run path to include task paths that support each declared adapter input family"
                 )));
             }
             if (workflow_declares_compose_file_alias(env)
@@ -11746,9 +11756,11 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 && !selected_workflow_supports_adapter_inputs
             {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.{name}.env.adapter_inputs.compose.*` and ensure the selected workflow run path includes at least one compose-running task path or declared compose adapter input"
+                    "`workflows.{name}.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.{name}.adapter_inputs.compose.*` and ensure the selected workflow run path includes at least one compose-running task path or declared compose adapter input"
                 )));
             }
+            let effective_workflow_adapter_inputs =
+                crate::adapter_inputs::effective_workflow_adapter_inputs(workflow);
             if let Some(profile_name) = env
                 .profile
                 .as_deref()
@@ -11761,15 +11773,18 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     .and_then(|profile| profile.render.as_ref())
                     .and_then(|render| render.dotenv.as_ref())
                     .map(|dotenv| dotenv.path.trim())
-                && env.adapter_inputs.compose.as_ref().is_some_and(|compose| {
-                    compose
-                        .env_files
-                        .iter()
-                        .any(|path| path.trim() == rendered_path)
-                })
+                && effective_workflow_adapter_inputs
+                    .compose
+                    .as_ref()
+                    .is_some_and(|compose| {
+                        compose
+                            .env_files
+                            .iter()
+                            .any(|path| path.trim() == rendered_path)
+                    })
             {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.adapter_inputs.compose.env_files` must not repeat rendered workflow env artifact `{rendered_path}`; ota already projects `env.profiles.{profile_name}.render.dotenv.path` into selected compose task paths"
+                    "`workflows.{name}.adapter_inputs.compose.env_files` must not repeat rendered workflow env artifact `{rendered_path}`; ota already projects `env.profiles.{profile_name}.render.dotenv.path` into selected compose task paths"
                 )));
             }
         }
@@ -13638,16 +13653,15 @@ tasks:
 workflows:
   default: app
   app:
-    env:
-      adapter_inputs:
-        compose:
-          env_files:
-            - .env.compose
-          files:
-            - compose.base.yaml
-          profiles:
-            - web
-          project_name: app-local
+    adapter_inputs:
+      compose:
+        env_files:
+          - .env.compose
+        files:
+          - compose.base.yaml
+        profiles:
+          - web
+        project_name: app-local
     run:
       task: dev
 "#,
@@ -13676,11 +13690,10 @@ tasks:
 workflows:
   default: app
   app:
-    env:
-      adapter_inputs:
-        compose:
-          env_files:
-            - .env.compose
+    adapter_inputs:
+      compose:
+        env_files:
+          - .env.compose
     run:
       task: dev
 "#,
@@ -13705,11 +13718,10 @@ tasks:
 workflows:
   default: app
   app:
-    env:
-      adapter_inputs:
-        compose:
-          profiles:
-            - "   "
+    adapter_inputs:
+      compose:
+        profiles:
+          - "   "
     run:
       task: dev
 "#,
@@ -13720,9 +13732,7 @@ workflows:
             .expect_err("invalid workflow compose profiles should fail validation")
             .to_string();
         assert!(
-            error.contains(
-                "`workflows.app.env.adapter_inputs.compose.profiles[0]` must not be empty"
-            )
+            error.contains("`workflows.app.adapter_inputs.compose.profiles[0]` must not be empty")
         );
     }
 
@@ -13740,11 +13750,10 @@ tasks:
 workflows:
   default: image
   image:
-    env:
-      adapter_inputs:
-        bake:
-          files:
-            - docker-bake.hcl
+    adapter_inputs:
+      bake:
+        files:
+          - docker-bake.hcl
     run:
       task: image:build
 "#,
@@ -13776,14 +13785,13 @@ tasks:
 workflows:
   default: app
   app:
-    env:
-      adapter_inputs:
-        compose:
-          profiles:
-            - web
-        bake:
-          files:
-            - docker-bake.hcl
+    adapter_inputs:
+      compose:
+        profiles:
+          - web
+      bake:
+        files:
+          - docker-bake.hcl
     run:
       task: verify
 "#,
@@ -13807,11 +13815,10 @@ tasks:
 workflows:
   default: app
   app:
-    env:
-      adapter_inputs:
-        bake:
-          files:
-            - docker-bake.hcl
+    adapter_inputs:
+      bake:
+        files:
+          - docker-bake.hcl
     run:
       task: dev
 "#,
@@ -13822,7 +13829,7 @@ workflows:
             .expect_err("missing bake support should fail validation")
             .to_string();
         assert!(error.contains(
-            "`workflows.app.env.adapter_inputs` requires the selected workflow run path to include task paths that support each declared adapter input family"
+            "`workflows.app.adapter_inputs` requires the selected workflow run path to include task paths that support each declared adapter input family"
         ));
     }
 
@@ -13858,7 +13865,7 @@ workflows:
         ));
         assert!(error.contains("`workflows.app.env.compose_project_name` must not be empty"));
         assert!(error.contains(
-            "`workflows.app.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.app.env.adapter_inputs.compose.*` and ensure the selected workflow task closure includes at least one compose-running task path or declared compose adapter input"
+            "`workflows.app.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.app.adapter_inputs.compose.*` and ensure the selected workflow task closure includes at least one compose-running task path or declared compose adapter input"
         ));
     }
 
@@ -13876,12 +13883,12 @@ tasks:
 workflows:
   default: app
   app:
+    adapter_inputs:
+      compose:
+        files:
+          - compose.base.yaml
+        project_name: canonical-app
     env:
-      adapter_inputs:
-        compose:
-          files:
-            - compose.base.yaml
-          project_name: canonical-app
       compose_files:
         - compose.legacy.yaml
       compose_project_name: legacy-app
@@ -13895,10 +13902,10 @@ workflows:
             .expect_err("duplicate canonical and legacy workflow compose overlays should fail")
             .to_string();
         assert!(error.contains(
-            "`workflows.app.env.compose_files` duplicates `workflows.app.env.adapter_inputs.compose.files`; keep workflow-owned compose file overlays on the canonical `adapter_inputs` surface"
+            "`workflows.app.env.compose_files` duplicates canonical workflow adapter ownership; keep workflow-owned compose file overlays on `workflows.app.adapter_inputs.compose.files`"
         ));
         assert!(error.contains(
-            "`workflows.app.env.compose_project_name` duplicates `workflows.app.env.adapter_inputs.compose.project_name`; keep workflow-owned compose project naming on the canonical `adapter_inputs` surface"
+            "`workflows.app.env.compose_project_name` duplicates canonical workflow adapter ownership; keep workflow-owned compose project naming on `workflows.app.adapter_inputs.compose.project_name`"
         ));
     }
 
@@ -29914,8 +29921,9 @@ tasks:
 workflows:
   default: compose
   compose:
-    env:
-      compose_project_name: workflow-local
+    adapter_inputs:
+      compose:
+        project_name: workflow-local
     run:
       task: build
 "#,
@@ -29931,7 +29939,7 @@ workflows:
                     && value.adapter_family == "compose"
                     && value.field_name == "project_name"
                     && value.field_value == "workflow-local"
-                    && value.workflow_location == "workflows.compose.env.adapter_inputs.compose.project_name"
+                    && value.workflow_location == "workflows.compose.adapter_inputs.compose.project_name"
         )));
     }
 
@@ -29967,23 +29975,21 @@ tasks:
 workflows:
   default: compose
   compose:
-    env:
-      adapter_inputs:
-        compose:
-          env_files:
-            - .env.dev
-          files:
-            - compose.dev.yaml
-          profiles:
-            - api
+    adapter_inputs:
+      compose:
+        env_files:
+          - .env.dev
+        files:
+          - compose.dev.yaml
+        profiles:
+          - api
     run:
       task: compose:dev
   image:
-    env:
-      adapter_inputs:
-        bake:
-          files:
-            - docker-bake.hcl
+    adapter_inputs:
+      bake:
+        files:
+          - docker-bake.hcl
     run:
       task: image:build
 "#,
@@ -29999,7 +30005,7 @@ workflows:
                     && value.adapter_family == "compose"
                     && value.field_name == "env_files"
                     && value.field_value == ".env.dev"
-                    && value.workflow_location == "workflows.compose.env.adapter_inputs.compose.env_files"
+                    && value.workflow_location == "workflows.compose.adapter_inputs.compose.env_files"
         )));
         assert!(advisories.iter().any(|advisory| matches!(
             advisory,
@@ -30009,7 +30015,7 @@ workflows:
                     && value.adapter_family == "compose"
                     && value.field_name == "files"
                     && value.field_value == "compose.dev.yaml"
-                    && value.workflow_location == "workflows.compose.env.adapter_inputs.compose.files"
+                    && value.workflow_location == "workflows.compose.adapter_inputs.compose.files"
         )));
         assert!(advisories.iter().any(|advisory| matches!(
             advisory,
@@ -30019,7 +30025,7 @@ workflows:
                     && value.adapter_family == "compose"
                     && value.field_name == "profiles"
                     && value.field_value == "api"
-                    && value.workflow_location == "workflows.compose.env.adapter_inputs.compose.profiles"
+                    && value.workflow_location == "workflows.compose.adapter_inputs.compose.profiles"
         )));
         assert!(advisories.iter().any(|advisory| matches!(
             advisory,
@@ -30029,7 +30035,7 @@ workflows:
                     && value.adapter_family == "bake"
                     && value.field_name == "files"
                     && value.field_value == "docker-bake.hcl"
-                    && value.workflow_location == "workflows.image.env.adapter_inputs.bake.files"
+                    && value.workflow_location == "workflows.image.adapter_inputs.bake.files"
                     && value.location == "tasks.image:build.execution.modes.container.adapter_inputs.bake.files"
         )));
     }

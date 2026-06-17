@@ -1805,7 +1805,9 @@ fn full_contract_schema_is_published_and_covered_by_schema_publication() {
         schema.get("$schema").and_then(|value| value.as_str()),
         Some("https://json-schema.org/draft/2020-12/schema")
     );
+    let workflow = &schema["$defs"]["workflowSpec"]["properties"];
     let workflow_env = &schema["$defs"]["workflowEnv"]["properties"];
+    assert!(workflow.get("adapter_inputs").is_some());
     assert!(workflow_env.get("compose_env_file_services").is_some());
     assert!(workflow_env.get("adapter_inputs").is_some());
     assert!(workflow_env.get("compose_files").is_some());

@@ -486,8 +486,7 @@ impl Contract {
         workflow_name: Option<&str>,
     ) -> TaskAdapterInputsSpec {
         self.selected_workflow(workflow_name)
-            .and_then(|(_, workflow)| workflow.env.as_ref())
-            .map(crate::adapter_inputs::effective_workflow_adapter_inputs)
+            .map(|(_, workflow)| crate::adapter_inputs::effective_workflow_adapter_inputs(workflow))
             .unwrap_or_default()
     }
 
@@ -545,6 +544,8 @@ pub struct WorkflowSpec {
     pub description: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "TaskAdapterInputsSpec::is_empty")]
+    pub adapter_inputs: TaskAdapterInputsSpec,
     #[serde(default)]
     pub env: Option<WorkflowEnvSpec>,
     #[serde(default)]

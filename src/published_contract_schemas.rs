@@ -758,6 +758,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "intent": { "type": "string" },
         "description": { "type": "string" },
         "notes": { "type": "string" },
+        "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
         "env": { "$ref": "#/$defs/workflowEnv" },
         "prepare": { "$ref": "#/$defs/workflowTaskRef" },
         "setup": { "$ref": "#/$defs/workflowTaskRef" },

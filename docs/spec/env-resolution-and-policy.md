@@ -245,15 +245,15 @@ and the selected task path is a compose-running task, ota projects that artifact
 file is a process env overlay.
 
 When the workflow also owns adapter-scoped compose overlays, declare them under
-`workflows.<name>.env.adapter_inputs.compose.*`. Ota projects those into compose-running task
+`workflows.<name>.adapter_inputs.compose.*`. Ota projects those into compose-running task
 paths as adapter input truth, not process env: workflow compose files prepend the selected path's
 `adapter_inputs.compose.files`, and workflow compose project name fills the selected path only
 when task-local compose project naming is absent. `workflows.<name>.env.compose_files` and
 `.compose_project_name` remain accepted as compatibility aliases, but canonical authoring should
-use `env.adapter_inputs.compose.*`.
+use `adapter_inputs.compose.*`.
 
 When one task or workflow owns `docker buildx bake` file selection, keep that under
-`tasks.<name>.adapter_inputs.bake.files` or `workflows.<name>.env.adapter_inputs.bake.files`.
+`tasks.<name>.adapter_inputs.bake.files` or `workflows.<name>.adapter_inputs.bake.files`.
 Ota projects those through `BUILDX_BAKE_FILE`, prepends workflow-owned Bake files ahead of
 task-local additions, and keeps Bake file truth out of shell `docker buildx bake -f` flags.
 
