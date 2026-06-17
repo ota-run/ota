@@ -136,10 +136,9 @@ jobs:
           tasks:
             verify:
               command:
-                exe: /bin/sh
+                exe: systemctl
                 args:
-                  - -lc
-                  - ":"
+                  - --version
               requires_services:
                 - fixture
           workflows:
