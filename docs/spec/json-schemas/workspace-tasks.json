@@ -112,14 +112,16 @@
       "additionalProperties": false,
       "required": ["kind"],
       "properties": {
-        "kind": { "enum": ["sequence", "dependency_hydration"] },
+        "kind": { "enum": ["sequence", "dependency_hydration", "tool_bootstrap"] },
         "steps": {
           "type": "array",
           "items": { "$ref": "#/$defs/taskPrepare" }
         },
+        "tool": { "enum": ["uv"] },
         "medium": { "enum": ["container_images", "package_dependencies"] },
         "source_kind": {
           "enum": [
+            "pip",
             "docker_compose",
             "node_package_manager",
             "bundler",
@@ -131,7 +133,7 @@
         "cwd": { "type": "string" },
         "file": { "type": "string" },
         "manager": { "enum": ["npm", "pnpm", "yarn", "bundle", "uv", "poetry"] },
-        "mode": { "enum": ["install", "ci", "sync", "download"] },
+        "mode": { "enum": ["install", "ci", "sync", "download", "uv"] },
         "group_mode": { "enum": ["with", "only"] },
         "groups": {
           "type": "array",
@@ -166,7 +168,7 @@
         },
         "network": { "type": "boolean" },
         "network_kind": {
-          "enum": ["broad", "dependency_hydration"]
+          "enum": ["broad", "dependency_hydration", "tool_bootstrap"]
         },
         "external_state": {
           "type": "array",
@@ -223,7 +225,7 @@
               "required": ["name", "kind", "depends_on"],
               "properties": {
                 "name": { "type": "string" },
-                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_container_network", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
+                "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_container_network", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
                 "description": { "type": "string" },
                 "run": { "type": "string" },
                 "script": { "type": "string" },

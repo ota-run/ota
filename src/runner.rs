@@ -8271,6 +8271,13 @@ fn prepare_task_shell_command(
             .map(|step| prepare_task_shell_command(_task_name, step, backend))
             .collect::<Result<Vec<_>, _>>()?
             .join(" && ")),
+        crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => match &spec.source {
+            crate::schema::TaskToolBootstrapSourceSpec::Pip(source) => Ok(format!(
+                "{} -m pip install --disable-pip-version-check -q {}",
+                shell_quote_command_word(source.exe.trim(), quote_style),
+                shell_quote_command_word(spec.tool.label(), quote_style)
+            )),
+        },
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => match &spec.source {
             crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
                 let cwd = source.cwd.trim();
@@ -52762,6 +52769,72 @@ tasks:
     }
 
     #[test]
+    fn tool_bootstrap_prepare_executes_pip_uv_install() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:tooling:
+    prepare:
+      kind: tool_bootstrap
+      tool: uv
+      source:
+        kind: pip
+        exe: python
+    requirements:
+      toolchains:
+        - python
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let python_body = if cfg!(windows) {
+            "@echo off\r\n>> \"%OTA_PYTHON_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_PYTHON_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "python", python_body);
+        let log_path = fixture.dir.path().join("python.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_PYTHON_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_PYTHON_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup:tooling")
+            .expect("tool bootstrap prepare should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_PYTHON_LOG", value) },
+            None => unsafe { env::remove_var("OTA_PYTHON_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(
+            logged.contains("-m pip install --disable-pip-version-check -q uv"),
+            "{logged}"
+        );
+    }
+
+    #[test]
     fn prepare_sequence_executes_structural_steps_in_declared_order() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -52912,6 +52985,32 @@ tasks:
         assert_eq!(
             command,
             r#"cd "docker dir" && docker compose -f "docker compose.dev.yml" pull "redis cache" database"#
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tool_bootstrap_prepare_uses_windows_cmd_quoting_on_native_backend() {
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+        let prepare = crate::schema::TaskPrepareSpec::ToolBootstrap(
+            crate::schema::TaskToolBootstrapPrepareSpec {
+                tool: crate::schema::TaskBootstrapToolKind::Uv,
+                source: crate::schema::TaskToolBootstrapSourceSpec::Pip(
+                    crate::schema::TaskPipToolBootstrapSourceSpec {
+                        exe: String::from("python.exe"),
+                    },
+                ),
+            },
+        );
+
+        let command =
+            super::prepare_task_shell_command("setup:tooling", &prepare, &backend).unwrap();
+
+        assert_eq!(
+            command,
+            r#"python.exe -m pip install --disable-pip-version-check -q uv"#
         );
     }
 

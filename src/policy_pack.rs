@@ -1968,6 +1968,20 @@ fn resolve_network_effect_governance_decision(
             }
         }
         (
+            EffectGovernanceScope::SafeTask,
+            crate::schema::TaskNetworkEffectKind::ToolBootstrap,
+        ) => {
+            if let Some(decision) = safe.network {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.network"),
+                );
+            }
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
+        (
             EffectGovernanceScope::Task,
             crate::schema::TaskNetworkEffectKind::DependencyHydration,
         ) => {
@@ -1982,6 +1996,11 @@ fn resolve_network_effect_governance_decision(
             }
         }
         (EffectGovernanceScope::Task, crate::schema::TaskNetworkEffectKind::Broad) => {
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
+        (EffectGovernanceScope::Task, crate::schema::TaskNetworkEffectKind::ToolBootstrap) => {
             if let Some(decision) = task.network {
                 return (decision, String::from("policies.effects.tasks.network"));
             }

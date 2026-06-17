@@ -3695,6 +3695,35 @@ fn validate_task_prepare(
                 validate_task_prepare(task_name, step, requirements, effects, _backend, errors);
             }
         }
+        crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => match &spec.source {
+            crate::schema::TaskToolBootstrapSourceSpec::Pip(source) => {
+                if source.exe.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: pip` must declare a non-empty `prepare.source.exe`"
+                    )));
+                }
+                if !requirements
+                    .toolchains
+                    .iter()
+                    .any(|toolchain| toolchain == "python")
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: pip` must declare `requirements.toolchains: [python]`"
+                    )));
+                }
+                if !effects.network {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` must declare `effects.network: true`"
+                    )));
+                }
+                if effects.network_kind != Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` must declare `effects.network_kind: tool_bootstrap`"
+                    )));
+                }
+            }
+        },
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
             for (index, target) in spec.targets.iter().enumerate() {
                 if target.trim().is_empty() {
@@ -6749,6 +6778,7 @@ pub enum ContractAdvisory {
     ServiceUsesOpaqueShellStart(ServiceUsesOpaqueShellStartAdvisory),
     ReplaceableShellCheck(ReplaceableShellCheckAdvisory),
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
+    ReplaceableToolBootstrapOwnership(ReplaceableToolBootstrapOwnershipAdvisory),
     ReplaceableSystemdServiceOwnership(ReplaceableSystemdServiceOwnershipAdvisory),
     ReplaceableContainerNetworkOwnership(ReplaceableContainerNetworkOwnershipAdvisory),
     ReplaceableAdapterInputOwnership(ReplaceableAdapterInputOwnershipAdvisory),
@@ -6853,6 +6883,12 @@ pub struct ReplaceableShellCheckAdvisory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceableShellEnvMutationAdvisory {
+    pub task_name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableToolBootstrapOwnershipAdvisory {
     pub task_name: String,
     pub command: String,
 }
@@ -7014,6 +7050,9 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableShellEnvMutation(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_MUTATION"
             }
+            ContractAdvisory::ReplaceableToolBootstrapOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_TOOL_BOOTSTRAP"
+            }
             ContractAdvisory::ReplaceableSystemdServiceOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_SYSTEMD_SERVICE_OWNERSHIP"
             }
@@ -7053,6 +7092,9 @@ impl ContractAdvisory {
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => match advisory.network_kind {
                 TaskNetworkEffectKind::DependencyHydration => {
                     "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_DEPENDENCY_HYDRATION"
+                }
+                TaskNetworkEffectKind::ToolBootstrap => {
+                    "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_TOOL_BOOTSTRAP"
                 }
                 TaskNetworkEffectKind::Broad => "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK",
             },
@@ -7140,6 +7182,10 @@ impl ContractAdvisory {
             },
             ContractAdvisory::ReplaceableShellEnvMutation(advisory) => format!(
                 "task `{}` uses replaceable shell env-file mutation",
+                advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableToolBootstrapOwnership(advisory) => format!(
+                "task `{}` hard-codes tool bootstrap in its task body",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableSystemdServiceOwnership(advisory) => format!(
@@ -7290,6 +7336,10 @@ impl ContractAdvisory {
                 "task `{}` rewrites one env file through shell mutation (`{}`), which is less portable and less governable than `action.kind: ensure_env_file` with deterministic `mode: replace` keys",
                 advisory.task_name, advisory.command
             ),
+            ContractAdvisory::ReplaceableToolBootstrapOwnership(advisory) => format!(
+                "task `{}` hard-codes tool bootstrap shell (`{}`), which hides contract-owned tool installation from Ota instead of declaring it under `prepare.kind: tool_bootstrap`",
+                advisory.task_name, advisory.command
+            ),
             ContractAdvisory::ReplaceableSystemdServiceOwnership(advisory) => format!(
                 "task `{}` hard-codes systemd service lifecycle or readiness shell (`{}`), which hides host service ownership from Ota instead of declaring it under `services.<name>.manager.kind: host`, `manager.host.kind: systemd`, and `readiness.kind: systemd_active`",
                 advisory.task_name, advisory.command
@@ -7372,6 +7422,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
             | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
@@ -7406,6 +7457,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
             | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
@@ -7441,6 +7493,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
+            | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
             | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
             | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
@@ -7534,6 +7587,10 @@ impl ContractAdvisory {
                 "replace shell env-file mutation in task `{}` with `action.kind: ensure_env_file` (or `ensure_bundle`) and explicit `mode: replace` keys",
                 advisory.task_name
             ),
+            ContractAdvisory::ReplaceableToolBootstrapOwnership(advisory) => format!(
+                "move tool bootstrap out of task `{}` shell: declare `prepare.kind: tool_bootstrap` with an explicit typed source instead of `{}`",
+                advisory.task_name, advisory.command
+            ),
             ContractAdvisory::ReplaceableSystemdServiceOwnership(advisory) => format!(
                 "move systemd service ownership out of task `{}` body: declare `services.<name>.manager.kind: host`, `manager.host.kind: systemd`, and `readiness.kind: systemd_active` instead of shelling `{}`",
                 advisory.task_name, advisory.command
@@ -7608,6 +7665,10 @@ fn agent_safe_network_summary(advisory: &AgentSafeTaskNetworkAdvisory) -> String
             "agent-safe task `{}` performs network dependency hydration",
             advisory.task_name
         ),
+        TaskNetworkEffectKind::ToolBootstrap => format!(
+            "agent-safe task `{}` performs network tool bootstrap",
+            advisory.task_name
+        ),
         TaskNetworkEffectKind::Broad => format!(
             "agent-safe task `{}` requires network access",
             advisory.task_name
@@ -7621,6 +7682,10 @@ fn agent_safe_network_why(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
             "task `{}` is declared agent-safe and performs dependency hydration over the network (for example lockfile-backed package-manager fetches); this is narrower than arbitrary remote mutation but still depends on registry/service reachability outside repo write boundaries",
             advisory.task_name
         ),
+        TaskNetworkEffectKind::ToolBootstrap => format!(
+            "task `{}` is declared agent-safe and bootstraps required tooling over the network (for example installing `uv` through `pip`) before execution; this is narrower than arbitrary remote mutation but still depends on package index reachability and mutable tool-install state outside repo write boundaries",
+            advisory.task_name
+        ),
         TaskNetworkEffectKind::Broad => format!(
             "task `{}` is declared agent-safe but also declares `effects.network: true`, so unattended execution still depends on registry, API, or remote service reachability",
             advisory.task_name
@@ -7632,6 +7697,10 @@ fn agent_safe_network_next(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
     match advisory.network_kind {
         TaskNetworkEffectKind::DependencyHydration => format!(
             "keep `effects.network: true` with `effects.network_kind: dependency_hydration` explicit for `{}`, and keep lockfile/provenance discipline strict on this task path",
+            advisory.task_name
+        ),
+        TaskNetworkEffectKind::ToolBootstrap => format!(
+            "keep `effects.network: true` with `effects.network_kind: tool_bootstrap` explicit for `{}`, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended tool installation is not acceptable",
             advisory.task_name
         ),
         TaskNetworkEffectKind::Broad => format!(
@@ -7684,6 +7753,9 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_service_uses_opaque_shell_start_advisories(contract));
     advisories.extend(collect_replaceable_shell_check_advisories(contract));
     advisories.extend(collect_replaceable_shell_env_mutation_advisories(contract));
+    advisories.extend(collect_replaceable_tool_bootstrap_ownership_advisories(
+        contract,
+    ));
     advisories.extend(collect_replaceable_systemd_service_ownership_advisories(
         contract,
     ));
@@ -8079,6 +8151,50 @@ fn collect_replaceable_shell_env_mutation_advisories(contract: &Contract) -> Vec
         if obvious_env_mutation_shell(command) {
             advisories.push(ContractAdvisory::ReplaceableShellEnvMutation(
                 ReplaceableShellEnvMutationAdvisory {
+                    task_name: task_name.clone(),
+                    command: command.to_string(),
+                },
+            ));
+        }
+    }
+    advisories
+}
+
+fn collect_replaceable_tool_bootstrap_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.action.is_some()
+            || task.prepare.is_some()
+            || task.launch.is_some()
+            || task.aggregate.is_some()
+        {
+            continue;
+        }
+
+        let command = task
+            .run
+            .as_deref()
+            .or(task.script.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let Some(command) = command else {
+            if let Some(command) = task.command.as_ref()
+                && obvious_pip_uv_bootstrap_command(command)
+            {
+                advisories.push(ContractAdvisory::ReplaceableToolBootstrapOwnership(
+                    ReplaceableToolBootstrapOwnershipAdvisory {
+                        task_name: task_name.clone(),
+                        command: render_task_command_preview(command),
+                    },
+                ));
+            }
+            continue;
+        };
+        if obvious_pip_uv_bootstrap_shell(command) {
+            advisories.push(ContractAdvisory::ReplaceableToolBootstrapOwnership(
+                ReplaceableToolBootstrapOwnershipAdvisory {
                     task_name: task_name.clone(),
                     command: command.to_string(),
                 },
@@ -8695,6 +8811,27 @@ fn obvious_env_mutation_shell(command: &str) -> bool {
     let mutates_with_perl =
         lower.contains("perl ") && lower.contains("-pi") && lower.contains(".env");
     touches_env && (mutates_with_sed || mutates_with_perl)
+}
+
+fn obvious_pip_uv_bootstrap_shell(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    (lower.contains("python -m pip install") || lower.contains("python3 -m pip install"))
+        && lower.contains(" uv")
+}
+
+fn obvious_pip_uv_bootstrap_command(command: &TaskCommandSpec) -> bool {
+    let exe = command.exe.trim();
+    if !exe.eq_ignore_ascii_case("python") && !exe.eq_ignore_ascii_case("python3") {
+        return false;
+    }
+    let args = command
+        .args
+        .iter()
+        .map(|arg| arg.trim().to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    args.windows(3)
+        .any(|window| window == ["-m", "pip", "install"])
+        && args.iter().any(|arg| arg == "uv")
 }
 
 fn obvious_systemd_service_shell(command: &str) -> bool {
@@ -9690,6 +9827,10 @@ fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<Contrac
                 effective_network_kind = Some(match (effective_network_kind, network_kind) {
                     (Some(TaskNetworkEffectKind::Broad), _) => TaskNetworkEffectKind::Broad,
                     (_, TaskNetworkEffectKind::Broad) => TaskNetworkEffectKind::Broad,
+                    (Some(TaskNetworkEffectKind::ToolBootstrap), _)
+                    | (_, TaskNetworkEffectKind::ToolBootstrap) => {
+                        TaskNetworkEffectKind::ToolBootstrap
+                    }
                     _ => TaskNetworkEffectKind::DependencyHydration,
                 });
             }
@@ -28828,6 +28969,147 @@ tasks:
             ContractAdvisory::AgentSafeTaskNetwork(value)
                 if value.task_name == "setup"
                     && value.network_kind == TaskNetworkEffectKind::DependencyHydration
+        )));
+    }
+
+    #[test]
+    fn accepts_prepare_only_tool_bootstrap_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    version: "3.12"
+tasks:
+  setup:tooling:
+    prepare:
+      kind: tool_bootstrap
+      tool: uv
+      source:
+        kind: pip
+        exe: python
+    requirements:
+      toolchains:
+        - python
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("tool_bootstrap task should validate");
+    }
+
+    #[test]
+    fn rejects_tool_bootstrap_prepare_without_python_and_tool_bootstrap_effect_kind() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    version: "3.12"
+tasks:
+  setup:tooling:
+    prepare:
+      kind: tool_bootstrap
+      tool: uv
+      source:
+        kind: pip
+        exe: python
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid tool_bootstrap shape should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:tooling` prepare `tool_bootstrap` with `source.kind: pip` must declare `requirements.toolchains: [python]`"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:tooling` prepare `tool_bootstrap` must declare `effects.network_kind: tool_bootstrap`"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn collects_agent_safe_tool_bootstrap_advisory_for_structured_tool_bootstrap() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    version: "3.12"
+tasks:
+  setup:tooling:
+    safe_for_agent: true
+    prepare:
+      kind: tool_bootstrap
+      tool: uv
+      source:
+        kind: pip
+        exe: python
+    requirements:
+      toolchains:
+        - python
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskNetwork(value)
+                if value.task_name == "setup:tooling"
+                    && value.network_kind == TaskNetworkEffectKind::ToolBootstrap
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_tool_bootstrap_advisory_for_pip_uv_shell() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: python -m pip install --disable-pip-version-check -q uv
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableToolBootstrapOwnership(value)
+                if value.task_name == "setup"
         )));
     }
 

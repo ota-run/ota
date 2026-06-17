@@ -1087,6 +1087,24 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "tool", "source"],
+          "properties": {
+            "kind": { "const": "tool_bootstrap" },
+            "tool": { "enum": ["uv"] },
+            "source": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "exe"],
+              "properties": {
+                "kind": { "const": "pip" },
+                "exe": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "steps"],
           "properties": {
             "kind": { "const": "sequence" },
@@ -1104,7 +1122,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "properties": {
         "writes": { "$ref": "#/$defs/stringArray" },
         "network": { "type": "boolean" },
-        "network_kind": { "enum": ["broad", "dependency_hydration"] },
+        "network_kind": { "enum": ["broad", "dependency_hydration", "tool_bootstrap"] },
         "external_state": { "$ref": "#/$defs/stringArray" }
       }
     },

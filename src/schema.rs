@@ -3657,6 +3657,7 @@ impl TaskEffectsSpec {
 pub enum TaskNetworkEffectKind {
     Broad,
     DependencyHydration,
+    ToolBootstrap,
 }
 
 impl TaskNetworkEffectKind {
@@ -3664,6 +3665,7 @@ impl TaskNetworkEffectKind {
         match self {
             Self::Broad => "broad",
             Self::DependencyHydration => "dependency_hydration",
+            Self::ToolBootstrap => "tool_bootstrap",
         }
     }
 }
@@ -4829,6 +4831,7 @@ impl TaskActionSpec {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskPrepareSpec {
     DependencyHydration(TaskDependencyHydrationPrepareSpec),
+    ToolBootstrap(TaskToolBootstrapPrepareSpec),
     Sequence(TaskPrepareSequenceSpec),
 }
 
@@ -4836,6 +4839,7 @@ impl TaskPrepareSpec {
     pub const fn kind_str(&self) -> &'static str {
         match self {
             Self::DependencyHydration(_) => "dependency_hydration",
+            Self::ToolBootstrap(_) => "tool_bootstrap",
             Self::Sequence(_) => "sequence",
         }
     }
@@ -4908,6 +4912,13 @@ impl TaskPrepareSpec {
                     source.cwd.trim()
                 ),
             },
+            Self::ToolBootstrap(spec) => match &spec.source {
+                TaskToolBootstrapSourceSpec::Pip(source) => format!(
+                    "bootstrap tool `{}` with {}",
+                    spec.tool.label(),
+                    source.command_preview(spec.tool)
+                ),
+            },
             Self::Sequence(spec) => format!(
                 "prepare sequence: {}",
                 spec.steps
@@ -4924,6 +4935,49 @@ impl TaskPrepareSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskPrepareSequenceSpec {
     pub steps: Vec<TaskPrepareSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskToolBootstrapPrepareSpec {
+    pub tool: TaskBootstrapToolKind,
+    pub source: TaskToolBootstrapSourceSpec,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskBootstrapToolKind {
+    Uv,
+}
+
+impl TaskBootstrapToolKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Uv => "uv",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskToolBootstrapSourceSpec {
+    Pip(TaskPipToolBootstrapSourceSpec),
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskPipToolBootstrapSourceSpec {
+    pub exe: String,
+}
+
+impl TaskPipToolBootstrapSourceSpec {
+    pub fn command_preview(&self, tool: TaskBootstrapToolKind) -> String {
+        format!(
+            "{} -m pip install --disable-pip-version-check -q {}",
+            self.exe.trim(),
+            tool.label()
+        )
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -6710,6 +6764,26 @@ tasks:
             cwd: String::from("."),
         };
         assert_eq!(uv.command_preview(), "uv sync");
+    }
+
+    #[test]
+    fn tool_bootstrap_prepare_preview_uses_pip_uv_shape() {
+        let source = super::TaskPipToolBootstrapSourceSpec {
+            exe: String::from("python"),
+        };
+        assert_eq!(
+            source.command_preview(super::TaskBootstrapToolKind::Uv),
+            "python -m pip install --disable-pip-version-check -q uv"
+        );
+
+        let prepare = super::TaskPrepareSpec::ToolBootstrap(super::TaskToolBootstrapPrepareSpec {
+            tool: super::TaskBootstrapToolKind::Uv,
+            source: super::TaskToolBootstrapSourceSpec::Pip(source),
+        });
+        assert_eq!(
+            prepare.preview(),
+            "bootstrap tool `uv` with python -m pip install --disable-pip-version-check -q uv"
+        );
     }
 
     #[test]

@@ -4261,6 +4261,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::ReplaceableShellEnvMutation(advisory) => {
                 ContractAdvisory::ReplaceableShellEnvMutation(advisory)
             }
+            ContractAdvisory::ReplaceableToolBootstrapOwnership(advisory) => {
+                ContractAdvisory::ReplaceableToolBootstrapOwnership(advisory)
+            }
             ContractAdvisory::ReplaceableSystemdServiceOwnership(advisory) => {
                 ContractAdvisory::ReplaceableSystemdServiceOwnership(advisory)
             }
@@ -4364,6 +4367,7 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::ServiceUsesOpaqueShellStart(_)
         | ContractAdvisory::ReplaceableShellCheck(_)
         | ContractAdvisory::ReplaceableShellEnvMutation(_)
+        | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
         | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
         | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
         | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
@@ -4390,6 +4394,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::AgentSafeTaskNetwork(advisory) => match advisory.network_kind {
             TaskNetworkEffectKind::DependencyHydration => format!(
                 "Agent-safe task `{}` performs network dependency hydration",
+                advisory.task_name
+            ),
+            TaskNetworkEffectKind::ToolBootstrap => format!(
+                "Agent-safe task `{}` performs network tool bootstrap",
                 advisory.task_name
             ),
             TaskNetworkEffectKind::Broad => {
@@ -4427,6 +4435,7 @@ fn diagnose_selected_task_effects(
 
     let mut broad_network_tasks = Vec::new();
     let mut hydration_network_tasks = Vec::new();
+    let mut tool_bootstrap_tasks = Vec::new();
     let mut external_state_tasks = Vec::new();
     let mut external_state_systems = BTreeSet::new();
 
@@ -4439,6 +4448,9 @@ fn diagnose_selected_task_effects(
                 TaskNetworkEffectKind::Broad => broad_network_tasks.push(task_name.clone()),
                 TaskNetworkEffectKind::DependencyHydration => {
                     hydration_network_tasks.push(task_name.clone())
+                }
+                TaskNetworkEffectKind::ToolBootstrap => {
+                    tool_bootstrap_tasks.push(task_name.clone())
                 }
             }
         }
@@ -4477,6 +4489,21 @@ fn diagnose_selected_task_effects(
             ),
             "the selected task path includes tasks with `effects.network_kind: dependency_hydration`; this is a narrower network lane (for example lockfile-backed package-manager fetches), but still depends on registry reachability",
             "keep lockfiles and package-manager provenance strict for these tasks, and keep `effects.network_kind: dependency_hydration` explicit on that path",
+        ));
+    }
+
+    if !tool_bootstrap_tasks.is_empty() {
+        findings.push(Finding::identified(
+            "OTA_SELECTED_TASK_PATH_TOOL_BOOTSTRAP",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Info,
+            format!(
+                "Selected task path performs network tool bootstrap: {}",
+                tool_bootstrap_tasks.join(", ")
+            ),
+            "the selected task path includes tasks with `effects.network_kind: tool_bootstrap`; this is a narrower network lane for contract-owned tool installation (for example `pip install uv`), but still depends on package index reachability and mutable tool-install state",
+            "keep the tool bootstrap source explicit, prefer first-class `prepare.kind: tool_bootstrap` over shell glue, and keep `effects.network_kind: tool_bootstrap` explicit on that path",
         ));
     }
 

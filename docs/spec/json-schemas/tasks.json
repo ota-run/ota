@@ -200,15 +200,17 @@
       "additionalProperties": false,
       "required": ["kind"],
       "properties": {
-        "kind": { "enum": ["sequence", "dependency_hydration"] },
+        "kind": { "enum": ["sequence", "dependency_hydration", "tool_bootstrap"] },
         "steps": {
           "type": "array",
           "items": { "$ref": "#/$defs/taskPrepare" }
         },
+        "tool": { "enum": ["uv"] },
         "medium": { "enum": ["container_images", "package_dependencies"] },
         "source": { "$ref": "#/$defs/taskPrepareSource" },
         "source_kind": {
           "enum": [
+            "pip",
             "docker_compose",
             "node_package_manager",
             "bundler",
@@ -221,7 +223,7 @@
         "file": { "type": "string" },
         "engine": { "enum": ["docker", "podman"] },
         "manager": { "enum": ["npm", "pnpm", "yarn", "bundle", "uv", "poetry"] },
-        "mode": { "enum": ["install", "ci", "sync", "download"] },
+        "mode": { "enum": ["install", "ci", "sync", "download", "uv"] },
         "group_mode": { "enum": ["with", "only"] },
         "groups": {
           "type": "array",
@@ -269,7 +271,7 @@
         },
         "network": { "type": "boolean" },
         "network_kind": {
-          "enum": ["broad", "dependency_hydration"]
+          "enum": ["broad", "dependency_hydration", "tool_bootstrap"]
         },
         "external_state": {
           "type": "array",
@@ -353,7 +355,7 @@
                 "type": "object",
                 "additionalProperties": { "$ref": "#/$defs/taskInput" }
               },
-              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_container_network", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
+              "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_container_network", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
               "run": { "type": "string" },
               "script": { "type": "string" },
               "command": { "$ref": "#/$defs/taskCommand" },
@@ -419,7 +421,7 @@
                     },
                     "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
                     "lifecycle": { "enum": ["persistent", "ephemeral"] },
-                    "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration", "ensure_container_network"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration", "tool_bootstrap", "ensure_container_network"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "command": { "$ref": "#/$defs/taskCommand" },
@@ -508,7 +510,7 @@
                       "type": "object",
                       "additionalProperties": { "$ref": "#/$defs/taskInput" }
                     },
-                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_container_network", "ensure_bundle", "sequence", "dependency_hydration", "aggregate"] },
+                    "kind": { "enum": ["run", "script", "command", "container", "copy_if_missing", "ensure_env_file", "ensure_file", "ensure_directory", "ensure_container_network", "ensure_bundle", "sequence", "dependency_hydration", "tool_bootstrap", "aggregate"] },
                     "run": { "type": "string" },
                     "script": { "type": "string" },
                     "command": { "$ref": "#/$defs/taskCommand" },
@@ -574,7 +576,7 @@
                           },
                           "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
                           "lifecycle": { "enum": ["persistent", "ephemeral"] },
-                          "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration", "ensure_container_network"] },
+                          "kind": { "enum": ["run", "script", "command", "container", "sequence", "dependency_hydration", "tool_bootstrap", "ensure_container_network"] },
                           "run": { "type": "string" },
                           "script": { "type": "string" },
                           "command": { "$ref": "#/$defs/taskCommand" },

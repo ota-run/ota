@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- added first-class `prepare.kind: tool_bootstrap` for contract-owned tool installation, with the
+  first shipped slice modeling `tool: uv` via `source.kind: pip` and explicit `source.exe`
+- widened task network classification with `effects.network_kind: tool_bootstrap`, so ota can
+  distinguish typed tool installation from repo dependency hydration and broader remote-call
+  execution in doctor, validate, policy, and receipts
+- validate/doctor now warn on replaceable shell-owned Python `pip install uv` task bodies when
+  that tool bootstrap truth belongs on typed `prepare.kind: tool_bootstrap`
 - agent-safe dependency-hydration governance is now narrower and more truthful: ota no longer
   emits the generic agent-safe dependency-hydration contract advisory when the task path is
   already modeled on the first-class `prepare.kind: dependency_hydration` surface; weaker or

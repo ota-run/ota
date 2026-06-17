@@ -1176,7 +1176,7 @@ Current behavior:
 - `--skip-deps` is rejected when the requested task has no declared `depends_on`
 - `--effect-override <effect>=<allow|warn|deny>` temporarily overrides one effect-governance
   decision for this invocation only; supported selectors are `network`, `network:broad`,
-  `network:dependency_hydration`, and `external_state:<token>`
+  `network:dependency_hydration`, `network:tool_bootstrap`, and `external_state:<token>`
 - task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
 - when a task input overlaps an ota command flag name such as `mode` or `jobs`, put the ota command flag before the task and the task input after the task
 - task inputs are exposed to the task process as `OTA_INPUT_<NAME>` env variables
@@ -1392,6 +1392,9 @@ ota doctor --member api --member web --json [PATH]
 - first-class `prepare.kind: dependency_hydration` lanes keep their network truth visible, but ota
   does not emit the generic agent-safe dependency-hydration warning when that bounded lane is
   already modeled on the typed hydration surface
+- first-class `prepare.kind: tool_bootstrap` lanes keep contract-owned tool installation visible
+  too; ota can now distinguish typed tool bootstrap from both repo dependency hydration and broad
+  network execution
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, doctor names that
   activation lane directly instead of reducing the fix to a generic install hint; Corepack-managed
   `pnpm` is the first shipped provider path

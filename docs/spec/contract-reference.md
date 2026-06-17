@@ -1736,7 +1736,7 @@ Fields:
 - `writes`: optional list of normalized relative paths the task body is expected to mutate
 - `network`: optional boolean; set `true` when the task requires network access or reaches out to
   remote services during execution
-- `network_kind`: optional network lane classifier (`broad` or `dependency_hydration`) for
+- `network_kind`: optional network lane classifier (`broad`, `dependency_hydration`, or `tool_bootstrap`) for
   networked task paths
 - `external_state`: optional list of lowercase tokens naming out-of-repo state the task mutates,
   such as `docker` or `postgres`
@@ -1748,6 +1748,8 @@ Task-effect rules:
   dependency should stay explicit for CI and agent execution
 - use `effects.network_kind: dependency_hydration` for finite dependency acquisition lanes such as
   lockfile-backed package-manager install or first-class image hydration; keep
+- use `effects.network_kind: tool_bootstrap` for finite contract-owned tool installation lanes
+  such as bootstrapping `uv` through `pip`; keep
   `effects.network_kind: broad` (or omit `network_kind`) for wider API/remote-call execution
 - use `effects.external_state` when the task mutates state outside the repo filesystem, such as
   Docker resources, databases, or hosted services
@@ -1783,9 +1785,13 @@ Task-effect rules:
 
 `prepare` fields:
 
-- `prepare.kind`: required preparation classifier; ota currently ships `dependency_hydration` and `sequence`
+- `prepare.kind`: required preparation classifier; ota currently ships `dependency_hydration`, `tool_bootstrap`, and `sequence`
 - `prepare.kind: sequence`
   - `prepare.steps`: required non-empty ordered list of child prepare steps
+- `prepare.kind: tool_bootstrap`
+  - `prepare.tool`: required bootstrap target; ota currently ships `uv`
+  - `prepare.source.kind: pip`
+  - `prepare.source.exe`: required Python executable ota should use for `-m pip install ...`
 - `prepare.kind: dependency_hydration`
   - `prepare.medium: container_images`
     - `prepare.source.kind: docker_compose`
@@ -1832,6 +1838,8 @@ Task-effect rules:
 - `prepare.kind: sequence` uses the parent task's `requirements`, `effects`, and execution path for each ordered child step
 - `prepare.kind: sequence` must declare at least one child step under `prepare.steps`
 - use `prepare.kind: sequence` when one honest setup lane needs more than one structural finite step, such as Node hydration plus Python hydration in one repo-level `setup` task
+- `prepare.kind: tool_bootstrap` currently requires `requirements.toolchains: [python]`, `effects.network: true`, and `effects.network_kind: tool_bootstrap`
+- use `prepare.kind: tool_bootstrap` when the task truth is contract-owned tool installation rather than repo dependency hydration; for example bootstrapping `uv` through `pip`
 - `prepare.kind: dependency_hydration` currently requires `requirements.tools.docker`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: bundler` currently requires `requirements.toolchains: [ruby]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
@@ -1854,6 +1862,7 @@ Task-effect rules:
 - `prepare.source.kind: gradle` currently executes the narrow canonical Gradle hydration lane: `./gradlew dependencies` when wrapper-owned, otherwise `gradle dependencies`
 - `prepare.source.kind: cargo` currently executes the narrow canonical Cargo hydration lane: `cargo fetch`
 - `prepare.source.kind: dotnet_restore` currently executes the narrow canonical .NET hydration lane: `dotnet restore`
+- `prepare.kind: tool_bootstrap` currently executes the narrow canonical Python tool-bootstrap lane: `<exe> -m pip install --disable-pip-version-check -q uv`
 - `prepare` does not replace workflow-owned host bootstrap; workflow prepare is still the explicit host bootstrap lane and now points at one native finite owner (`prepare.task` or `prepare.action`)
 - `prepare` is not orchestrator-managed in the current shipped slice
 

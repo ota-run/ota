@@ -3671,6 +3671,29 @@ pub fn summarize_task_prepare(
             skip_tests: false,
             targets: Vec::new(),
         }),
+        crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
+            let (source_kind, mode) = match &spec.source {
+                crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
+                    ("pip", Some(spec.tool.label()))
+                }
+            };
+            Some(TaskPrepareSummary {
+                kind: "tool_bootstrap",
+                steps: Vec::new(),
+                medium: None,
+                source_kind: Some(source_kind),
+                cwd: None,
+                file: None,
+                manager: None,
+                mode,
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: false,
+                no_root: false,
+                skip_tests: false,
+                targets: Vec::new(),
+            })
+        }
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
             let (
                 source_kind,
@@ -3871,6 +3894,29 @@ pub fn summarize_task_prepare_owned(
             skip_tests: false,
             targets: Vec::new(),
         }),
+        crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
+            let (source_kind, mode) = match &spec.source {
+                crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
+                    ("pip", Some(spec.tool.label()))
+                }
+            };
+            Some(WorkspaceTaskPrepareSummary {
+                kind: "tool_bootstrap",
+                steps: Vec::new(),
+                medium: None,
+                source_kind: Some(source_kind),
+                cwd: None,
+                file: None,
+                manager: None,
+                mode,
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: false,
+                no_root: false,
+                skip_tests: false,
+                targets: Vec::new(),
+            })
+        }
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
             let (
                 source_kind,

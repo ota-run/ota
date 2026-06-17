@@ -234,7 +234,7 @@ enum Commands {
         /// Skip declared task dependencies for this local invocation only.
         #[arg(long, action = ArgAction::SetTrue)]
         skip_deps: bool,
-        /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, or `external_state:<token>`).
+        /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, `network:tool_bootstrap`, or `external_state:<token>`).
         #[arg(long = "effect-override", value_name = "EFFECT=DECISION")]
         effect_override: Vec<String>,
         /// Include the execution receipt in text output.
@@ -538,7 +538,7 @@ enum Commands {
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
-        /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, or `external_state:<token>`).
+        /// Temporarily override one effect-governance decision for this invocation (`network`, `network:broad`, `network:dependency_hydration`, `network:tool_bootstrap`, or `external_state:<token>`).
         #[arg(long = "effect-override", value_name = "EFFECT=DECISION")]
         effect_override: Vec<String>,
         /// Run the command against one or more monorepo members declared by the root contract.

@@ -1489,6 +1489,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::ReplaceableToolBootstrapOwnership(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("replaceable tool bootstrap shell"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::ReplaceableSystemdServiceOwnership(value) => format!(
             "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -1642,6 +1653,7 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
                 crate::schema::TaskNetworkEffectKind::DependencyHydration => {
                     "network dependency hydration"
                 }
+                crate::schema::TaskNetworkEffectKind::ToolBootstrap => "network tool bootstrap",
                 crate::schema::TaskNetworkEffectKind::Broad => "network access",
             }),
             paint_key("Why:"),
@@ -14709,7 +14721,7 @@ fn parse_effect_governance_overrides(
         };
         let Some(selector) = parse_effect_override_selector(selector_raw) else {
             return Err(format!(
-                "invalid `--effect-override {raw}` effect selector; use one of `network`, `network:broad`, `network:dependency_hydration`, or `external_state:<token>`"
+                "invalid `--effect-override {raw}` effect selector; use one of `network`, `network:broad`, `network:dependency_hydration`, `network:tool_bootstrap`, or `external_state:<token>`"
             ));
         };
         let Some(decision) = parse_effect_override_decision(decision_raw) else {
@@ -15261,6 +15273,10 @@ fn collect_task_closure_effects(
                 }
                 (_, crate::schema::TaskNetworkEffectKind::Broad) => {
                     crate::schema::TaskNetworkEffectKind::Broad
+                }
+                (Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap), _)
+                | (_, crate::schema::TaskNetworkEffectKind::ToolBootstrap) => {
+                    crate::schema::TaskNetworkEffectKind::ToolBootstrap
                 }
                 _ => crate::schema::TaskNetworkEffectKind::DependencyHydration,
             });
@@ -34984,6 +35000,15 @@ fn collect_prepare_field_paths(
         TaskPrepareSpec::Sequence(spec) => {
             for (index, step) in spec.steps.iter().enumerate() {
                 collect_prepare_field_paths(format!("{prefix}.steps.{index}"), step, fields);
+            }
+        }
+        TaskPrepareSpec::ToolBootstrap(spec) => {
+            fields.push(format!("{prefix}.tool"));
+            fields.push(format!("{prefix}.source.kind"));
+            match &spec.source {
+                crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
+                    fields.push(format!("{prefix}.source.exe"));
+                }
             }
         }
         TaskPrepareSpec::DependencyHydration(spec) => {
