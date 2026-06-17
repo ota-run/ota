@@ -72,7 +72,7 @@ use crate::schema::{
     Backend, CheckKind, CheckSeverity, ContainerBackend, Contract, ExtensionKind, Lifecycle,
     NativePrerequisiteActivationShell, ReadinessProbeSpec, RequirementSurface, RuntimeRequirement,
     ServiceProducerSpec, ServiceReadinessSpec, ServiceSpec, TaskNetworkEffectKind,
-    ToolAcquisitionProvider, ToolAcquisitionSpec, ToolchainFulfillmentSource,
+    ToolAcquisitionProvider, ToolAcquisitionSpec, ToolRequirement, ToolchainFulfillmentSource,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 use crate::toolchains::{
@@ -958,6 +958,13 @@ fn corepack_activation_command(acquisition: &ToolAcquisitionSpec) -> String {
     )
 }
 
+fn corepack_bootstrap_and_activation_command(acquisition: &ToolAcquisitionSpec) -> String {
+    format!(
+        "npm install -g corepack && {}",
+        corepack_activation_command(acquisition)
+    )
+}
+
 fn tool_acquisition_shell_label(shell: NativePrerequisiteActivationShell) -> &'static str {
     match shell {
         NativePrerequisiteActivationShell::Sh => "sh",
@@ -970,7 +977,13 @@ fn tool_acquisition_shell_label(shell: NativePrerequisiteActivationShell) -> &'s
 
 fn tool_acquisition_command(acquisition: &ToolAcquisitionSpec) -> String {
     match acquisition.provider {
-        ToolAcquisitionProvider::Corepack => corepack_activation_command(acquisition),
+        ToolAcquisitionProvider::Corepack => {
+            if !command_available("corepack") && command_available("npm") {
+                corepack_bootstrap_and_activation_command(acquisition)
+            } else {
+                corepack_activation_command(acquisition)
+            }
+        }
         ToolAcquisitionProvider::Command => {
             let shell = acquisition
                 .shell
@@ -997,6 +1010,10 @@ fn tool_acquisition_command(acquisition: &ToolAcquisitionSpec) -> String {
             }
         }
     }
+}
+
+fn corepack_provider_bootstrap_available() -> bool {
+    !command_available("corepack") && command_available("npm")
 }
 
 fn tool_acquisition_provider_requirement(acquisition: &ToolAcquisitionSpec) -> &'static str {
@@ -6353,12 +6370,27 @@ fn diagnose_tools(
         }
         let required = requirement.required_for_os(target_os);
         let executable_candidates = vec![tool_executable_name(name).to_string()];
+        let toolchain_owned_requirement = selected_toolchain_owned_requirement_for_tool(
+            contract,
+            selected_toolchains,
+            target_os,
+            name,
+        );
         let run_path_fulfillment_source = selected_toolchain_run_fulfillment_source_for_tool(
             contract,
             selected_toolchains,
             target_os,
             name,
         );
+        let tool_acquisition = requirement.acquisition().or_else(|| {
+            toolchain_owned_requirement
+                .as_ref()
+                .and_then(ToolRequirement::acquisition)
+        });
+        let run_path_fulfillment_allowed = run_path_fulfillment_source.is_some()
+            || tool_acquisition.is_some_and(|acquisition| {
+                acquisition.provider == ToolAcquisitionProvider::Corepack
+            });
 
         container_probe_started |= diagnose_command_version(
             "tool",
@@ -6368,7 +6400,7 @@ fn diagnose_tools(
             required,
             false,
             run_path_fulfillment_source.map(toolchain_fulfillment_source_label),
-            requirement.acquisition(),
+            tool_acquisition,
             mode,
             selected_lifecycle,
             container_probe,
@@ -6377,7 +6409,7 @@ fn diagnose_tools(
             contract_path,
             loaded_policy,
             target_os,
-            run_path_fulfillment_source.is_some(),
+            run_path_fulfillment_allowed,
             provisioning_actions,
             findings,
         );
@@ -6407,6 +6439,29 @@ fn diagnose_tools(
         );
     }
     container_probe_started
+}
+
+fn selected_toolchain_owned_requirement_for_tool(
+    contract: &Contract,
+    selected_toolchains: &BTreeSet<String>,
+    target_os: &str,
+    tool_name: &str,
+) -> Option<ToolRequirement> {
+    selected_toolchains.iter().find_map(|toolchain_name| {
+        let toolchain = contract.toolchains.get(toolchain_name.as_str())?;
+        if !toolchain.active_for_os(target_os) {
+            return None;
+        }
+        let provider = declared_toolchain_contract(toolchain_name, toolchain)?;
+        provider
+            .owned_tool_requirements(toolchain, target_os)
+            .into_iter()
+            .find_map(|(owned_tool_name, requirement)| {
+                (owned_tool_name == tool_name
+                    || tool_executable_name(&owned_tool_name) == tool_name)
+                    .then_some(requirement)
+            })
+    })
 }
 
 fn selected_toolchain_run_fulfillment_source_for_tool(
@@ -8221,6 +8276,11 @@ fn diagnose_command_version(
             }
         }
         if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
+            if acquisition.provider == ToolAcquisitionProvider::Corepack
+                && corepack_provider_bootstrap_available()
+            {
+                return probe_started;
+            }
             let provider_requirement = tool_acquisition_provider_requirement(acquisition);
             findings.push(Finding::identified(
                 "OTA_TOOL_ACTIVATION_PROVIDER_MISSING",
@@ -8251,6 +8311,9 @@ fn diagnose_command_version(
             && kind == "tool"
             && provider_hint.is_some_and(|provider| provider == "corepack")
         {
+            if corepack_provider_bootstrap_available() {
+                return probe_started;
+            }
             probe_started |= diagnose_command_version(
                 "tool",
                 "corepack",
@@ -8694,6 +8757,9 @@ fn diagnose_command_version(
         && tool_acquisition
             .is_some_and(|acquisition| acquisition.provider == ToolAcquisitionProvider::Corepack)
     {
+        if corepack_provider_bootstrap_available() {
+            return probe_started;
+        }
         let finding_count = findings.len();
         probe_started |= diagnose_command_version(
             "tool",
@@ -8800,6 +8866,11 @@ fn diagnose_command_version(
     }
 
     if acquisition_provider_missing && let Some(acquisition) = tool_acquisition {
+        if acquisition.provider == ToolAcquisitionProvider::Corepack
+            && corepack_provider_bootstrap_available()
+        {
+            return probe_started;
+        }
         let provider_requirement = tool_acquisition_provider_requirement(acquisition);
         findings.push(Finding::identified(
             "OTA_TOOL_ACTIVATION_PROVIDER_MISSING",
@@ -12929,6 +13000,52 @@ workflows:
     }
 
     #[test]
+    fn doctor_skips_agent_safe_dependency_hydration_advisory_for_first_class_hydration() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  setup:
+    safe_for_agent: true
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(!report.findings.iter().any(|finding| {
+            finding.summary == "Agent-safe task `setup` performs network dependency hydration"
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Info
+                && finding.summary
+                    == "Selected task path performs network dependency hydration: setup"
+        }));
+    }
+
+    #[test]
     fn doctor_surfaces_selected_task_path_effects() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -14954,6 +15071,96 @@ workflows:
             finding
                 .next
                 .contains("corepack prepare pnpmx@10.22.0 --activate")
+        );
+    }
+
+    #[test]
+    fn doctor_does_not_block_on_missing_corepack_when_npm_can_bootstrap_it() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "node.cmd" } else { "node" },
+            if cfg!(windows) {
+                "@echo off\r\necho v24.0.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'v24.0.0'\n"
+            },
+        );
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "npm.cmd" } else { "npm" },
+            if cfg!(windows) {
+                "@echo off\r\necho 10.9.0\r\n"
+            } else {
+                "#!/bin/sh\necho '10.9.0'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "24"
+    package_managers:
+      pnpmx: "10.22.0"
+tasks:
+  setup:
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpmx: "10.22.0"
+workflows:
+  default: contributor
+  contributor:
+    setup:
+      task: setup
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("contributor"),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| { finding.summary == "Missing tool activation provider: corepack" }),
+            "{report:?}"
+        );
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Missing tool: pnpmx"),
+            "{report:?}"
         );
     }
 

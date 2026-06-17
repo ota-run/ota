@@ -56931,6 +56931,85 @@ workflows:
     }
 
     #[test]
+    fn selected_up_activation_actions_include_corepack_bootstrap_when_npm_is_available() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_executable_script(
+            &fake_command_path(&bin_dir, "npm"),
+            if cfg!(windows) {
+                "@echo off\r\necho 10.9.0\r\n"
+            } else {
+                "#!/bin/sh\necho '10.9.0'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: ">=22.16"
+    package_managers:
+      pnpm: "10.32.1"
+tasks:
+  install:
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "10.32.1"
+workflows:
+  default: backend
+  backend:
+    run:
+      task: install
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+
+        let actions = super::selected_up_activation_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            Some("backend"),
+            &preflight,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(actions[0].tool_name, "pnpm");
+        assert_eq!(
+            actions[0].acquisition.provider,
+            ToolAcquisitionProvider::Corepack
+        );
+    }
+
+    #[test]
     fn corepack_activation_invokes_provider_with_explicit_args() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
@@ -60196,6 +60275,47 @@ tasks:
                 && warning.owner == "repo_contract"
                 && warning.severity == "warn"
                 && warning.summary.contains("empty compose adapter inputs")
+        }));
+    }
+
+    #[test]
+    fn collect_validate_warning_details_skips_first_class_agent_safe_dependency_hydration() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  setup:
+    safe_for_agent: true
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let warnings = super::collect_validate_warning_details(&contract, None);
+        assert!(!warnings.iter().any(|warning| {
+            warning.code == "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_DEPENDENCY_HYDRATION"
         }));
     }
 
@@ -85899,12 +86019,22 @@ fn selected_up_activation_actions(
         .into_iter()
         .filter(|action| {
             !policy_provisioned_tools.contains(action.tool_name.as_str())
-                && preflight
+                && (preflight
                     .findings
                     .iter()
                     .any(|finding| finding_targets_activation_action(finding, action))
+                    || activation_action_needs_local_bootstrap(action))
         })
         .collect()
+}
+
+fn activation_action_needs_local_bootstrap(action: &RequirementActivationAction) -> bool {
+    match action.acquisition.provider {
+        ToolAcquisitionProvider::Corepack => {
+            !crate::doctor::command_available("corepack") && crate::doctor::command_available("npm")
+        }
+        ToolAcquisitionProvider::Command => false,
+    }
 }
 
 fn up_activation_requirement_surface(
@@ -88063,6 +88193,32 @@ fn run_corepack_activation_action(
     working_dir: &Path,
     mode: RepoExecutionMode,
 ) -> Result<CommandRunResult, String> {
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+
+    if !crate::doctor::command_available("corepack") && crate::doctor::command_available("npm") {
+        let bootstrap = run_process_command(
+            "npm",
+            &["install", "-g", "corepack"],
+            working_dir,
+            mode,
+            "Bootstrapping Corepack",
+        );
+        stdout.push_str(&bootstrap.stdout);
+        stderr.push_str(&bootstrap.stderr);
+        if bootstrap.exit_code != 0 {
+            return Ok(CommandRunResult {
+                exit_code: bootstrap.exit_code,
+                stdout,
+                stderr,
+                target: None,
+                runtime: None,
+                service_termination: None,
+                host_service_cleanup: Vec::new(),
+            });
+        }
+    }
+
     let enable = run_process_command(
         "corepack",
         &["enable"],
@@ -88070,8 +88226,18 @@ fn run_corepack_activation_action(
         mode,
         "Enabling Corepack",
     );
+    stdout.push_str(&enable.stdout);
+    stderr.push_str(&enable.stderr);
     if enable.exit_code != 0 {
-        return Ok(enable);
+        return Ok(CommandRunResult {
+            exit_code: enable.exit_code,
+            stdout,
+            stderr,
+            target: None,
+            runtime: None,
+            service_termination: None,
+            host_service_cleanup: Vec::new(),
+        });
     }
 
     let package_spec = format!(
@@ -88095,8 +88261,8 @@ fn run_corepack_activation_action(
 
     Ok(CommandRunResult {
         exit_code: prepare.exit_code,
-        stdout: format!("{}{}", enable.stdout, prepare.stdout),
-        stderr: format!("{}{}", enable.stderr, prepare.stderr),
+        stdout: format!("{stdout}{}", prepare.stdout),
+        stderr: format!("{stderr}{}", prepare.stderr),
         target: None,
         runtime: None,
         service_termination: None,

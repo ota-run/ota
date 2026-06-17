@@ -9671,6 +9671,8 @@ fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<Contrac
         }
 
         let mut effective_network_kind = None;
+        let mut hydration_is_fully_structured = true;
+        let mut saw_hydration = false;
         let mut external_state = BTreeSet::new();
 
         for task_name in collect_reachable_task_names(safe_task_name.as_str(), &contract.tasks) {
@@ -9678,6 +9680,13 @@ fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<Contrac
                 continue;
             };
             if let Some(network_kind) = task.effects.effective_network_kind() {
+                if network_kind == TaskNetworkEffectKind::DependencyHydration {
+                    saw_hydration = true;
+                    hydration_is_fully_structured &= matches!(
+                        task.prepare.as_ref(),
+                        Some(crate::schema::TaskPrepareSpec::DependencyHydration(_))
+                    );
+                }
                 effective_network_kind = Some(match (effective_network_kind, network_kind) {
                     (Some(TaskNetworkEffectKind::Broad), _) => TaskNetworkEffectKind::Broad,
                     (_, TaskNetworkEffectKind::Broad) => TaskNetworkEffectKind::Broad,
@@ -9688,12 +9697,18 @@ fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<Contrac
         }
 
         if let Some(network_kind) = effective_network_kind {
-            advisories.push(ContractAdvisory::AgentSafeTaskNetwork(
-                AgentSafeTaskNetworkAdvisory {
-                    task_name: safe_task_name.clone(),
-                    network_kind,
-                },
-            ));
+            let structured_hydration_only = network_kind
+                == TaskNetworkEffectKind::DependencyHydration
+                && saw_hydration
+                && hydration_is_fully_structured;
+            if !structured_hydration_only {
+                advisories.push(ContractAdvisory::AgentSafeTaskNetwork(
+                    AgentSafeTaskNetworkAdvisory {
+                        task_name: safe_task_name.clone(),
+                        network_kind,
+                    },
+                ));
+            }
         }
 
         if !external_state.is_empty() {
@@ -28769,6 +28784,98 @@ tasks:
             advisory,
             ContractAdvisory::AgentSafeTaskExternalState(value)
                 if value.task_name == "verify" && value.systems == vec![String::from("docker")]
+        )));
+    }
+
+    #[test]
+    fn skips_agent_safe_dependency_hydration_advisory_for_first_class_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  setup:
+    safe_for_agent: true
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskNetwork(value)
+                if value.task_name == "setup"
+                    && value.network_kind == TaskNetworkEffectKind::DependencyHydration
+        )));
+    }
+
+    #[test]
+    fn skips_agent_safe_dependency_hydration_advisory_for_first_class_hydration_dependency_closure()
+    {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  verify:
+    run: pnpm test
+    safe_for_agent: true
+    depends_on: [setup]
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        frozen_lockfile: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskNetwork(value)
+                if value.task_name == "verify"
+                    && value.network_kind == TaskNetworkEffectKind::DependencyHydration
         )));
     }
 

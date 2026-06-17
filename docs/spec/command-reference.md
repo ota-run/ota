@@ -1386,8 +1386,12 @@ ota doctor --member api --member web --json [PATH]
   so `toolchains.rust` can participate in approved-version and approved-source findings without
   re-declaring `runtimes.rust`
 - `ota doctor --json` now exposes additive `toolchains[]` entries for the selected workflow/task path, including the provider, effective backend, target OS, version, fulfillment mode, and the owned runtime/tool capabilities ota checked on that path
-- agent-safe tasks that declare `effects.network` or `effects.external_state` now produce warnings
-  in doctor output instead of leaving those execution risks implicit behind a safe-task label
+- agent-safe tasks that declare broad `effects.network` or `effects.external_state` produce
+  warnings in doctor output instead of leaving those execution risks implicit behind a safe-task
+  label
+- first-class `prepare.kind: dependency_hydration` lanes keep their network truth visible, but ota
+  does not emit the generic agent-safe dependency-hydration warning when that bounded lane is
+  already modeled on the typed hydration surface
 - when one selected tool requirement resolves to `tools.<name>.acquisition`, doctor names that
   activation lane directly instead of reducing the fix to a generic install hint; Corepack-managed
   `pnpm` is the first shipped provider path

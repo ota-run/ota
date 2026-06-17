@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- agent-safe dependency-hydration governance is now narrower and more truthful: ota no longer
+  emits the generic agent-safe dependency-hydration contract advisory when the task path is
+  already modeled on the first-class `prepare.kind: dependency_hydration` surface; weaker or
+  shell-modeled networked hydration still keeps the warning
+- Corepack-backed native activation is now provider-owned instead of repo-burdened when `npm`
+  is already available: `ota doctor` no longer blocks on a missing `corepack` shim that Ota can
+  bootstrap itself, `ota up` now installs `corepack` before `enable/prepare` when needed, and
+  direct native run-path Corepack activation follows the same bootstrap lane
 - `ota doctor` now treats inferred task-command and launch-command executables as presence-owned
   prerequisites instead of strict versioned tools, so valid command surfaces no longer fail
   diagnosis just because their executable does not support `--version`; explicit `tools:` contract
