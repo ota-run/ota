@@ -35,6 +35,9 @@
   failures now recover lookup-style unresolved hosts more reliably, auth/credential failures can
   recover endpoint-style and `addr=` / `hostname=` host evidence, and readiness-target mismatch
   now catches path drift when the app advertises a live endpoint in proof artifacts
+- tightened runtime-proof failure-class ordering onto one shared priority path, so
+  install/toolchain startup breaks now classify consistently from proof logs even when the proof
+  path only has log evidence and not a richer recovered likely-cause object
 - `ota detect` write modes now publish first-class field-admission rationale alongside detect
   ownership metadata: written contracts and JSON output record
   `metadata.ota.detect.field_admission` as `direct` for high-confidence detector-owned fields and

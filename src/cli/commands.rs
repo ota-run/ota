@@ -45057,6 +45057,67 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_uses_install_hint_without_likely_cause_for_run_exit() {
+        let fixture = TempDir::new().unwrap();
+        let up_log = fixture.path().join("up.log");
+        fs::write(&up_log, "node-gyp rebuild failed\n").unwrap();
+
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out"),
+                next: String::from("rerun"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "run",
+            None,
+            Some("timed out while waiting for readiness"),
+            None,
+            up_log.as_path(),
+        );
+        assert_eq!(class.as_deref(), Some("install_or_toolchain_failure"));
+    }
+
+    #[test]
+    fn proof_runtime_failure_class_uses_install_hint_without_likely_cause_for_timeout_only_failure()
+    {
+        let fixture = TempDir::new().unwrap();
+        let up_log = fixture.path().join("up.log");
+        fs::write(&up_log, "node-gyp rebuild failed\n").unwrap();
+
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: None,
+        };
+
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "readiness",
+            None,
+            Some("timed out while waiting for readiness"),
+            None,
+            up_log.as_path(),
+        );
+        assert_eq!(class.as_deref(), Some("install_or_toolchain_failure"));
+    }
+
+    #[test]
     fn proof_runtime_failure_class_marks_interrupted_without_primary_blocker() {
         let summary = DoctorSummary {
             verdict: DoctorVerdict::NotReady,
@@ -79171,16 +79232,6 @@ fn proof_runtime_failure_class(
     likely_cause: Option<&ProofRuntimeLikelyCause>,
     up_log_artifact_path: &Path,
 ) -> Option<String> {
-    let likely_readiness_target_mismatch =
-        likely_cause.is_some_and(ProofRuntimeLikelyCause::is_readiness_target_mismatch);
-    let likely_dns_service_name_resolution_failure =
-        likely_cause.is_some_and(ProofRuntimeLikelyCause::is_dns_service_name_resolution_failure);
-    let likely_auth_credential_failure =
-        likely_cause.is_some_and(ProofRuntimeLikelyCause::is_auth_credential_failure);
-    let likely_config_drift =
-        likely_cause.is_some_and(ProofRuntimeLikelyCause::implies_config_drift);
-    let likely_missing_env = likely_cause.is_some_and(ProofRuntimeLikelyCause::is_missing_env);
-    let likely_bind_conflict = likely_cause.is_some_and(ProofRuntimeLikelyCause::is_bind_conflict);
     let likely_install_or_toolchain_failure =
         likely_cause.is_some_and(ProofRuntimeLikelyCause::is_install_or_toolchain_failure);
     if cleanup_error.is_some() {
@@ -79194,28 +79245,18 @@ fn proof_runtime_failure_class(
     }
 
     let canonical_phase = canonical_proof_runtime_phase_key(phase);
+    let likely_failure_class = proof_runtime_likely_failure_class(
+        likely_cause,
+        likely_install_or_toolchain_failure
+            || proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path),
+    );
 
     let Some(primary) = proof_runtime_blocking_primary_blocker(summary) else {
         if up_process_failure
             .is_some_and(|failure| failure.contains("timed out while waiting for readiness"))
         {
-            if likely_readiness_target_mismatch {
-                return Some(String::from("readiness_target_mismatch"));
-            }
-            if likely_dns_service_name_resolution_failure {
-                return Some(String::from("dns_service_name_resolution_failure"));
-            }
-            if likely_auth_credential_failure {
-                return Some(String::from("auth_credential_failure"));
-            }
-            if likely_missing_env {
-                return Some(String::from("missing_env"));
-            }
-            if likely_bind_conflict {
-                return Some(String::from("bind_conflict"));
-            }
-            if likely_config_drift {
-                return Some(String::from("config_drift"));
+            if let Some(class) = likely_failure_class {
+                return Some(class);
             }
             return Some(String::from("readiness_timeout"));
         }
@@ -79232,28 +79273,8 @@ fn proof_runtime_failure_class(
         return None;
     };
     if primary.summary == "Run task exited before readiness" {
-        if likely_readiness_target_mismatch {
-            return Some(String::from("readiness_target_mismatch"));
-        }
-        if likely_dns_service_name_resolution_failure {
-            return Some(String::from("dns_service_name_resolution_failure"));
-        }
-        if likely_auth_credential_failure {
-            return Some(String::from("auth_credential_failure"));
-        }
-        if likely_missing_env {
-            return Some(String::from("missing_env"));
-        }
-        if likely_install_or_toolchain_failure
-            || proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path)
-        {
-            return Some(String::from("install_or_toolchain_failure"));
-        }
-        if likely_bind_conflict {
-            return Some(String::from("bind_conflict"));
-        }
-        if likely_config_drift {
-            return Some(String::from("config_drift"));
+        if let Some(class) = likely_failure_class {
+            return Some(class);
         }
         return Some(String::from("run_task_exit_before_readiness"));
     }
@@ -79263,23 +79284,8 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness timed out:")
     {
-        if likely_readiness_target_mismatch {
-            return Some(String::from("readiness_target_mismatch"));
-        }
-        if likely_dns_service_name_resolution_failure {
-            return Some(String::from("dns_service_name_resolution_failure"));
-        }
-        if likely_auth_credential_failure {
-            return Some(String::from("auth_credential_failure"));
-        }
-        if likely_missing_env {
-            return Some(String::from("missing_env"));
-        }
-        if likely_bind_conflict {
-            return Some(String::from("bind_conflict"));
-        }
-        if likely_config_drift {
-            return Some(String::from("config_drift"));
+        if let Some(class) = likely_failure_class {
+            return Some(class);
         }
         return Some(String::from("readiness_timeout"));
     }
@@ -79288,23 +79294,8 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness failed:")
     {
-        if likely_readiness_target_mismatch {
-            return Some(String::from("readiness_target_mismatch"));
-        }
-        if likely_dns_service_name_resolution_failure {
-            return Some(String::from("dns_service_name_resolution_failure"));
-        }
-        if likely_auth_credential_failure {
-            return Some(String::from("auth_credential_failure"));
-        }
-        if likely_missing_env {
-            return Some(String::from("missing_env"));
-        }
-        if likely_bind_conflict {
-            return Some(String::from("bind_conflict"));
-        }
-        if likely_config_drift {
-            return Some(String::from("config_drift"));
+        if let Some(class) = likely_failure_class {
+            return Some(class);
         }
         return Some(String::from("readiness_check_failed"));
     }
@@ -79315,7 +79306,7 @@ fn proof_runtime_failure_class(
             .summary
             .starts_with("Signal surface readiness could not be evaluated:")
     {
-        if likely_config_drift {
+        if likely_cause.is_some_and(ProofRuntimeLikelyCause::implies_config_drift) {
             return Some(String::from("config_drift"));
         }
         return Some(String::from("readiness_evaluation_failed"));
@@ -79329,6 +79320,41 @@ fn proof_runtime_failure_class(
         "readiness" => String::from("readiness_blocked"),
         _ => String::from("primary_blocker"),
     })
+}
+
+fn proof_runtime_likely_failure_class(
+    likely_cause: Option<&ProofRuntimeLikelyCause>,
+    install_or_toolchain_hint: bool,
+) -> Option<String> {
+    let Some(likely_cause) = likely_cause else {
+        if install_or_toolchain_hint {
+            return Some(String::from("install_or_toolchain_failure"));
+        }
+        return None;
+    };
+
+    if likely_cause.is_readiness_target_mismatch() {
+        return Some(String::from("readiness_target_mismatch"));
+    }
+    if likely_cause.is_dns_service_name_resolution_failure() {
+        return Some(String::from("dns_service_name_resolution_failure"));
+    }
+    if likely_cause.is_auth_credential_failure() {
+        return Some(String::from("auth_credential_failure"));
+    }
+    if likely_cause.is_missing_env() {
+        return Some(String::from("missing_env"));
+    }
+    if likely_cause.is_bind_conflict() {
+        return Some(String::from("bind_conflict"));
+    }
+    if likely_cause.implies_config_drift() {
+        return Some(String::from("config_drift"));
+    }
+    if likely_cause.is_install_or_toolchain_failure() || install_or_toolchain_hint {
+        return Some(String::from("install_or_toolchain_failure"));
+    }
+    None
 }
 
 fn proof_runtime_refined_phase(
