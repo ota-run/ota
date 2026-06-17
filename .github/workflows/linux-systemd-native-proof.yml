@@ -133,12 +133,23 @@ jobs:
                 kind: systemd_active
                 interval: 1s
                 retries: 10
+          tasks:
+            verify:
+              command:
+                exe: /bin/sh
+                args:
+                  - -lc
+                  - ":"
+              requires_services:
+                - fixture
           workflows:
             default: app
             app:
               services:
                 required:
                   - fixture
+              run:
+                task: verify
           EOF
 
           "$ota" validate "$proof_root" --plain
