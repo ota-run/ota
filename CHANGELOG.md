@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- improved native run-path failure trust for command-owned Compose tasks: when a native task launches
+  `podman` or `docker` and the selected engine backend is unavailable, `ota run` now reports
+  first-class `Container engine unavailable` guidance with engine-specific repair steps instead of
+  flattening the failure into generic non-zero-exit wording
 - added first-class `podman compose` ownership across the shipped Compose-family surfaces:
   compose-managed services can now declare `services.<name>.manager.engine: podman`, docker-compose
   dependency hydration can declare `prepare.source.engine: podman`, and adapter governance/doctor

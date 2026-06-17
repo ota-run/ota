@@ -644,6 +644,72 @@ fn render_task_exit_failure_text(
     out
 }
 
+fn render_container_engine_unavailable_failure_text(
+    where_value: &str,
+    failed_step_name: &str,
+    requested_task_name: Option<&str>,
+    engine: &str,
+    details: &str,
+    excerpt: Option<&OutputExcerpt>,
+    next_steps: &[String],
+    summary_block: Option<&str>,
+    receipt_text: Option<&str>,
+) -> String {
+    let mut out = format!(
+        "{}  {}",
+        render_severity(FindingSeverity::Error),
+        paint("Container engine unavailable", "1;37")
+    );
+    out.push_str(&format!(
+        "\n{}",
+        stylize_inline_text(&format!("`{failed_step_name}` could not use container engine `{engine}`"))
+    ));
+    if let Some(requested_task_name) = requested_task_name
+        && requested_task_name != failed_step_name
+    {
+        out.push_str(&format!(
+            "\n{} {}",
+            paint_key("Requested:"),
+            paint_code(requested_task_name)
+        ));
+        out.push_str(&format!(
+            "\n{} {}",
+            paint_key("Failed Step:"),
+            paint_code(failed_step_name)
+        ));
+    }
+    if let Some(context) = execution_context_from_summary_block(summary_block) {
+        out.push_str(&format!("\n{} {context}", paint_key("Context:")));
+    }
+    out.push_str(&format!(
+        "\n{} {}",
+        paint_key("Where:"),
+        paint_code(where_value)
+    ));
+    append_error_detail_section(
+        &mut out,
+        "Why:",
+        &[
+            format!(
+                "task `{failed_step_name}` launches `{engine}`, but the selected container engine backend is unavailable"
+            ),
+            format!("{engine} reported: {details}"),
+        ],
+        None,
+    );
+    if let Some(excerpt) = excerpt {
+        append_output_excerpt_section(&mut out, excerpt);
+    }
+    if let Some(receipt_text) = receipt_text
+        && !receipt_text.trim().is_empty()
+    {
+        out.push_str(receipt_text);
+    }
+    append_summary_block(&mut out, summary_block);
+    append_post_summary_next_block(&mut out, next_steps);
+    out
+}
+
 fn append_output_excerpt_section(output: &mut String, excerpt: &OutputExcerpt) {
     append_named_output_excerpt_section(output, "Output:", excerpt);
 }
@@ -66275,6 +66341,56 @@ tasks:
     }
 
     #[test]
+    fn run_failure_text_classifies_podman_engine_unavailable_for_native_compose_task() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  selfhost:compose:down:
+    command:
+      exe: podman
+      args:
+        - compose
+        - down
+"#,
+        )
+        .expect("contract should parse");
+        let rendered = strip_ansi_codes(&super::render_run_captured_failure_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "./ota.yaml",
+            "selfhost:compose:down",
+            "selfhost:compose:down",
+            None,
+            ExecutionOverrides::default(),
+            125,
+            "",
+            "Cannot connect to Podman\nError: unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused",
+            None,
+            None,
+            false,
+            None,
+            "RUN SUMMARY\nStatus:      failed\nNote:        placeholder",
+        ));
+
+        assert!(rendered.contains("Container engine unavailable"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "task `selfhost:compose:down` launches `podman`, but the selected container engine backend is unavailable"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("run `podman system connection list`"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("ERROR  Task Failed"), "{rendered}");
+    }
+
+    #[test]
     fn run_failure_text_prefers_actual_test_failures_over_package_manager_failed_noise() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -73284,6 +73400,27 @@ fn render_run_captured_failure_text(
     }
     let mut next_steps = Vec::new();
     let excerpt = run_output_excerpt(stdout, stderr, 20);
+    if let Some((engine, details)) =
+        detect_native_container_engine_unavailable(contract, task_name, stdout, stderr)
+    {
+        next_steps.push(format!("run `{engine} system connection list`"));
+        next_steps.push(format!(
+            "start or repair container engine `{engine}`, then rerun `{}`",
+            repo_run_stream_command_for_execution(task_name, member, Backend::Native, overrides)
+        ));
+        next_steps.push(task_use_details_step(Some(contract_path), member));
+        return render_container_engine_unavailable_failure_text(
+            where_value,
+            task_name,
+            Some(requested_task_name),
+            &engine,
+            &details,
+            excerpt.as_ref(),
+            &next_steps,
+            Some(summary),
+            receipt_text,
+        );
+    }
     let rerun_backend = effective_task_execution(contract, task_name, overrides).backend;
     if matches!(rerun_backend, Backend::Container)
         && detect_container_apt_permission_denied(stdout, stderr)
@@ -73308,6 +73445,84 @@ fn render_run_captured_failure_text(
         &next_steps,
         Some(summary),
         receipt_text,
+    )
+}
+
+fn detect_native_container_engine_unavailable(
+    contract: &Contract,
+    task_name: &str,
+    stdout: &str,
+    stderr: &str,
+) -> Option<(String, String)> {
+    let task = contract.tasks.get(task_name)?;
+    let engine = task_declared_container_engine_cli(task)?;
+    let details = extract_container_engine_unavailable_details(stdout, stderr)?;
+    Some((engine.to_string(), details))
+}
+
+fn task_declared_container_engine_cli(task: &TaskSpec) -> Option<&str> {
+    if let Some(command) = task.command.as_ref() {
+        let exe = command.exe.trim();
+        if exe.eq_ignore_ascii_case("docker") || exe.eq_ignore_ascii_case("podman") {
+            return Some(exe);
+        }
+    }
+    if let Some(crate::schema::TaskLaunchSpec::Command(command)) = task.launch.as_ref() {
+        let exe = command.exe.trim();
+        if exe.eq_ignore_ascii_case("docker") || exe.eq_ignore_ascii_case("podman") {
+            return Some(exe);
+        }
+    }
+    None
+}
+
+fn extract_container_engine_unavailable_details(stdout: &str, stderr: &str) -> Option<String> {
+    let normalized = format!("{stdout}\n{stderr}").replace("\r\n", "\n");
+    let lines = normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let combined_lower = lines
+        .iter()
+        .map(|line| line.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if !(combined_lower.contains("cannot connect to podman")
+        || combined_lower.contains("unable to connect to podman socket")
+        || combined_lower.contains("docker daemon is not running")
+        || combined_lower.contains("cannot connect to the docker daemon")
+        || combined_lower.contains("failed to connect to the docker api")
+        || combined_lower.contains("is the docker daemon running")
+        || combined_lower.contains("if the daemon is running")
+        || combined_lower.contains("pipe/docker_engine")
+        || combined_lower.contains("error while dialing")
+        || combined_lower.contains("connection refused"))
+    {
+        return None;
+    }
+
+    let detail_line = lines
+        .iter()
+        .rev()
+        .find(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower.contains("unable to connect to podman socket")
+                || lower.contains("cannot connect to podman")
+                || lower.contains("cannot connect to the docker daemon")
+                || lower.contains("failed to connect to the docker api")
+                || lower.contains("docker daemon is not running")
+                || lower.contains("pipe/docker_engine")
+                || lower.contains("error while dialing")
+                || lower.contains("connection refused")
+        })
+        .copied()
+        .unwrap_or("container engine backend is unavailable");
+    Some(
+        detail_line
+            .strip_prefix("Error: ")
+            .unwrap_or(detail_line)
+            .to_string(),
     )
 }
 

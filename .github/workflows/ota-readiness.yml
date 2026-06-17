@@ -49,6 +49,8 @@ jobs:
         run: |
           cargo test --test json_schema_contracts
           cargo test --test json_output_conformance
+      - name: Verify native Podman engine-unavailable classification
+        run: cargo test run_failure_text_classifies_podman_engine_unavailable_for_native_compose_task --lib -- --test-threads=1
 
   readiness:
     runs-on: ubuntu-latest
