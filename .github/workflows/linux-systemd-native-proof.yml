@@ -133,17 +133,12 @@ jobs:
                 kind: systemd_active
                 interval: 1s
                 retries: 10
-          tasks:
-            setup:
-              run: systemctl --user is-active --quiet $unit
-              requirements:
-                tools:
-                  systemctl: "*"
           workflows:
             default: app
             app:
-              setup:
-                task: setup
+              services:
+                required:
+                  - fixture
           EOF
 
           "$ota" validate "$proof_root" --plain
