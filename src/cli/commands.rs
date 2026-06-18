@@ -1482,6 +1482,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::ExceptionalDependencyHydrationOverride(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("exceptional dependency hydration override"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::ReplaceableShellCheck(value) => format!(
             "{} check `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -35060,6 +35071,9 @@ fn collect_prepare_field_paths(
                     if source.inline_builds {
                         fields.push(format!("{prefix}.source.inline_builds"));
                     }
+                    if source.force {
+                        fields.push(format!("{prefix}.source.force"));
+                    }
                 }
                 TaskDependencyHydrationSourceSpec::Bundler(_source) => {
                     fields.push(format!("{prefix}.source.cwd"));
@@ -36378,6 +36392,7 @@ fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> 
             &prepare.groups,
             prepare.frozen_lockfile,
             prepare.inline_builds,
+            prepare.force,
             prepare.no_root,
             prepare.skip_tests,
             &prepare.targets,
@@ -36434,6 +36449,7 @@ fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> 
             &prepare.groups,
             prepare.frozen_lockfile,
             prepare.inline_builds,
+            prepare.force,
             prepare.no_root,
             prepare.skip_tests,
             &prepare.targets,
@@ -36453,6 +36469,7 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
     groups: &[T],
     frozen_lockfile: bool,
     inline_builds: bool,
+    force: bool,
     no_root: bool,
     skip_tests: bool,
     targets: &[T],
@@ -36492,6 +36509,9 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
             }
             if inline_builds {
                 command.push_str(" --inline-builds");
+            }
+            if force {
+                command.push_str(" --force");
             }
             format!("hydrate {medium} with `{command}` in `{cwd}`")
         }
@@ -48176,6 +48196,7 @@ tasks:
                         groups: Vec::new(),
                         frozen_lockfile: true,
                         inline_builds: false,
+                        force: false,
                         no_root: false,
                         skip_tests: false,
                         targets: Vec::new(),
@@ -48193,6 +48214,7 @@ tasks:
                         groups: Vec::new(),
                         frozen_lockfile: false,
                         inline_builds: false,
+                        force: false,
                         no_root: false,
                         skip_tests: false,
                         targets: Vec::new(),
@@ -48208,6 +48230,7 @@ tasks:
                 groups: Vec::new(),
                 frozen_lockfile: false,
                 inline_builds: false,
+                force: false,
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
@@ -48277,6 +48300,7 @@ tasks:
                 groups: Vec::new(),
                 frozen_lockfile: true,
                 inline_builds: false,
+                force: false,
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
@@ -48326,6 +48350,7 @@ tasks:
                 groups: Vec::new(),
                 frozen_lockfile: true,
                 inline_builds: false,
+                force: false,
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
@@ -48397,6 +48422,7 @@ tasks:
                 groups: Vec::new(),
                 frozen_lockfile: true,
                 inline_builds: true,
+                force: false,
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
@@ -48422,6 +48448,71 @@ tasks:
         assert!(
             rendered.contains(
                 "Prepare: hydrate package dependencies with `yarn install --immutable --inline-builds` in `.`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_tasks_text_reports_npm_force_hydration() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "setup:npm",
+            context: Some("host"),
+            default_mode: None,
+            description: Some("Hydrate npm dependencies with force"),
+            notes: None,
+            category: None,
+            env: &env,
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs: &inputs,
+            kind: "prepare",
+            run: None,
+            script: None,
+            command: None,
+            launch: None,
+            action: None,
+            prepare: Some(crate::output::TaskPrepareSummary {
+                kind: "dependency_hydration",
+                steps: Vec::new(),
+                medium: Some("package_dependencies"),
+                source_kind: Some("node_package_manager"),
+                cwd: Some("."),
+                file: None,
+                manager: Some("npm"),
+                mode: Some("install"),
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: false,
+                inline_builds: false,
+                force: true,
+                no_root: false,
+                skip_tests: false,
+                targets: Vec::new(),
+            }),
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+
+        assert!(
+            rendered.contains(
+                "Prepare: hydrate package dependencies with `npm install --force` in `.`"
             ),
             "{rendered}"
         );

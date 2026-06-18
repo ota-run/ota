@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- widened first-class Node dependency hydration with explicit npm `force` ownership, so repos can
+  now model `npm install --force` structurally under `prepare.kind: dependency_hydration` instead
+  of burying that override lane in shell
+- validate/doctor now warn when contracts declare the exceptional npm `--force` hydration path,
+  and they also flag raw `npm install --force` task bodies as replaceable structured dependency
+  hydration
 - widened first-class Node dependency hydration with Yarn `inline_builds` support, so repos can
   now model `yarn install --inline-builds` structurally under
   `prepare.kind: dependency_hydration` instead of hiding that setup lane in shell

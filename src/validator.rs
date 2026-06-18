@@ -3901,6 +3901,26 @@ fn validate_task_prepare(
                             "task `{task_name}` prepare `node_package_manager` must use `mode: install` when `inline_builds: true` is declared"
                         )));
                     }
+                    if source.force
+                        && !matches!(
+                            source.manager,
+                            crate::schema::TaskNodePackageManagerKind::Npm
+                        )
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` must not declare `force: true` unless `manager: npm`"
+                        )));
+                    }
+                    if source.force
+                        && !matches!(
+                            source.mode,
+                            crate::schema::TaskNodePackageManagerHydrationMode::Install
+                        )
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` must use `mode: install` when `force: true` is declared"
+                        )));
+                    }
                 }
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => {
                     if spec.medium
@@ -6798,6 +6818,7 @@ pub enum ContractAdvisory {
     ServiceUsesOpaqueShellStart(ServiceUsesOpaqueShellStartAdvisory),
     ReplaceableFiniteShellCommand(ReplaceableFiniteShellCommandAdvisory),
     ReplaceableDependencyHydrationOwnership(ReplaceableDependencyHydrationOwnershipAdvisory),
+    ExceptionalDependencyHydrationOverride(ExceptionalDependencyHydrationOverrideAdvisory),
     ReplaceableShellCheck(ReplaceableShellCheckAdvisory),
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
     ReplaceableToolBootstrapOwnership(ReplaceableToolBootstrapOwnershipAdvisory),
@@ -6909,6 +6930,13 @@ pub struct ReplaceableFiniteShellCommandAdvisory {
 pub struct ReplaceableDependencyHydrationOwnershipAdvisory {
     pub task_name: String,
     pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExceptionalDependencyHydrationOverrideAdvisory {
+    pub task_name: String,
+    pub manager: String,
+    pub flag: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7083,6 +7111,9 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableDependencyHydrationOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_DEPENDENCY_HYDRATION"
             }
+            ContractAdvisory::ExceptionalDependencyHydrationOverride(_) => {
+                "OTA_CONTRACT_ADVISORY_EXCEPTIONAL_DEPENDENCY_HYDRATION_OVERRIDE"
+            }
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => {
                     "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_FILE_CHECK"
@@ -7221,6 +7252,10 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableDependencyHydrationOwnership(advisory) => format!(
                 "task `{}` hard-codes dependency hydration in its task body",
                 advisory.task_name
+            ),
+            ContractAdvisory::ExceptionalDependencyHydrationOverride(advisory) => format!(
+                "task `{}` declares exceptional dependency hydration override `{}` for `{}`",
+                advisory.task_name, advisory.flag, advisory.manager
             ),
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => format!(
@@ -7385,6 +7420,10 @@ impl ContractAdvisory {
                 "task `{}` hard-codes a dependency-hydration shell (`{}`), which hides setup ownership from Ota instead of declaring it under `prepare.kind: dependency_hydration`",
                 advisory.task_name, advisory.command
             ),
+            ContractAdvisory::ExceptionalDependencyHydrationOverride(advisory) => format!(
+                "task `{}` declares `{}` on structured {} hydration; that weakens normal package-manager safety and should only be kept when the repo truth genuinely requires the override",
+                advisory.task_name, advisory.flag, advisory.manager
+            ),
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => format!(
                     "check `{}` uses an obvious shell file-state command (`{}`), which is less portable and less governable than a first-class `kind: file` check",
@@ -7485,6 +7524,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableFiniteShellCommand(_)
             | ContractAdvisory::ReplaceableDependencyHydrationOwnership(_)
+            | ContractAdvisory::ExceptionalDependencyHydrationOverride(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
@@ -7522,6 +7562,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableFiniteShellCommand(_)
             | ContractAdvisory::ReplaceableDependencyHydrationOwnership(_)
+            | ContractAdvisory::ExceptionalDependencyHydrationOverride(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
@@ -7560,6 +7601,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
             | ContractAdvisory::ReplaceableFiniteShellCommand(_)
             | ContractAdvisory::ReplaceableDependencyHydrationOwnership(_)
+            | ContractAdvisory::ExceptionalDependencyHydrationOverride(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
@@ -7657,6 +7699,10 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableDependencyHydrationOwnership(advisory) => format!(
                 "move dependency hydration out of task `{}` shell: declare `prepare.kind: dependency_hydration` with a typed source instead of `{}`",
                 advisory.task_name, advisory.command
+            ),
+            ContractAdvisory::ExceptionalDependencyHydrationOverride(advisory) => format!(
+                "keep `{}` on {} hydration only when the repo truth genuinely requires it; otherwise remove the override and return task `{}` to normal package-manager hydration semantics",
+                advisory.flag, advisory.manager, advisory.task_name
             ),
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => file_check_replacement_guidance(
@@ -7840,6 +7886,7 @@ pub fn collect_contract_advisories_with_contract_path(
         contract,
     ));
     advisories.extend(collect_replaceable_dependency_hydration_ownership_advisories(contract));
+    advisories.extend(collect_exceptional_dependency_hydration_override_advisories(contract));
     advisories.extend(collect_replaceable_shell_check_advisories(contract));
     advisories.extend(collect_replaceable_shell_env_mutation_advisories(contract));
     advisories.extend(collect_replaceable_tool_bootstrap_ownership_advisories(
@@ -8309,7 +8356,7 @@ fn collect_replaceable_dependency_hydration_ownership_advisories(
             .map(str::trim)
             .filter(|value| !value.is_empty());
         if let Some(command) = task_shell_command
-            && obvious_yarn_inline_builds_hydration_shell(command)
+            && obvious_replaceable_dependency_hydration_shell(command)
         {
             advisories.push(ContractAdvisory::ReplaceableDependencyHydrationOwnership(
                 ReplaceableDependencyHydrationOwnershipAdvisory {
@@ -8320,7 +8367,7 @@ fn collect_replaceable_dependency_hydration_ownership_advisories(
             continue;
         }
         if let Some(command) = task.command.as_ref()
-            && obvious_yarn_inline_builds_hydration_command(command)
+            && obvious_replaceable_dependency_hydration_command(command)
         {
             advisories.push(ContractAdvisory::ReplaceableDependencyHydrationOwnership(
                 ReplaceableDependencyHydrationOwnershipAdvisory {
@@ -8339,7 +8386,7 @@ fn collect_replaceable_dependency_hydration_ownership_advisories(
                     .map(str::trim)
                     .filter(|value| !value.is_empty());
                 if let Some(command) = branch_shell_command
-                    && obvious_yarn_inline_builds_hydration_shell(command)
+                    && obvious_replaceable_dependency_hydration_shell(command)
                 {
                     advisories.push(ContractAdvisory::ReplaceableDependencyHydrationOwnership(
                         ReplaceableDependencyHydrationOwnershipAdvisory {
@@ -8352,11 +8399,59 @@ fn collect_replaceable_dependency_hydration_ownership_advisories(
                 let Some(command) = branch.command.as_ref() else {
                     continue;
                 };
-                if obvious_yarn_inline_builds_hydration_command(command) {
+                if obvious_replaceable_dependency_hydration_command(command) {
                     advisories.push(ContractAdvisory::ReplaceableDependencyHydrationOwnership(
                         ReplaceableDependencyHydrationOwnershipAdvisory {
                             task_name: task_name.clone(),
                             command: render_task_command_preview(command),
+                        },
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    advisories
+}
+
+fn collect_exceptional_dependency_hydration_override_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if let Some(crate::schema::TaskPrepareSpec::DependencyHydration(spec)) =
+            task.prepare.as_ref()
+            && let crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) =
+                &spec.source
+            && source.force
+        {
+            advisories.push(ContractAdvisory::ExceptionalDependencyHydrationOverride(
+                ExceptionalDependencyHydrationOverrideAdvisory {
+                    task_name: task_name.clone(),
+                    manager: String::from("npm"),
+                    flag: String::from("--force"),
+                },
+            ));
+            continue;
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                let Some(crate::schema::TaskPrepareSpec::DependencyHydration(spec)) =
+                    branch.prepare.as_ref()
+                else {
+                    continue;
+                };
+                let crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) =
+                    &spec.source
+                else {
+                    continue;
+                };
+                if source.force {
+                    advisories.push(ContractAdvisory::ExceptionalDependencyHydrationOverride(
+                        ExceptionalDependencyHydrationOverrideAdvisory {
+                            task_name: task_name.clone(),
+                            manager: String::from("npm"),
+                            flag: String::from("--force"),
                         },
                     ));
                     break;
@@ -9151,13 +9246,13 @@ fn obvious_pip_uv_bootstrap_command(command: &TaskCommandSpec) -> bool {
         && args.iter().any(|arg| arg == "uv")
 }
 
-fn obvious_yarn_inline_builds_hydration_shell(command: &str) -> bool {
+fn obvious_replaceable_dependency_hydration_shell(command: &str) -> bool {
     obvious_replaceable_finite_shell_argv(command)
         .as_deref()
-        .is_some_and(obvious_yarn_inline_builds_hydration_argv)
+        .is_some_and(obvious_replaceable_dependency_hydration_argv)
 }
 
-fn obvious_yarn_inline_builds_hydration_command(command: &TaskCommandSpec) -> bool {
+fn obvious_replaceable_dependency_hydration_command(command: &TaskCommandSpec) -> bool {
     let mut argv = vec![command.exe.trim().to_ascii_lowercase()];
     argv.extend(
         command
@@ -9165,7 +9260,11 @@ fn obvious_yarn_inline_builds_hydration_command(command: &TaskCommandSpec) -> bo
             .iter()
             .map(|value| value.trim().to_ascii_lowercase()),
     );
-    obvious_yarn_inline_builds_hydration_argv(argv.as_slice())
+    obvious_replaceable_dependency_hydration_argv(argv.as_slice())
+}
+
+fn obvious_replaceable_dependency_hydration_argv(argv: &[String]) -> bool {
+    obvious_yarn_inline_builds_hydration_argv(argv) || obvious_npm_force_hydration_argv(argv)
 }
 
 fn obvious_yarn_inline_builds_hydration_argv(argv: &[String]) -> bool {
@@ -9177,6 +9276,17 @@ fn obvious_yarn_inline_builds_hydration_argv(argv: &[String]) -> bool {
         && argv[offset] == "yarn"
         && argv[offset + 1] == "install"
         && argv[offset + 2] == "--inline-builds"
+}
+
+fn obvious_npm_force_hydration_argv(argv: &[String]) -> bool {
+    if argv.is_empty() {
+        return false;
+    }
+    let offset = if argv[0] == "corepack" { 1 } else { 0 };
+    argv.len() == offset + 3
+        && argv[offset] == "npm"
+        && argv[offset + 1] == "install"
+        && argv[offset + 2] == "--force"
 }
 
 fn obvious_systemd_service_shell(command: &str) -> bool {
@@ -21096,6 +21206,45 @@ tasks:
     }
 
     #[test]
+    fn accepts_prepare_only_npm_force_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      npm: "11.6.0"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: install
+        force: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("npm force package-manager prepare should validate");
+    }
+
+    #[test]
     fn accepts_prepare_only_bun_package_manager_hydration_task() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -21358,6 +21507,50 @@ tasks:
             errors
                 .to_string()
                 .contains("must not declare `inline_builds: true` unless `manager: yarn`")
+        );
+    }
+
+    #[test]
+    fn rejects_force_for_non_npm_package_manager_prepare() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        force: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("non-npm force prepare should fail");
+        assert!(
+            errors
+                .to_string()
+                .contains("must not declare `force: true` unless `manager: npm`")
         );
     }
 
@@ -29424,6 +29617,76 @@ tasks:
             ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
                 if value.task_name == "install"
                     && value.command == "yarn install --inline-builds"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_dependency_hydration_ownership_advisory_for_npm_force_shell() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    run: npm install --force
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
+                if value.task_name == "install"
+                    && value.command == "npm install --force"
+        )));
+    }
+
+    #[test]
+    fn collects_exceptional_dependency_hydration_override_advisory_for_npm_force_prepare() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      npm: "11.6.0"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: install
+        force: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ExceptionalDependencyHydrationOverride(value)
+                if value.task_name == "install"
+                    && value.manager == "npm"
+                    && value.flag == "--force"
         )));
     }
 

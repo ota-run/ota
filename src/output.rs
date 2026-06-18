@@ -3432,6 +3432,8 @@ pub struct TaskPrepareSummary<'a> {
     #[serde(default, skip_serializing_if = "is_false")]
     pub inline_builds: bool,
     #[serde(default, skip_serializing_if = "is_false")]
+    pub force: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
     pub no_root: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub skip_tests: bool,
@@ -3464,6 +3466,8 @@ pub struct WorkspaceTaskPrepareSummary {
     pub frozen_lockfile: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub inline_builds: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub force: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub no_root: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -3672,6 +3676,7 @@ pub fn summarize_task_prepare(
             groups: Vec::new(),
             frozen_lockfile: false,
             inline_builds: false,
+            force: false,
             no_root: false,
             skip_tests: false,
             targets: Vec::new(),
@@ -3695,6 +3700,7 @@ pub fn summarize_task_prepare(
                 groups: Vec::new(),
                 frozen_lockfile: false,
                 inline_builds: false,
+                force: false,
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
@@ -3711,6 +3717,7 @@ pub fn summarize_task_prepare(
                 groups,
                 frozen_lockfile,
                 inline_builds,
+                force,
                 no_root,
                 skip_tests,
             ) = match &spec.source {
@@ -3722,6 +3729,7 @@ pub fn summarize_task_prepare(
                     None,
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                     false,
@@ -3745,6 +3753,7 @@ pub fn summarize_task_prepare(
                     Vec::new(),
                     source.frozen_lockfile,
                     source.inline_builds,
+                    source.force,
                     false,
                     false,
                 ),
@@ -3760,6 +3769,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
                     "uv",
@@ -3769,6 +3779,7 @@ pub fn summarize_task_prepare(
                     Some("sync"),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                     false,
@@ -3787,6 +3798,7 @@ pub fn summarize_task_prepare(
                     source.groups.iter().map(String::as_str).collect(),
                     false,
                     false,
+                    false,
                     source.no_root,
                     false,
                 ),
@@ -3802,6 +3814,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => (
                     "maven",
@@ -3811,6 +3824,7 @@ pub fn summarize_task_prepare(
                     Some(source.mode.goal()),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                     false,
@@ -3832,6 +3846,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => (
                     "cargo",
@@ -3845,6 +3860,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => (
                     "dotnet_restore",
@@ -3854,6 +3870,7 @@ pub fn summarize_task_prepare(
                     Some("restore"),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                     false,
@@ -3880,6 +3897,7 @@ pub fn summarize_task_prepare(
                 groups,
                 frozen_lockfile,
                 inline_builds,
+                force,
                 no_root,
                 skip_tests,
                 targets: spec.targets.iter().map(String::as_str).collect(),
@@ -3909,6 +3927,7 @@ pub fn summarize_task_prepare_owned(
             groups: Vec::new(),
             frozen_lockfile: false,
             inline_builds: false,
+            force: false,
             no_root: false,
             skip_tests: false,
             targets: Vec::new(),
@@ -3932,6 +3951,7 @@ pub fn summarize_task_prepare_owned(
                 groups: Vec::new(),
                 frozen_lockfile: false,
                 inline_builds: false,
+                force: false,
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
@@ -3948,6 +3968,7 @@ pub fn summarize_task_prepare_owned(
                 groups,
                 frozen_lockfile,
                 inline_builds,
+                force,
                 no_root,
                 skip_tests,
             ) = match &spec.source {
@@ -3959,6 +3980,7 @@ pub fn summarize_task_prepare_owned(
                     None,
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                     false,
@@ -3982,6 +4004,7 @@ pub fn summarize_task_prepare_owned(
                     Vec::new(),
                     source.frozen_lockfile,
                     source.inline_builds,
+                    source.force,
                     false,
                     false,
                 ),
@@ -3997,6 +4020,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
                     "uv",
@@ -4006,6 +4030,7 @@ pub fn summarize_task_prepare_owned(
                     Some("sync"),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                     false,
@@ -4024,6 +4049,7 @@ pub fn summarize_task_prepare_owned(
                     source.groups.clone(),
                     false,
                     false,
+                    false,
                     source.no_root,
                     false,
                 ),
@@ -4039,6 +4065,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => (
                     "maven",
@@ -4048,6 +4075,7 @@ pub fn summarize_task_prepare_owned(
                     Some(source.mode.goal()),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                     false,
@@ -4069,6 +4097,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => (
                     "cargo",
@@ -4082,6 +4111,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    false,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => (
                     "dotnet_restore",
@@ -4091,6 +4121,7 @@ pub fn summarize_task_prepare_owned(
                     Some("restore"),
                     None,
                     Vec::new(),
+                    false,
                     false,
                     false,
                     false,
@@ -4117,6 +4148,7 @@ pub fn summarize_task_prepare_owned(
                 groups,
                 frozen_lockfile,
                 inline_builds,
+                force,
                 no_root,
                 skip_tests,
                 targets: spec.targets.clone(),

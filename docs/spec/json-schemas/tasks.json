@@ -264,6 +264,7 @@
         },
         "frozen_lockfile": { "type": "boolean" },
         "inline_builds": { "type": "boolean" },
+        "force": { "type": "boolean" },
         "no_root": { "type": "boolean" },
         "targets": {
           "type": "array",

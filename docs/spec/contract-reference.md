@@ -1806,6 +1806,7 @@ Task-effect rules:
     - `prepare.source.mode`: required install mode; ota currently ships `install` and `ci`
     - `prepare.source.frozen_lockfile`: optional explicit lockfile strictness for `pnpm install --frozen-lockfile`, `yarn install --immutable`, or `bun install --frozen-lockfile`
     - `prepare.source.inline_builds`: optional explicit Yarn inline-build ownership for `yarn install --inline-builds`; valid only with `manager: yarn` and `mode: install`
+    - `prepare.source.force`: optional explicit npm override ownership for `npm install --force`; valid only with `manager: npm` and `mode: install`, and should be treated as an exceptional hydration lane rather than a normal default
     - `prepare.source.kind: bundler`
     - `prepare.source.cwd`: required repo-relative working directory for the Bundler invocation
     - `prepare.source.path`: required repo-relative bundle install path for the repo-local gem lane
@@ -1853,6 +1854,7 @@ Task-effect rules:
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: dotnet_restore` currently requires `requirements.toolchains: [dotnet]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.source.manager: pnpm` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `pnpm install --frozen-lockfile`
 - `prepare.source.manager: npm` currently supports `mode: install` or `mode: ci`; use `mode: ci` when the repo truth is lockfile-strict npm hydration
+- `prepare.source.manager: npm` may also declare `force: true` when the repo truth is explicitly `npm install --force`; keep that override deliberate because it weakens normal npm safety semantics
 - `prepare.source.manager: yarn` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `yarn install --immutable`
 - `prepare.source.manager: yarn` may also declare `inline_builds: true` when the repo truth is `yarn install --inline-builds`
 - `prepare.source.manager: bun` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `bun install --frozen-lockfile`

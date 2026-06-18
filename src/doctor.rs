@@ -2986,6 +2986,12 @@ impl Finding {
             {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_DEPENDENCY_HYDRATION"
             }
+            s if s.starts_with("task `")
+                && s.contains(" declares exceptional dependency hydration override `")
+                && s.contains(" for `") =>
+            {
+                "OTA_CONTRACT_ADVISORY_EXCEPTIONAL_DEPENDENCY_HYDRATION_OVERRIDE"
+            }
             s if s.starts_with("check `")
                 && s.contains(" uses replaceable shell file glue for `") =>
             {
@@ -4272,6 +4278,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::ReplaceableDependencyHydrationOwnership(advisory) => {
                 ContractAdvisory::ReplaceableDependencyHydrationOwnership(advisory)
             }
+            ContractAdvisory::ExceptionalDependencyHydrationOverride(advisory) => {
+                ContractAdvisory::ExceptionalDependencyHydrationOverride(advisory)
+            }
             ContractAdvisory::ReplaceableShellCheck(advisory) => {
                 ContractAdvisory::ReplaceableShellCheck(advisory)
             }
@@ -4384,6 +4393,7 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::ServiceUsesOpaqueShellStart(_)
         | ContractAdvisory::ReplaceableFiniteShellCommand(_)
         | ContractAdvisory::ReplaceableDependencyHydrationOwnership(_)
+        | ContractAdvisory::ExceptionalDependencyHydrationOverride(_)
         | ContractAdvisory::ReplaceableShellCheck(_)
         | ContractAdvisory::ReplaceableShellEnvMutation(_)
         | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
@@ -21030,6 +21040,26 @@ tasks:
         assert_eq!(
             finding.code(),
             "OTA_CONTRACT_ADVISORY_REPLACEABLE_FINITE_SHELL_COMMAND"
+        );
+        assert_eq!(finding.category(), "contract");
+        assert_eq!(finding.owner(), "repo_contract");
+    }
+
+    #[test]
+    fn finding_code_classifies_contract_advisory_exceptional_dependency_hydration_override() {
+        let finding = Finding {
+            identity: None,
+            severity: FindingSeverity::Warn,
+            summary: String::from(
+                "task `install` declares exceptional dependency hydration override `--force` for `npm`",
+            ),
+            why: String::from("resolver override weakens normal package-manager safety"),
+            next: String::from("keep only when repo truth requires it"),
+        };
+
+        assert_eq!(
+            finding.code(),
+            "OTA_CONTRACT_ADVISORY_EXCEPTIONAL_DEPENDENCY_HYDRATION_OVERRIDE"
         );
         assert_eq!(finding.category(), "contract");
         assert_eq!(finding.owner(), "repo_contract");

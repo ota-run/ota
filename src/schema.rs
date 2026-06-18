@@ -5051,6 +5051,8 @@ pub struct TaskNodePackageManagerHydrationSourceSpec {
     pub frozen_lockfile: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub inline_builds: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub force: bool,
 }
 
 impl TaskNodePackageManagerHydrationSourceSpec {
@@ -5074,6 +5076,14 @@ impl TaskNodePackageManagerHydrationSourceSpec {
         }
     }
 
+    pub const fn force_flag(&self) -> Option<&'static str> {
+        if self.force && matches!(self.manager, TaskNodePackageManagerKind::Npm) {
+            Some("--force")
+        } else {
+            None
+        }
+    }
+
     pub fn command_preview(&self) -> String {
         let mut parts = vec![
             self.manager.label().to_string(),
@@ -5083,6 +5093,9 @@ impl TaskNodePackageManagerHydrationSourceSpec {
             parts.push(String::from(flag));
         }
         if let Some(flag) = self.inline_builds_flag() {
+            parts.push(String::from(flag));
+        }
+        if let Some(flag) = self.force_flag() {
             parts.push(String::from(flag));
         }
         parts.join(" ")
@@ -6740,6 +6753,7 @@ tasks:
             mode: super::TaskNodePackageManagerHydrationMode::Install,
             frozen_lockfile: true,
             inline_builds: false,
+            force: false,
         };
         assert_eq!(pnpm.lockfile_flag(), Some("--frozen-lockfile"));
         assert_eq!(pnpm.command_preview(), "pnpm install --frozen-lockfile");
@@ -6750,6 +6764,7 @@ tasks:
             mode: super::TaskNodePackageManagerHydrationMode::Install,
             frozen_lockfile: true,
             inline_builds: true,
+            force: false,
         };
         assert_eq!(yarn.lockfile_flag(), Some("--immutable"));
         assert_eq!(yarn.inline_builds_flag(), Some("--inline-builds"));
@@ -6764,9 +6779,11 @@ tasks:
             mode: super::TaskNodePackageManagerHydrationMode::Install,
             frozen_lockfile: true,
             inline_builds: false,
+            force: true,
         };
         assert_eq!(npm.lockfile_flag(), None);
-        assert_eq!(npm.command_preview(), "npm install");
+        assert_eq!(npm.force_flag(), Some("--force"));
+        assert_eq!(npm.command_preview(), "npm install --force");
 
         let bun = super::TaskNodePackageManagerHydrationSourceSpec {
             cwd: String::from("."),
@@ -6774,6 +6791,7 @@ tasks:
             mode: super::TaskNodePackageManagerHydrationMode::Install,
             frozen_lockfile: true,
             inline_builds: false,
+            force: false,
         };
         assert_eq!(bun.lockfile_flag(), Some("--frozen-lockfile"));
         assert_eq!(bun.command_preview(), "bun install --frozen-lockfile");
@@ -6821,6 +6839,7 @@ tasks:
                                 mode: super::TaskNodePackageManagerHydrationMode::Install,
                                 frozen_lockfile: true,
                                 inline_builds: false,
+                                force: false,
                             },
                         ),
                         targets: Vec::new(),
