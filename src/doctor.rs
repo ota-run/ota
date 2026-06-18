@@ -1199,6 +1199,25 @@ fn merge_direct_tool_acquisition_provisioning(
     Some(diagnostics)
 }
 
+fn merged_provisioning_actions_for_requirement_surface(
+    base_actions: Vec<ProvisioningAction>,
+    requirement_surface: &RequirementSurface,
+    target_os: &str,
+) -> Vec<ProvisioningAction> {
+    merge_direct_tool_acquisition_provisioning(
+        Some(ProvisioningDiagnostics {
+            plan: ProvisioningPlan::default(),
+            request: ProvisioningBackendRequest {
+                actions: base_actions,
+            },
+        }),
+        requirement_surface,
+        target_os,
+    )
+    .map(|diagnostics| diagnostics.request.actions)
+    .unwrap_or_default()
+}
+
 fn exact_tooling_remediation(
     target_kind: ProvisioningTargetKind,
     name: &str,
@@ -1402,7 +1421,21 @@ fn remote_doctor_probe_contexts(
             &selected_toolchain_names,
             &target_os,
         );
-        let provisioning_actions = loaded_policy
+        let required_tools = requirement_surface
+            .tools
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let provisioning_requirement_surface =
+            requirement_surface_with_toolchain_owned_tools_for_required_tools(
+                contract,
+                &requirement_surface,
+                &selected_toolchain_names,
+                &target_os,
+                Some(&required_tools),
+            );
+        let provisioning_actions = merged_provisioning_actions_for_requirement_surface(
+            loaded_policy
             .map(|loaded| {
                 loaded
                     .pack
@@ -1411,7 +1444,10 @@ fn remote_doctor_probe_contexts(
                         &policy_requirement_surface,
                     )
             })
-            .unwrap_or_default();
+            .unwrap_or_default(),
+            &provisioning_requirement_surface,
+            &target_os,
+        );
         probes.push(RemoteProbeContext {
             context_name: Some(name.clone()),
             backend,
@@ -1498,7 +1534,21 @@ fn remote_doctor_probe_contexts(
         &selected_toolchain_names,
         policy_target_os_for_mode(DoctorMode::Remote),
     );
-    let provisioning_actions = loaded_policy
+    let required_tools = requirement_surface
+        .tools
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let provisioning_requirement_surface =
+        requirement_surface_with_toolchain_owned_tools_for_required_tools(
+            contract,
+            &requirement_surface,
+            &selected_toolchain_names,
+            policy_target_os_for_mode(DoctorMode::Remote),
+            Some(&required_tools),
+        );
+    let provisioning_actions = merged_provisioning_actions_for_requirement_surface(
+        loaded_policy
         .map(|loaded| {
             loaded
                 .pack
@@ -1507,7 +1557,10 @@ fn remote_doctor_probe_contexts(
                     &policy_requirement_surface,
                 )
         })
-        .unwrap_or_default();
+        .unwrap_or_default(),
+        &provisioning_requirement_surface,
+        &target_os,
+    );
 
     probes.push(RemoteProbeContext {
         context_name: None,
@@ -3991,7 +4044,23 @@ fn diagnose_contract_with_scope(
                     },
                     selection.context_name.as_deref(),
                 );
-                let selection_provisioning_actions = loaded_policy
+                let required_tools = selection
+                    .requirement_surface
+                    .tools
+                    .keys()
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                let provisioning_requirement_surface =
+                    requirement_surface_with_toolchain_owned_tools_for_required_tools(
+                        contract,
+                        &selection.requirement_surface,
+                        &selection.toolchain_names,
+                        policy_target_os_for_mode(mode),
+                        Some(&required_tools),
+                    );
+                let selection_provisioning_actions =
+                    merged_provisioning_actions_for_requirement_surface(
+                        loaded_policy
                     .as_ref()
                     .map(|loaded| {
                         let policy_requirement_surface = policy_requirement_surface_for_toolchains(
@@ -4007,7 +4076,10 @@ fn diagnose_contract_with_scope(
                                 &policy_requirement_surface,
                             )
                     })
-                    .unwrap_or_default();
+                    .unwrap_or_default(),
+                    &provisioning_requirement_surface,
+                    policy_target_os_for_mode(mode),
+                );
                 diagnose_env(
                     contract,
                     loaded_policy
@@ -4034,22 +4106,10 @@ fn diagnose_contract_with_scope(
                     &selection_provisioning_actions,
                     &mut findings,
                 );
-                let required_tools = selection
-                    .requirement_surface
-                    .tools
-                    .keys()
-                    .cloned()
-                    .collect::<BTreeSet<_>>();
                 let tool_probe_started = diagnose_tools(
                     contract,
                     &selection.toolchain_names,
-                    &requirement_surface_with_toolchain_owned_tools_for_required_tools(
-                        contract,
-                        &selection.requirement_surface,
-                        &selection.toolchain_names,
-                        policy_target_os_for_mode(mode),
-                        Some(&required_tools),
-                    ),
+                    &provisioning_requirement_surface,
                     policy_target_os_for_mode(mode),
                     contract_path,
                     loaded_policy.as_ref(),
@@ -4169,7 +4229,23 @@ fn diagnose_contract_with_scope(
                 } else {
                     None
                 };
-                let additional_provisioning_actions = loaded_policy
+                let required_tools = additional_selection
+                    .requirement_surface
+                    .tools
+                    .keys()
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                let provisioning_requirement_surface =
+                    requirement_surface_with_toolchain_owned_tools_for_required_tools(
+                        contract,
+                        &additional_selection.requirement_surface,
+                        &additional_selection.toolchain_names,
+                        policy_target_os_for_mode(additional_mode),
+                        Some(&required_tools),
+                    );
+                let additional_provisioning_actions =
+                    merged_provisioning_actions_for_requirement_surface(
+                        loaded_policy
                     .as_ref()
                     .map(|loaded| {
                         let policy_requirement_surface = policy_requirement_surface_for_toolchains(
@@ -4185,7 +4261,10 @@ fn diagnose_contract_with_scope(
                                 &policy_requirement_surface,
                             )
                     })
-                    .unwrap_or_default();
+                    .unwrap_or_default(),
+                    &provisioning_requirement_surface,
+                    policy_target_os_for_mode(additional_mode),
+                );
                 if matches!(additional_mode, DoctorMode::Native | DoctorMode::Container) {
                     diagnose_env(
                         contract,
@@ -4218,22 +4297,10 @@ fn diagnose_contract_with_scope(
                     &additional_provisioning_actions,
                     &mut findings,
                 );
-                let required_tools = additional_selection
-                    .requirement_surface
-                    .tools
-                    .keys()
-                    .cloned()
-                    .collect::<BTreeSet<_>>();
                 diagnose_tools(
                     contract,
                     &additional_selection.toolchain_names,
-                    &requirement_surface_with_toolchain_owned_tools_for_required_tools(
-                        contract,
-                        &additional_selection.requirement_surface,
-                        &additional_selection.toolchain_names,
-                        policy_target_os_for_mode(additional_mode),
-                        Some(&required_tools),
-                    ),
+                    &provisioning_requirement_surface,
                     policy_target_os_for_mode(additional_mode),
                     contract_path,
                     loaded_policy.as_ref(),
@@ -9260,11 +9327,12 @@ fn container_installability_failure(
     provisioning_actions: &[ProvisioningAction],
 ) -> Option<ProvisioningFailureDiagnosis> {
     let container_probe = container_probe?;
-    let action = provisioning_actions.iter().find(|action| {
-        action.target_kind == target_kind
-            && action.name == display_name
-            && action.requested_version == requirement
-    })?;
+    let action = selected_provisioning_action(
+        target_kind,
+        display_name,
+        requirement,
+        provisioning_actions,
+    )?;
     let target = ProvisioningExecutionTarget::Container {
         image: container_probe.image.clone(),
         engine: container_probe.engine.clone(),
@@ -9289,8 +9357,10 @@ fn selected_provisioning_action<'a>(
 ) -> Option<&'a ProvisioningAction> {
     provisioning_actions.iter().find(|action| {
         action.target_kind == target_kind
-            && action.name == display_name
-            && action.requested_version == requirement
+            && action.name.eq_ignore_ascii_case(display_name)
+            && (action.requested_version == requirement
+                || requirement == "*"
+                || action.requested_version == "*")
     })
 }
 
@@ -9310,6 +9380,10 @@ fn provisionable_missing_command_is_covered(
     else {
         return false;
     };
+
+    if !matches!(mode, DoctorMode::Native) {
+        return true;
+    }
 
     let target = match mode {
         DoctorMode::Native => ProvisioningExecutionTarget::Native,
@@ -9424,11 +9498,12 @@ fn remote_installability_failure(
     provisioning_actions: &[ProvisioningAction],
 ) -> Option<ProvisioningFailureDiagnosis> {
     let target = remote_provisioning_target(remote_probe, remote_context_name)?;
-    let action = provisioning_actions.iter().find(|action| {
-        action.target_kind == target_kind
-            && action.name == display_name
-            && action.requested_version == requirement
-    })?;
+    let action = selected_provisioning_action(
+        target_kind,
+        display_name,
+        requirement,
+        provisioning_actions,
+    )?;
     match probe_provisioning_installability_with_target(
         action,
         contract_working_dir(contract_path),
@@ -15825,6 +15900,152 @@ tasks:
                     .and_then(|config| config.get("asset_by_platform"))
                     .is_some()
         }));
+    }
+
+    #[test]
+    fn container_mode_does_not_report_release_asset_tool_missing_when_selected_path_can_provision_it()
+    {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "docker.cmd" } else { "docker" },
+            if cfg!(windows) {
+                r#"@echo off
+if "%1"=="info" exit /b 0
+if "%1"=="run" (
+  echo %* | findstr /C:"command -v 'task'" >nul && exit /b 1
+  echo %* | findstr /C:"curl -fsSL -o" >nul && (
+    mkdir .\.ota\state\source-managed\bin >nul 2>&1
+    > .\.ota\state\source-managed\bin\task.cmd echo @echo off
+    >> .\.ota\state\source-managed\bin\task.cmd echo if "%%1"=="--version" echo 3.51.1
+    exit /b 0
+  )
+  echo %* | findstr /C:".ota/state/source-managed/bin/task" >nul && (
+    echo 3.51.1
+    exit /b 0
+  )
+)
+exit /b 1
+"#
+            } else {
+                r#"#!/bin/sh
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  args="$*"
+  case "$args" in
+    *"command -v 'task'"*)
+      exit 1
+      ;;
+    *"curl -fsSL -o"*)
+      /bin/mkdir -p ./.ota/state/source-managed/bin
+      cat > ./.ota/state/source-managed/bin/task <<'EOF'
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo '3.51.1'
+  exit 0
+fi
+exit 1
+EOF
+      /bin/chmod +x ./.ota/state/source-managed/bin/task
+      exit 0
+      ;;
+    *".ota/state/source-managed/bin/task"*)
+      echo '3.51.1'
+      exit 0
+      ;;
+  esac
+fi
+exit 1
+"#
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  task:
+    version: "3.51.1"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64:
+            url: https://example.com/releases/v{version}/task_linux_amd64.tar.gz
+            archive:
+              format: tar_gz
+              executable_path: task
+          linux_aarch64:
+            url: https://example.com/releases/v{version}/task_linux_arm64.tar.gz
+            archive:
+              format: tar_gz
+              executable_path: task
+execution:
+  preferred: container
+  lifecycle: ephemeral
+  backends:
+    container:
+      image: premium/test:latest
+tasks:
+  verify:
+    command:
+      exe: task
+      args:
+        - --version
+    requirements:
+      tools:
+        task: "3.51.1"
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions_with_mode(
+            &contract,
+            &contract_path,
+            DoctorMode::Container,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let provisioning = report
+            .provisioning
+            .as_ref()
+            .expect("container release-asset provisioning should be present");
+        assert!(provisioning.request.actions.iter().any(|action| {
+            action.kind == ProvisioningActionKind::SelectSource
+                && action.target_kind == ProvisioningTargetKind::Tool
+                && action.name == "task"
+                && action.source == "release-asset"
+        }));
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.code() != "OTA_TOOL_MISSING"),
+            "unexpected missing-tool findings: {:?}",
+            report.findings
+        );
     }
 
     #[test]

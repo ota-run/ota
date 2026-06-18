@@ -78,7 +78,7 @@ use crate::schema::{
     TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind,
     TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskServiceEnvBindingFormat,
     TaskServiceEnvBindingSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
-    TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec,
+    TaskTargetSpec, ToolAcquisitionProvider, ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec,
     format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
     task_target_env_name,
 };
@@ -9744,6 +9744,52 @@ impl BackendRequirementGap {
     }
 }
 
+fn select_direct_tool_acquisition_actions_for_backend_gaps(
+    contract: &Contract,
+    target_os: &str,
+    missing: &[BackendRequirementGap],
+) -> Vec<ProvisioningAction> {
+    let mut actions = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for gap in missing {
+        if gap.kind != ProvisioningTargetKind::Tool || !seen.insert(gap.key()) {
+            continue;
+        }
+        let Some(requirement) = contract.tools.get(gap.name.as_str()) else {
+            continue;
+        };
+        let Some(acquisition) = requirement.acquisition_for_os(target_os) else {
+            continue;
+        };
+        let Some(source) = acquisition.provider.provisioning_source() else {
+            continue;
+        };
+        actions.push(ProvisioningAction {
+            kind: if matches!(acquisition.provider, ToolAcquisitionProvider::ReleaseAsset) {
+                crate::policy_pack::ProvisioningActionKind::SelectSource
+            } else {
+                crate::policy_pack::ProvisioningActionKind::Install
+            },
+            target_kind: ProvisioningTargetKind::Tool,
+            name: gap.name.clone(),
+            requested_version: gap.required_version.clone(),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: acquisition.package.clone().or_else(|| {
+                (!matches!(acquisition.provider, ToolAcquisitionProvider::ReleaseAsset))
+                    .then(|| gap.name.clone())
+            }),
+            source: source.to_string(),
+            source_config: acquisition.source_config.clone(),
+            approved_version: None,
+            policy_match: None,
+        });
+    }
+
+    actions
+}
+
 fn maybe_fulfill_backend_requirements_on_run_path(
     contract: &Contract,
     contract_path: &Path,
@@ -9842,7 +9888,35 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         BackendFulfillmentMode::Run => {}
     }
 
-    let Some(loaded_policy) = loaded_policy else {
+    let mut actions = select_direct_tool_acquisition_actions_for_backend_gaps(
+        contract,
+        plan.target_os.as_str(),
+        &missing,
+    );
+    if let Some(loaded_policy) = loaded_policy.as_ref() {
+        let policy_actions = select_provisioning_actions_for_backend_gaps(
+            &loaded_policy.pack,
+            plan.target_os.as_str(),
+            &missing,
+        )
+        .map_err(|details| RunError::BackendFulfillmentFailed {
+            task: task_name.to_string(),
+            backend_unit: plan.backend_unit.clone(),
+            details,
+            evidence: evidence.clone(),
+        })?;
+        for action in policy_actions {
+            let duplicate = actions.iter().any(|existing| {
+                existing.target_kind == action.target_kind
+                    && existing.name == action.name
+                    && existing.requested_version == action.requested_version
+                    && existing.source == action.source
+            });
+            if !duplicate {
+                actions.push(action);
+            }
+        }
+    } else if actions.is_empty() {
         evidence.result = BackendFulfillmentResult::Failed;
         return Err(RunError::BackendFulfillmentFailed {
             task: task_name.to_string(),
@@ -9852,19 +9926,7 @@ fn maybe_fulfill_backend_requirements_on_run_path(
             ),
             evidence,
         });
-    };
-
-    let actions = select_provisioning_actions_for_backend_gaps(
-        &loaded_policy.pack,
-        plan.target_os.as_str(),
-        &missing,
-    )
-    .map_err(|details| RunError::BackendFulfillmentFailed {
-        task: task_name.to_string(),
-        backend_unit: plan.backend_unit.clone(),
-        details,
-        evidence: evidence.clone(),
-    })?;
+    }
 
     evidence.actions = actions
         .iter()
@@ -9886,8 +9948,12 @@ fn maybe_fulfill_backend_requirements_on_run_path(
 
     let output_mode = backend_fulfillment_output_mode(mode);
     let request = ProvisioningBackendRequest { actions };
-    let adapter_bootstrap =
-        adapter_bootstrap_request_for_provisioning_sources(&loaded_policy.pack, &request);
+    let adapter_bootstrap = loaded_policy
+        .as_ref()
+        .map(|loaded| adapter_bootstrap_request_for_provisioning_sources(&loaded.pack, &request))
+        .unwrap_or_else(|| ProvisioningBackendRequest {
+            actions: Vec::new(),
+        });
     if plan.strategy == BackendFulfillmentStrategy::DeferredEphemeralContainer {
         return Ok(BackendFulfillmentPreparation {
             evidence: Some(evidence.clone()),
@@ -9896,7 +9962,7 @@ fn maybe_fulfill_backend_requirements_on_run_path(
                 actions: request.actions,
                 adapter_bootstrap,
                 target_os: plan.target_os,
-                policy_pack: Some(Arc::new(loaded_policy.pack)),
+                policy_pack: None,
             }),
             source_managed_actions: Vec::new(),
         });
@@ -9946,7 +10012,7 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         &plan.declared_tools,
         &plan.probe_backend,
         working_dir,
-        Some(&loaded_policy.pack),
+        active_policy,
         plan.target_os.as_str(),
     );
     let remaining = remaining
@@ -10767,25 +10833,30 @@ fn backend_fulfillment_plan(
         ExecutionSharedBackendFulfillment::None => BackendFulfillmentMode::None,
         ExecutionSharedBackendFulfillment::Run => BackendFulfillmentMode::Run,
     };
-    let (declared_runtimes, declared_tools) =
-        direct_context_requirement_versions(contract, context_name, target_os.as_str()).map_err(
-            |details| RunError::BackendFulfillmentFailed {
-                task: task_name.to_string(),
-                backend_unit: format!("context:{context_name}"),
-                details,
-                evidence: BackendFulfillmentEvidence {
-                    backend_unit: format!("context:{context_name}"),
-                    backend: String::from("container"),
-                    mode,
-                    declared_runtimes: BTreeMap::new(),
-                    declared_tools: BTreeMap::new(),
-                    missing: Vec::new(),
-                    actions: Vec::new(),
-                    result: BackendFulfillmentResult::Failed,
-                    task_executed: false,
-                },
-            },
-        )?;
+    let (declared_runtimes, declared_tools) = direct_task_requirement_versions_for_backend(
+        contract,
+        task,
+        task_name,
+        Backend::Container,
+        Some(context_name),
+        target_os.as_str(),
+    )
+    .map_err(|details| RunError::BackendFulfillmentFailed {
+        task: task_name.to_string(),
+        backend_unit: format!("context:{context_name}"),
+        details,
+        evidence: BackendFulfillmentEvidence {
+            backend_unit: format!("context:{context_name}"),
+            backend: String::from("container"),
+            mode,
+            declared_runtimes: BTreeMap::new(),
+            declared_tools: BTreeMap::new(),
+            missing: Vec::new(),
+            actions: Vec::new(),
+            result: BackendFulfillmentResult::Failed,
+            task_executed: false,
+        },
+    })?;
     let strategy = match lifecycle {
         Lifecycle::Persistent => BackendFulfillmentStrategy::Immediate,
         Lifecycle::Ephemeral => BackendFulfillmentStrategy::DeferredEphemeralContainer,
@@ -10957,83 +11028,28 @@ fn shared_local_backend_requirement_versions(
     ))
 }
 
-fn direct_context_requirement_versions(
-    contract: &Contract,
-    context_name: &str,
-    target_os: &str,
-) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
-    let Some(context) = contract
-        .execution
-        .as_ref()
-        .and_then(|execution| execution.contexts.get(context_name))
-    else {
-        return Err(format!("unknown execution context `{context_name}`"));
-    };
-
-    let mut runtimes = BTreeMap::<String, (String, String)>::new();
-    let mut tools = BTreeMap::<String, (String, String)>::new();
-    merge_requirement_versions(
-        &mut runtimes,
-        &contract.runtimes,
-        target_os,
-        "contract.runtimes",
-    )?;
-    merge_requirement_versions(&mut tools, &contract.tools, target_os, "contract.tools")?;
-
-    let runtime_source = format!("execution context `{context_name}` runtimes");
-    let tool_source = format!("execution context `{context_name}` tools");
-    merge_requirement_versions(
-        &mut runtimes,
-        &context.requirements.runtimes,
-        target_os,
-        runtime_source.as_str(),
-    )?;
-    merge_requirement_versions(
-        &mut tools,
-        &context.requirements.tools,
-        target_os,
-        tool_source.as_str(),
-    )?;
-    let scoped_surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
-        contract,
-        &crate::schema::RequirementSurface {
-            runtimes: context.requirements.runtimes.clone(),
-            tools: context.requirements.tools.clone(),
-            presence_only_tools: BTreeSet::new(),
-        },
-        &context.requirements.toolchains.iter().cloned().collect(),
-        target_os,
-        None,
-    );
-    merge_requirement_versions(
-        &mut runtimes,
-        &scoped_surface.runtimes,
-        target_os,
-        "execution context toolchain-owned runtimes",
-    )?;
-    merge_requirement_versions(
-        &mut tools,
-        &scoped_surface.tools,
-        target_os,
-        "execution context toolchain-owned tools",
-    )?;
-
-    Ok((
-        runtimes
-            .into_iter()
-            .map(|(name, (version, _))| (name, version))
-            .collect(),
-        tools
-            .into_iter()
-            .map(|(name, (version, _))| (name, version))
-            .collect(),
-    ))
-}
-
 fn direct_task_requirement_versions(
     contract: &Contract,
     task: &TaskSpec,
     task_name: &str,
+    target_os: &str,
+) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
+    direct_task_requirement_versions_for_backend(
+        contract,
+        task,
+        task_name,
+        Backend::Native,
+        task.context_for_backend(contract.execution.as_ref(), Backend::Native),
+        target_os,
+    )
+}
+
+fn direct_task_requirement_versions_for_backend(
+    contract: &Contract,
+    task: &TaskSpec,
+    task_name: &str,
+    backend: Backend,
+    context_name: Option<&str>,
     target_os: &str,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
     let mut runtimes = BTreeMap::<String, (String, String)>::new();
@@ -11048,9 +11064,7 @@ fn direct_task_requirement_versions(
 
     let runtime_source = format!("task `{task_name}` runtimes");
     let tool_source = format!("task `{task_name}` tools");
-    let context_name = task.context_for_backend(contract.execution.as_ref(), Backend::Native);
-    let scoped_surface =
-        task.scoped_requirement_surface_for_execution(Backend::Native, context_name);
+    let scoped_surface = task.scoped_requirement_surface_for_execution(backend, context_name);
     merge_requirement_versions(
         &mut runtimes,
         &scoped_surface.runtimes,
@@ -11067,7 +11081,7 @@ fn direct_task_requirement_versions(
         contract,
         &scoped_surface,
         &contract
-            .task_toolchain_names_for_execution(task, Backend::Native, context_name)
+            .task_toolchain_names_for_execution(task, backend, context_name)
             .into_iter()
             .collect(),
         target_os,
@@ -11085,22 +11099,23 @@ fn direct_task_requirement_versions(
         target_os,
         "task toolchain-owned tools",
     )?;
-    let scoped_native =
-        task.scoped_native_requirements_for_execution(Backend::Native, context_name);
-    let native_surface =
-        contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os);
-    merge_requirement_versions(
-        &mut runtimes,
-        &native_surface.runtimes,
-        target_os,
-        "task native prerequisite runtimes",
-    )?;
-    merge_requirement_versions(
-        &mut tools,
-        &native_surface.tools,
-        target_os,
-        "task native prerequisite tools",
-    )?;
+    if backend == Backend::Native {
+        let scoped_native = task.scoped_native_requirements_for_execution(backend, context_name);
+        let native_surface =
+            contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os);
+        merge_requirement_versions(
+            &mut runtimes,
+            &native_surface.runtimes,
+            target_os,
+            "task native prerequisite runtimes",
+        )?;
+        merge_requirement_versions(
+            &mut tools,
+            &native_surface.tools,
+            target_os,
+            "task native prerequisite tools",
+        )?;
+    }
 
     Ok((
         runtimes
@@ -49921,6 +49936,147 @@ exit 0
                 .any(|action| action.contains("tool yq") && action.contains("4.52.5")),
             "strict policy mismatch should trigger an approved provisioning action"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deferred_container_reprobe_uses_container_requirement_branch_after_provisioning() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: ci
+  contexts:
+    ci:
+      backend: container
+      lifecycle: ephemeral
+      fulfillment: run
+      container:
+        image: golang:1.26-bookworm
+tasks:
+  verify:
+    context: ci
+    run: go version > go.txt && yq --version > yq.txt
+    requirements:
+      tools:
+        yq: "4.52.5"
+      any_of:
+        - when:
+            backend: native
+          runtimes:
+            go: ">=1.27,<1.28"
+        - when:
+            backend: container
+          runtimes:
+            go: ">=1.26,<1.27"
+"#,
+        );
+        fixture.write(
+            ".ota/org-policy.yaml",
+            r#"
+policies:
+  provisioning:
+    yq:
+      source: apt
+      package: yq
+      approved_versions:
+        - "4.52.5"
+      platforms:
+        linux:
+          source: apt
+          package: yq
+          approved_versions:
+            - "4.52.5"
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        install_fake_docker(&docker_path);
+        let go_path = bin_dir.join("go");
+        fs::write(
+            &go_path,
+            r#"#!/bin/sh
+if [ "$1" = "version" ]; then
+  printf "go version go1.26.0 linux/amd64\n"
+  exit 0
+fi
+exit 1
+"#,
+        )
+        .unwrap();
+        let apt_get_path = bin_dir.join("apt-get");
+        fs::write(
+            &apt_get_path,
+            format!(
+                r#"#!/bin/sh
+printf "apt-get %s\n" "$*" >> "{log}"
+if printf "%s" "$*" | grep -q "install -y yq"; then
+  cat > "{bin}/yq" <<'EOF'
+#!/bin/sh
+printf "yq 4.52.5\n"
+EOF
+  chmod +x "{bin}/yq"
+fi
+exit 0
+"#,
+                log = fixture.dir.path().join("apt-log.txt").display(),
+                bin = bin_dir.display(),
+            ),
+        )
+        .unwrap();
+        for path in [&docker_path, &go_path, &apt_get_path] {
+            let mut permissions = fs::metadata(path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(path, permissions).unwrap();
+        }
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "verify")
+            .expect("deferred container fulfillment should succeed");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        assert_eq!(
+            outcome
+                .backend_fulfillment
+                .as_ref()
+                .map(|evidence| evidence.result),
+            Some(super::BackendFulfillmentResult::Fulfilled)
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("go.txt")).unwrap(),
+            "go version go1.26.0 linux/amd64\n"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join("yq.txt")).unwrap(),
+            "yq 4.52.5\n"
+        );
+        let apt_log = fs::read_to_string(fixture.dir.path().join("apt-log.txt")).unwrap();
+        assert!(apt_log.contains("install -y yq"), "{apt_log}");
     }
 
     #[test]
