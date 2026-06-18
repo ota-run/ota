@@ -11112,22 +11112,22 @@ fn probe_native_backend_command_version(
     ))
 }
 
-fn native_backend_version_probe_args(command_name: &str) -> Vec<&'static str> {
-    if command_name == "go" {
-        vec!["version"]
-    } else {
-        vec!["--version", "version", "-version"]
+fn native_backend_version_probe_args(command_name: &str) -> Vec<&'static [&'static str]> {
+    match command_name {
+        "go" => vec![&["version"]],
+        "kubectl" => vec![&["version", "--client"], &["--version"], &["version"], &["-version"]],
+        _ => vec![&["--version"], &["version"], &["-version"]],
     }
 }
 
 fn native_backend_probe_output(
     command_name: &OsStr,
-    args: &str,
+    args: &[&str],
     working_dir: &Path,
 ) -> std::io::Result<std::process::Output> {
     let mut command = native_backend_probe_command(command_name);
     command
-        .arg(args)
+        .args(args)
         .current_dir(working_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -11183,13 +11183,14 @@ fn backend_runtime_version_probe_command(
     backend: &ResolvedExecutionBackend,
 ) -> String {
     let quoted = shell_quote(command_name);
+    let version_probe_commands = tool_runtime_version_probe_commands(command_name, quoted.as_str());
     if cfg!(windows) && matches!(backend, ResolvedExecutionBackend::Native { .. }) {
         return format!(
-            "where {quoted} >NUL 2>&1 && ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1) || exit /B 127"
+            "where {quoted} >NUL 2>&1 && ({version_probe_commands}) || exit /B 127"
         );
     }
     format!(
-        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
+        "if command -v {quoted} >/dev/null 2>&1; then ({version_probe_commands}); else exit 127; fi"
     )
 }
 
@@ -11200,8 +11201,9 @@ fn probe_named_container_command_version(
     command_name: &str,
 ) -> Result<Option<String>, String> {
     let quoted = shell_quote(command_name);
+    let version_probe_commands = tool_runtime_version_probe_commands(command_name, quoted.as_str());
     let probe_command = format!(
-        "if command -v {quoted} >/dev/null 2>&1; then ({quoted} --version 2>&1 || {quoted} version 2>&1 || {quoted} -version 2>&1); else exit 127; fi"
+        "if command -v {quoted} >/dev/null 2>&1; then ({version_probe_commands}); else exit 127; fi"
     );
     let output = container_command_output(
         engine,
@@ -11233,6 +11235,21 @@ fn probe_named_container_command_version(
     Err(String::from(
         "version probe did not return a parseable version",
     ))
+}
+
+fn tool_runtime_version_probe_commands(command_name: &str, quoted_command: &str) -> String {
+    native_backend_version_probe_args(command_name)
+        .into_iter()
+        .map(|args| {
+            let suffix = args
+                .iter()
+                .map(|arg| shell_quote(arg))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("{quoted_command} {suffix} 2>&1")
+        })
+        .collect::<Vec<_>>()
+        .join(" || ")
 }
 
 fn extract_probe_version_token(output: &str) -> Option<String> {

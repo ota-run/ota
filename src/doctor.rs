@@ -11622,12 +11622,18 @@ fn version_command(name: &str, program: &OsStr, working_dir: &Path) -> Command {
     #[cfg(not(windows))]
     let mut command = Command::new(program);
     command.current_dir(working_dir);
-    if name == "go" {
-        command.arg("version");
-    } else {
-        command.arg("--version");
+    for arg in tool_version_probe_args(name) {
+        command.arg(arg);
     }
     command
+}
+
+fn tool_version_probe_args(name: &str) -> &'static [&'static str] {
+    match name {
+        "go" => &["version"],
+        "kubectl" => &["version", "--client"],
+        _ => &["--version"],
+    }
 }
 
 fn version_probe_program<'a>(name: &'a str, resolved_path: Option<&'a Path>) -> &'a OsStr {
@@ -13898,6 +13904,78 @@ tasks:
         );
         #[cfg(not(windows))]
         assert_eq!(finding.evidence().path, npm_path.display().to_string());
+    }
+
+    #[test]
+    fn probes_kubectl_with_version_client() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "kubectl",
+            if cfg!(windows) {
+                "@echo off\r\nif \"%1\"==\"version\" if \"%2\"==\"--client\" (\r\necho Client Version: v1.33.9\r\necho Kustomize Version: v5.6.0\r\nexit /b 0\r\n)\r\nexit /b 1\r\n"
+            } else {
+                "#!/bin/sh\nif [ \"$1\" = \"version\" ] && [ \"$2\" = \"--client\" ]; then\n  echo 'Client Version: v1.33.9'\n  echo 'Kustomize Version: v5.6.0'\n  exit 0\nfi\nexit 1\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  kubectl: "*"
+tasks:
+  test:
+    run: echo test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(report.ok, "{report:?}");
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Tool probe failed: kubectl"),
+            "{report:?}"
+        );
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Unparseable version for tool: kubectl"),
+            "{report:?}"
+        );
     }
 
     #[test]
