@@ -3644,12 +3644,135 @@ fn validate_bake_adapter_inputs(
     );
 }
 
+fn validate_adapter_overlay_inputs(
+    task_name: Option<&str>,
+    scope: &str,
+    family: &str,
+    overlay: &crate::schema::TaskAdapterOverlaySpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    validate_adapter_input_cwd(
+        task_name,
+        &format!("{scope}.overlays.{family}.cwd"),
+        overlay.cwd.as_deref(),
+        errors,
+    );
+    validate_adapter_input_paths(
+        task_name,
+        &format!("{scope}.overlays.{family}"),
+        "env_files",
+        &overlay.env_files,
+        errors,
+    );
+    validate_adapter_input_paths(
+        task_name,
+        &format!("{scope}.overlays.{family}"),
+        "files",
+        &overlay.files,
+        errors,
+    );
+    validate_adapter_input_values_non_empty(
+        task_name,
+        &format!("{scope}.overlays.{family}"),
+        "profiles",
+        &overlay.profiles,
+        errors,
+    );
+    validate_adapter_input_optional_non_empty(
+        task_name,
+        &format!("{scope}.overlays.{family}.project_name"),
+        overlay.project_name.as_deref(),
+        errors,
+    );
+    match family {
+        "compose" => {}
+        "bake" => {
+            if !overlay.env_files.is_empty() {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.bake.env_files` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.bake.env_files` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                }));
+            }
+            if !overlay.profiles.is_empty() {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.bake.profiles` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.bake.profiles` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                }));
+            }
+            if overlay
+                .project_name
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+            {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.bake.project_name` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.bake.project_name` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                }));
+            }
+        }
+        other => errors.push(ValidationError::new(match task_name {
+            Some(task_name) => format!(
+                "task `{task_name}` `{scope}.overlays.{other}` uses unsupported adapter family `{other}`; shipped overlay families are `compose` and `bake`"
+            ),
+            None => format!(
+                "`{scope}.overlays.{other}` uses unsupported adapter family `{other}`; shipped overlay families are `compose` and `bake`"
+            ),
+        })),
+    }
+}
+
 fn validate_adapter_inputs(
     task_name: Option<&str>,
     scope: &str,
     adapter_inputs: &crate::schema::TaskAdapterInputsSpec,
     errors: &mut Vec<ValidationError>,
 ) {
+    for (family, overlay) in &adapter_inputs.overlays {
+        validate_adapter_overlay_inputs(task_name, scope, family, overlay, errors);
+    }
+    if adapter_inputs.overlay("compose").is_some()
+        && adapter_inputs
+            .compose
+            .as_ref()
+            .is_some_and(|compose| !compose.is_empty())
+    {
+        errors.push(ValidationError::new(match task_name {
+            Some(task_name) => format!(
+                "task `{task_name}` declares both `{scope}.overlays.compose` and `{scope}.compose`; keep compose adapter overlay ownership on the canonical `overlays.compose` surface"
+            ),
+            None => format!(
+                "`{scope}.overlays.compose` duplicates `{scope}.compose`; keep compose adapter overlay ownership on the canonical `overlays.compose` surface"
+            ),
+        }));
+    }
+    if adapter_inputs.overlay("bake").is_some()
+        && adapter_inputs
+            .bake
+            .as_ref()
+            .is_some_and(|bake| !bake.is_empty())
+    {
+        errors.push(ValidationError::new(match task_name {
+            Some(task_name) => format!(
+                "task `{task_name}` declares both `{scope}.overlays.bake` and `{scope}.bake`; keep Bake adapter overlay ownership on the canonical `overlays.bake` surface"
+            ),
+            None => format!(
+                "`{scope}.overlays.bake` duplicates `{scope}.bake`; keep Bake adapter overlay ownership on the canonical `overlays.bake` surface"
+            ),
+        }));
+    }
     if let Some(compose) = adapter_inputs.compose.as_ref() {
         validate_compose_adapter_inputs(task_name, scope, compose, errors);
     }
@@ -3915,10 +4038,11 @@ fn validate_task_prepare(
                         && !matches!(
                             source.mode,
                             crate::schema::TaskNodePackageManagerHydrationMode::Install
+                                | crate::schema::TaskNodePackageManagerHydrationMode::Ci
                         )
                     {
                         errors.push(ValidationError::new(format!(
-                            "task `{task_name}` prepare `node_package_manager` must use `mode: install` when `force: true` is declared"
+                            "task `{task_name}` prepare `node_package_manager` must use `mode: install` or `mode: ci` when `force: true` is declared"
                         )));
                     }
                 }
@@ -9285,7 +9409,7 @@ fn obvious_npm_force_hydration_argv(argv: &[String]) -> bool {
     let offset = if argv[0] == "corepack" { 1 } else { 0 };
     argv.len() == offset + 3
         && argv[offset] == "npm"
-        && argv[offset + 1] == "install"
+        && matches!(argv[offset + 1].as_str(), "install" | "ci")
         && argv[offset + 2] == "--force"
 }
 
@@ -9338,11 +9462,11 @@ fn replaceable_adapter_ownership_why(
 ) -> String {
     match advisory.family {
         AdapterInputFamily::Compose => format!(
-            "task `{}` hard-codes compose adapter flags or adapter-root shell glue inside its task body (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under task or workflow `adapter_inputs.compose.*` or `services.<name>.manager.env_file`",
+            "task `{}` hard-codes compose adapter flags or adapter-root shell glue inside its task body (`{}`), which hides compose adapter input ownership from Ota instead of declaring it under task or workflow `adapter_inputs.overlays.compose.*` or `services.<name>.manager.env_file`",
             advisory.task_name, advisory.command
         ),
         AdapterInputFamily::Bake => format!(
-            "task `{}` hard-codes Bake file selection or adapter-root shell glue inside its task body (`{}`), which hides `docker buildx bake` adapter input ownership from Ota instead of declaring it under task or workflow `adapter_inputs.bake.*`",
+            "task `{}` hard-codes Bake file selection or adapter-root shell glue inside its task body (`{}`), which hides `docker buildx bake` adapter input ownership from Ota instead of declaring it under task or workflow `adapter_inputs.overlays.bake.*`",
             advisory.task_name, advisory.command
         ),
     }
@@ -9353,11 +9477,11 @@ fn replaceable_adapter_ownership_next(
 ) -> String {
     match advisory.family {
         AdapterInputFamily::Compose => format!(
-            "move compose adapter input ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.compose.*` when the task owns compose cwd, interpolation, compose file selection, compose profiles, or project naming, `workflows.<name>.adapter_inputs.compose.*` when one selected workflow owns the shared workflow adapter overlay, or `services.<name>.manager.env_file` / `.profiles` when one managed compose service owns those inputs",
+            "move compose adapter input ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.overlays.compose.*` when the task owns compose cwd, interpolation, compose file selection, compose profiles, or project naming, `workflows.<name>.adapter_inputs.overlays.compose.*` when one selected workflow owns the shared workflow adapter overlay, or `services.<name>.manager.env_file` / `.profiles` when one managed compose service owns those inputs",
             advisory.task_name
         ),
         AdapterInputFamily::Bake => format!(
-            "move Bake adapter ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.bake.*` when the task owns `docker buildx bake` cwd or file selection truth, or `workflows.<name>.adapter_inputs.bake.*` when one selected workflow owns the shared workflow adapter overlay",
+            "move Bake adapter ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.overlays.bake.*` when the task owns `docker buildx bake` cwd or file selection truth, or `workflows.<name>.adapter_inputs.overlays.bake.*` when one selected workflow owns the shared workflow adapter overlay",
             advisory.task_name
         ),
     }
@@ -12412,12 +12536,12 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
             );
             if workflow_duplicates_canonical_compose_file_alias(workflow) {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.compose_files` duplicates canonical workflow adapter ownership; keep workflow-owned compose file overlays on `workflows.{name}.adapter_inputs.compose.files`"
+                    "`workflows.{name}.env.compose_files` duplicates canonical workflow adapter ownership; keep workflow-owned compose file overlays on `workflows.{name}.adapter_inputs.overlays.compose.files`"
                 )));
             }
             if workflow_duplicates_canonical_compose_project_name_alias(workflow) {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.compose_project_name` duplicates canonical workflow adapter ownership; keep workflow-owned compose project naming on `workflows.{name}.adapter_inputs.compose.project_name`"
+                    "`workflows.{name}.env.compose_project_name` duplicates canonical workflow adapter ownership; keep workflow-owned compose project naming on `workflows.{name}.adapter_inputs.overlays.compose.project_name`"
                 )));
             }
             for (index, path) in env.compose_files.iter().enumerate() {
@@ -12449,7 +12573,7 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 && !selected_workflow_supports_adapter_inputs
             {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.{name}.adapter_inputs.compose.*` and ensure the selected workflow run path includes at least one compose-running task path or declared compose adapter input"
+                    "`workflows.{name}.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.{name}.adapter_inputs.overlays.compose.*` and ensure the selected workflow run path includes at least one compose-running task path or declared compose adapter input"
                 )));
             }
             let effective_workflow_adapter_inputs = effective_workflow_adapter_overlay
@@ -12468,17 +12592,13 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                     .and_then(|render| render.dotenv.as_ref())
                     .map(|dotenv| dotenv.path.trim())
                 && effective_workflow_adapter_inputs
-                    .compose
-                    .as_ref()
+                    .effective_compose()
                     .is_some_and(|compose| {
-                        compose
-                            .env_files
-                            .iter()
-                            .any(|path| path.trim() == rendered_path)
+                        compose.env_files.iter().any(|path| path.trim() == rendered_path)
                     })
             {
                 errors.push(ValidationError::new(format!(
-                    "`workflows.{name}.adapter_inputs.compose.env_files` must not repeat rendered workflow env artifact `{rendered_path}`; ota already projects `env.profiles.{profile_name}.render.dotenv.path` into selected compose task paths"
+                    "`workflows.{name}.adapter_inputs.overlays.compose.env_files` must not repeat rendered workflow env artifact `{rendered_path}`; ota already projects `env.profiles.{profile_name}.render.dotenv.path` into selected compose task paths"
                 )));
             }
         }
@@ -14348,14 +14468,15 @@ workflows:
   default: app
   app:
     adapter_inputs:
-      compose:
-        env_files:
-          - .env.compose
-        files:
-          - compose.base.yaml
-        profiles:
-          - web
-        project_name: app-local
+      overlays:
+        compose:
+          env_files:
+            - .env.compose
+          files:
+            - compose.base.yaml
+          profiles:
+            - web
+          project_name: app-local
     run:
       task: dev
 "#,
@@ -14385,9 +14506,10 @@ workflows:
   default: app
   app:
     adapter_inputs:
-      compose:
-        env_files:
-          - .env.compose
+      overlays:
+        compose:
+          env_files:
+            - .env.compose
     run:
       task: dev
 "#,
@@ -14413,9 +14535,10 @@ workflows:
   default: app
   app:
     adapter_inputs:
-      compose:
-        profiles:
-          - "   "
+      overlays:
+        compose:
+          profiles:
+            - "   "
     run:
       task: dev
 "#,
@@ -14426,7 +14549,7 @@ workflows:
             .expect_err("invalid workflow compose profiles should fail validation")
             .to_string();
         assert!(
-            error.contains("`workflows.app.adapter_inputs.compose.profiles[0]` must not be empty")
+            error.contains("`workflows.app.adapter_inputs.overlays.compose.profiles[0]` must not be empty")
         );
     }
 
@@ -14445,9 +14568,10 @@ workflows:
   default: image
   image:
     adapter_inputs:
-      bake:
-        files:
-          - docker-bake.hcl
+      overlays:
+        bake:
+          files:
+            - docker-bake.hcl
     run:
       task: image:build
 "#,
@@ -14456,6 +14580,69 @@ workflows:
 
         validate_contract(&contract)
             .expect("canonical workflow bake adapter inputs should validate");
+    }
+
+    #[test]
+    fn rejects_duplicate_overlay_and_family_alias_for_task_adapter_inputs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    adapter_inputs:
+      overlays:
+        compose:
+          files:
+            - compose.overlay.yaml
+      compose:
+        files:
+          - compose.alias.yaml
+    run: docker compose up
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("duplicate overlay and alias should fail validation")
+            .to_string();
+        assert!(error.contains("declares both"));
+        assert!(error.contains("adapter_inputs.overlays.compose"));
+        assert!(error.contains("adapter_inputs.compose"));
+    }
+
+    #[test]
+    fn rejects_unsupported_adapter_overlay_family() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  deploy:
+    adapter_inputs:
+      overlays:
+        kubernetes:
+          files:
+            - k8s/deployment.yaml
+    command:
+      exe: kubectl
+      args:
+        - apply
+        - -f
+        - k8s/deployment.yaml
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("unsupported overlay family should fail validation")
+            .to_string();
+        assert!(error.contains("unsupported adapter family `kubernetes`"));
+        assert!(error.contains("shipped overlay families are `compose` and `bake`"));
     }
 
     #[test]
@@ -14480,12 +14667,13 @@ workflows:
   default: app
   app:
     adapter_inputs:
-      compose:
-        profiles:
-          - web
-      bake:
-        files:
-          - docker-bake.hcl
+      overlays:
+        compose:
+          profiles:
+            - web
+        bake:
+          files:
+            - docker-bake.hcl
     run:
       task: verify
 "#,
@@ -14510,9 +14698,10 @@ workflows:
   default: app
   app:
     adapter_inputs:
-      bake:
-        files:
-          - docker-bake.hcl
+      overlays:
+        bake:
+          files:
+            - docker-bake.hcl
     run:
       task: dev
 "#,
@@ -14559,7 +14748,7 @@ workflows:
         ));
         assert!(error.contains("`workflows.app.env.compose_project_name` must not be empty"));
         assert!(error.contains(
-            "`workflows.app.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.app.adapter_inputs.compose.*` and ensure the selected workflow run path includes at least one compose-running task path or declared compose adapter input"
+            "`workflows.app.env.compose_files` / `compose_project_name` are compatibility aliases; prefer `workflows.app.adapter_inputs.overlays.compose.*` and ensure the selected workflow run path includes at least one compose-running task path or declared compose adapter input"
         ));
     }
 
@@ -14578,10 +14767,11 @@ workflows:
   default: app
   app:
     adapter_inputs:
-      compose:
-        files:
-          - compose.base.yaml
-        project_name: canonical-app
+      overlays:
+        compose:
+          files:
+            - compose.base.yaml
+          project_name: canonical-app
     env:
       compose_files:
         - compose.legacy.yaml
@@ -14596,10 +14786,10 @@ workflows:
             .expect_err("duplicate canonical and legacy workflow compose overlays should fail")
             .to_string();
         assert!(error.contains(
-            "`workflows.app.env.compose_files` duplicates canonical workflow adapter ownership; keep workflow-owned compose file overlays on `workflows.app.adapter_inputs.compose.files`"
+            "`workflows.app.env.compose_files` duplicates canonical workflow adapter ownership; keep workflow-owned compose file overlays on `workflows.app.adapter_inputs.overlays.compose.files`"
         ));
         assert!(error.contains(
-            "`workflows.app.env.compose_project_name` duplicates canonical workflow adapter ownership; keep workflow-owned compose project naming on `workflows.app.adapter_inputs.compose.project_name`"
+            "`workflows.app.env.compose_project_name` duplicates canonical workflow adapter ownership; keep workflow-owned compose project naming on `workflows.app.adapter_inputs.overlays.compose.project_name`"
         ));
     }
 
@@ -21242,6 +21432,46 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("npm force package-manager prepare should validate");
+    }
+
+    #[test]
+    fn accepts_prepare_only_npm_ci_force_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      npm: "11.6.0"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: ci
+        force: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("npm ci --force package-manager prepare should validate");
     }
 
     #[test]
@@ -29641,6 +29871,30 @@ tasks:
             ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
                 if value.task_name == "install"
                     && value.command == "npm install --force"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_dependency_hydration_ownership_advisory_for_npm_ci_force_shell() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    run: npm ci --force
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
+                if value.task_name == "install"
+                    && value.command == "npm ci --force"
         )));
     }
 

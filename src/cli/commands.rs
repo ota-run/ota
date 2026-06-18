@@ -16718,7 +16718,10 @@ fn write_distributed_skill_tree(temp_dir: &Path) -> Result<(), String> {
     if let Some(source_dir) = env::var_os("OTA_SKILL_SOURCE_DIR") {
         let source_dir = PathBuf::from(source_dir);
         for (relative_path, destination) in distributed_skill_file_targets(temp_dir) {
-            copy_skill_file(source_dir.join(relative_path).as_path(), destination.as_path())?;
+            copy_skill_file(
+                source_dir.join(relative_path).as_path(),
+                destination.as_path(),
+            )?;
         }
         return Ok(());
     }
@@ -16754,7 +16757,8 @@ fn distributed_skill_file_targets(root: &Path) -> Vec<(&'static str, PathBuf)> {
         ),
         (
             "references/agent-and-governance-checklist.md",
-            root.join("references").join("agent-and-governance-checklist.md"),
+            root.join("references")
+                .join("agent-and-governance-checklist.md"),
         ),
     ]
 }
@@ -46457,6 +46461,102 @@ workflows:
                 signal: String::from(
                     "redis authentication error addr=redis.internal:6379 invalid password"
                 ),
+            }
+        );
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_recovers_auth_host_from_url_prefix_logs() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "authentication error url=redis://cache.internal:6379/0 invalid password\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::AuthCredentialFailure {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                service: Some(String::from("Redis")),
+                host: Some(String::from("cache.internal")),
+                signal: String::from(
+                    "authentication error url=redis://cache.internal:6379/0 invalid password"
+                ),
+            }
+        );
+    }
+
+    #[test]
+    fn proof_runtime_likely_cause_inferrs_auth_service_from_host_when_line_lacks_service_name() {
+        let fixture = TempDir::new().unwrap();
+        let artifact_dir = fixture.path().join(".ota/proof/app");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        let up_log = artifact_dir.join("up.log");
+        fs::write(&up_log, "timed out while waiting for readiness\n").unwrap();
+        fs::write(
+            artifact_dir.join("up-detached-run.log"),
+            "authentication failed endpoint=clickhouse.internal:8443\n",
+        )
+        .unwrap();
+
+        let summary = crate::output::DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(crate::output::DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("timed out while waiting for readiness"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let likely = super::proof_runtime_likely_cause(
+            &summary,
+            Some("timed out while waiting for readiness"),
+            &up_log,
+        )
+        .expect("likely cause should be detected");
+        assert_eq!(
+            likely,
+            super::ProofRuntimeLikelyCause::AuthCredentialFailure {
+                artifact: artifact_dir.join("up-detached-run.log"),
+                service: Some(String::from("ClickHouse")),
+                host: Some(String::from("clickhouse.internal")),
+                signal: String::from("authentication failed endpoint=clickhouse.internal:8443"),
             }
         );
     }
@@ -80765,17 +80865,18 @@ fn auth_credential_failure_hint_from_log(path: &Path) -> Option<ProofRuntimeLike
         {
             continue;
         }
+        let host = extract_auth_failure_host(&line);
         return Some(ProofRuntimeLikelyCause::AuthCredentialFailure {
             artifact: path.to_path_buf(),
-            service: infer_auth_failure_service(&lowered),
-            host: extract_auth_failure_host(&line),
+            service: infer_auth_failure_service(&lowered, host.as_deref()),
+            host,
             signal: line,
         });
     }
     None
 }
 
-fn infer_auth_failure_service(lowered_line: &str) -> Option<String> {
+fn infer_auth_failure_service(lowered_line: &str, host: Option<&str>) -> Option<String> {
     if lowered_line.contains("password authentication failed")
         || lowered_line.contains("permission denied for user")
         || lowered_line.contains("postgres")
@@ -80796,6 +80897,26 @@ fn infer_auth_failure_service(lowered_line: &str) -> Option<String> {
     }
     if lowered_line.contains("jwt") || lowered_line.contains("bearer token") {
         return Some(String::from("HTTP auth"));
+    }
+    host.and_then(infer_auth_failure_service_from_host)
+}
+
+fn infer_auth_failure_service_from_host(host: &str) -> Option<String> {
+    let lowered = host.to_ascii_lowercase();
+    if lowered.contains("postgres") || lowered.contains("pg") {
+        return Some(String::from("Postgres"));
+    }
+    if lowered.contains("redis") {
+        return Some(String::from("Redis"));
+    }
+    if lowered.contains("mysql") {
+        return Some(String::from("MySQL"));
+    }
+    if lowered.contains("mongo") {
+        return Some(String::from("MongoDB"));
+    }
+    if lowered.contains("clickhouse") {
+        return Some(String::from("ClickHouse"));
     }
     None
 }
@@ -80833,6 +80954,18 @@ fn extract_auth_failure_host(line: &str) -> Option<String> {
     if let Some(host) = extract_host_after_prefix(line, "host=") {
         return Some(host);
     }
+    if let Some(host) = extract_host_after_prefix(line, "url=") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_after_prefix(line, "uri=") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_after_prefix(line, "dsn=") {
+        return Some(host);
+    }
+    if let Some(host) = extract_host_after_prefix(line, "endpoint=") {
+        return Some(host);
+    }
     if let Some(host) = extract_host_after_prefix(line, "server=") {
         return Some(host);
     }
@@ -80844,6 +80977,22 @@ fn extract_auth_failure_host(line: &str) -> Option<String> {
     }
     if let Some(host) = extract_host_after_prefix(line, "on host ") {
         return Some(host);
+    }
+    extract_first_host_port_token(line)
+}
+
+fn extract_first_host_port_token(line: &str) -> Option<String> {
+    for token in line.split_whitespace() {
+        let candidate = token.trim_matches(|ch: char| {
+            matches!(ch, '"' | '\'' | '`' | ',' | ';' | '(' | ')' | '[' | ']')
+        });
+        let Some((host, _port)) = candidate.rsplit_once(':') else {
+            continue;
+        };
+        let host = host.rsplit('@').next().unwrap_or(host).trim();
+        if let Some(normalized) = normalized_unresolved_host(host) {
+            return Some(normalized);
+        }
     }
     None
 }
@@ -80922,20 +81071,27 @@ fn extract_lookup_host_from_line(line: &str) -> Option<String> {
 fn extract_host_after_prefix(line: &str, prefix: &str) -> Option<String> {
     let lowered = line.to_ascii_lowercase();
     let start = lowered.find(prefix)?;
-    let value = line[start + prefix.len()..]
-        .split(|ch: char| {
-            ch.is_whitespace()
-                || ch == ':'
-                || ch == ','
-                || ch == ';'
-                || ch == '/'
-                || ch == '('
-                || ch == ')'
-        })
+    let raw = line[start + prefix.len()..]
+        .split(|ch: char| ch.is_whitespace() || ch == ',' || ch == ';' || ch == '(' || ch == ')')
         .next()
         .unwrap_or_default()
         .trim_matches('`')
         .trim();
+    let value = if let Some((_, remainder)) = raw.split_once("://") {
+        remainder
+            .split('/')
+            .next()
+            .unwrap_or(remainder)
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .trim()
+    } else {
+        raw.split(|ch: char| ch == ':' || ch == '/')
+            .next()
+            .unwrap_or_default()
+            .trim()
+    };
     normalized_unresolved_host(value)
 }
 

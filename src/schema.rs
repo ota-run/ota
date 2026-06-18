@@ -3917,30 +3917,28 @@ impl TaskSpec {
     pub fn compose_adapter_env_files_for_backend(&self, backend: Backend) -> Vec<String> {
         let mut merged = self
             .adapter_inputs
-            .compose
-            .as_ref()
-            .map(|compose| compose.env_files.clone())
+            .effective_compose()
+            .map(|compose| compose.env_files)
             .unwrap_or_default();
         if let Some(branch) = self.mode_execution_branch(backend)
-            && let Some(compose) = branch.adapter_inputs.compose.as_ref()
+            && let Some(compose) = branch.adapter_inputs.effective_compose()
         {
-            merged.extend(compose.env_files.clone());
+            merged.extend(compose.env_files);
         }
         merged
     }
 
-    pub fn compose_adapter_cwd_for_backend(&self, backend: Backend) -> Option<&str> {
+    pub fn compose_adapter_cwd_for_backend(&self, backend: Backend) -> Option<String> {
         self.mode_execution_branch(backend)
-            .and_then(|branch| branch.adapter_inputs.compose.as_ref())
-            .and_then(|compose| compose.cwd.as_deref())
-            .map(str::trim)
+            .and_then(|branch| branch.adapter_inputs.effective_compose())
+            .and_then(|compose| compose.cwd)
+            .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .or_else(|| {
                 self.adapter_inputs
-                    .compose
-                    .as_ref()
-                    .and_then(|compose| compose.cwd.as_deref())
-                    .map(str::trim)
+                    .effective_compose()
+                    .and_then(|compose| compose.cwd)
+                    .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
             })
     }
@@ -3948,14 +3946,13 @@ impl TaskSpec {
     pub fn compose_adapter_files_for_backend(&self, backend: Backend) -> Vec<String> {
         let mut merged = self
             .adapter_inputs
-            .compose
-            .as_ref()
-            .map(|compose| compose.files.clone())
+            .effective_compose()
+            .map(|compose| compose.files)
             .unwrap_or_default();
         if let Some(branch) = self.mode_execution_branch(backend)
-            && let Some(compose) = branch.adapter_inputs.compose.as_ref()
+            && let Some(compose) = branch.adapter_inputs.effective_compose()
         {
-            merged.extend(compose.files.clone());
+            merged.extend(compose.files);
         }
         merged
     }
@@ -3963,30 +3960,28 @@ impl TaskSpec {
     pub fn compose_adapter_profiles_for_backend(&self, backend: Backend) -> Vec<String> {
         let mut merged = self
             .adapter_inputs
-            .compose
-            .as_ref()
-            .map(|compose| compose.profiles.clone())
+            .effective_compose()
+            .map(|compose| compose.profiles)
             .unwrap_or_default();
         if let Some(branch) = self.mode_execution_branch(backend)
-            && let Some(compose) = branch.adapter_inputs.compose.as_ref()
+            && let Some(compose) = branch.adapter_inputs.effective_compose()
         {
-            merged.extend(compose.profiles.clone());
+            merged.extend(compose.profiles);
         }
         merged
     }
 
-    pub fn compose_adapter_project_name_for_backend(&self, backend: Backend) -> Option<&str> {
+    pub fn compose_adapter_project_name_for_backend(&self, backend: Backend) -> Option<String> {
         self.mode_execution_branch(backend)
-            .and_then(|branch| branch.adapter_inputs.compose.as_ref())
-            .and_then(|compose| compose.project_name.as_deref())
-            .map(str::trim)
+            .and_then(|branch| branch.adapter_inputs.effective_compose())
+            .and_then(|compose| compose.project_name)
+            .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .or_else(|| {
                 self.adapter_inputs
-                    .compose
-                    .as_ref()
-                    .and_then(|compose| compose.project_name.as_deref())
-                    .map(str::trim)
+                    .effective_compose()
+                    .and_then(|compose| compose.project_name)
+                    .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
             })
     }
@@ -3994,30 +3989,28 @@ impl TaskSpec {
     pub fn bake_adapter_files_for_backend(&self, backend: Backend) -> Vec<String> {
         let mut merged = self
             .adapter_inputs
-            .bake
-            .as_ref()
-            .map(|bake| bake.files.clone())
+            .effective_bake()
+            .map(|bake| bake.files)
             .unwrap_or_default();
         if let Some(branch) = self.mode_execution_branch(backend)
-            && let Some(bake) = branch.adapter_inputs.bake.as_ref()
+            && let Some(bake) = branch.adapter_inputs.effective_bake()
         {
-            merged.extend(bake.files.clone());
+            merged.extend(bake.files);
         }
         merged
     }
 
-    pub fn bake_adapter_cwd_for_backend(&self, backend: Backend) -> Option<&str> {
+    pub fn bake_adapter_cwd_for_backend(&self, backend: Backend) -> Option<String> {
         self.mode_execution_branch(backend)
-            .and_then(|branch| branch.adapter_inputs.bake.as_ref())
-            .and_then(|bake| bake.cwd.as_deref())
-            .map(str::trim)
+            .and_then(|branch| branch.adapter_inputs.effective_bake())
+            .and_then(|bake| bake.cwd)
+            .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .or_else(|| {
                 self.adapter_inputs
-                    .bake
-                    .as_ref()
-                    .and_then(|bake| bake.cwd.as_deref())
-                    .map(str::trim)
+                    .effective_bake()
+                    .and_then(|bake| bake.cwd)
+                    .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty())
             })
     }
@@ -5951,6 +5944,8 @@ pub enum TaskTargetKind {
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskAdapterInputsSpec {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub overlays: BTreeMap<String, TaskAdapterOverlaySpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeAdapterInputsSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -5959,13 +5954,92 @@ pub struct TaskAdapterInputsSpec {
 
 impl TaskAdapterInputsSpec {
     pub fn is_empty(&self) -> bool {
-        self.compose
-            .as_ref()
-            .is_none_or(TaskComposeAdapterInputsSpec::is_empty)
+        self.overlays
+            .values()
+            .all(TaskAdapterOverlaySpec::is_empty)
+            && self
+                .overlays
+                .keys()
+                .all(|family| family.trim().is_empty())
+            && self
+                .compose
+                .as_ref()
+                .is_none_or(TaskComposeAdapterInputsSpec::is_empty)
             && self
                 .bake
                 .as_ref()
                 .is_none_or(TaskBakeAdapterInputsSpec::is_empty)
+    }
+
+    pub fn overlay(&self, family: &str) -> Option<&TaskAdapterOverlaySpec> {
+        self.overlays
+            .get(family)
+            .filter(|overlay| !overlay.is_empty())
+    }
+
+    pub fn effective_compose(&self) -> Option<TaskComposeAdapterInputsSpec> {
+        if let Some(overlay) = self.overlay("compose") {
+            let mut compose = TaskComposeAdapterInputsSpec::default();
+            compose.cwd = overlay.cwd.clone();
+            compose.env_files = overlay.env_files.clone();
+            compose.files = overlay.files.clone();
+            compose.profiles = overlay.profiles.clone();
+            compose.project_name = overlay.project_name.clone();
+            return (!compose.is_empty()).then_some(compose);
+        }
+        self.compose
+            .clone()
+            .filter(|compose| !compose.is_empty())
+    }
+
+    pub fn effective_bake(&self) -> Option<TaskBakeAdapterInputsSpec> {
+        if let Some(overlay) = self.overlay("bake") {
+            let mut bake = TaskBakeAdapterInputsSpec::default();
+            bake.cwd = overlay.cwd.clone();
+            bake.files = overlay.files.clone();
+            return (!bake.is_empty()).then_some(bake);
+        }
+        self.bake.clone().filter(|bake| !bake.is_empty())
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAdapterOverlaySpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+}
+
+impl TaskAdapterOverlaySpec {
+    pub fn is_empty(&self) -> bool {
+        self.cwd.as_deref().map(str::trim).is_none_or(str::is_empty)
+            && self.env_files.is_empty()
+            && self.files.is_empty()
+            && self.profiles.is_empty()
+            && self
+                .project_name
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
+    }
+}
+
+impl TaskAdapterInputsSpec {
+    pub fn declared_families(&self) -> impl Iterator<Item = &str> {
+        self.overlays
+            .iter()
+            .filter(|(_, overlay)| !overlay.is_empty())
+            .map(|(family, _)| family.as_str())
+            .chain(self.compose.as_ref().filter(|spec| !spec.is_empty()).map(|_| "compose"))
+            .chain(self.bake.as_ref().filter(|spec| !spec.is_empty()).map(|_| "bake"))
     }
 }
 
@@ -6784,6 +6858,17 @@ tasks:
         assert_eq!(npm.lockfile_flag(), None);
         assert_eq!(npm.force_flag(), Some("--force"));
         assert_eq!(npm.command_preview(), "npm install --force");
+
+        let npm_ci = super::TaskNodePackageManagerHydrationSourceSpec {
+            cwd: String::from("."),
+            manager: super::TaskNodePackageManagerKind::Npm,
+            mode: super::TaskNodePackageManagerHydrationMode::Ci,
+            frozen_lockfile: false,
+            inline_builds: false,
+            force: true,
+        };
+        assert_eq!(npm_ci.force_flag(), Some("--force"));
+        assert_eq!(npm_ci.command_preview(), "npm ci --force");
 
         let bun = super::TaskNodePackageManagerHydrationSourceSpec {
             cwd: String::from("."),

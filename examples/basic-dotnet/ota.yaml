@@ -32,13 +32,26 @@ toolchains:
 tasks:
   setup:
     description: Restore .NET dependencies
-    run: dotnet restore
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: dotnet_restore
+        cwd: .
     requirements:
       toolchains:
         - dotnet
+    effects:
+      writes:
+        - obj
+      network: true
+      network_kind: dependency_hydration
   build:
     description: Build the .NET repo
-    run: dotnet build
+    command:
+      exe: dotnet
+      args:
+        - build
     depends_on:
       - setup
     requirements:
@@ -46,7 +59,10 @@ tasks:
         - dotnet
   test:
     description: Run the .NET test suite
-    run: dotnet test
+    command:
+      exe: dotnet
+      args:
+        - test
     depends_on:
       - setup
     requirements:
@@ -76,6 +92,7 @@ agent:
     - src
     - tests
     - docs
+    - obj
   protected_paths:
     - ota.yaml
   notes: |

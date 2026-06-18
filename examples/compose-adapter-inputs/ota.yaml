@@ -69,10 +69,11 @@ tasks:
     context: host
     description: Start the compose stack with task-owned adapter truth
     adapter_inputs:
-      compose:
-        cwd: docker
-        env_files:
-          - docker/.env.task
+      overlays:
+        compose:
+          cwd: docker
+          env_files:
+            - docker/.env.task
     launch:
       kind: command
       exe: docker
@@ -86,14 +87,15 @@ tasks:
     context: host
     description: Stop the compose stack with task-owned compose file and profile truth
     adapter_inputs:
-      compose:
-        cwd: docker
-        env_files:
-          - docker/.env.task
-        files:
-          - docker/docker-compose.yml
-        profiles:
-          - app
+      overlays:
+        compose:
+          cwd: docker
+          env_files:
+            - docker/.env.task
+          files:
+            - docker/docker-compose.yml
+          profiles:
+            - app
     command:
       exe: docker
       args:
@@ -106,15 +108,16 @@ tasks:
     context: host
     description: Start a debug compose lane with task-owned project naming
     adapter_inputs:
-      compose:
-        cwd: docker
-        env_files:
-          - docker/.env.task
-        files:
-          - docker/docker-compose.yml
-        profiles:
-          - debug
-        project_name: compose-adapter-inputs-debug
+      overlays:
+        compose:
+          cwd: docker
+          env_files:
+            - docker/.env.task
+          files:
+            - docker/docker-compose.yml
+          profiles:
+            - debug
+          project_name: compose-adapter-inputs-debug
     launch:
       kind: command
       exe: docker
@@ -142,13 +145,14 @@ workflows:
     intent: packaged_runtime
     description: Render workflow-owned dotenv truth and prepend compose files, profiles, and project name into the selected compose task path
     adapter_inputs:
-      compose:
-        cwd: docker
-        files:
-          - docker/docker-compose.override.yml
-        profiles:
-          - runtime
-        project_name: compose-adapter-inputs
+      overlays:
+        compose:
+          cwd: docker
+          files:
+            - docker/docker-compose.override.yml
+          profiles:
+            - runtime
+          project_name: compose-adapter-inputs
     env:
       profile: runtime
       compose_env_file_services:

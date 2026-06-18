@@ -29,12 +29,26 @@
 - fixed `ota skills install` so Codex and Claude installs now stage the full canonical Ota skill
   payload instead of a partial bundle; the installer now includes the referenced `agents/` and
   `references/` support files and validates that the staged skill tree is complete before replace
-- widened first-class Node dependency hydration with explicit npm `force` ownership, so repos can
-  now model `npm install --force` structurally under `prepare.kind: dependency_hydration` instead
-  of burying that override lane in shell
+- widened first-class Node dependency hydration with explicit npm `force` ownership across both
+  `npm install --force` and `npm ci --force`, so repos can now model those exceptional override
+  lanes structurally under `prepare.kind: dependency_hydration` instead of burying them in shell
 - validate/doctor now warn when contracts declare the exceptional npm `--force` hydration path,
-  and they also flag raw `npm install --force` task bodies as replaceable structured dependency
-  hydration
+  and they also flag raw `npm install --force` / `npm ci --force` task bodies as replaceable
+  structured dependency hydration
+- tightened adapter-overlay ownership internals so backend adapter resolution now runs through the
+  same adapter-field registry that already owns workflow/task advisory identity, making Compose and
+  Bake overlay widening safer without splitting field truth across duplicate match arms
+- widened the public adapter-overlay contract from family-specific `adapter_inputs.compose.*` /
+  `.bake.*` teaching to the canonical `adapter_inputs.overlays.<family>.*` model, while keeping
+  `compose` and `bake` as compatibility aliases for existing contracts
+- fixed workflow overlay compatibility projection so legacy compose alias inputs such as
+  `env.compose_files`, `env.compose_project_name`, and compatibility `adapter_inputs.compose.*`
+  still merge correctly when the canonical workflow contract already uses
+  `adapter_inputs.overlays.compose.*`
+- tightened runtime-proof auth evidence recovery so likely-cause classification can recover service
+  identity from resolved host hints and more endpoint-style auth logs
+- refreshed canonical Rust, .NET, and Java examples onto current first-class setup surfaces, so
+  setup now uses typed dependency hydration and finite verification/build tasks use `command`
 - widened first-class Node dependency hydration with Yarn `inline_builds` support, so repos can
   now model `yarn install --inline-builds` structurally under
   `prepare.kind: dependency_hydration` instead of hiding that setup lane in shell

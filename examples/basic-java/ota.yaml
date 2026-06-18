@@ -39,7 +39,12 @@ checks:
 tasks:
   setup:
     description: Warm the Maven dependency graph
-    run: mvn -q dependency:resolve
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: maven
+        cwd: .
     requirements:
       toolchains:
         - java
@@ -47,9 +52,15 @@ tasks:
         maven: "3.9"
       checks:
         - maven-installed
+    effects:
+      network: true
+      network_kind: dependency_hydration
   build:
     description: Compile and package the repo
-    run: mvn package
+    command:
+      exe: mvn
+      args:
+        - package
     depends_on:
       - setup
     requirements:
@@ -59,7 +70,10 @@ tasks:
         maven: "3.9"
   test:
     description: Run the Maven test suite
-    run: mvn test
+    command:
+      exe: mvn
+      args:
+        - test
     depends_on:
       - setup
     requirements:

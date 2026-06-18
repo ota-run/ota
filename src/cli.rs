@@ -6254,10 +6254,8 @@ mod tests {
         let skill_dir = temp.path().join("codex-home").join("skills").join("ota");
         assert_distributed_skill_tree(&skill_dir);
         let skill = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
-        let references = fs::read_to_string(
-            skill_dir.join("references").join("official-sources.md"),
-        )
-        .unwrap();
+        let references =
+            fs::read_to_string(skill_dir.join("references").join("official-sources.md")).unwrap();
         assert!(skill.contains("name: ota"));
         assert!(references.contains("Official Ota Sources"));
     }

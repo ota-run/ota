@@ -33,13 +33,24 @@ toolchains:
 tasks:
   setup:
     description: Fetch Cargo dependencies
-    run: cargo fetch
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: cargo
+        cwd: .
     requirements:
       toolchains:
         - rust
+    effects:
+      network: true
+      network_kind: dependency_hydration
   build:
     description: Compile the crate
-    run: cargo build
+    command:
+      exe: cargo
+      args:
+        - build
     depends_on:
       - setup
     requirements:
@@ -47,7 +58,11 @@ tasks:
         - rust
   fmt:
     description: Check Rust formatting through the selected toolchain
-    run: cargo fmt --check
+    command:
+      exe: cargo
+      args:
+        - fmt
+        - --check
     depends_on:
       - setup
     requirements:
@@ -55,7 +70,10 @@ tasks:
         - rust
   test:
     description: Run the Cargo test suite
-    run: cargo test
+    command:
+      exe: cargo
+      args:
+        - test
     depends_on:
       - fmt
       - build

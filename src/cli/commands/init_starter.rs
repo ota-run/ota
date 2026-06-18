@@ -1108,17 +1108,41 @@ fn detect_prepare_from_run(
             vec![String::from(".gradle")],
             BTreeMap::new(),
         )),
-        "npm install" => Some(node_hydration_shape(TaskNodePackageManagerKind::Npm, false)),
-        "npm ci" => Some(node_hydration_shape(TaskNodePackageManagerKind::Npm, true)),
+        "npm install" => Some(node_hydration_shape(
+            TaskNodePackageManagerKind::Npm,
+            false,
+            false,
+        )),
+        "npm install --force" => Some(node_hydration_shape(
+            TaskNodePackageManagerKind::Npm,
+            false,
+            true,
+        )),
+        "npm ci" => Some(node_hydration_shape(
+            TaskNodePackageManagerKind::Npm,
+            true,
+            false,
+        )),
+        "npm ci --force" => Some(node_hydration_shape(
+            TaskNodePackageManagerKind::Npm,
+            true,
+            true,
+        )),
         "pnpm install" => Some(node_hydration_shape(
             TaskNodePackageManagerKind::Pnpm,
+            false,
             false,
         )),
         "yarn install" => Some(node_hydration_shape(
             TaskNodePackageManagerKind::Yarn,
             false,
+            false,
         )),
-        "bun install" => Some(node_hydration_shape(TaskNodePackageManagerKind::Bun, false)),
+        "bun install" => Some(node_hydration_shape(
+            TaskNodePackageManagerKind::Bun,
+            false,
+            false,
+        )),
         _ => return None,
     }
 }
@@ -1126,6 +1150,7 @@ fn detect_prepare_from_run(
 fn node_hydration_shape(
     manager: TaskNodePackageManagerKind,
     ci: bool,
+    force: bool,
 ) -> (TaskPrepareSpec, TaskRequirementsSpec, TaskEffectsSpec) {
     hydration_shape(
         TaskPrepareSpec::DependencyHydration(TaskDependencyHydrationPrepareSpec {
@@ -1141,7 +1166,7 @@ fn node_hydration_shape(
                     },
                     frozen_lockfile: false,
                     inline_builds: false,
-                    force: false,
+                    force,
                 },
             ),
             targets: Vec::new(),
@@ -3233,7 +3258,8 @@ mod tests {
     use crate::detector::{DetectContract, DetectReport, DetectTask};
     use crate::schema::{
         AgentPosture, EnvSource, EnvSourceKind, TaskDependencyHydrationSourceSpec,
-        TaskMavenHydrationMode, TaskNodePackageManagerKind, TaskPrepareSpec,
+        TaskMavenHydrationMode, TaskNodePackageManagerHydrationMode, TaskNodePackageManagerKind,
+        TaskPrepareSpec,
     };
     use std::collections::BTreeMap;
     use tempfile::TempDir;
@@ -3387,6 +3413,100 @@ mod tests {
                 .as_deref(),
             Some("npm run check")
         );
+    }
+
+    #[test]
+    fn bootstrap_contract_normalizes_detected_npm_force_install_setup_to_dependency_hydration() {
+        let fixture = TempDir::new().expect("fixture");
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            String::from("setup"),
+            DetectTask {
+                description: Some(String::from("Install dependencies")),
+                run: String::from("npm install --force"),
+                command: None,
+                action: None,
+                prepare: None,
+                requirements: crate::schema::TaskRequirementsSpec::default(),
+                effects: crate::schema::TaskEffectsSpec::default(),
+                depends_on: Vec::new(),
+                notes: None,
+                internal: false,
+                safe_for_agent: false,
+            },
+        );
+        let report = DetectReport {
+            root: fixture.path().to_path_buf(),
+            contract: DetectContract {
+                version: 1,
+                tasks,
+                ..DetectContract::default()
+            },
+            inferences: Vec::new(),
+        };
+
+        let contract = bootstrap_init_contract(&report);
+        let setup = contract.tasks.get("setup").expect("setup task");
+        match setup.prepare.as_ref() {
+            Some(TaskPrepareSpec::DependencyHydration(prepare)) => match &prepare.source {
+                TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
+                    assert_eq!(source.manager, TaskNodePackageManagerKind::Npm);
+                    assert_eq!(source.mode, TaskNodePackageManagerHydrationMode::Install);
+                    assert!(source.force);
+                }
+                other => panic!("expected node package-manager hydration, got {other:?}"),
+            },
+            other => panic!("expected dependency hydration setup, got {other:?}"),
+        }
+        assert!(setup.command.is_none());
+        assert!(setup.run.is_empty());
+    }
+
+    #[test]
+    fn bootstrap_contract_normalizes_detected_npm_force_ci_setup_to_dependency_hydration() {
+        let fixture = TempDir::new().expect("fixture");
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            String::from("setup"),
+            DetectTask {
+                description: Some(String::from("Install dependencies")),
+                run: String::from("npm ci --force"),
+                command: None,
+                action: None,
+                prepare: None,
+                requirements: crate::schema::TaskRequirementsSpec::default(),
+                effects: crate::schema::TaskEffectsSpec::default(),
+                depends_on: Vec::new(),
+                notes: None,
+                internal: false,
+                safe_for_agent: false,
+            },
+        );
+        let report = DetectReport {
+            root: fixture.path().to_path_buf(),
+            contract: DetectContract {
+                version: 1,
+                tasks,
+                ..DetectContract::default()
+            },
+            inferences: Vec::new(),
+        };
+
+        let contract = bootstrap_init_contract(&report);
+        let setup = contract.tasks.get("setup").expect("setup task");
+        match setup.prepare.as_ref() {
+            Some(TaskPrepareSpec::DependencyHydration(prepare)) => match &prepare.source {
+                TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
+                    assert_eq!(source.manager, TaskNodePackageManagerKind::Npm);
+                    assert_eq!(source.mode, TaskNodePackageManagerHydrationMode::Ci);
+                    assert!(source.force);
+                }
+                other => panic!("expected node package-manager hydration, got {other:?}"),
+            },
+            other => panic!("expected dependency hydration setup, got {other:?}"),
+        }
+        assert!(setup.command.is_none());
+        assert!(setup.run.is_empty());
     }
 
     #[test]

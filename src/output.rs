@@ -3025,7 +3025,7 @@ pub struct TaskSummary<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_files: Vec<&'a str>,
     #[serde(skip_serializing_if = "TaskAdapterInputsSummary::is_empty")]
-    pub adapter_inputs: TaskAdapterInputsSummary<'a>,
+    pub adapter_inputs: TaskAdapterInputsSummary,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub inputs: &'a BTreeMap<String, TaskInputSpec>,
     pub kind: &'a str,
@@ -3083,14 +3083,14 @@ pub struct TaskAggregateSummary {
 }
 
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
-pub struct TaskAdapterInputsSummary<'a> {
+pub struct TaskAdapterInputsSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub compose: Option<TaskComposeAdapterInputsSummary<'a>>,
+    pub compose: Option<TaskComposeAdapterInputsSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub bake: Option<TaskBakeAdapterInputsSummary<'a>>,
+    pub bake: Option<TaskBakeAdapterInputsSummary>,
 }
 
-impl<'a> TaskAdapterInputsSummary<'a> {
+impl TaskAdapterInputsSummary {
     pub fn is_empty(&self) -> bool {
         self.compose
             .as_ref()
@@ -3103,20 +3103,20 @@ impl<'a> TaskAdapterInputsSummary<'a> {
 }
 
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
-pub struct TaskComposeAdapterInputsSummary<'a> {
+pub struct TaskComposeAdapterInputsSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<&'a str>,
+    pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub env_files: Vec<&'a str>,
+    pub env_files: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub files: Vec<&'a str>,
+    pub files: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub profiles: Vec<&'a str>,
+    pub profiles: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_name: Option<&'a str>,
+    pub project_name: Option<String>,
 }
 
-impl<'a> TaskComposeAdapterInputsSummary<'a> {
+impl TaskComposeAdapterInputsSummary {
     pub fn is_empty(&self) -> bool {
         self.cwd.is_none()
             && self.env_files.is_empty()
@@ -3127,14 +3127,14 @@ impl<'a> TaskComposeAdapterInputsSummary<'a> {
 }
 
 #[derive(Debug, Serialize, Clone, Default, PartialEq, Eq)]
-pub struct TaskBakeAdapterInputsSummary<'a> {
+pub struct TaskBakeAdapterInputsSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<&'a str>,
+    pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub files: Vec<&'a str>,
+    pub files: Vec<String>,
 }
 
-impl<'a> TaskBakeAdapterInputsSummary<'a> {
+impl TaskBakeAdapterInputsSummary {
     pub fn is_empty(&self) -> bool {
         self.cwd.is_none() && self.files.is_empty()
     }
@@ -3324,7 +3324,7 @@ pub struct TaskModeView<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_files: Vec<&'a str>,
     #[serde(skip_serializing_if = "TaskAdapterInputsSummary::is_empty")]
-    pub adapter_inputs: TaskAdapterInputsSummary<'a>,
+    pub adapter_inputs: TaskAdapterInputsSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3349,39 +3349,34 @@ pub struct TaskCommandSummary<'a> {
     pub args: Vec<&'a str>,
 }
 
-pub fn summarize_task_adapter_inputs<'a>(
-    adapter_inputs: &'a crate::schema::TaskAdapterInputsSpec,
-) -> TaskAdapterInputsSummary<'a> {
+pub fn summarize_task_adapter_inputs(
+    adapter_inputs: &crate::schema::TaskAdapterInputsSpec,
+) -> TaskAdapterInputsSummary {
     TaskAdapterInputsSummary {
         compose: adapter_inputs
-            .compose
-            .as_ref()
+            .effective_compose()
             .map(|compose| TaskComposeAdapterInputsSummary {
                 cwd: compose
                     .cwd
-                    .as_deref()
-                    .map(str::trim)
+                    .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty()),
-                env_files: compose.env_files.iter().map(String::as_str).collect(),
-                files: compose.files.iter().map(String::as_str).collect(),
-                profiles: compose.profiles.iter().map(String::as_str).collect(),
+                env_files: compose.env_files,
+                files: compose.files,
+                profiles: compose.profiles,
                 project_name: compose
                     .project_name
-                    .as_deref()
-                    .map(str::trim)
+                    .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty()),
             })
             .filter(|compose| !compose.is_empty()),
         bake: adapter_inputs
-            .bake
-            .as_ref()
+            .effective_bake()
             .map(|bake| TaskBakeAdapterInputsSummary {
                 cwd: bake
                     .cwd
-                    .as_deref()
-                    .map(str::trim)
+                    .map(|value| value.trim().to_string())
                     .filter(|value| !value.is_empty()),
-                files: bake.files.iter().map(String::as_str).collect(),
+                files: bake.files,
             })
             .filter(|bake| !bake.is_empty()),
     }

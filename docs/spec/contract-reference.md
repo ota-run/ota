@@ -1806,7 +1806,7 @@ Task-effect rules:
     - `prepare.source.mode`: required install mode; ota currently ships `install` and `ci`
     - `prepare.source.frozen_lockfile`: optional explicit lockfile strictness for `pnpm install --frozen-lockfile`, `yarn install --immutable`, or `bun install --frozen-lockfile`
     - `prepare.source.inline_builds`: optional explicit Yarn inline-build ownership for `yarn install --inline-builds`; valid only with `manager: yarn` and `mode: install`
-    - `prepare.source.force`: optional explicit npm override ownership for `npm install --force`; valid only with `manager: npm` and `mode: install`, and should be treated as an exceptional hydration lane rather than a normal default
+    - `prepare.source.force`: optional explicit npm override ownership for `npm install --force` or `npm ci --force`; valid only with `manager: npm` and `mode: install` or `mode: ci`, and should be treated as an exceptional hydration lane rather than a normal default
     - `prepare.source.kind: bundler`
     - `prepare.source.cwd`: required repo-relative working directory for the Bundler invocation
     - `prepare.source.path`: required repo-relative bundle install path for the repo-local gem lane
@@ -1854,7 +1854,7 @@ Task-effect rules:
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: dotnet_restore` currently requires `requirements.toolchains: [dotnet]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
 - `prepare.source.manager: pnpm` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `pnpm install --frozen-lockfile`
 - `prepare.source.manager: npm` currently supports `mode: install` or `mode: ci`; use `mode: ci` when the repo truth is lockfile-strict npm hydration
-- `prepare.source.manager: npm` may also declare `force: true` when the repo truth is explicitly `npm install --force`; keep that override deliberate because it weakens normal npm safety semantics
+- `prepare.source.manager: npm` may also declare `force: true` when the repo truth is explicitly `npm install --force` or `npm ci --force`; keep that override deliberate because it weakens normal npm safety semantics
 - `prepare.source.manager: yarn` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `yarn install --immutable`
 - `prepare.source.manager: yarn` may also declare `inline_builds: true` when the repo truth is `yarn install --inline-builds`
 - `prepare.source.manager: bun` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `bun install --frozen-lockfile`
@@ -1911,22 +1911,24 @@ tasks:
 - `modes.<mode>.context`: optional context override for that mode
 - `modes.<mode>.lifecycle`: optional lifecycle override for that mode (container mode only)
 - `env_files`: optional ordered repo-relative dotenv overlays injected into the task process before task-level `env`
-- `adapter_inputs.compose.cwd`: optional repo-relative adapter working directory ota should enter before executing the selected `docker compose` or `podman compose` task path; declared compose env files and compose files stay repo-relative in the contract and are projected relative to this adapter root at runtime
-- `adapter_inputs.compose.env_files`: optional ordered repo-relative compose interpolation files projected to the selected task mode through `COMPOSE_ENV_FILES`; use this for task-owned `docker compose` or `podman compose` adapter input truth rather than process dotenv injection
-- `adapter_inputs.compose.files`: optional ordered repo-relative compose file list projected to the selected task mode through `COMPOSE_FILE`
-- `adapter_inputs.compose.profiles`: optional ordered compose profile list projected to the selected task mode through `COMPOSE_PROFILES`
-- `adapter_inputs.compose.project_name`: optional compose project name projected to the selected task mode through `COMPOSE_PROJECT_NAME`
-- `adapter_inputs.bake.cwd`: optional repo-relative adapter working directory ota should enter before executing the selected `docker buildx bake` task path; declared Bake files stay repo-relative in the contract and are projected relative to this adapter root at runtime
-- `adapter_inputs.bake.files`: optional ordered repo-relative Bake file list projected to the selected task mode through `BUILDX_BAKE_FILE`
+- `adapter_inputs.overlays.compose.cwd`: canonical optional repo-relative adapter working directory ota should enter before executing the selected `docker compose` or `podman compose` task path; declared compose env files and compose files stay repo-relative in the contract and are projected relative to this adapter root at runtime
+- `adapter_inputs.overlays.compose.env_files`: canonical optional ordered repo-relative compose interpolation files projected to the selected task mode through `COMPOSE_ENV_FILES`; use this for task-owned `docker compose` or `podman compose` adapter input truth rather than process dotenv injection
+- `adapter_inputs.overlays.compose.files`: canonical optional ordered repo-relative compose file list projected to the selected task mode through `COMPOSE_FILE`
+- `adapter_inputs.overlays.compose.profiles`: canonical optional ordered compose profile list projected to the selected task mode through `COMPOSE_PROFILES`
+- `adapter_inputs.overlays.compose.project_name`: canonical optional compose project name projected to the selected task mode through `COMPOSE_PROJECT_NAME`
+- `adapter_inputs.overlays.bake.cwd`: canonical optional repo-relative adapter working directory ota should enter before executing the selected `docker buildx bake` task path; declared Bake files stay repo-relative in the contract and are projected relative to this adapter root at runtime
+- `adapter_inputs.overlays.bake.files`: canonical optional ordered repo-relative Bake file list projected to the selected task mode through `BUILDX_BAKE_FILE`
+- `adapter_inputs.compose.*` / `adapter_inputs.bake.*`: compatibility aliases for existing contracts; prefer `adapter_inputs.overlays.<family>.*` for new authoring
+- the public map shape is generalized, but shipped runtime semantics currently exist only for overlay families `compose` and `bake`; other family keys are rejected by validation until ota ships their runtime and governance model
 - `modes.<mode>.env`: optional env map merged over task-level `env`
 - `modes.<mode>.env_files`: optional ordered repo-relative dotenv overlays appended after task-level `env_files`
-- `modes.<mode>.adapter_inputs.compose.cwd`: optional compose adapter working-directory override for that mode
-- `modes.<mode>.adapter_inputs.compose.env_files`: optional ordered repo-relative compose interpolation files appended after task-level `adapter_inputs.compose.env_files`
-- `modes.<mode>.adapter_inputs.compose.files`: optional ordered repo-relative compose file list appended after task-level `adapter_inputs.compose.files`
-- `modes.<mode>.adapter_inputs.compose.profiles`: optional ordered compose profile list appended after task-level `adapter_inputs.compose.profiles`
-- `modes.<mode>.adapter_inputs.compose.project_name`: optional compose project name override for that mode
-- `modes.<mode>.adapter_inputs.bake.cwd`: optional Bake adapter working-directory override for that mode
-- `modes.<mode>.adapter_inputs.bake.files`: optional ordered repo-relative Bake file list appended after task-level `adapter_inputs.bake.files`
+- `modes.<mode>.adapter_inputs.overlays.compose.cwd`: optional compose adapter working-directory override for that mode
+- `modes.<mode>.adapter_inputs.overlays.compose.env_files`: optional ordered repo-relative compose interpolation files appended after task-level `adapter_inputs.overlays.compose.env_files`
+- `modes.<mode>.adapter_inputs.overlays.compose.files`: optional ordered repo-relative compose file list appended after task-level `adapter_inputs.overlays.compose.files`
+- `modes.<mode>.adapter_inputs.overlays.compose.profiles`: optional ordered compose profile list appended after task-level `adapter_inputs.overlays.compose.profiles`
+- `modes.<mode>.adapter_inputs.overlays.compose.project_name`: optional compose project name override for that mode
+- `modes.<mode>.adapter_inputs.overlays.bake.cwd`: optional Bake adapter working-directory override for that mode
+- `modes.<mode>.adapter_inputs.overlays.bake.files`: optional ordered repo-relative Bake file list appended after task-level `adapter_inputs.overlays.bake.files`
 - `modes.<mode>.run`: optional single-line command override for that mode
 - `modes.<mode>.script`: optional multiline script override for that mode
 - `modes.<mode>.command`: optional structured finite command override for that mode
@@ -1950,11 +1952,12 @@ tasks:
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
 - when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`command`/`prepare`/`launch`, and `runtime`
-- use `env_files` for task-process dotenv overlays; use `adapter_inputs.compose.*` when one task path owns `docker compose` adapter root, interpolation input, compose file selection, compose profiles, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
-- use `adapter_inputs.bake.*` when one task path owns `docker buildx bake` adapter root or file selection and that truth should project through a first-class adapter surface instead of shell `cd ... &&` / `-f`
-- keep `adapter_inputs.compose` / `adapter_inputs.bake` non-empty: empty family markers are a governance smell and validate/doctor warn on them; either declare concrete adapter-owned fields or omit the family entirely
-- validate/doctor warn when Compose adapter root or file/profile/project truth stays hard-coded in shell `docker compose --project-directory ...`, `cd ... && docker compose ...`, `--env-file`, `-f`, `--file`, `--profile`, `-p`, or `--project-name` instead of `adapter_inputs.compose.*`
-- validate/doctor warn when Bake file truth stays hard-coded in shell `docker buildx bake -f` / `--file` flags, or when Bake adapter root stays hard-coded in shell `cd ... && docker buildx bake ...`, instead of `adapter_inputs.bake.*`
+- use `env_files` for task-process dotenv overlays; use `adapter_inputs.overlays.compose.*` when one task path owns `docker compose` adapter root, interpolation input, compose file selection, compose profiles, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
+- use `adapter_inputs.overlays.bake.*` when one task path owns `docker buildx bake` adapter root or file selection and that truth should project through a first-class adapter surface instead of shell `cd ... &&` / `-f`
+- keep `adapter_inputs.overlays.<family>` non-empty: empty family markers are a governance smell and validate/doctor warn on them; either declare concrete adapter-owned fields or omit the family entirely
+- do not infer that arbitrary families are executable just because the map is generic; today ota only executes overlay semantics for `compose` and `bake`, and validator rejects unsupported families
+- validate/doctor warn when Compose adapter root or file/profile/project truth stays hard-coded in shell `docker compose --project-directory ...`, `cd ... && docker compose ...`, `--env-file`, `-f`, `--file`, `--profile`, `-p`, or `--project-name` instead of `adapter_inputs.overlays.compose.*`
+- validate/doctor warn when Bake file truth stays hard-coded in shell `docker buildx bake -f` / `--file` flags, or when Bake adapter root stays hard-coded in shell `cd ... && docker buildx bake ...`, instead of `adapter_inputs.overlays.bake.*`
 - when a selected branch omits `run`/`script`/`command`/`prepare`/`launch`, ota falls back to the task-level execution body (including OS variants)
 - when a task declares `execution.modes`, an explicit `--mode` must resolve to a declared branch
   unless it matches `default_mode`; unsupported explicit overrides fail early with a mode-branch error
@@ -2942,21 +2945,23 @@ Fields:
 - `<name>.intent`: optional workflow classification such as `local_development`
 - `<name>.description`: optional operator-facing summary
 - `<name>.notes`: optional multiline notes shown during `ota workflows` and `ota tasks --workflow` summaries
-- `<name>.adapter_inputs.compose.cwd`: optional repo-relative adapter working directory the
+- `<name>.adapter_inputs.overlays.compose.cwd`: canonical optional repo-relative adapter working directory the
   workflow should project into selected compose task paths when that path does not already declare one
-- `<name>.adapter_inputs.compose.env_files`: optional ordered repo-relative adapter-owned
+- `<name>.adapter_inputs.overlays.compose.env_files`: canonical optional ordered repo-relative adapter-owned
   compose interpolation files the workflow should project into selected compose task paths
-- `<name>.adapter_inputs.compose.files`: optional ordered repo-relative adapter-owned compose
+- `<name>.adapter_inputs.overlays.compose.files`: canonical optional ordered repo-relative adapter-owned compose
   file overlays the workflow should project into selected compose task paths
-- `<name>.adapter_inputs.compose.profiles`: optional ordered adapter-owned compose profile list
+- `<name>.adapter_inputs.overlays.compose.profiles`: canonical optional ordered adapter-owned compose profile list
   the workflow should project into selected compose task paths
-- `<name>.adapter_inputs.compose.project_name`: optional adapter-owned compose project name the
+- `<name>.adapter_inputs.overlays.compose.project_name`: canonical optional adapter-owned compose project name the
   workflow should project into selected compose task paths when that path does not already declare
   one
-- `<name>.adapter_inputs.bake.cwd`: optional repo-relative adapter working directory the
+- `<name>.adapter_inputs.overlays.bake.cwd`: canonical optional repo-relative adapter working directory the
   workflow should project into selected `docker buildx bake` task paths when that path does not already declare one
-- `<name>.adapter_inputs.bake.files`: optional ordered repo-relative adapter-owned Bake file
+- `<name>.adapter_inputs.overlays.bake.files`: canonical optional ordered repo-relative adapter-owned Bake file
   overlays the workflow should project into selected `docker buildx bake` task paths
+- `<name>.adapter_inputs.compose.*` / `<name>.adapter_inputs.bake.*`: compatibility aliases for existing workflow contracts; prefer `<name>.adapter_inputs.overlays.<family>.*` for new authoring
+- the workflow overlay map is generalized structurally, but shipped workflow runtime semantics currently exist only for `compose` and `bake`; unsupported overlay families fail validation instead of silently acting as inert metadata
 - `<name>.env.profile`: optional env profile name from `env.profiles`
 - `<name>.env.compose_env_file_services`: optional compose-managed services that should consume the
   selected workflow profile's rendered dotenv artifact as `services.<service>.manager.env_file`
@@ -3005,43 +3010,46 @@ Workflow env adapter rules:
 - treat `<name>.adapter_inputs.*` as the shared workflow adapter overlay surface: declare the
   base adapter-owned truth there once, then let task-local adapter inputs carry only the narrower
   additions that are specific to one selected path
-- use `<name>.adapter_inputs.compose.*` when one workflow owns adapter-scoped compose input
+- ota resolves that workflow overlay through one adapter-field registry across the shipped Compose
+  and Bake families, so workflow/task/mode precedence, duplicate-ownership governance, and runtime
+  env projection stay aligned on one contract-owned field map instead of family-specific drift
+- use `<name>.adapter_inputs.overlays.compose.*` when one workflow owns adapter-scoped compose input
   truth for the selected runnable path and task-local compose adapter inputs should only carry
   narrower path-specific additions
-- use `<name>.adapter_inputs.bake.*` when one workflow owns the base Bake adapter root or file stack for
+- use `<name>.adapter_inputs.overlays.bake.*` when one workflow owns the base Bake adapter root or file stack for
   selected `docker buildx bake` task paths and task-local adapter inputs should only carry narrower
   additions
 - this keeps compose adapter input ownership on the workflow surface instead of duplicating
   the same `manager.env_file` path across services
 - when the selected workflow run path includes a compose-running task, ota also projects that
-  rendered dotenv artifact into `tasks.<name>.adapter_inputs.compose.env_files` instead of
+  rendered dotenv artifact into `tasks.<name>.adapter_inputs.overlays.compose.env_files` instead of
   misrouting it through process `env_files`
-- ota applies `<name>.adapter_inputs.compose.cwd` only when the selected compose task path
+- ota applies `<name>.adapter_inputs.overlays.compose.cwd` only when the selected compose task path
   does not already declare one; this lets one workflow own `docker/` or similar adapter roots
   without forcing shell `cd ... && docker compose ...` glue back into task bodies
-- ota prepends `<name>.adapter_inputs.compose.files` ahead of task-local
-  `adapter_inputs.compose.files`, preserving declared task additions without letting workflow-owned
+- ota prepends `<name>.adapter_inputs.overlays.compose.files` ahead of task-local
+  `adapter_inputs.overlays.compose.files`, preserving declared task additions without letting workflow-owned
   base compose files drift back into shell `docker compose -f` flags
-- ota prepends `<name>.adapter_inputs.compose.profiles` ahead of task-local
-  `adapter_inputs.compose.profiles`, preserving narrower task additions without forcing workflow
+- ota prepends `<name>.adapter_inputs.overlays.compose.profiles` ahead of task-local
+  `adapter_inputs.overlays.compose.profiles`, preserving narrower task additions without forcing workflow
   profile truth back into shell `docker compose --profile ...` flags
-- ota applies `<name>.adapter_inputs.compose.project_name` only when the selected task path
+- ota applies `<name>.adapter_inputs.overlays.compose.project_name` only when the selected task path
   does not already declare one; validate/doctor warn if task-local compose project naming
   duplicates workflow truth
-- ota applies `<name>.adapter_inputs.bake.cwd` only when the selected Bake task path does not
+- ota applies `<name>.adapter_inputs.overlays.bake.cwd` only when the selected Bake task path does not
   already declare one; this lets one workflow own a subdirectory-rooted Bake lane without forcing
   shell `cd ... && docker buildx bake ...` glue back into task bodies
-- ota prepends `<name>.adapter_inputs.bake.files` ahead of task-local
-  `adapter_inputs.bake.files`, preserving narrower Bake file additions without forcing workflow
+- ota prepends `<name>.adapter_inputs.overlays.bake.files` ahead of task-local
+  `adapter_inputs.overlays.bake.files`, preserving narrower Bake file additions without forcing workflow
   truth back into shell `docker buildx bake -f` flags
 - every referenced service must declare `manager.kind: compose`
 - the selected profile must declare `render.dotenv`
 - if a referenced service also declares `manager.env_file`, it must match the workflow-owned
   rendered dotenv path exactly
-- `<name>.adapter_inputs.compose.env_files` / `.files` must stay repo-relative and must not
+- `<name>.adapter_inputs.overlays.compose.env_files` / `.files` must stay repo-relative and must not
   escape the repo
-- `<name>.adapter_inputs.compose.profiles[*]` must not be empty
-- `<name>.adapter_inputs.bake.files` must stay repo-relative and must not escape the repo
+- `<name>.adapter_inputs.overlays.compose.profiles[*]` must not be empty
+- `<name>.adapter_inputs.overlays.bake.files` must stay repo-relative and must not escape the repo
 - `<name>.adapter_inputs` requires the selected workflow run path to include task paths
   that support each declared adapter input family
 
@@ -3050,9 +3058,9 @@ Compatibility:
 - `<name>.env.adapter_inputs.*` remains accepted as a compatibility lane for older contracts
 - `<name>.env.compose_files` and `<name>.env.compose_project_name` remain accepted as compatibility
   aliases for existing contracts
-- new and updated contracts should use `<name>.adapter_inputs.*` for workflow-owned adapter truth
+- new and updated contracts should use `<name>.adapter_inputs.overlays.*` for workflow-owned adapter truth
 - do not declare the compatibility aliases together with the canonical
-  `adapter_inputs.compose.files` / `.project_name` fields
+  `adapter_inputs.overlays.compose.files` / `.project_name` fields
 
 Prepare vs setup vs run:
 
@@ -3307,7 +3315,8 @@ Current behavior:
   replacement keys
 - validate/doctor warn when task bodies hard-code compose shell flags such as
   `docker compose --env-file ...`, `-f`, `--file`, `--profile`, `-p`, or `--project-name`; move
-  that ownership to task `adapter_inputs.compose.*` or `services.<name>.manager.env_file` so Ota
+  that ownership to task `adapter_inputs.overlays.compose.*` or
+  `services.<name>.manager.env_file` so Ota
   can reason about it
 - changed-files checks evaluate tracked diffs via git (`base_ref..head_ref` when both refs are
   declared, otherwise against `HEAD`) and may include untracked matches when

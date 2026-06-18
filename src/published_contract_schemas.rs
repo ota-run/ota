@@ -1070,6 +1070,46 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "kind": { "const": "go_modules" },
             "cwd": { "type": "string" }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "cwd"],
+          "properties": {
+            "kind": { "const": "cargo" },
+            "cwd": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "cwd"],
+          "properties": {
+            "kind": { "const": "dotnet_restore" },
+            "cwd": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "cwd", "wrapper"],
+          "properties": {
+            "kind": { "const": "gradle" },
+            "cwd": { "type": "string" },
+            "wrapper": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "cwd"],
+          "properties": {
+            "kind": { "const": "maven" },
+            "cwd": { "type": "string" },
+            "wrapper": { "type": "boolean" },
+            "mode": { "enum": ["resolve", "go_offline"] },
+            "skip_tests": { "type": "boolean" }
+          }
         }
       ]
     },
@@ -1377,10 +1417,25 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "files": { "$ref": "#/$defs/stringArray" }
       }
     },
+    "taskAdapterOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cwd": { "type": "string" },
+        "env_files": { "$ref": "#/$defs/stringArray" },
+        "files": { "$ref": "#/$defs/stringArray" },
+        "profiles": { "$ref": "#/$defs/stringArray" },
+        "project_name": { "type": "string" }
+      }
+    },
     "taskAdapterInputs": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "overlays": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/taskAdapterOverlay" }
+        },
         "compose": { "$ref": "#/$defs/taskComposeAdapterInputs" },
         "bake": { "$ref": "#/$defs/taskBakeAdapterInputs" }
       }

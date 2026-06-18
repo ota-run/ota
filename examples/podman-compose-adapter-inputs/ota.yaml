@@ -56,10 +56,11 @@ tasks:
     category: dev
     context: host
     adapter_inputs:
-      compose:
-        cwd: compose
-        env_files:
-          - compose/.env.task
+      overlays:
+        compose:
+          cwd: compose
+          env_files:
+            - compose/.env.task
     launch:
       kind: command
       exe: podman
@@ -75,14 +76,15 @@ tasks:
     category: setup
     context: host
     adapter_inputs:
-      compose:
-        cwd: compose
-        env_files:
-          - compose/.env.task
-        files:
-          - compose/compose.yml
-        profiles:
-          - app
+      overlays:
+        compose:
+          cwd: compose
+          env_files:
+            - compose/.env.task
+          files:
+            - compose/compose.yml
+          profiles:
+            - app
     command:
       exe: podman
       args:
@@ -112,13 +114,14 @@ workflows:
     intent: packaged_runtime
     description: Render workflow-owned dotenv truth and prepend Podman compose overlays into the selected compose task path
     adapter_inputs:
-      compose:
-        cwd: compose
-        files:
-          - compose/compose.override.yml
-        profiles:
-          - runtime
-        project_name: podman-compose-adapter-inputs
+      overlays:
+        compose:
+          cwd: compose
+          files:
+            - compose/compose.override.yml
+          profiles:
+            - runtime
+          project_name: podman-compose-adapter-inputs
     env:
       profile: runtime
       compose_env_file_services:

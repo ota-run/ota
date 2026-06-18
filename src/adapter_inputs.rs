@@ -38,13 +38,20 @@ impl WorkflowAdapterOverlay {
         let Some(env) = workflow.env.as_ref() else {
             return Self { adapter_inputs };
         };
+        merge_generic_workflow_adapter_inputs(&mut adapter_inputs, &env.adapter_inputs);
         merge_legacy_workflow_adapter_inputs(&mut adapter_inputs, &env.adapter_inputs);
         if !env.compose_files.is_empty() {
-            let compose = adapter_inputs
-                .compose
-                .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
-            if compose.files.is_empty() {
-                compose.files = env.compose_files.clone();
+            if let Some(overlay) = adapter_inputs.overlays.get_mut("compose") {
+                if overlay.files.is_empty() {
+                    overlay.files = env.compose_files.clone();
+                }
+            } else {
+                let compose = adapter_inputs
+                    .compose
+                    .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
+                if compose.files.is_empty() {
+                    compose.files = env.compose_files.clone();
+                }
             }
         }
         if let Some(project_name) = env
@@ -53,11 +60,17 @@ impl WorkflowAdapterOverlay {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            let compose = adapter_inputs
-                .compose
-                .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
-            if compose.project_name.is_none() {
-                compose.project_name = Some(project_name.to_string());
+            if let Some(overlay) = adapter_inputs.overlays.get_mut("compose") {
+                if overlay.project_name.is_none() {
+                    overlay.project_name = Some(project_name.to_string());
+                }
+            } else {
+                let compose = adapter_inputs
+                    .compose
+                    .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
+                if compose.project_name.is_none() {
+                    compose.project_name = Some(project_name.to_string());
+                }
             }
         }
         Self { adapter_inputs }
@@ -328,50 +341,40 @@ impl AdapterInputField {
     pub(crate) fn workflow_value(self, adapter_inputs: &TaskAdapterInputsSpec) -> Option<String> {
         match self {
             Self::ComposeCwd => adapter_inputs
-                .compose
-                .as_ref()
-                .and_then(|compose| compose.cwd.as_deref())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string),
+                .effective_compose()
+                .and_then(|compose| compose.cwd)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
             Self::ComposeEnvFiles => adapter_inputs
-                .compose
-                .as_ref()
-                .map(|compose| compose.env_files.as_slice())
+                .effective_compose()
+                .map(|compose| compose.env_files)
                 .filter(|values| !values.is_empty())
-                .map(render_adapter_input_value_list),
+                .map(|values| render_adapter_input_value_list(&values)),
             Self::ComposeFiles => adapter_inputs
-                .compose
-                .as_ref()
-                .map(|compose| compose.files.as_slice())
+                .effective_compose()
+                .map(|compose| compose.files)
                 .filter(|values| !values.is_empty())
-                .map(render_adapter_input_value_list),
+                .map(|values| render_adapter_input_value_list(&values)),
             Self::ComposeProfiles => adapter_inputs
-                .compose
-                .as_ref()
-                .map(|compose| compose.profiles.as_slice())
+                .effective_compose()
+                .map(|compose| compose.profiles)
                 .filter(|values| !values.is_empty())
-                .map(render_adapter_input_value_list),
+                .map(|values| render_adapter_input_value_list(&values)),
             Self::ComposeProjectName => adapter_inputs
-                .compose
-                .as_ref()
-                .and_then(|compose| compose.project_name.as_deref())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string),
+                .effective_compose()
+                .and_then(|compose| compose.project_name)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
             Self::BakeCwd => adapter_inputs
-                .bake
-                .as_ref()
-                .and_then(|bake| bake.cwd.as_deref())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string),
+                .effective_bake()
+                .and_then(|bake| bake.cwd)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
             Self::BakeFiles => adapter_inputs
-                .bake
-                .as_ref()
-                .map(|bake| bake.files.as_slice())
+                .effective_bake()
+                .map(|bake| bake.files)
                 .filter(|values| !values.is_empty())
-                .map(render_adapter_input_value_list),
+                .map(|values| render_adapter_input_value_list(&values)),
         }
     }
 
@@ -379,41 +382,37 @@ impl AdapterInputField {
         match self {
             Self::ComposeCwd => task
                 .adapter_inputs
-                .compose
-                .as_ref()
+                .effective_compose()
                 .filter(|compose| !compose.workflow_overlay_bound)
-                .and_then(|compose| compose.cwd.as_deref())
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()),
-            Self::ComposeEnvFiles => task.adapter_inputs.compose.as_ref().is_some_and(|compose| {
-                !compose.workflow_overlay_bound && !compose.env_files.is_empty()
-            }),
-            Self::ComposeFiles => task.adapter_inputs.compose.as_ref().is_some_and(|compose| {
-                !compose.workflow_overlay_bound && !compose.files.is_empty()
-            }),
-            Self::ComposeProfiles => task.adapter_inputs.compose.as_ref().is_some_and(|compose| {
-                !compose.workflow_overlay_bound && !compose.profiles.is_empty()
-            }),
+                .and_then(|compose| compose.cwd)
+                .is_some_and(|value| !value.trim().is_empty()),
+            Self::ComposeEnvFiles => task
+                .adapter_inputs
+                .effective_compose()
+                .is_some_and(|compose| !compose.workflow_overlay_bound && !compose.env_files.is_empty()),
+            Self::ComposeFiles => task
+                .adapter_inputs
+                .effective_compose()
+                .is_some_and(|compose| !compose.workflow_overlay_bound && !compose.files.is_empty()),
+            Self::ComposeProfiles => task
+                .adapter_inputs
+                .effective_compose()
+                .is_some_and(|compose| !compose.workflow_overlay_bound && !compose.profiles.is_empty()),
             Self::ComposeProjectName => task
                 .adapter_inputs
-                .compose
-                .as_ref()
+                .effective_compose()
                 .filter(|compose| !compose.workflow_overlay_bound)
-                .and_then(|compose| compose.project_name.as_deref())
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()),
+                .and_then(|compose| compose.project_name)
+                .is_some_and(|value| !value.trim().is_empty()),
             Self::BakeCwd => task
                 .adapter_inputs
-                .bake
-                .as_ref()
+                .effective_bake()
                 .filter(|bake| !bake.workflow_overlay_bound)
-                .and_then(|bake| bake.cwd.as_deref())
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()),
+                .and_then(|bake| bake.cwd)
+                .is_some_and(|value| !value.trim().is_empty()),
             Self::BakeFiles => task
                 .adapter_inputs
-                .bake
-                .as_ref()
+                .effective_bake()
                 .is_some_and(|bake| !bake.workflow_overlay_bound && !bake.files.is_empty()),
         }
     }
@@ -422,57 +421,35 @@ impl AdapterInputField {
         match self {
             Self::ComposeCwd => branch
                 .adapter_inputs
-                .compose
-                .as_ref()
+                .effective_compose()
                 .filter(|compose| !compose.workflow_overlay_bound)
-                .and_then(|compose| compose.cwd.as_deref())
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()),
-            Self::ComposeEnvFiles => {
-                branch
-                    .adapter_inputs
-                    .compose
-                    .as_ref()
-                    .is_some_and(|compose| {
-                        !compose.workflow_overlay_bound && !compose.env_files.is_empty()
-                    })
-            }
+                .and_then(|compose| compose.cwd)
+                .is_some_and(|value| !value.trim().is_empty()),
+            Self::ComposeEnvFiles => branch.adapter_inputs.effective_compose().is_some_and(
+                |compose| !compose.workflow_overlay_bound && !compose.env_files.is_empty(),
+            ),
             Self::ComposeFiles => branch
                 .adapter_inputs
-                .compose
-                .as_ref()
-                .is_some_and(|compose| {
-                    !compose.workflow_overlay_bound && !compose.files.is_empty()
-                }),
-            Self::ComposeProfiles => {
-                branch
-                    .adapter_inputs
-                    .compose
-                    .as_ref()
-                    .is_some_and(|compose| {
-                        !compose.workflow_overlay_bound && !compose.profiles.is_empty()
-                    })
-            }
+                .effective_compose()
+                .is_some_and(|compose| !compose.workflow_overlay_bound && !compose.files.is_empty()),
+            Self::ComposeProfiles => branch.adapter_inputs.effective_compose().is_some_and(
+                |compose| !compose.workflow_overlay_bound && !compose.profiles.is_empty(),
+            ),
             Self::ComposeProjectName => branch
                 .adapter_inputs
-                .compose
-                .as_ref()
+                .effective_compose()
                 .filter(|compose| !compose.workflow_overlay_bound)
-                .and_then(|compose| compose.project_name.as_deref())
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()),
+                .and_then(|compose| compose.project_name)
+                .is_some_and(|value| !value.trim().is_empty()),
             Self::BakeCwd => branch
                 .adapter_inputs
-                .bake
-                .as_ref()
+                .effective_bake()
                 .filter(|bake| !bake.workflow_overlay_bound)
-                .and_then(|bake| bake.cwd.as_deref())
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty()),
+                .and_then(|bake| bake.cwd)
+                .is_some_and(|value| !value.trim().is_empty()),
             Self::BakeFiles => branch
                 .adapter_inputs
-                .bake
-                .as_ref()
+                .effective_bake()
                 .is_some_and(|bake| !bake.workflow_overlay_bound && !bake.files.is_empty()),
         }
     }
@@ -486,13 +463,52 @@ impl AdapterInputField {
     }
 
     pub(crate) fn backend_paths(self, task: &TaskSpec, backend: Backend) -> Vec<String> {
+        self.backend_values(task, backend).unwrap_or_default()
+    }
+
+    pub(crate) fn backend_value(self, task: &TaskSpec, backend: Backend) -> Option<String> {
         match self {
-            Self::ComposeEnvFiles => task.compose_adapter_env_files_for_backend(backend),
-            Self::ComposeFiles => task.compose_adapter_files_for_backend(backend),
-            Self::BakeFiles => task.bake_adapter_files_for_backend(backend),
-            Self::ComposeCwd | Self::ComposeProfiles | Self::ComposeProjectName | Self::BakeCwd => {
-                Vec::new()
-            }
+            Self::ComposeCwd => branch_first_scalar_value(task, backend, |spec| {
+                spec.effective_compose()
+                    .and_then(|compose| compose.cwd)
+            }),
+            Self::ComposeProjectName => branch_first_scalar_value(task, backend, |spec| {
+                spec.effective_compose()
+                    .and_then(|compose| compose.project_name)
+            }),
+            Self::BakeCwd => branch_first_scalar_value(task, backend, |spec| {
+                spec.effective_bake().and_then(|bake| bake.cwd)
+            }),
+            Self::ComposeEnvFiles
+            | Self::ComposeFiles
+            | Self::ComposeProfiles
+            | Self::BakeFiles => None,
+        }
+    }
+
+    pub(crate) fn backend_values(self, task: &TaskSpec, backend: Backend) -> Option<Vec<String>> {
+        match self {
+            Self::ComposeEnvFiles => Some(merged_branch_vector_values(task, backend, |spec| {
+                spec.effective_compose()
+                    .map(|compose| compose.env_files)
+                    .unwrap_or_default()
+            })),
+            Self::ComposeFiles => Some(merged_branch_vector_values(task, backend, |spec| {
+                spec.effective_compose()
+                    .map(|compose| compose.files)
+                    .unwrap_or_default()
+            })),
+            Self::ComposeProfiles => Some(merged_branch_vector_values(task, backend, |spec| {
+                spec.effective_compose()
+                    .map(|compose| compose.profiles)
+                    .unwrap_or_default()
+            })),
+            Self::BakeFiles => Some(merged_branch_vector_values(task, backend, |spec| {
+                spec.effective_bake()
+                    .map(|bake| bake.files)
+                    .unwrap_or_default()
+            })),
+            Self::ComposeCwd | Self::ComposeProjectName | Self::BakeCwd => None,
         }
     }
 
@@ -525,15 +541,39 @@ impl AdapterInputField {
                 (!values.is_empty()).then(|| render_adapter_file_env_value(&values))
             }
             Self::ComposeProfiles => {
-                let values = task.compose_adapter_profiles_for_backend(backend);
+                let values = self.backend_values(task, backend).unwrap_or_default();
                 (!values.is_empty()).then(|| values.join(","))
             }
-            Self::ComposeProjectName => task
-                .compose_adapter_project_name_for_backend(backend)
-                .map(ToString::to_string),
+            Self::ComposeProjectName => self.backend_value(task, backend),
             Self::ComposeCwd | Self::BakeCwd => None,
         }
     }
+}
+
+fn branch_first_scalar_value<F>(task: &TaskSpec, backend: Backend, accessor: F) -> Option<String>
+where
+    F: Fn(&TaskAdapterInputsSpec) -> Option<String>,
+{
+    task.mode_execution_branch(backend)
+        .and_then(|branch| accessor(&branch.adapter_inputs))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            accessor(&task.adapter_inputs)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+}
+
+fn merged_branch_vector_values<F>(task: &TaskSpec, backend: Backend, accessor: F) -> Vec<String>
+where
+    F: Fn(&TaskAdapterInputsSpec) -> Vec<String>,
+{
+    let mut merged = accessor(&task.adapter_inputs);
+    if let Some(branch) = task.mode_execution_branch(backend) {
+        merged.extend(accessor(&branch.adapter_inputs));
+    }
+    merged
 }
 
 fn merge_legacy_workflow_adapter_inputs(
@@ -541,35 +581,77 @@ fn merge_legacy_workflow_adapter_inputs(
     legacy: &TaskAdapterInputsSpec,
 ) {
     if let Some(legacy_compose) = legacy.compose.as_ref() {
-        let compose = target
-            .compose
-            .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
-        if compose.cwd.is_none() {
-            compose.cwd = legacy_compose.cwd.clone();
-        }
-        if compose.env_files.is_empty() {
-            compose.env_files = legacy_compose.env_files.clone();
-        }
-        if compose.files.is_empty() {
-            compose.files = legacy_compose.files.clone();
-        }
-        if compose.profiles.is_empty() {
-            compose.profiles = legacy_compose.profiles.clone();
-        }
-        if compose.project_name.is_none() {
-            compose.project_name = legacy_compose.project_name.clone();
+        if let Some(overlay) = target.overlays.get_mut("compose") {
+            if overlay.cwd.is_none() {
+                overlay.cwd = legacy_compose.cwd.clone();
+            }
+            if overlay.env_files.is_empty() {
+                overlay.env_files = legacy_compose.env_files.clone();
+            }
+            if overlay.files.is_empty() {
+                overlay.files = legacy_compose.files.clone();
+            }
+            if overlay.profiles.is_empty() {
+                overlay.profiles = legacy_compose.profiles.clone();
+            }
+            if overlay.project_name.is_none() {
+                overlay.project_name = legacy_compose.project_name.clone();
+            }
+        } else {
+            let compose = target
+                .compose
+                .get_or_insert_with(TaskComposeAdapterInputsSpec::default);
+            if compose.cwd.is_none() {
+                compose.cwd = legacy_compose.cwd.clone();
+            }
+            if compose.env_files.is_empty() {
+                compose.env_files = legacy_compose.env_files.clone();
+            }
+            if compose.files.is_empty() {
+                compose.files = legacy_compose.files.clone();
+            }
+            if compose.profiles.is_empty() {
+                compose.profiles = legacy_compose.profiles.clone();
+            }
+            if compose.project_name.is_none() {
+                compose.project_name = legacy_compose.project_name.clone();
+            }
         }
     }
     if let Some(legacy_bake) = legacy.bake.as_ref() {
-        let bake = target
-            .bake
-            .get_or_insert_with(TaskBakeAdapterInputsSpec::default);
-        if bake.cwd.is_none() {
-            bake.cwd = legacy_bake.cwd.clone();
+        if let Some(overlay) = target.overlays.get_mut("bake") {
+            if overlay.cwd.is_none() {
+                overlay.cwd = legacy_bake.cwd.clone();
+            }
+            if overlay.files.is_empty() {
+                overlay.files = legacy_bake.files.clone();
+            }
+        } else {
+            let bake = target
+                .bake
+                .get_or_insert_with(TaskBakeAdapterInputsSpec::default);
+            if bake.cwd.is_none() {
+                bake.cwd = legacy_bake.cwd.clone();
+            }
+            if bake.files.is_empty() {
+                bake.files = legacy_bake.files.clone();
+            }
         }
-        if bake.files.is_empty() {
-            bake.files = legacy_bake.files.clone();
+    }
+}
+
+fn merge_generic_workflow_adapter_inputs(
+    target: &mut TaskAdapterInputsSpec,
+    legacy: &TaskAdapterInputsSpec,
+) {
+    for (family, overlay) in &legacy.overlays {
+        if overlay.is_empty() {
+            continue;
         }
+        target
+            .overlays
+            .entry(family.clone())
+            .or_insert_with(|| overlay.clone());
     }
 }
 
@@ -589,13 +671,11 @@ pub(crate) fn workflow_duplicates_canonical_compose_file_alias(workflow: &Workfl
         workflow_declares_compose_file_alias(env)
             && (workflow
                 .adapter_inputs
-                .compose
-                .as_ref()
+                .effective_compose()
                 .is_some_and(|compose| !compose.files.is_empty())
                 || env
                     .adapter_inputs
-                    .compose
-                    .as_ref()
+                    .effective_compose()
                     .is_some_and(|compose| !compose.files.is_empty()))
     })
 }
@@ -607,18 +687,14 @@ pub(crate) fn workflow_duplicates_canonical_compose_project_name_alias(
         workflow_declares_compose_project_name_alias(env)
             && (workflow
                 .adapter_inputs
-                .compose
-                .as_ref()
-                .and_then(|compose| compose.project_name.as_deref())
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty())
+                .effective_compose()
+                .and_then(|compose| compose.project_name)
+                .is_some_and(|value| !value.trim().is_empty())
                 || env
                     .adapter_inputs
-                    .compose
-                    .as_ref()
-                    .and_then(|compose| compose.project_name.as_deref())
-                    .map(str::trim)
-                    .is_some_and(|value| !value.is_empty()))
+                    .effective_compose()
+                    .and_then(|compose| compose.project_name)
+                    .is_some_and(|value| !value.trim().is_empty()))
     })
 }
 
@@ -751,7 +827,7 @@ impl AdapterInputFamily {
         }
     }
 
-    pub(crate) fn effective_cwd(self, task: &TaskSpec, backend: Backend) -> Option<&str> {
+    pub(crate) fn effective_cwd(self, task: &TaskSpec, backend: Backend) -> Option<String> {
         match self {
             Self::Compose => task.compose_adapter_cwd_for_backend(backend),
             Self::Bake => task.bake_adapter_cwd_for_backend(backend),
@@ -776,13 +852,11 @@ impl AdapterInputFamily {
         match self {
             Self::Compose => overlay
                 .as_task_adapter_inputs()
-                .compose
-                .as_ref()
+                .effective_compose()
                 .is_some_and(|compose| !compose.is_empty()),
             Self::Bake => overlay
                 .as_task_adapter_inputs()
-                .bake
-                .as_ref()
+                .effective_bake()
                 .is_some_and(|bake| !bake.is_empty()),
         }
     }
@@ -934,7 +1008,7 @@ pub(crate) fn bind_workflow_adapter_overlays(
     bound
 }
 
-pub(crate) fn task_effective_adapter_cwd(task: &TaskSpec, backend: Backend) -> Option<&str> {
+pub(crate) fn task_effective_adapter_cwd(task: &TaskSpec, backend: Backend) -> Option<String> {
     for family in ADAPTER_INPUT_FAMILIES {
         if family.task_supports(task)
             && let Some(cwd) = family.effective_cwd(task, backend)
@@ -947,11 +1021,11 @@ pub(crate) fn task_effective_adapter_cwd(task: &TaskSpec, backend: Backend) -> O
 
 pub(crate) fn rebase_repo_relative_adapter_paths(
     paths: &[String],
-    adapter_cwd: Option<&str>,
+    adapter_cwd: Option<String>,
 ) -> Vec<String> {
     paths
         .iter()
-        .map(|path| rebase_repo_relative_adapter_path(path, adapter_cwd))
+        .map(|path| rebase_repo_relative_adapter_path(path, adapter_cwd.as_deref()))
         .collect()
 }
 
@@ -1092,6 +1166,122 @@ mod tests {
     }
 
     #[test]
+    fn adapter_input_field_registry_resolves_backend_values_generically() {
+        let task = TaskSpec {
+            description: None,
+            notes: None,
+            category: None,
+            context: None,
+            env: BTreeMap::new(),
+            env_files: Vec::new(),
+            env_bindings: BTreeMap::new(),
+            adapter_inputs: crate::schema::TaskAdapterInputsSpec {
+                overlays: BTreeMap::new(),
+                compose: Some(TaskComposeAdapterInputsSpec {
+                    cwd: Some(String::from("ops/compose")),
+                    env_files: vec![String::from("ops/compose/.env.base")],
+                    files: vec![String::from("ops/compose/base.yml")],
+                    profiles: vec![String::from("base")],
+                    project_name: Some(String::from("base-project")),
+                    workflow_overlay_bound: false,
+                }),
+                bake: Some(crate::schema::TaskBakeAdapterInputsSpec {
+                    cwd: Some(String::from("ops/bake")),
+                    files: vec![String::from("docker-bake.hcl")],
+                    workflow_overlay_bound: false,
+                }),
+            },
+            inputs: BTreeMap::new(),
+            targets: BTreeMap::new(),
+            run: Some(String::from("docker compose up")),
+            script: None,
+            command: None,
+            prepare: None,
+            launch: None,
+            action: None,
+            aggregate: None,
+            effects: crate::schema::TaskEffectsSpec::default(),
+            requirements: TaskRequirementsSpec::default(),
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            runtime: None,
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            execution: Some(crate::schema::TaskModeExecutionSpec {
+                default_mode: None,
+                orchestrator: None,
+                modes: crate::schema::TaskModeBranchesSpec {
+                    native: Some(crate::schema::TaskModeBranchSpec {
+                        context: None,
+                        orchestrator: None,
+                        lifecycle: None,
+                        run: None,
+                        script: None,
+                        command: None,
+                        prepare: None,
+                        launch: None,
+                        runtime: None,
+                        env: BTreeMap::new(),
+                        env_files: Vec::new(),
+                        env_bindings: BTreeMap::new(),
+                        adapter_inputs: crate::schema::TaskAdapterInputsSpec {
+                            overlays: BTreeMap::new(),
+                            compose: Some(TaskComposeAdapterInputsSpec {
+                                cwd: Some(String::from("ops/compose/native")),
+                                env_files: vec![String::from("ops/compose/.env.native")],
+                                files: vec![String::from("ops/compose/native.yml")],
+                                profiles: vec![String::from("native")],
+                                project_name: Some(String::from("native-project")),
+                                workflow_overlay_bound: false,
+                            }),
+                            bake: Some(crate::schema::TaskBakeAdapterInputsSpec {
+                                cwd: Some(String::from("ops/bake/native")),
+                                files: vec![String::from("docker-bake.native.hcl")],
+                                workflow_overlay_bound: false,
+                            }),
+                        },
+                    }),
+                    container: None,
+                    remote: None,
+                },
+            }),
+            when: TaskExecutionWhenSpec::default(),
+            projected_env_materialization_paths: Vec::new(),
+        };
+
+        assert_eq!(
+            AdapterInputField::ComposeCwd.backend_value(&task, Backend::Native),
+            Some(String::from("ops/compose/native"))
+        );
+        assert_eq!(
+            AdapterInputField::ComposeEnvFiles.backend_values(&task, Backend::Native),
+            Some(vec![
+                String::from("ops/compose/.env.base"),
+                String::from("ops/compose/.env.native"),
+            ])
+        );
+        assert_eq!(
+            AdapterInputField::ComposeProfiles.backend_values(&task, Backend::Native),
+            Some(vec![String::from("base"), String::from("native")])
+        );
+        assert_eq!(
+            AdapterInputField::ComposeProjectName.backend_value(&task, Backend::Native),
+            Some(String::from("native-project"))
+        );
+        assert_eq!(
+            AdapterInputField::BakeFiles.backend_values(&task, Backend::Native),
+            Some(vec![
+                String::from("docker-bake.hcl"),
+                String::from("docker-bake.native.hcl"),
+            ])
+        );
+    }
+
+    #[test]
     fn task_adapter_env_bindings_project_registry_owned_env_vars() {
         let task = TaskSpec {
             description: None,
@@ -1102,6 +1292,7 @@ mod tests {
             env_files: Vec::new(),
             env_bindings: BTreeMap::new(),
             adapter_inputs: crate::schema::TaskAdapterInputsSpec {
+                overlays: BTreeMap::new(),
                 compose: Some(TaskComposeAdapterInputsSpec {
                     cwd: Some(String::from("ops/compose")),
                     env_files: vec![String::from("ops/compose/.env.compose")],
@@ -1164,6 +1355,7 @@ mod tests {
             env_files: Vec::new(),
             env_bindings: BTreeMap::new(),
             adapter_inputs: crate::schema::TaskAdapterInputsSpec {
+                overlays: BTreeMap::new(),
                 compose: Some(TaskComposeAdapterInputsSpec {
                     cwd: Some(String::from("ops/compose")),
                     env_files: Vec::new(),
@@ -1205,7 +1397,7 @@ mod tests {
 
         assert_eq!(
             task_effective_adapter_cwd(&task, Backend::Native),
-            Some("ops/compose")
+            Some(String::from("ops/compose"))
         );
     }
 
@@ -1216,11 +1408,21 @@ mod tests {
             description: None,
             notes: None,
             adapter_inputs: TaskAdapterInputsSpec {
+                overlays: BTreeMap::from([(
+                    String::from("compose"),
+                    crate::schema::TaskAdapterOverlaySpec {
+                        cwd: Some(String::from("ops/compose")),
+                        env_files: vec![String::from(".env.workflow")],
+                        files: Vec::new(),
+                        profiles: vec![String::from("web")],
+                        project_name: None,
+                    },
+                )]),
                 compose: Some(TaskComposeAdapterInputsSpec {
-                    cwd: Some(String::from("ops/compose")),
-                    env_files: vec![String::from(".env.workflow")],
+                    cwd: Some(String::from("ops/compose-compat")),
+                    env_files: vec![String::from(".env.compat")],
                     files: Vec::new(),
-                    profiles: vec![String::from("web")],
+                    profiles: vec![String::from("compat")],
                     project_name: None,
                     workflow_overlay_bound: false,
                 }),
@@ -1244,8 +1446,7 @@ mod tests {
         let overlay = WorkflowAdapterOverlay::from_workflow(&workflow);
         let compose = overlay
             .as_task_adapter_inputs()
-            .compose
-            .as_ref()
+            .effective_compose()
             .expect("compose overlay should exist");
         assert_eq!(compose.cwd.as_deref(), Some("ops/compose"));
         assert_eq!(compose.env_files, vec![String::from(".env.workflow")]);
