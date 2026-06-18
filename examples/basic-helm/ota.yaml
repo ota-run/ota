@@ -32,7 +32,23 @@ execution:
     host:
       backend: native
 tools:
-  helm: ">=3.18"
+  helm:
+    version: ">=3.18"
+    platforms:
+      linux:
+        acquisition:
+          provider: apt
+          package: helm
+      macos:
+        acquisition:
+          provider: brew
+          package: helm
+          source_config:
+            tap_name: homebrew/core
+      windows:
+        acquisition:
+          provider: winget
+          package: Helm.Helm
   kubectl: "*"
 tasks:
   setup:

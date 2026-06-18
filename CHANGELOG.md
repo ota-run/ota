@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- allow `tools.<name>.acquisition.source_config` for package-manager-backed standalone CLI
+  ownership and pass that provider truth through doctor provisioning requests
+- widened `tools.<name>.acquisition` with package-manager-backed standalone CLI ownership across
+  `apt`, `brew`, `winget`, `choco`, and `scoop`, including OS-specific `platforms.<os>.acquisition`
+  overrides so repos can keep tool identity and host fulfillment truth in the `tools` layer
+  instead of splitting standalone CLIs such as Helm across `tools` and `native_prerequisites`
 - widened first-class adapter ownership with `adapter_inputs.overlays.helm.*`, so Helm task paths
   can now declare contract-owned `cwd`, `values_files`, `chart`, `release_name`, and `namespace`
   truth instead of hard-coding that selection in argv or shell

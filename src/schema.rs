@@ -2245,6 +2245,17 @@ impl ToolRequirement {
         }
     }
 
+    pub fn acquisition_for_os(&self, os: &str) -> Option<&ToolAcquisitionSpec> {
+        match self {
+            Self::Simple(_) => None,
+            Self::Detailed(detail) => detail
+                .platforms
+                .get(os)
+                .and_then(|platform| platform.acquisition.as_ref())
+                .or_else(|| detail.acquisition.as_ref()),
+        }
+    }
+
     pub fn merged_with_overlay(&self, overlay: &ToolRequirement) -> ToolRequirement {
         match (self, overlay) {
             (Self::Detailed(base), Self::Simple(version)) => Self::Detailed(ToolDetail {
@@ -2292,6 +2303,8 @@ pub struct ToolDetail {
 pub struct ToolPlatformDetail {
     #[serde(default)]
     pub version: Option<String>,
+    #[serde(default)]
+    pub acquisition: Option<ToolAcquisitionSpec>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -2300,6 +2313,8 @@ pub struct ToolAcquisitionSpec {
     pub provider: ToolAcquisitionProvider,
     #[serde(default)]
     pub package: Option<String>,
+    #[serde(default)]
+    pub source_config: Option<BTreeMap<String, serde_yaml::Value>>,
     #[serde(default)]
     pub version: Option<String>,
     #[serde(default)]
@@ -2313,6 +2328,40 @@ pub struct ToolAcquisitionSpec {
 pub enum ToolAcquisitionProvider {
     Corepack,
     Command,
+    Apt,
+    Brew,
+    Winget,
+    Choco,
+    Scoop,
+}
+
+impl ToolAcquisitionProvider {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Corepack => "corepack",
+            Self::Command => "command",
+            Self::Apt => "apt",
+            Self::Brew => "brew",
+            Self::Winget => "winget",
+            Self::Choco => "choco",
+            Self::Scoop => "scoop",
+        }
+    }
+
+    pub const fn is_activation_provider(self) -> bool {
+        matches!(self, Self::Corepack | Self::Command)
+    }
+
+    pub const fn provisioning_source(self) -> Option<&'static str> {
+        match self {
+            Self::Apt => Some("apt"),
+            Self::Brew => Some("brew"),
+            Self::Winget => Some("winget"),
+            Self::Choco => Some("choco"),
+            Self::Scoop => Some("scoop"),
+            Self::Corepack | Self::Command => None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

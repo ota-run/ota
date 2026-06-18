@@ -1009,6 +1009,26 @@ fn tool_acquisition_command(acquisition: &ToolAcquisitionSpec) -> String {
                 }
             }
         }
+        ToolAcquisitionProvider::Apt => format!(
+            "apt-get install -y {}",
+            acquisition.package.as_deref().unwrap_or("<package>")
+        ),
+        ToolAcquisitionProvider::Brew => format!(
+            "brew install {}",
+            acquisition.package.as_deref().unwrap_or("<package>")
+        ),
+        ToolAcquisitionProvider::Winget => format!(
+            "winget install --id {} --exact",
+            acquisition.package.as_deref().unwrap_or("<package>")
+        ),
+        ToolAcquisitionProvider::Choco => format!(
+            "choco install {} -y",
+            acquisition.package.as_deref().unwrap_or("<package>")
+        ),
+        ToolAcquisitionProvider::Scoop => format!(
+            "scoop install {}",
+            acquisition.package.as_deref().unwrap_or("<package>")
+        ),
     }
 }
 
@@ -1024,7 +1044,78 @@ fn tool_acquisition_provider_requirement(acquisition: &ToolAcquisitionSpec) -> &
                 .shell
                 .expect("validated command acquisition shell"),
         ),
+        ToolAcquisitionProvider::Apt => "apt-get",
+        ToolAcquisitionProvider::Brew => "brew",
+        ToolAcquisitionProvider::Winget => "winget",
+        ToolAcquisitionProvider::Choco => "choco",
+        ToolAcquisitionProvider::Scoop => "scoop",
     }
+}
+
+fn direct_tool_acquisition_provisioning_actions(
+    requirement_surface: &RequirementSurface,
+    target_os: &str,
+) -> Vec<ProvisioningAction> {
+    requirement_surface
+        .tools
+        .iter()
+        .filter(|(_, requirement)| {
+            requirement.active_for_os(target_os) && requirement.required_for_os(target_os)
+        })
+        .filter_map(|(name, requirement)| {
+            let acquisition = requirement.acquisition_for_os(target_os)?;
+            let source = acquisition.provider.provisioning_source()?;
+            Some(ProvisioningAction {
+                kind: crate::policy_pack::ProvisioningActionKind::Install,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: name.clone(),
+                requested_version: requirement.version_for_os(target_os).to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
+                package: acquisition
+                    .package
+                    .clone()
+                    .or_else(|| Some(name.clone())),
+                source: source.to_string(),
+                source_config: acquisition.source_config.clone(),
+                approved_version: None,
+                policy_match: None,
+            })
+        })
+        .collect()
+}
+
+fn merge_direct_tool_acquisition_provisioning(
+    provisioning: Option<ProvisioningDiagnostics>,
+    requirement_surface: &RequirementSurface,
+    target_os: &str,
+) -> Option<ProvisioningDiagnostics> {
+    let direct_actions = direct_tool_acquisition_provisioning_actions(requirement_surface, target_os);
+    if direct_actions.is_empty() {
+        return provisioning;
+    }
+
+    let mut diagnostics = provisioning.unwrap_or(ProvisioningDiagnostics {
+        plan: ProvisioningPlan::default(),
+        request: ProvisioningBackendRequest {
+            actions: Vec::new(),
+        },
+    });
+
+    for action in direct_actions {
+        let duplicate = diagnostics.request.actions.iter().any(|existing| {
+            existing.target_kind == action.target_kind
+                && existing.name == action.name
+                && existing.source == action.source
+        });
+        if duplicate {
+            continue;
+        }
+        diagnostics.plan.actions.push(action.clone());
+        diagnostics.request.actions.push(action);
+    }
+
+    Some(diagnostics)
 }
 
 fn exact_tooling_remediation(
@@ -1037,6 +1128,11 @@ fn exact_tooling_remediation(
     provisioning_actions: &[ProvisioningAction],
 ) -> Option<String> {
     if let Some(acquisition) = acquisition {
+        if acquisition.provider.provisioning_source().is_some() && acquisition.package.is_none() {
+            let mut acquisition = acquisition.clone();
+            acquisition.package = Some(name.to_string());
+            return Some(tool_acquisition_command(&acquisition));
+        }
         return Some(tool_acquisition_command(acquisition));
     }
     exact_tooling_remediation_fallback(
@@ -4132,6 +4228,24 @@ fn diagnose_contract_with_scope(
                 &precondition_selection.native_names,
                 &mut findings,
             );
+            let required_tools = requirement_surface
+                .tools
+                .keys()
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let provisioning_requirement_surface =
+                requirement_surface_with_toolchain_owned_tools_for_required_tools(
+                    contract,
+                    &requirement_surface,
+                    &precondition_selection.toolchain_names,
+                    policy_target_os_for_mode(mode),
+                    Some(&required_tools),
+                );
+            provisioning = merge_direct_tool_acquisition_provisioning(
+                provisioning,
+                &provisioning_requirement_surface,
+                policy_target_os_for_mode(mode),
+            );
         }
         adapter_bootstrap = diagnose_adapter_bootstrap(loaded_policy.as_ref(), &mut findings);
     }
@@ -6438,10 +6552,10 @@ fn diagnose_tools(
             target_os,
             name,
         );
-        let tool_acquisition = requirement.acquisition().or_else(|| {
+        let tool_acquisition = requirement.acquisition_for_os(target_os).or_else(|| {
             toolchain_owned_requirement
                 .as_ref()
-                .and_then(ToolRequirement::acquisition)
+                .and_then(|requirement| requirement.acquisition_for_os(target_os))
         });
         let run_path_fulfillment_allowed = run_path_fulfillment_source.is_some()
             || tool_acquisition.is_some_and(|acquisition| {
@@ -8350,9 +8464,10 @@ fn diagnose_command_version(
                 format!("Missing tool activation provider: {provider_requirement}"),
                 format!(
                     "{display_name} is required by the selected workflow/task prerequisites, but the contract acquires it through `{}` and `{provider_requirement}` is not available on PATH",
-                    match acquisition.provider {
-                        ToolAcquisitionProvider::Corepack => "corepack",
-                        ToolAcquisitionProvider::Command => "command activation",
+                    if acquisition.provider == ToolAcquisitionProvider::Command {
+                        "command activation"
+                    } else {
+                        acquisition.provider.as_str()
                     }
                 ),
                 format!(
@@ -8940,9 +9055,10 @@ fn diagnose_command_version(
             format!("Missing tool activation provider: {provider_requirement}"),
             format!(
                 "{display_name} is required by the selected workflow/task prerequisites, but the contract upgrades it through `{}` and `{provider_requirement}` is not available on PATH",
-                match acquisition.provider {
-                    ToolAcquisitionProvider::Corepack => "corepack",
-                    ToolAcquisitionProvider::Command => "command activation",
+                if acquisition.provider == ToolAcquisitionProvider::Command {
+                    "command activation"
+                } else {
+                    acquisition.provider.as_str()
                 }
             ),
             format!(
@@ -15384,6 +15500,87 @@ workflows:
                 .any(|finding| finding.summary == "Missing tool: pnpmx"),
             "{report:?}"
         );
+    }
+
+    #[test]
+    fn doctor_emits_direct_tool_acquisition_provisioning_request() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "node.cmd" } else { "node" },
+            if cfg!(windows) {
+                "@echo off\r\necho v24.0.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'v24.0.0'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  helm:
+    version: ">=3.8"
+    platforms:
+      macos:
+        acquisition:
+          provider: brew
+          package: helm
+          source_config:
+            tap_name: vendor/tap
+            tap_url: https://github.com/vendor/homebrew-tap
+tasks:
+  render:
+    run: helm template app ./chart
+    requirements:
+      tools:
+        helm: ">=3.8"
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions(&contract, synthetic_contract_path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let provisioning = report
+            .provisioning
+            .as_ref()
+            .expect("direct tool acquisition provisioning should be present");
+        assert!(provisioning.request.actions.iter().any(|action| {
+            action.kind == ProvisioningActionKind::Install
+                && action.target_kind == ProvisioningTargetKind::Tool
+                && action.name == "helm"
+                && action.source == "brew"
+                && action.package.as_deref() == Some("helm")
+                && action
+                    .source_config
+                    .as_ref()
+                    .and_then(|config| config.get("tap_name"))
+                    .and_then(|value| value.as_str())
+                    == Some("vendor/tap")
+        }));
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| finding.why.contains("helm")));
     }
 
     #[test]

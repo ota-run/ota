@@ -16001,11 +16001,8 @@ fn build_run_preview_plan(
         if !requirement.required_for_os(target_os) {
             line.push_str(" (optional)");
         }
-        if let Some(acquisition) = requirement.acquisition() {
-            let provider = match acquisition.provider {
-                ToolAcquisitionProvider::Corepack => "corepack",
-                ToolAcquisitionProvider::Command => "command",
-            };
+        if let Some(acquisition) = requirement.acquisition_for_os(target_os) {
+            let provider = acquisition.provider.as_str();
             line.push_str(&format!(", acquisition `{provider}`"));
         }
         plan.requirement_lines.push(line);
@@ -16042,7 +16039,7 @@ fn build_run_preview_plan(
         let activation_surface =
             selected_task_activation_requirement_surface(contract, task_name, overrides)
                 .unwrap_or_default();
-        for action in requirement_surface_activation_actions(&activation_surface) {
+        for action in requirement_surface_activation_actions(&activation_surface, target_os) {
             plan.actions
                 .push(render_up_preview_activation_action(&action));
         }
@@ -57249,6 +57246,7 @@ workflows:
         let acquisition = ToolAcquisitionSpec {
             provider: ToolAcquisitionProvider::Corepack,
             package: Some(String::from("pnpm")),
+            source_config: None,
             version: Some(String::from("10.22.0")),
             shell: None,
             run: None,
@@ -57383,6 +57381,7 @@ workflows:
         let acquisition = ToolAcquisitionSpec {
             provider: ToolAcquisitionProvider::Corepack,
             package: Some(String::from("pnpm")),
+            source_config: None,
             version: Some(String::from("10.22.0")),
             shell: None,
             run: None,
@@ -57484,6 +57483,7 @@ workflows:
         let acquisition = ToolAcquisitionSpec {
             provider: ToolAcquisitionProvider::Command,
             package: None,
+            source_config: None,
             version: None,
             shell: Some(crate::schema::NativePrerequisiteActivationShell::Sh),
             run: Some(format!("printf '%s' activated > '{}'", log_path.display())),
@@ -57782,6 +57782,76 @@ workflows:
 
         assert_eq!(actions.len(), 1, "{actions:?}");
         assert_eq!(actions[0].name, "pnpm");
+    }
+
+    #[test]
+    fn selected_up_provisioning_actions_include_direct_tool_acquisition_packages() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  helm:
+    version: ">=3.8"
+    platforms:
+      macos:
+        acquisition:
+          provider: brew
+          package: helm
+tasks:
+  render:
+    run: helm template app ./chart
+    requirements:
+      tools:
+        helm: ">=3.8"
+"#,
+        )
+        .unwrap();
+
+        let preflight = DoctorReport {
+            ok: false,
+            provisioning: Some(ProvisioningDiagnostics {
+                plan: ProvisioningPlan::default(),
+                request: ProvisioningBackendRequest {
+                    actions: vec![ProvisioningAction {
+                        kind: ProvisioningActionKind::Install,
+                        target_kind: ProvisioningTargetKind::Tool,
+                        name: String::from("helm"),
+                        requested_version: String::from(">=3.8"),
+                        normalized_requirement: None,
+                        resolved_version: None,
+                        package: Some(String::from("helm")),
+                        source: String::from("brew"),
+                        source_config: None,
+                        approved_version: None,
+                        policy_match: None,
+                    }],
+                },
+            }),
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                identity: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: helm"),
+                why: String::from("helm is declared in the contract but is not available on PATH"),
+                next: String::from("run `brew install helm` and rerun `ota doctor`"),
+            }],
+        };
+
+        let actions = super::selected_up_provisioning_actions(
+            &contract,
+            ExecutionOverrides::default(),
+            None,
+            &preflight,
+        );
+
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(actions[0].name, "helm");
+        assert_eq!(actions[0].source, "brew");
+        assert_eq!(actions[0].kind, ProvisioningActionKind::Install);
     }
 
     #[test]
@@ -86309,13 +86379,15 @@ struct NativeRequirementPreparationAction {
 
 fn requirement_surface_activation_actions(
     requirement_surface: &RequirementSurface,
+    target_os: &str,
 ) -> Vec<RequirementActivationAction> {
     requirement_surface
         .tools
         .iter()
         .filter_map(|(name, requirement)| {
             requirement
-                .acquisition()
+                .acquisition_for_os(target_os)
+                .filter(|acquisition| acquisition.provider.is_activation_provider())
                 .cloned()
                 .map(|acquisition| RequirementActivationAction {
                     tool_name: name.clone(),
@@ -86367,6 +86439,13 @@ fn activation_action_command(action: &RequirementActivationAction) -> String {
                 }
             }
         }
+        ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::Brew
+        | ToolAcquisitionProvider::Winget
+        | ToolAcquisitionProvider::Choco
+        | ToolAcquisitionProvider::Scoop => {
+            unreachable!("package-manager-backed tool acquisition is provisioning-owned, not activation-owned")
+        }
     }
 }
 
@@ -86407,6 +86486,11 @@ fn finding_targets_activation_action(
                 )
                 && finding.why.contains(action.tool_name.as_str())
         }
+        ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::Brew
+        | ToolAcquisitionProvider::Winget
+        | ToolAcquisitionProvider::Choco
+        | ToolAcquisitionProvider::Scoop => false,
     }
 }
 
@@ -86427,7 +86511,7 @@ fn selected_up_activation_actions(
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
-    requirement_surface_activation_actions(&requirement_surface)
+    requirement_surface_activation_actions(&requirement_surface, current_os())
         .into_iter()
         .filter(|action| {
             !policy_provisioned_tools.contains(action.tool_name.as_str())
@@ -86446,6 +86530,11 @@ fn activation_action_needs_local_bootstrap(action: &RequirementActivationAction)
             !crate::doctor::command_available("corepack") && crate::doctor::command_available("npm")
         }
         ToolAcquisitionProvider::Command => false,
+        ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::Brew
+        | ToolAcquisitionProvider::Winget
+        | ToolAcquisitionProvider::Choco
+        | ToolAcquisitionProvider::Scoop => false,
     }
 }
 
@@ -87154,6 +87243,13 @@ fn render_up_preview_activation_action(action: &RequirementActivationAction) -> 
                 .map(native_prerequisite_activation_shell_label)
                 .unwrap_or("command")
         ),
+        ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::Brew
+        | ToolAcquisitionProvider::Winget
+        | ToolAcquisitionProvider::Choco
+        | ToolAcquisitionProvider::Scoop => unreachable!(
+            "package-manager-backed tool acquisition is provisioning-owned, not activation-owned"
+        ),
     }
 }
 
@@ -87171,6 +87267,13 @@ fn render_up_preview_skipped_activation_action(action: &RequirementActivationAct
                 .map(native_prerequisite_activation_shell_label)
                 .unwrap_or("command"),
             action.tool_name
+        ),
+        ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::Brew
+        | ToolAcquisitionProvider::Winget
+        | ToolAcquisitionProvider::Choco
+        | ToolAcquisitionProvider::Scoop => unreachable!(
+            "package-manager-backed tool acquisition is provisioning-owned, not activation-owned"
         ),
     }
 }
@@ -87370,7 +87473,7 @@ fn build_up_preview(
         contract,
         overrides,
         workflow_name,
-    )) {
+    ), current_os()) {
         if policy_provisioned_tools.contains(action.tool_name.as_str()) {
             skipped.push(render_up_preview_skipped_activation_action(&action));
         }
@@ -88589,6 +88692,13 @@ fn activation_failure_finding(action: &RequirementActivationAction, exit_code: i
                 activation_action_command(action)
             ),
         },
+        ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::Brew
+        | ToolAcquisitionProvider::Winget
+        | ToolAcquisitionProvider::Choco
+        | ToolAcquisitionProvider::Scoop => unreachable!(
+            "package-manager-backed tool acquisition is provisioning-owned, not activation-owned"
+        ),
     }
 }
 
@@ -88604,6 +88714,13 @@ fn run_activation_action(
         ToolAcquisitionProvider::Command => {
             run_command_activation_action(&action.acquisition, working_dir, mode)
         }
+        ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::Brew
+        | ToolAcquisitionProvider::Winget
+        | ToolAcquisitionProvider::Choco
+        | ToolAcquisitionProvider::Scoop => Err(String::from(
+            "package-manager-backed tool acquisition is provisioning-owned, not activation-owned",
+        )),
     }
 }
 

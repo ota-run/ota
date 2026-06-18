@@ -1417,6 +1417,7 @@ fn corepack_owned_tool_requirements(
                     acquisition: Some(ToolAcquisitionSpec {
                         provider: ToolAcquisitionProvider::Corepack,
                         package: Some(name.clone()),
+                        source_config: None,
                         version: Some(version),
                         shell: None,
                         run: None,

@@ -1060,10 +1060,18 @@ fn validate_tool_details(
                     "tool `{name}` platform `{platform}` must not declare an empty `version`"
                 )));
             }
+            if let Some(acquisition) = platform_detail.acquisition.as_ref() {
+                validate_tool_acquisition(
+                    name,
+                    acquisition,
+                    Some(format!(" platform `{platform}`")),
+                    errors,
+                );
+            }
         }
 
         if let Some(acquisition) = detail.acquisition.as_ref() {
-            validate_tool_acquisition(name, acquisition, errors);
+            validate_tool_acquisition(name, acquisition, None, errors);
         }
     }
 }
@@ -1579,15 +1587,26 @@ fn is_shell_safe_corepack_token(value: &str) -> bool {
 fn validate_tool_acquisition(
     name: &str,
     acquisition: &crate::schema::ToolAcquisitionSpec,
+    location: Option<String>,
     errors: &mut Vec<ValidationError>,
 ) {
+    let location = location.unwrap_or_default();
+    let provider_name = match acquisition.provider {
+        crate::schema::ToolAcquisitionProvider::Corepack => "corepack",
+        crate::schema::ToolAcquisitionProvider::Command => "command",
+        crate::schema::ToolAcquisitionProvider::Apt => "apt",
+        crate::schema::ToolAcquisitionProvider::Brew => "brew",
+        crate::schema::ToolAcquisitionProvider::Winget => "winget",
+        crate::schema::ToolAcquisitionProvider::Choco => "choco",
+        crate::schema::ToolAcquisitionProvider::Scoop => "scoop",
+    };
     if acquisition
         .package
         .as_deref()
         .is_some_and(|value| value.trim().is_empty())
     {
         errors.push(ValidationError::new(format!(
-            "tool `{name}` acquisition `package` must not be empty"
+            "tool `{name}`{location} acquisition `package` must not be empty"
         )));
     }
     if acquisition
@@ -1596,7 +1615,7 @@ fn validate_tool_acquisition(
         .is_some_and(|value| value.trim().is_empty())
     {
         errors.push(ValidationError::new(format!(
-            "tool `{name}` acquisition `version` must not be empty"
+            "tool `{name}`{location} acquisition `version` must not be empty"
         )));
     }
     if acquisition
@@ -1605,7 +1624,16 @@ fn validate_tool_acquisition(
         .is_some_and(|value| value.trim().is_empty())
     {
         errors.push(ValidationError::new(format!(
-            "tool `{name}` acquisition `run` must not be empty"
+            "tool `{name}`{location} acquisition `run` must not be empty"
+        )));
+    }
+    if acquisition
+        .source_config
+        .as_ref()
+        .is_some_and(|value| value.is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "tool `{name}`{location} acquisition `source_config` must not be empty"
         )));
     }
 
@@ -1613,62 +1641,73 @@ fn validate_tool_acquisition(
         crate::schema::ToolAcquisitionProvider::Corepack => {
             let Some(package) = acquisition.package.as_deref() else {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `corepack` must declare `package`"
+                    "tool `{name}`{location} acquisition `corepack` must declare `package`"
                 )));
                 return;
             };
             let Some(version) = acquisition.version.as_deref() else {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `corepack` must declare `version`"
+                    "tool `{name}`{location} acquisition `corepack` must declare `version`"
                 )));
                 return;
             };
             if !is_shell_safe_corepack_token(package) {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `package` must be a shell-safe Corepack package token"
+                    "tool `{name}`{location} acquisition `package` must be a shell-safe Corepack package token"
                 )));
             }
             if !is_shell_safe_corepack_token(version) {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `version` must be a shell-safe Corepack version token"
+                    "tool `{name}`{location} acquisition `version` must be a shell-safe Corepack version token"
                 )));
             }
             if name.eq_ignore_ascii_case("node") {
                 errors.push(ValidationError::new(
-                    "tool `node` acquisition `corepack` is invalid; declare Node under `toolchains.node` with structured `fulfillment` when ota should own selected-path activation, or under `runtimes.node` for simple unmanaged checks, and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
-                        .to_string(),
+                    format!(
+                        "tool `node`{location} acquisition `corepack` is invalid; declare Node under `toolchains.node` with structured `fulfillment` when ota should own selected-path activation, or under `runtimes.node` for simple unmanaged checks, and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
+                    ),
                 ));
             }
             if package.eq_ignore_ascii_case("node") && !name.eq_ignore_ascii_case("node") {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `corepack` must not declare `package: node`; declare Node under `toolchains.node` with structured `fulfillment` when ota should own selected-path activation, or under `runtimes.node` for simple unmanaged checks, and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
+                    "tool `{name}`{location} acquisition `corepack` must not declare `package: node`; declare Node under `toolchains.node` with structured `fulfillment` when ota should own selected-path activation, or under `runtimes.node` for simple unmanaged checks, and use corepack acquisition only for package managers such as `pnpm` or `yarn`"
                 )));
             }
             if acquisition.shell.is_some() {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `corepack` must not declare `shell`"
+                    "tool `{name}`{location} acquisition `corepack` must not declare `shell`"
                 )));
             }
             if acquisition.run.is_some() {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `corepack` must not declare `run`"
+                    "tool `{name}`{location} acquisition `corepack` must not declare `run`"
+                )));
+            }
+            if acquisition.source_config.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `corepack` must not declare `source_config`"
                 )));
             }
         }
         crate::schema::ToolAcquisitionProvider::Command => {
             if acquisition.package.is_some() {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `command` must not declare `package`"
+                    "tool `{name}`{location} acquisition `command` must not declare `package`"
                 )));
             }
             if acquisition.version.is_some() {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `command` must not declare `version`"
+                    "tool `{name}`{location} acquisition `command` must not declare `version`"
+                )));
+            }
+            if acquisition.source_config.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `command` must not declare `source_config`"
                 )));
             }
             if acquisition.shell.is_none() {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `command` must declare `shell`"
+                    "tool `{name}`{location} acquisition `command` must declare `shell`"
                 )));
             }
             if acquisition
@@ -1679,7 +1718,28 @@ fn validate_tool_acquisition(
                 .is_none()
             {
                 errors.push(ValidationError::new(format!(
-                    "tool `{name}` acquisition `command` must declare `run`"
+                    "tool `{name}`{location} acquisition `command` must declare `run`"
+                )));
+            }
+        }
+        crate::schema::ToolAcquisitionProvider::Apt
+        | crate::schema::ToolAcquisitionProvider::Brew
+        | crate::schema::ToolAcquisitionProvider::Winget
+        | crate::schema::ToolAcquisitionProvider::Choco
+        | crate::schema::ToolAcquisitionProvider::Scoop => {
+            if acquisition.version.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `{provider_name}` must not declare `version`; package-manager-backed standalone tool acquisition uses the tool requirement version and optional `package` mapping"
+                )));
+            }
+            if acquisition.shell.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `{provider_name}` must not declare `shell`"
+                )));
+            }
+            if acquisition.run.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `{provider_name}` must not declare `run`"
                 )));
             }
         }
@@ -27734,6 +27794,102 @@ tasks:
     }
 
     #[test]
+    fn accepts_platform_scoped_package_manager_tool_acquisition_metadata() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  helm:
+    version: ">=3.8"
+    platforms:
+      linux:
+        acquisition:
+          provider: apt
+          package: helm
+      macos:
+        acquisition:
+          provider: brew
+          package: helm
+      windows:
+        acquisition:
+          provider: winget
+          package: Helm.Helm
+tasks:
+  render:
+    run: helm template app ./chart
+    requirements:
+      tools:
+        helm: ">=3.8"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("platform-scoped package-manager tool acquisition should validate");
+    }
+
+    #[test]
+    fn accepts_package_manager_tool_acquisition_source_config() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  helm:
+    version: ">=3.8"
+    acquisition:
+      provider: brew
+      package: helm
+      source_config:
+        tap_name: vendor/tap
+        tap_url: https://github.com/vendor/homebrew-tap
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("package-manager tool acquisition source_config should validate");
+    }
+
+    #[test]
+    fn rejects_package_manager_tool_acquisition_with_explicit_version_field() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  helm:
+    version: ">=3.8"
+    acquisition:
+      provider: brew
+      package: helm
+      version: "3.16.4"
+"#,
+        )
+        .unwrap();
+
+        let messages = validate_contract(&contract)
+            .unwrap_err()
+            .errors()
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| {
+                message == "tool `helm` acquisition `brew` must not declare `version`; package-manager-backed standalone tool acquisition uses the tool requirement version and optional `package` mapping"
+            }),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
     fn rejects_command_tool_acquisition_without_shell_and_run() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -27809,6 +27965,40 @@ tools:
                 .iter()
                 .any(|message| message
                     == "tool `bun` acquisition `command` must not declare `version`"),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_command_tool_acquisition_with_source_config() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  bun:
+    version: ">=1.2.0"
+    acquisition:
+      provider: command
+      shell: sh
+      run: curl -fsSL https://bun.sh/install | sh
+      source_config:
+        note: unsupported
+"#,
+        )
+        .unwrap();
+
+        let messages = validate_contract(&contract)
+            .unwrap_err()
+            .errors()
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| message
+                == "tool `bun` acquisition `command` must not declare `source_config`"),
             "{messages:?}"
         );
     }

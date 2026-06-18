@@ -945,6 +945,24 @@ tools:
       provider: corepack
       package: pnpm
       version: "10.0.0"
+  helm:
+    version: ">=3.8"
+    platforms:
+      linux:
+        acquisition:
+          provider: apt
+          package: helm
+      macos:
+        acquisition:
+          provider: brew
+          package: helm
+          source_config:
+            tap_name: vendor/tap
+            tap_url: https://github.com/vendor/homebrew-tap
+      windows:
+        acquisition:
+          provider: winget
+          package: Helm.Helm
   pwsh:
     version: "7.6.0"
     only_on:
@@ -963,21 +981,35 @@ Rules:
 - versions must not be empty
 - `required` defaults to `true` and controls whether missing or mismatched tools are blocking
 - `only_on`, when set, scopes the tool to `linux`, `macos`, or `windows`
-- `platforms` may override `version` per OS using `linux`, `macos`, or `windows`
+- `platforms` may override `version` and `acquisition` per OS using `linux`, `macos`, or `windows`
 - `platforms` entries must also appear in `only_on` when `only_on` is declared
 - `acquisition` optionally declares how ota can activate or provision the tool safely when a
   selected task/workflow requires it
-- `acquisition.provider`: supported values are `corepack` and `command`
+- `acquisition.provider`: supported values are `corepack`, `command`, `apt`, `brew`, `winget`,
+  `choco`, and `scoop`
 - `acquisition.package` and `acquisition.version` are required for `provider: corepack`
 - `tool node` cannot use `provider: corepack`; declare Node under `toolchains.node` instead, and
   use structured `fulfillment` there when ota should own package-manager activation on the
   selected path.
 - `acquisition.shell` and `acquisition.run` are required for `provider: command`
+- package-manager-backed tool acquisition (`apt`, `brew`, `winget`, `choco`, `scoop`) is
+  provisioning-owned rather than activation-owned; ota keeps the tool identity under `tools` and
+  emits a provisioning request for the selected task/workflow path instead of treating the tool as
+  a native prerequisite
+- package-manager-backed tool acquisition may also declare provider-owned `source_config` when the
+  package manager itself needs explicit source truth such as a Homebrew tap, Winget source,
+  Chocolatey feed, Scoop bucket, or apt sources list
+- package-manager-backed tool acquisition may declare `package` when the install identifier differs
+  from the tool key; it must not declare `version`, `shell`, or `run`
+- `source_config` must not be empty and is only valid on package-manager-backed acquisition
 - `provider: corepack` activates package-manager-managed tools such as `pnpm` through
   `corepack enable && corepack prepare <package>@<version> --activate`
 - `provider: command` runs one explicit shell command as the acquisition lane for that tool; use it
   when the repo truth is "this tool becomes available through this command", not "install it any
   way you want"
+- package-manager-backed acquisition belongs in `tools`, not `native_prerequisites`; use
+  `native_prerequisites` for host-native bundles such as compiler stacks, Xcode CLT, or Visual
+  Studio Build Tools
 - Corepack `package` and `version` values must be shell-safe tokens; use package names like `pnpm`
   and activation versions like `10.22.0`
 - command acquisition `shell` may use `sh`, `bash`, `zsh`, `pwsh`, or `cmd`
