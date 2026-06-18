@@ -6157,9 +6157,15 @@ mod tests {
     fn skill_source_guard(temp: &TempDir) -> EnvVarGuard {
         let source_dir = temp.path().join("skill-source");
         fs::create_dir_all(source_dir.join("references")).unwrap();
+        fs::create_dir_all(source_dir.join("agents")).unwrap();
         fs::write(
             source_dir.join("SKILL.md"),
-            "---\nname: ota\ndescription: Test Ota skill.\n---\n\n# Ota\n",
+            "---\nname: ota\ndescription: Test Ota skill.\n---\n\n# Ota\n\nRead `references/official-sources.md`.\nRead `references/contract-patterns.md`.\nRead `references/review-checklist.md`.\nRead `references/workflow-service-patterns.md`.\nRead `references/agent-and-governance-checklist.md`.\nUse `agents/openai.yaml`.\n",
+        )
+        .unwrap();
+        fs::write(
+            source_dir.join("agents").join("openai.yaml"),
+            "name: ota-test-agent\n",
         )
         .unwrap();
         fs::write(
@@ -6167,7 +6173,66 @@ mod tests {
             "# Official Ota Sources\n\n- `https://github.com/ota-run/skills`\n",
         )
         .unwrap();
+        fs::write(
+            source_dir.join("references").join("contract-patterns.md"),
+            "# Contract Patterns\n",
+        )
+        .unwrap();
+        fs::write(
+            source_dir.join("references").join("review-checklist.md"),
+            "# Review Checklist\n",
+        )
+        .unwrap();
+        fs::write(
+            source_dir
+                .join("references")
+                .join("workflow-service-patterns.md"),
+            "# Workflow Service Patterns\n",
+        )
+        .unwrap();
+        fs::write(
+            source_dir
+                .join("references")
+                .join("agent-and-governance-checklist.md"),
+            "# Agent And Governance Checklist\n",
+        )
+        .unwrap();
         EnvVarGuard::set("OTA_SKILL_SOURCE_DIR", source_dir.into_os_string())
+    }
+
+    fn assert_distributed_skill_tree(skill_dir: &Path) {
+        assert!(skill_dir.join("SKILL.md").is_file());
+        assert!(skill_dir.join("agents").join("openai.yaml").is_file());
+        assert!(
+            skill_dir
+                .join("references")
+                .join("official-sources.md")
+                .is_file()
+        );
+        assert!(
+            skill_dir
+                .join("references")
+                .join("contract-patterns.md")
+                .is_file()
+        );
+        assert!(
+            skill_dir
+                .join("references")
+                .join("review-checklist.md")
+                .is_file()
+        );
+        assert!(
+            skill_dir
+                .join("references")
+                .join("workflow-service-patterns.md")
+                .is_file()
+        );
+        assert!(
+            skill_dir
+                .join("references")
+                .join("agent-and-governance-checklist.md")
+                .is_file()
+        );
     }
 
     #[test]
@@ -6187,9 +6252,12 @@ mod tests {
         assert!(output.stdout.contains("agent: codex"));
 
         let skill_dir = temp.path().join("codex-home").join("skills").join("ota");
+        assert_distributed_skill_tree(&skill_dir);
         let skill = fs::read_to_string(skill_dir.join("SKILL.md")).unwrap();
-        let references =
-            fs::read_to_string(skill_dir.join("references").join("official-sources.md")).unwrap();
+        let references = fs::read_to_string(
+            skill_dir.join("references").join("official-sources.md"),
+        )
+        .unwrap();
         assert!(skill.contains("name: ota"));
         assert!(references.contains("Official Ota Sources"));
     }
@@ -6213,13 +6281,7 @@ mod tests {
             .join(".codex")
             .join("skills")
             .join("ota");
-        assert!(skill_dir.join("SKILL.md").is_file());
-        assert!(
-            skill_dir
-                .join("references")
-                .join("official-sources.md")
-                .is_file()
-        );
+        assert_distributed_skill_tree(&skill_dir);
     }
 
     #[test]
@@ -6240,13 +6302,7 @@ mod tests {
             .join(".claude")
             .join("skills")
             .join("ota");
-        assert!(skill_dir.join("SKILL.md").is_file());
-        assert!(
-            skill_dir
-                .join("references")
-                .join("official-sources.md")
-                .is_file()
-        );
+        assert_distributed_skill_tree(&skill_dir);
     }
 
     #[test]
@@ -6265,7 +6321,7 @@ mod tests {
         let output = run_with(["ota", "skills", "install", "--agent", "codex"]);
 
         assert_eq!(output.exit_code, 0, "{output:?}");
-        assert!(skill_dir.join("SKILL.md").is_file());
+        assert_distributed_skill_tree(&skill_dir);
         assert!(!skill_dir.join("stale.txt").exists());
     }
 

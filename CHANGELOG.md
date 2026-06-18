@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- fixed `ota skills install` so Codex and Claude installs now stage the full canonical Ota skill
+  payload instead of a partial bundle; the installer now includes the referenced `agents/` and
+  `references/` support files and validates that the staged skill tree is complete before replace
 - widened first-class Node dependency hydration with explicit npm `force` ownership, so repos can
   now model `npm install --force` structurally under `prepare.kind: dependency_hydration` instead
   of burying that override lane in shell

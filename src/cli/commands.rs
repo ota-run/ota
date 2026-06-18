@@ -16701,35 +16701,62 @@ fn install_distributed_ota_skill(target_dir: &Path) -> Result<(), String> {
 
 fn write_distributed_skill_tree(temp_dir: &Path) -> Result<(), String> {
     let references_dir = temp_dir.join("references");
+    let agents_dir = temp_dir.join("agents");
     fs::create_dir_all(&references_dir).map_err(|error| {
         format!(
             "could not create staged skill directory `{}`: {error}",
             references_dir.display()
         )
     })?;
+    fs::create_dir_all(&agents_dir).map_err(|error| {
+        format!(
+            "could not create staged skill directory `{}`: {error}",
+            agents_dir.display()
+        )
+    })?;
 
     if let Some(source_dir) = env::var_os("OTA_SKILL_SOURCE_DIR") {
         let source_dir = PathBuf::from(source_dir);
-        copy_skill_file(
-            source_dir.join("SKILL.md").as_path(),
-            temp_dir.join("SKILL.md").as_path(),
-        )?;
-        copy_skill_file(
-            source_dir
-                .join("references")
-                .join("official-sources.md")
-                .as_path(),
-            references_dir.join("official-sources.md").as_path(),
-        )?;
+        for (relative_path, destination) in distributed_skill_file_targets(temp_dir) {
+            copy_skill_file(source_dir.join(relative_path).as_path(), destination.as_path())?;
+        }
         return Ok(());
     }
 
-    download_skill_file("SKILL.md", temp_dir.join("SKILL.md").as_path())?;
-    download_skill_file(
-        "references/official-sources.md",
-        references_dir.join("official-sources.md").as_path(),
-    )?;
+    for (relative_path, destination) in distributed_skill_file_targets(temp_dir) {
+        download_skill_file(relative_path, destination.as_path())?;
+    }
     Ok(())
+}
+
+fn distributed_skill_file_targets(root: &Path) -> Vec<(&'static str, PathBuf)> {
+    vec![
+        ("SKILL.md", root.join("SKILL.md")),
+        (
+            "agents/openai.yaml",
+            root.join("agents").join("openai.yaml"),
+        ),
+        (
+            "references/official-sources.md",
+            root.join("references").join("official-sources.md"),
+        ),
+        (
+            "references/contract-patterns.md",
+            root.join("references").join("contract-patterns.md"),
+        ),
+        (
+            "references/review-checklist.md",
+            root.join("references").join("review-checklist.md"),
+        ),
+        (
+            "references/workflow-service-patterns.md",
+            root.join("references").join("workflow-service-patterns.md"),
+        ),
+        (
+            "references/agent-and-governance-checklist.md",
+            root.join("references").join("agent-and-governance-checklist.md"),
+        ),
+    ]
 }
 
 fn copy_skill_file(source: &Path, destination: &Path) -> Result<(), String> {
@@ -16831,11 +16858,9 @@ fn powershell_single_quote(value: &str) -> String {
 }
 
 fn skill_tree_is_complete(path: &Path) -> bool {
-    path.join("SKILL.md").is_file()
-        && path
-            .join("references")
-            .join("official-sources.md")
-            .is_file()
+    distributed_skill_file_targets(path)
+        .into_iter()
+        .all(|(_, target)| target.is_file())
 }
 
 fn unique_sibling_path(parent: &Path, prefix: &str) -> PathBuf {
