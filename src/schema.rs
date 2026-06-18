@@ -5049,6 +5049,8 @@ pub struct TaskNodePackageManagerHydrationSourceSpec {
     pub mode: TaskNodePackageManagerHydrationMode,
     #[serde(default, skip_serializing_if = "is_false")]
     pub frozen_lockfile: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub inline_builds: bool,
 }
 
 impl TaskNodePackageManagerHydrationSourceSpec {
@@ -5064,12 +5066,23 @@ impl TaskNodePackageManagerHydrationSourceSpec {
         }
     }
 
+    pub const fn inline_builds_flag(&self) -> Option<&'static str> {
+        if self.inline_builds && matches!(self.manager, TaskNodePackageManagerKind::Yarn) {
+            Some("--inline-builds")
+        } else {
+            None
+        }
+    }
+
     pub fn command_preview(&self) -> String {
         let mut parts = vec![
             self.manager.label().to_string(),
             self.mode.label().to_string(),
         ];
         if let Some(flag) = self.lockfile_flag() {
+            parts.push(String::from(flag));
+        }
+        if let Some(flag) = self.inline_builds_flag() {
             parts.push(String::from(flag));
         }
         parts.join(" ")
@@ -6726,6 +6739,7 @@ tasks:
             manager: super::TaskNodePackageManagerKind::Pnpm,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
             frozen_lockfile: true,
+            inline_builds: false,
         };
         assert_eq!(pnpm.lockfile_flag(), Some("--frozen-lockfile"));
         assert_eq!(pnpm.command_preview(), "pnpm install --frozen-lockfile");
@@ -6735,15 +6749,21 @@ tasks:
             manager: super::TaskNodePackageManagerKind::Yarn,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
             frozen_lockfile: true,
+            inline_builds: true,
         };
         assert_eq!(yarn.lockfile_flag(), Some("--immutable"));
-        assert_eq!(yarn.command_preview(), "yarn install --immutable");
+        assert_eq!(yarn.inline_builds_flag(), Some("--inline-builds"));
+        assert_eq!(
+            yarn.command_preview(),
+            "yarn install --immutable --inline-builds"
+        );
 
         let npm = super::TaskNodePackageManagerHydrationSourceSpec {
             cwd: String::from("."),
             manager: super::TaskNodePackageManagerKind::Npm,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
             frozen_lockfile: true,
+            inline_builds: false,
         };
         assert_eq!(npm.lockfile_flag(), None);
         assert_eq!(npm.command_preview(), "npm install");
@@ -6753,6 +6773,7 @@ tasks:
             manager: super::TaskNodePackageManagerKind::Bun,
             mode: super::TaskNodePackageManagerHydrationMode::Install,
             frozen_lockfile: true,
+            inline_builds: false,
         };
         assert_eq!(bun.lockfile_flag(), Some("--frozen-lockfile"));
         assert_eq!(bun.command_preview(), "bun install --frozen-lockfile");
@@ -6799,6 +6820,7 @@ tasks:
                                 manager: super::TaskNodePackageManagerKind::Pnpm,
                                 mode: super::TaskNodePackageManagerHydrationMode::Install,
                                 frozen_lockfile: true,
+                                inline_builds: false,
                             },
                         ),
                         targets: Vec::new(),

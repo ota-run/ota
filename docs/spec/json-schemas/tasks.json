@@ -216,20 +216,54 @@
             "bundler",
             "uv",
             "poetry",
-            "go_modules"
+            "go_modules",
+            "maven",
+            "gradle",
+            "cargo",
+            "dotnet_restore"
           ]
         },
         "cwd": { "type": "string" },
         "file": { "type": "string" },
         "engine": { "enum": ["docker", "podman"] },
-        "manager": { "enum": ["npm", "pnpm", "yarn", "bundle", "uv", "poetry"] },
-        "mode": { "enum": ["install", "ci", "sync", "download", "uv"] },
+        "manager": {
+          "enum": [
+            "npm",
+            "pnpm",
+            "yarn",
+            "bun",
+            "bundle",
+            "uv",
+            "poetry",
+            "mvn",
+            "./mvnw",
+            "gradle",
+            "./gradlew",
+            "cargo",
+            "dotnet"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "install",
+            "ci",
+            "sync",
+            "download",
+            "uv",
+            "resolve",
+            "go-offline",
+            "dependencies",
+            "fetch",
+            "restore"
+          ]
+        },
         "group_mode": { "enum": ["with", "only"] },
         "groups": {
           "type": "array",
           "items": { "type": "string" }
         },
         "frozen_lockfile": { "type": "boolean" },
+        "inline_builds": { "type": "boolean" },
         "no_root": { "type": "boolean" },
         "targets": {
           "type": "array",

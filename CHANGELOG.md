@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- widened first-class Node dependency hydration with Yarn `inline_builds` support, so repos can
+  now model `yarn install --inline-builds` structurally under
+  `prepare.kind: dependency_hydration` instead of hiding that setup lane in shell
+- validate/doctor now warn when task bodies still shell `yarn install --inline-builds` directly
+  instead of keeping that dependency-hydration ownership on typed `prepare.kind: dependency_hydration`
 - added first-class `prepare.kind: tool_bootstrap` for contract-owned tool installation, with the
   first shipped slice modeling `tool: uv` via `source.kind: pip` and explicit `source.exe`
 - widened task network classification with `effects.network_kind: tool_bootstrap`, so ota can

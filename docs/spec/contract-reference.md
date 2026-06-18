@@ -1805,6 +1805,7 @@ Task-effect rules:
     - `prepare.source.manager`: required package manager; ota currently ships `npm`, `pnpm`, `yarn`, and `bun`
     - `prepare.source.mode`: required install mode; ota currently ships `install` and `ci`
     - `prepare.source.frozen_lockfile`: optional explicit lockfile strictness for `pnpm install --frozen-lockfile`, `yarn install --immutable`, or `bun install --frozen-lockfile`
+    - `prepare.source.inline_builds`: optional explicit Yarn inline-build ownership for `yarn install --inline-builds`; valid only with `manager: yarn` and `mode: install`
     - `prepare.source.kind: bundler`
     - `prepare.source.cwd`: required repo-relative working directory for the Bundler invocation
     - `prepare.source.path`: required repo-relative bundle install path for the repo-local gem lane
@@ -1853,6 +1854,7 @@ Task-effect rules:
 - `prepare.source.manager: pnpm` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `pnpm install --frozen-lockfile`
 - `prepare.source.manager: npm` currently supports `mode: install` or `mode: ci`; use `mode: ci` when the repo truth is lockfile-strict npm hydration
 - `prepare.source.manager: yarn` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `yarn install --immutable`
+- `prepare.source.manager: yarn` may also declare `inline_builds: true` when the repo truth is `yarn install --inline-builds`
 - `prepare.source.manager: bun` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `bun install --frozen-lockfile`
 - `prepare.source.kind: bundler` currently executes the narrow canonical repo-local gem hydration lane: `bundle config set path <path> && bundle install`
 - `prepare.source.kind: uv` currently executes the narrow canonical uv hydration lane: `uv sync`

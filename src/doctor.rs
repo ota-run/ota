@@ -2975,6 +2975,17 @@ impl Finding {
             {
                 "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
             }
+            s if s.starts_with("task `")
+                && s.contains(" uses replaceable shell `")
+                && s.contains(" instead of `command`") =>
+            {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_FINITE_SHELL_COMMAND"
+            }
+            s if s.starts_with("task `")
+                && s.contains(" hard-codes dependency hydration in its task body") =>
+            {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_DEPENDENCY_HYDRATION"
+            }
             s if s.starts_with("check `")
                 && s.contains(" uses replaceable shell file glue for `") =>
             {
@@ -4255,6 +4266,12 @@ fn diagnose_contract_advisories(
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => {
                 ContractAdvisory::ServiceUsesOpaqueShellStart(advisory)
             }
+            ContractAdvisory::ReplaceableFiniteShellCommand(advisory) => {
+                ContractAdvisory::ReplaceableFiniteShellCommand(advisory)
+            }
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(advisory) => {
+                ContractAdvisory::ReplaceableDependencyHydrationOwnership(advisory)
+            }
             ContractAdvisory::ReplaceableShellCheck(advisory) => {
                 ContractAdvisory::ReplaceableShellCheck(advisory)
             }
@@ -4365,6 +4382,8 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
             advisory.service_name
         ),
         ContractAdvisory::ServiceUsesOpaqueShellStart(_)
+        | ContractAdvisory::ReplaceableFiniteShellCommand(_)
+        | ContractAdvisory::ReplaceableDependencyHydrationOwnership(_)
         | ContractAdvisory::ReplaceableShellCheck(_)
         | ContractAdvisory::ReplaceableShellEnvMutation(_)
         | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
@@ -20993,6 +21012,24 @@ tasks:
         assert_eq!(
             finding.code(),
             "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
+        );
+        assert_eq!(finding.category(), "contract");
+        assert_eq!(finding.owner(), "repo_contract");
+    }
+
+    #[test]
+    fn finding_code_classifies_contract_advisory_replaceable_finite_shell_command() {
+        let finding = Finding {
+            identity: None,
+            severity: FindingSeverity::Warn,
+            summary: String::from("task `lint` uses replaceable shell `run` instead of `command`"),
+            why: String::from("finite argv command kept in shell"),
+            next: String::from("replace `tasks.lint.run` with `tasks.lint.command`"),
+        };
+
+        assert_eq!(
+            finding.code(),
+            "OTA_CONTRACT_ADVISORY_REPLACEABLE_FINITE_SHELL_COMMAND"
         );
         assert_eq!(finding.category(), "contract");
         assert_eq!(finding.owner(), "repo_contract");

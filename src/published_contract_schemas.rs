@@ -1024,9 +1024,10 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "properties": {
             "kind": { "const": "node_package_manager" },
             "cwd": { "type": "string" },
-            "manager": { "enum": ["npm", "pnpm", "yarn"] },
+            "manager": { "enum": ["npm", "pnpm", "yarn", "bun"] },
             "mode": { "enum": ["install", "ci"] },
-            "frozen_lockfile": { "type": "boolean" }
+            "frozen_lockfile": { "type": "boolean" },
+            "inline_builds": { "type": "boolean" }
           }
         },
         {

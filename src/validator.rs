@@ -3881,6 +3881,26 @@ fn validate_task_prepare(
                             "task `{task_name}` prepare `node_package_manager` must not declare `frozen_lockfile: true` for `manager: npm`; use `mode: ci` for lockfile-strict npm hydration"
                         )));
                     }
+                    if source.inline_builds
+                        && !matches!(
+                            source.manager,
+                            crate::schema::TaskNodePackageManagerKind::Yarn
+                        )
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` must not declare `inline_builds: true` unless `manager: yarn`"
+                        )));
+                    }
+                    if source.inline_builds
+                        && !matches!(
+                            source.mode,
+                            crate::schema::TaskNodePackageManagerHydrationMode::Install
+                        )
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `node_package_manager` must use `mode: install` when `inline_builds: true` is declared"
+                        )));
+                    }
                 }
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => {
                     if spec.medium
@@ -6776,6 +6796,8 @@ pub enum ContractAdvisory {
     LegacyHostServiceLifecycle(LegacyHostServiceLifecycleAdvisory),
     LegacyServiceReadinessRun(LegacyServiceReadinessRunAdvisory),
     ServiceUsesOpaqueShellStart(ServiceUsesOpaqueShellStartAdvisory),
+    ReplaceableFiniteShellCommand(ReplaceableFiniteShellCommandAdvisory),
+    ReplaceableDependencyHydrationOwnership(ReplaceableDependencyHydrationOwnershipAdvisory),
     ReplaceableShellCheck(ReplaceableShellCheckAdvisory),
     ReplaceableShellEnvMutation(ReplaceableShellEnvMutationAdvisory),
     ReplaceableToolBootstrapOwnership(ReplaceableToolBootstrapOwnershipAdvisory),
@@ -6871,6 +6893,22 @@ pub struct ServiceUsesOpaqueShellStartAdvisory {
     pub body_location: String,
     pub runtime_location: String,
     pub launch_location: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableFiniteShellCommandAdvisory {
+    pub task_name: String,
+    pub body_kind: String,
+    pub body_location: String,
+    pub command_preview: String,
+    pub suggested_exe: String,
+    pub suggested_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableDependencyHydrationOwnershipAdvisory {
+    pub task_name: String,
+    pub command: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7039,6 +7077,12 @@ impl ContractAdvisory {
             ContractAdvisory::ServiceUsesOpaqueShellStart(_) => {
                 "OTA_CONTRACT_ADVISORY_SERVICE_OPAQUE_SHELL_START"
             }
+            ContractAdvisory::ReplaceableFiniteShellCommand(_) => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_FINITE_SHELL_COMMAND"
+            }
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_DEPENDENCY_HYDRATION"
+            }
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => {
                     "OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_FILE_CHECK"
@@ -7169,6 +7213,14 @@ impl ContractAdvisory {
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
                 "task `{}` uses opaque shell `{}` for long-running service path `{}`",
                 advisory.task_name, advisory.body_kind, advisory.body_location
+            ),
+            ContractAdvisory::ReplaceableFiniteShellCommand(advisory) => format!(
+                "task `{}` uses replaceable shell `{}` instead of `command`",
+                advisory.task_name, advisory.body_kind
+            ),
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(advisory) => format!(
+                "task `{}` hard-codes dependency hydration in its task body",
+                advisory.task_name
             ),
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => format!(
@@ -7322,6 +7374,17 @@ impl ContractAdvisory {
                 advisory.body_kind,
                 advisory.body_location
             ),
+            ContractAdvisory::ReplaceableFiniteShellCommand(advisory) => format!(
+                "task `{}` keeps a finite argv-shaped command in shell `{}` at `{}` (`{}`), which is less governable and less inspectable than the first-class `command` surface",
+                advisory.task_name,
+                advisory.body_kind,
+                advisory.body_location,
+                advisory.command_preview
+            ),
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(advisory) => format!(
+                "task `{}` hard-codes a dependency-hydration shell (`{}`), which hides setup ownership from Ota instead of declaring it under `prepare.kind: dependency_hydration`",
+                advisory.task_name, advisory.command
+            ),
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => format!(
                     "check `{}` uses an obvious shell file-state command (`{}`), which is less portable and less governable than a first-class `kind: file` check",
@@ -7420,6 +7483,8 @@ impl ContractAdvisory {
             | ContractAdvisory::LegacyHostServiceLifecycle(_)
             | ContractAdvisory::LegacyServiceReadinessRun(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
+            | ContractAdvisory::ReplaceableFiniteShellCommand(_)
+            | ContractAdvisory::ReplaceableDependencyHydrationOwnership(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
@@ -7455,6 +7520,8 @@ impl ContractAdvisory {
             | ContractAdvisory::LegacyHostServiceLifecycle(_)
             | ContractAdvisory::LegacyServiceReadinessRun(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
+            | ContractAdvisory::ReplaceableFiniteShellCommand(_)
+            | ContractAdvisory::ReplaceableDependencyHydrationOwnership(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
@@ -7491,6 +7558,8 @@ impl ContractAdvisory {
             | ContractAdvisory::LegacyHostServiceLifecycle(_)
             | ContractAdvisory::LegacyServiceReadinessRun(_)
             | ContractAdvisory::ServiceUsesOpaqueShellStart(_)
+            | ContractAdvisory::ReplaceableFiniteShellCommand(_)
+            | ContractAdvisory::ReplaceableDependencyHydrationOwnership(_)
             | ContractAdvisory::ReplaceableShellCheck(_)
             | ContractAdvisory::ReplaceableShellEnvMutation(_)
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
@@ -7572,6 +7641,22 @@ impl ContractAdvisory {
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
                 "replace `{}` with `{}` modeled as `kind: command`; keep service exposure and readiness under `{}` and reserve `run`/`script` for shell-oriented finite tasks",
                 advisory.body_location, advisory.launch_location, advisory.runtime_location
+            ),
+            ContractAdvisory::ReplaceableFiniteShellCommand(advisory) => format!(
+                "replace `{}` with `tasks.{}.command` using `exe: {}` and `args: [{}]`; reserve `run`/`script` for shell behavior that cannot be modeled structurally",
+                advisory.body_location,
+                advisory.task_name,
+                advisory.suggested_exe,
+                advisory
+                    .suggested_args
+                    .iter()
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(advisory) => format!(
+                "move dependency hydration out of task `{}` shell: declare `prepare.kind: dependency_hydration` with a typed source instead of `{}`",
+                advisory.task_name, advisory.command
             ),
             ContractAdvisory::ReplaceableShellCheck(advisory) => match advisory.replacement_kind {
                 ReplaceableShellCheckKind::File => file_check_replacement_guidance(
@@ -7751,6 +7836,10 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_legacy_host_service_lifecycle_advisories(contract));
     advisories.extend(collect_legacy_service_readiness_run_advisories(contract));
     advisories.extend(collect_service_uses_opaque_shell_start_advisories(contract));
+    advisories.extend(collect_replaceable_finite_shell_command_advisories(
+        contract,
+    ));
+    advisories.extend(collect_replaceable_dependency_hydration_ownership_advisories(contract));
     advisories.extend(collect_replaceable_shell_check_advisories(contract));
     advisories.extend(collect_replaceable_shell_env_mutation_advisories(contract));
     advisories.extend(collect_replaceable_tool_bootstrap_ownership_advisories(
@@ -8123,6 +8212,190 @@ fn collect_replaceable_shell_check_advisories(contract: &Contract) -> Vec<Contra
         }
     }
     advisories
+}
+
+fn collect_replaceable_finite_shell_command_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.aggregate.is_some()
+            || task.prepare.is_some()
+            || task.action.is_some()
+            || task.command.is_some()
+            || task.launch.is_some()
+            || task
+                .runtime
+                .as_ref()
+                .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+        {
+            continue;
+        }
+
+        if let Some(advisory) = replaceable_finite_shell_command_advisory_for_task(
+            task_name.as_str(),
+            task.run.as_deref(),
+            task.script.as_deref(),
+            OpaqueShellBodyLocation::Task("run"),
+            OpaqueShellBodyLocation::Task("script"),
+        ) {
+            advisories.push(ContractAdvisory::ReplaceableFiniteShellCommand(advisory));
+            continue;
+        }
+
+        let Some(execution) = task.execution.as_ref() else {
+            continue;
+        };
+        for (backend, branch) in execution.modes.iter() {
+            if branch.command.is_some() || branch.launch.is_some() {
+                continue;
+            }
+            if branch
+                .runtime
+                .as_ref()
+                .or(task.runtime.as_ref())
+                .is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service)
+            {
+                continue;
+            }
+            let advisory = replaceable_finite_shell_command_advisory_for_task(
+                task_name.as_str(),
+                branch.run.as_deref().or(task.run.as_deref()),
+                branch.script.as_deref().or(task.script.as_deref()),
+                OpaqueShellBodyLocation::Mode("run"),
+                OpaqueShellBodyLocation::Mode("script"),
+            )
+            .map(|mut advisory| {
+                let backend_name = match backend {
+                    Backend::Native => "native",
+                    Backend::Container => "container",
+                    Backend::Remote => "remote",
+                };
+                advisory.body_location = match advisory.body_location.as_str() {
+                    "run" => format!("tasks.{task_name}.execution.modes.{backend_name}.run"),
+                    "script" => {
+                        format!("tasks.{task_name}.execution.modes.{backend_name}.script")
+                    }
+                    value => value.to_string(),
+                };
+                advisory
+            });
+            if let Some(advisory) = advisory {
+                advisories.push(ContractAdvisory::ReplaceableFiniteShellCommand(advisory));
+                break;
+            }
+        }
+    }
+    advisories
+}
+
+fn collect_replaceable_dependency_hydration_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.prepare.is_some()
+            || task.action.is_some()
+            || task.launch.is_some()
+            || task.aggregate.is_some()
+        {
+            continue;
+        }
+
+        let task_shell_command = task
+            .run
+            .as_deref()
+            .or(task.script.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(command) = task_shell_command
+            && obvious_yarn_inline_builds_hydration_shell(command)
+        {
+            advisories.push(ContractAdvisory::ReplaceableDependencyHydrationOwnership(
+                ReplaceableDependencyHydrationOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: command.to_string(),
+                },
+            ));
+            continue;
+        }
+        if let Some(command) = task.command.as_ref()
+            && obvious_yarn_inline_builds_hydration_command(command)
+        {
+            advisories.push(ContractAdvisory::ReplaceableDependencyHydrationOwnership(
+                ReplaceableDependencyHydrationOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: render_task_command_preview(command),
+                },
+            ));
+            continue;
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                let branch_shell_command = branch
+                    .run
+                    .as_deref()
+                    .or(branch.script.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if let Some(command) = branch_shell_command
+                    && obvious_yarn_inline_builds_hydration_shell(command)
+                {
+                    advisories.push(ContractAdvisory::ReplaceableDependencyHydrationOwnership(
+                        ReplaceableDependencyHydrationOwnershipAdvisory {
+                            task_name: task_name.clone(),
+                            command: command.to_string(),
+                        },
+                    ));
+                    break;
+                }
+                let Some(command) = branch.command.as_ref() else {
+                    continue;
+                };
+                if obvious_yarn_inline_builds_hydration_command(command) {
+                    advisories.push(ContractAdvisory::ReplaceableDependencyHydrationOwnership(
+                        ReplaceableDependencyHydrationOwnershipAdvisory {
+                            task_name: task_name.clone(),
+                            command: render_task_command_preview(command),
+                        },
+                    ));
+                    break;
+                }
+            }
+        }
+    }
+    advisories
+}
+
+fn replaceable_finite_shell_command_advisory_for_task(
+    task_name: &str,
+    run: Option<&str>,
+    script: Option<&str>,
+    run_location: OpaqueShellBodyLocation,
+    script_location: OpaqueShellBodyLocation,
+) -> Option<ReplaceableFiniteShellCommandAdvisory> {
+    let (body_kind, body_location, command) =
+        if let Some(command) = run.map(str::trim).filter(|value| !value.is_empty()) {
+            ("run", run_location, command)
+        } else if let Some(command) = script.map(str::trim).filter(|value| !value.is_empty()) {
+            ("script", script_location, command)
+        } else {
+            return None;
+        };
+    let argv = obvious_replaceable_finite_shell_argv(command)?;
+    let suggested_exe = argv.first()?.to_string();
+    let suggested_args = argv.iter().skip(1).cloned().collect::<Vec<_>>();
+    Some(ReplaceableFiniteShellCommandAdvisory {
+        task_name: task_name.to_string(),
+        body_kind: body_kind.to_string(),
+        body_location: match body_location {
+            OpaqueShellBodyLocation::Task(field) => format!("tasks.{task_name}.{field}"),
+            OpaqueShellBodyLocation::Mode(field) => field.to_string(),
+        },
+        command_preview: command.to_string(),
+        suggested_exe,
+        suggested_args,
+    })
 }
 
 fn has_non_empty_command(command: Option<&str>) -> bool {
@@ -8813,6 +9086,50 @@ fn obvious_env_mutation_shell(command: &str) -> bool {
     touches_env && (mutates_with_sed || mutates_with_perl)
 }
 
+fn obvious_replaceable_finite_shell_argv(command: &str) -> Option<Vec<String>> {
+    if command.contains('\n') || command.contains('\r') {
+        return None;
+    }
+    if command.chars().any(|ch| {
+        matches!(
+            ch,
+            '|' | '&'
+                | ';'
+                | '<'
+                | '>'
+                | '$'
+                | '`'
+                | '\\'
+                | '\''
+                | '"'
+                | '('
+                | ')'
+                | '{'
+                | '}'
+                | '*'
+                | '?'
+                | '!'
+                | '#'
+        )
+    }) {
+        return None;
+    }
+    let argv = command
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if argv.is_empty() {
+        return None;
+    }
+    if argv[0].contains('=') {
+        return None;
+    }
+    if argv.join(" ") != command.trim() {
+        return None;
+    }
+    Some(argv)
+}
+
 fn obvious_pip_uv_bootstrap_shell(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     (lower.contains("python -m pip install") || lower.contains("python3 -m pip install"))
@@ -8832,6 +9149,34 @@ fn obvious_pip_uv_bootstrap_command(command: &TaskCommandSpec) -> bool {
     args.windows(3)
         .any(|window| window == ["-m", "pip", "install"])
         && args.iter().any(|arg| arg == "uv")
+}
+
+fn obvious_yarn_inline_builds_hydration_shell(command: &str) -> bool {
+    obvious_replaceable_finite_shell_argv(command)
+        .as_deref()
+        .is_some_and(obvious_yarn_inline_builds_hydration_argv)
+}
+
+fn obvious_yarn_inline_builds_hydration_command(command: &TaskCommandSpec) -> bool {
+    let mut argv = vec![command.exe.trim().to_ascii_lowercase()];
+    argv.extend(
+        command
+            .args
+            .iter()
+            .map(|value| value.trim().to_ascii_lowercase()),
+    );
+    obvious_yarn_inline_builds_hydration_argv(argv.as_slice())
+}
+
+fn obvious_yarn_inline_builds_hydration_argv(argv: &[String]) -> bool {
+    if argv.is_empty() {
+        return false;
+    }
+    let offset = if argv[0] == "corepack" { 1 } else { 0 };
+    argv.len() == offset + 3
+        && argv[offset] == "yarn"
+        && argv[offset + 1] == "install"
+        && argv[offset + 2] == "--inline-builds"
 }
 
 fn obvious_systemd_service_shell(command: &str) -> bool {
@@ -20710,6 +21055,47 @@ tasks:
     }
 
     #[test]
+    fn accepts_prepare_only_yarn_inline_builds_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      yarn: "4.11.0"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: yarn
+        mode: install
+        inline_builds: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+        - .yarn/install-state.gz
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("yarn inline-builds package-manager prepare should validate");
+    }
+
+    #[test]
     fn accepts_prepare_only_bun_package_manager_hydration_task() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -20927,6 +21313,51 @@ tasks:
             errors
                 .to_string()
                 .contains("must not use `manager: yarn` with `mode: ci`")
+        );
+    }
+
+    #[test]
+    fn rejects_inline_builds_for_non_yarn_package_manager_prepare() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "24.15.0"
+    package_managers:
+      pnpm: "10.33.4"
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+        inline_builds: true
+    requirements:
+      toolchains:
+        - node
+    effects:
+      writes:
+        - node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors =
+            validate_contract(&contract).expect_err("non-yarn inline-builds prepare should fail");
+        assert!(
+            errors
+                .to_string()
+                .contains("must not declare `inline_builds: true` unless `manager: yarn`")
         );
     }
 
@@ -28973,6 +29404,30 @@ tasks:
     }
 
     #[test]
+    fn collects_replaceable_dependency_hydration_ownership_advisory_for_yarn_inline_builds_shell() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    run: yarn install --inline-builds
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
+                if value.task_name == "install"
+                    && value.command == "yarn install --inline-builds"
+        )));
+    }
+
+    #[test]
     fn accepts_prepare_only_tool_bootstrap_task() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -29835,6 +30290,60 @@ tasks:
             advisory,
             ContractAdvisory::ReplaceableShellEnvMutation(value)
                 if value.task_name == "normalize-env"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_finite_shell_command_advisory_for_simple_run_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    run: cargo clippy --all-targets --no-deps
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableFiniteShellCommand(value)
+                if value.task_name == "lint"
+                    && value.body_kind == "run"
+                    && value.body_location == "tasks.lint.run"
+                    && value.suggested_exe == "cargo"
+                    && value.suggested_args
+                        == vec![
+                            String::from("clippy"),
+                            String::from("--all-targets"),
+                            String::from("--no-deps"),
+                        ]
+        )));
+    }
+
+    #[test]
+    fn does_not_collect_replaceable_finite_shell_command_advisory_for_shell_pipeline() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    run: cargo clippy --all-targets --no-deps | tee clippy.log
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableFiniteShellCommand(value) if value.task_name == "lint"
         )));
     }
 
