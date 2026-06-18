@@ -78,9 +78,9 @@ use crate::schema::{
     TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind,
     TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskServiceEnvBindingFormat,
     TaskServiceEnvBindingSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
-    TaskTargetSpec, ToolAcquisitionProvider, ToolRequirement, ToolchainFulfillmentMode, ToolchainSpec,
-    format_memory_size_bytes, parse_memory_size_bytes, parse_readiness_duration_spec,
-    task_target_env_name,
+    TaskTargetSpec, ToolAcquisitionProvider, ToolRequirement, ToolchainFulfillmentMode,
+    ToolchainSpec, format_memory_size_bytes, parse_memory_size_bytes,
+    parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
 #[cfg(test)]
@@ -11685,6 +11685,10 @@ fn probe_named_container_command_version(
     let probe_command = format!(
         "if command -v {quoted} >/dev/null 2>&1; then ({version_probe_commands}); else exit 127; fi"
     );
+    let path_export = container_task_path_export(engine, container_name, task_name, None)
+        .map_err(|error| error.to_string())?;
+    let probe_command =
+        command_with_optional_path_export(probe_command.as_str(), path_export.as_deref());
     let output = container_command_output(
         engine,
         &[
@@ -11945,6 +11949,62 @@ fn source_managed_tool_path_export(
     }
     segments.push(String::from("$PATH"));
     segments.join(":")
+}
+
+fn merge_path_export_with_container_path(
+    path_export: Option<&str>,
+    container_path: Option<&str>,
+) -> Option<String> {
+    match (path_export, container_path) {
+        (Some(path_export), Some(container_path)) => Some(
+            path_export
+                .replace("${PATH}", container_path)
+                .replace("$PATH", container_path),
+        ),
+        (Some(path_export), None) => Some(path_export.to_string()),
+        (None, Some(container_path)) => Some(container_path.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn declared_container_path(
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+) -> Result<Option<String>, RunError> {
+    let inspect = container_command_output(
+        engine,
+        &[
+            "inspect",
+            "--format",
+            "{{json .Config.Env}}",
+            container_name,
+        ],
+        None,
+        task_name,
+    )?;
+    if inspect.exit_code != 0 {
+        return Ok(None);
+    }
+    let env_entries = serde_json::from_str::<Vec<String>>(inspect.stdout.trim()).ok();
+    Ok(env_entries.and_then(|entries| {
+        entries
+            .into_iter()
+            .find_map(|entry| entry.strip_prefix("PATH=").map(str::to_string))
+    }))
+}
+
+fn container_task_path_export(
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+    path_export: Option<&str>,
+) -> Result<Option<String>, RunError> {
+    let container_path = declared_container_path(engine, container_name, task_name)?;
+    Ok(merge_path_export_with_container_path(
+        path_export,
+        container_path.as_deref(),
+    ))
 }
 
 fn source_managed_remaining_gap_covered(
@@ -23607,6 +23667,7 @@ fn exec_persistent_container_task_command(
     container_name: &str,
     readiness_probe: Option<&RuntimeReadinessProbe>,
 ) -> Result<TaskCommandOutput, RunError> {
+    let path_export = container_task_path_export(engine, container_name, task_name, path_export)?;
     let mut container = container_engine_command(engine);
     container.arg("exec").arg("-i");
     append_container_git_safe_directory_args(&mut container, env_overrides);
@@ -23620,9 +23681,9 @@ fn exec_persistent_container_task_command(
     }
     container.arg(&container_name).arg("sh").arg("-c").arg(
         if runtime.is_some_and(|runtime| runtime.kind == TaskRuntimeKind::Service) {
-            persistent_service_command_with_path_export(task_name, command, path_export)
+            persistent_service_command_with_path_export(task_name, command, path_export.as_deref())
         } else {
-            command_with_path_export(command, path_export)
+            command_with_path_export(command, path_export.as_deref())
         },
     );
 
@@ -50396,6 +50457,26 @@ tasks:
         assert_eq!(
             super::source_managed_tool_path_export(&actions, None),
             ".ota/state/source-managed/bin:$PATH"
+        );
+    }
+
+    #[test]
+    fn merge_path_export_with_container_path_replaces_shell_path_token() {
+        assert_eq!(
+            super::merge_path_export_with_container_path(
+                Some(".ota/state/source-managed/bin:$PATH"),
+                Some("/go/bin:/usr/local/go/bin:/usr/bin:/bin"),
+            ),
+            Some(String::from(
+                ".ota/state/source-managed/bin:/go/bin:/usr/local/go/bin:/usr/bin:/bin"
+            ))
+        );
+        assert_eq!(
+            super::merge_path_export_with_container_path(
+                None,
+                Some("/go/bin:/usr/local/go/bin:/usr/bin:/bin"),
+            ),
+            Some(String::from("/go/bin:/usr/local/go/bin:/usr/bin:/bin"))
         );
     }
 
