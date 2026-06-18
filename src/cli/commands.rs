@@ -63596,6 +63596,7 @@ tasks:
     fn run_phase_failure_exit_code_accepts_non_zero_exit_code() {
         let outcome = super::CommandRunResult {
             exit_code: 42,
+            executed_tasks: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: None,
@@ -63611,6 +63612,7 @@ tasks:
     fn run_phase_failure_exit_code_treats_service_termination_as_failure() {
         let outcome = super::CommandRunResult {
             exit_code: 0,
+            executed_tasks: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: Some(String::from("ota-persistent-app")),
@@ -83923,6 +83925,7 @@ enum UpRunBehavior {
 
 struct CommandRunResult {
     exit_code: i32,
+    executed_tasks: Vec<String>,
     stdout: String,
     stderr: String,
     target: Option<String>,
@@ -84509,7 +84512,7 @@ fn repo_readiness_receipt(
         contract,
         doctor_mode_execution_overrides(mode, lifecycle),
         None,
-        false,
+        None,
     );
     receipt.blocked = report
         .findings
@@ -85716,6 +85719,7 @@ fn acquire_workspace_repo(
     if !workspace_repo_needs_acquisition(repo) {
         return Ok(CommandRunResult {
             exit_code: 0,
+            executed_tasks: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: None,
@@ -85754,6 +85758,7 @@ fn acquire_workspace_repo(
     if clone.exit_code != 0 {
         return Ok(CommandRunResult {
             exit_code: clone.exit_code,
+            executed_tasks: Vec::new(),
             stdout,
             stderr,
             target: None,
@@ -85776,6 +85781,7 @@ fn acquire_workspace_repo(
         if checkout.exit_code != 0 {
             return Ok(CommandRunResult {
                 exit_code: checkout.exit_code,
+                executed_tasks: Vec::new(),
                 stdout,
                 stderr,
                 target: None,
@@ -85788,6 +85794,7 @@ fn acquire_workspace_repo(
 
     Ok(CommandRunResult {
         exit_code: 0,
+        executed_tasks: Vec::new(),
         stdout,
         stderr,
         target: None,
@@ -85813,6 +85820,7 @@ fn run_git_command(
             let output = command.output()?;
             Ok(CommandRunResult {
                 exit_code: output.status.code().unwrap_or(1),
+                executed_tasks: Vec::new(),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
@@ -85825,6 +85833,7 @@ fn run_git_command(
             let status = command.status()?;
             Ok(CommandRunResult {
                 exit_code: status.code().unwrap_or(1),
+                executed_tasks: Vec::new(),
                 stdout: String::new(),
                 stderr: String::new(),
                 target: None,
@@ -86606,7 +86615,7 @@ fn selected_up_receipt_native_prerequisites(
     contract: &Contract,
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
-    activation_applied: bool,
+    applied_tasks: Option<&BTreeSet<String>>,
 ) -> Vec<crate::output::ExecutionReceiptNativePrerequisite> {
     let current_os = current_requirement_platform();
     let mut prerequisites = Vec::new();
@@ -86618,6 +86627,9 @@ fn selected_up_receipt_native_prerequisites(
         ) {
             continue;
         }
+        let activation_applied = applied_tasks
+            .as_ref()
+            .is_some_and(|executed| executed.contains(task_name.as_str()));
         for prerequisite in receipt_native_prerequisites(
             contract,
             Some(task_name.as_str()),
@@ -87463,6 +87475,7 @@ fn run_up_task(
         )
         .map(|outcome| CommandRunResult {
             exit_code: outcome.exit_code,
+            executed_tasks: outcome.executed_tasks,
             stdout: String::new(),
             stderr: String::new(),
             target: outcome.target,
@@ -87481,6 +87494,7 @@ fn run_up_task(
         )
         .map(|outcome| CommandRunResult {
             exit_code: outcome.exit_code,
+            executed_tasks: outcome.executed_tasks,
             stdout: outcome.stdout,
             stderr: outcome.stderr,
             target: outcome.target,
@@ -87690,6 +87704,7 @@ fn run_up_task_detached_until_ready(
         }
         return Ok(CommandRunResult {
             exit_code: 0,
+            executed_tasks: Vec::new(),
             stdout: String::new(),
             stderr: String::new(),
             target: None,
@@ -87729,6 +87744,7 @@ fn run_up_task_detached_until_ready(
     }
     Ok(CommandRunResult {
         exit_code: 1,
+        executed_tasks: Vec::new(),
         stdout: String::new(),
         stderr: render_detached_run_failure_output(
             &failure,
@@ -88612,6 +88628,7 @@ fn run_corepack_activation_action(
         if bootstrap.exit_code != 0 {
             return Ok(CommandRunResult {
                 exit_code: bootstrap.exit_code,
+                executed_tasks: Vec::new(),
                 stdout,
                 stderr,
                 target: None,
@@ -88634,6 +88651,7 @@ fn run_corepack_activation_action(
     if enable.exit_code != 0 {
         return Ok(CommandRunResult {
             exit_code: enable.exit_code,
+            executed_tasks: Vec::new(),
             stdout,
             stderr,
             target: None,
@@ -88664,6 +88682,7 @@ fn run_corepack_activation_action(
 
     Ok(CommandRunResult {
         exit_code: prepare.exit_code,
+        executed_tasks: Vec::new(),
         stdout: format!("{stdout}{}", prepare.stdout),
         stderr: format!("{stderr}{}", prepare.stderr),
         target: None,
@@ -88750,6 +88769,7 @@ fn run_process_command(
         RepoExecutionMode::Capture => match command.output() {
             Ok(output) => CommandRunResult {
                 exit_code: output.status.code().unwrap_or(1),
+                executed_tasks: Vec::new(),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,
@@ -88763,6 +88783,7 @@ fn run_process_command(
             match run_streaming_command_with_loader(&mut command, loader_label) {
                 Ok(exit_code) => CommandRunResult {
                     exit_code,
+                    executed_tasks: Vec::new(),
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
@@ -88791,6 +88812,7 @@ fn command_spawn_failure_result(command_label: &str, error: io::Error) -> Comman
     };
     CommandRunResult {
         exit_code,
+        executed_tasks: Vec::new(),
         stdout: String::new(),
         stderr: format!("failed to execute `{command_label}`: {error}\n"),
         target: None,
@@ -89008,6 +89030,7 @@ fn execute_repo_up_with_behavior(
     );
     let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let mut run_runtime: Option<ResolvedTaskRuntime> = None;
+    let mut executed_task_names = BTreeSet::<String>::new();
     let provisioning_output_mode = match mode {
         RepoExecutionMode::Capture => ProvisioningOutputMode::Capture,
         RepoExecutionMode::Stream => ProvisioningOutputMode::StreamAndCapture,
@@ -90086,6 +90109,7 @@ fn execute_repo_up_with_behavior(
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
                 setup_runtime = outcome.runtime;
+                executed_task_names.extend(outcome.executed_tasks);
                 if !preflight.ok {
                     let refreshed = diagnose_preconditions_with_mode_for_workflow_with_overrides(
                         contract,
@@ -90276,6 +90300,7 @@ fn execute_repo_up_with_behavior(
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
                 run_runtime = outcome.runtime;
+                executed_task_names.extend(outcome.executed_tasks);
             }
             Err(error) => {
                 if let Some(blocked_result) = up_backend_fulfillment_blocked_result(
@@ -90315,8 +90340,12 @@ fn execute_repo_up_with_behavior(
                 .first()
                 .map(|finding| finding.next.clone()),
         );
-        receipt.native_prerequisites =
-            selected_up_receipt_native_prerequisites(contract, overrides, workflow_name, true);
+        receipt.native_prerequisites = selected_up_receipt_native_prerequisites(
+            contract,
+            overrides,
+            workflow_name,
+            Some(&executed_task_names),
+        );
         return Ok(RepoUpResult {
             ok: false,
             status: "NOT READY",
@@ -90376,8 +90405,12 @@ fn execute_repo_up_with_behavior(
         None,
         report.findings.first().map(|finding| finding.next.clone()),
     );
-    receipt.native_prerequisites =
-        selected_up_receipt_native_prerequisites(contract, overrides, workflow_name, true);
+    receipt.native_prerequisites = selected_up_receipt_native_prerequisites(
+        contract,
+        overrides,
+        workflow_name,
+        Some(&executed_task_names),
+    );
     receipt.workloads = workloads;
     Ok(RepoUpResult {
         ok: report.ok,
@@ -92447,6 +92480,7 @@ fn run_workspace_repo_refresh_command(
         if fetch.exit_code != 0 {
             return Ok(CommandRunResult {
                 exit_code: fetch.exit_code,
+                executed_tasks: Vec::new(),
                 stdout,
                 stderr,
                 target: None,
@@ -92464,6 +92498,7 @@ fn run_workspace_repo_refresh_command(
         stderr.push_str(&reset.stderr);
         return Ok(CommandRunResult {
             exit_code: reset.exit_code,
+            executed_tasks: Vec::new(),
             stdout,
             stderr,
             target: None,
@@ -92970,6 +93005,7 @@ fn run_workspace_repo_task(
                     )
                     .map(|result| CommandRunResult {
                         exit_code: result.exit_code,
+                        executed_tasks: Vec::new(),
                         stdout: result.stdout,
                         stderr: result.stderr,
                         target: result.target,
@@ -92992,6 +93028,7 @@ fn run_workspace_repo_task(
                     )
                     .map(|result| CommandRunResult {
                         exit_code: result.exit_code,
+                        executed_tasks: Vec::new(),
                         stdout: String::new(),
                         stderr: String::new(),
                         target: result.target,
@@ -93596,6 +93633,7 @@ fn run_shell_command(
             run_streaming_command_with_loader(&mut process, loader_label)
                 .map(|exit_code| CommandRunResult {
                     exit_code,
+                    executed_tasks: Vec::new(),
                     stdout: String::new(),
                     stderr: String::new(),
                     target: None,
@@ -93614,6 +93652,7 @@ fn run_shell_command(
             .and_then(|child| child.wait_with_output())
             .map(|output| CommandRunResult {
                 exit_code: output.status.code().unwrap_or(1),
+                executed_tasks: Vec::new(),
                 stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
                 target: None,

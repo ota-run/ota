@@ -6049,13 +6049,8 @@ pub struct TaskAdapterInputsSpec {
 
 impl TaskAdapterInputsSpec {
     pub fn is_empty(&self) -> bool {
-        self.overlays
-            .values()
-            .all(TaskAdapterOverlaySpec::is_empty)
-            && self
-                .overlays
-                .keys()
-                .all(|family| family.trim().is_empty())
+        self.overlays.values().all(TaskAdapterOverlaySpec::is_empty)
+            && self.overlays.keys().all(|family| family.trim().is_empty())
             && self
                 .compose
                 .as_ref()
@@ -6086,9 +6081,7 @@ impl TaskAdapterInputsSpec {
             compose.project_name = overlay.project_name.clone();
             return (!compose.is_empty()).then_some(compose);
         }
-        self.compose
-            .clone()
-            .filter(|compose| !compose.is_empty())
+        self.compose.clone().filter(|compose| !compose.is_empty())
     }
 
     pub fn effective_bake(&self) -> Option<TaskBakeAdapterInputsSpec> {
@@ -6150,7 +6143,11 @@ impl TaskAdapterOverlaySpec {
                 .map(str::trim)
                 .is_none_or(str::is_empty)
             && self.values_files.is_empty()
-            && self.chart.as_deref().map(str::trim).is_none_or(str::is_empty)
+            && self
+                .chart
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
             && self
                 .release_name
                 .as_deref()
@@ -6170,9 +6167,24 @@ impl TaskAdapterInputsSpec {
             .iter()
             .filter(|(_, overlay)| !overlay.is_empty())
             .map(|(family, _)| family.as_str())
-            .chain(self.compose.as_ref().filter(|spec| !spec.is_empty()).map(|_| "compose"))
-            .chain(self.bake.as_ref().filter(|spec| !spec.is_empty()).map(|_| "bake"))
-            .chain(self.helm.as_ref().filter(|spec| !spec.is_empty()).map(|_| "helm"))
+            .chain(
+                self.compose
+                    .as_ref()
+                    .filter(|spec| !spec.is_empty())
+                    .map(|_| "compose"),
+            )
+            .chain(
+                self.bake
+                    .as_ref()
+                    .filter(|spec| !spec.is_empty())
+                    .map(|_| "bake"),
+            )
+            .chain(
+                self.helm
+                    .as_ref()
+                    .filter(|spec| !spec.is_empty())
+                    .map(|_| "helm"),
+            )
     }
 }
 
@@ -6245,7 +6257,11 @@ impl TaskHelmAdapterInputsSpec {
     pub fn is_empty(&self) -> bool {
         self.cwd.as_deref().map(str::trim).is_none_or(str::is_empty)
             && self.values_files.is_empty()
-            && self.chart.as_deref().map(str::trim).is_none_or(str::is_empty)
+            && self
+                .chart
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
             && self
                 .release_name
                 .as_deref()

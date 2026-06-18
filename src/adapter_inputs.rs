@@ -511,18 +511,26 @@ impl AdapterInputField {
                 .filter(|compose| !compose.workflow_overlay_bound)
                 .and_then(|compose| compose.cwd)
                 .is_some_and(|value| !value.trim().is_empty()),
-            Self::ComposeEnvFiles => task
-                .adapter_inputs
-                .effective_compose()
-                .is_some_and(|compose| !compose.workflow_overlay_bound && !compose.env_files.is_empty()),
+            Self::ComposeEnvFiles => {
+                task.adapter_inputs
+                    .effective_compose()
+                    .is_some_and(|compose| {
+                        !compose.workflow_overlay_bound && !compose.env_files.is_empty()
+                    })
+            }
             Self::ComposeFiles => task
                 .adapter_inputs
                 .effective_compose()
-                .is_some_and(|compose| !compose.workflow_overlay_bound && !compose.files.is_empty()),
-            Self::ComposeProfiles => task
-                .adapter_inputs
-                .effective_compose()
-                .is_some_and(|compose| !compose.workflow_overlay_bound && !compose.profiles.is_empty()),
+                .is_some_and(|compose| {
+                    !compose.workflow_overlay_bound && !compose.files.is_empty()
+                }),
+            Self::ComposeProfiles => {
+                task.adapter_inputs
+                    .effective_compose()
+                    .is_some_and(|compose| {
+                        !compose.workflow_overlay_bound && !compose.profiles.is_empty()
+                    })
+            }
             Self::ComposeProjectName => task
                 .adapter_inputs
                 .effective_compose()
@@ -578,16 +586,30 @@ impl AdapterInputField {
                 .filter(|compose| !compose.workflow_overlay_bound)
                 .and_then(|compose| compose.cwd)
                 .is_some_and(|value| !value.trim().is_empty()),
-            Self::ComposeEnvFiles => branch.adapter_inputs.effective_compose().is_some_and(
-                |compose| !compose.workflow_overlay_bound && !compose.env_files.is_empty(),
-            ),
-            Self::ComposeFiles => branch
-                .adapter_inputs
-                .effective_compose()
-                .is_some_and(|compose| !compose.workflow_overlay_bound && !compose.files.is_empty()),
-            Self::ComposeProfiles => branch.adapter_inputs.effective_compose().is_some_and(
-                |compose| !compose.workflow_overlay_bound && !compose.profiles.is_empty(),
-            ),
+            Self::ComposeEnvFiles => {
+                branch
+                    .adapter_inputs
+                    .effective_compose()
+                    .is_some_and(|compose| {
+                        !compose.workflow_overlay_bound && !compose.env_files.is_empty()
+                    })
+            }
+            Self::ComposeFiles => {
+                branch
+                    .adapter_inputs
+                    .effective_compose()
+                    .is_some_and(|compose| {
+                        !compose.workflow_overlay_bound && !compose.files.is_empty()
+                    })
+            }
+            Self::ComposeProfiles => {
+                branch
+                    .adapter_inputs
+                    .effective_compose()
+                    .is_some_and(|compose| {
+                        !compose.workflow_overlay_bound && !compose.profiles.is_empty()
+                    })
+            }
             Self::ComposeProjectName => branch
                 .adapter_inputs
                 .effective_compose()
@@ -650,8 +672,7 @@ impl AdapterInputField {
     pub(crate) fn backend_value(self, task: &TaskSpec, backend: Backend) -> Option<String> {
         match self {
             Self::ComposeCwd => branch_first_scalar_value(task, backend, |spec| {
-                spec.effective_compose()
-                    .and_then(|compose| compose.cwd)
+                spec.effective_compose().and_then(|compose| compose.cwd)
             }),
             Self::ComposeProjectName => branch_first_scalar_value(task, backend, |spec| {
                 spec.effective_compose()

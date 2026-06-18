@@ -12864,7 +12864,10 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 && effective_workflow_adapter_inputs
                     .effective_compose()
                     .is_some_and(|compose| {
-                        compose.env_files.iter().any(|path| path.trim() == rendered_path)
+                        compose
+                            .env_files
+                            .iter()
+                            .any(|path| path.trim() == rendered_path)
                     })
             {
                 errors.push(ValidationError::new(format!(
@@ -14818,9 +14821,9 @@ workflows:
         let error = validate_contract(&contract)
             .expect_err("invalid workflow compose profiles should fail validation")
             .to_string();
-        assert!(
-            error.contains("`workflows.app.adapter_inputs.overlays.compose.profiles[0]` must not be empty")
-        );
+        assert!(error.contains(
+            "`workflows.app.adapter_inputs.overlays.compose.profiles[0]` must not be empty"
+        ));
     }
 
     #[test]
@@ -16697,9 +16700,8 @@ tasks:
             "{rendered:?}"
         );
         assert!(
-            rendered.iter().any(|error| error.contains(
-                "task `helm:render` `adapter_inputs.helm.namespace` must not be empty"
-            )),
+            rendered.iter().any(|error| error
+                .contains("task `helm:render` `adapter_inputs.helm.namespace` must not be empty")),
             "{rendered:?}"
         );
     }
@@ -30298,7 +30300,7 @@ tasks:
 
     #[test]
     fn collects_replaceable_dependency_hydration_ownership_advisory_for_helm_dependency_build_command()
-    {
+     {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"

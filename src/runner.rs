@@ -2495,11 +2495,7 @@ fn project_helm_adapter_inputs(
         .and_then(|values| values.into_iter().next());
     let release_name = task.helm_adapter_release_name_for_backend(backend);
     let namespace = task.helm_adapter_namespace_for_backend(backend);
-    if values_files.is_empty()
-        && chart.is_none()
-        && release_name.is_none()
-        && namespace.is_none()
-    {
+    if values_files.is_empty() && chart.is_none() && release_name.is_none() && namespace.is_none() {
         return command.clone();
     }
 
@@ -2507,7 +2503,9 @@ fn project_helm_adapter_inputs(
     if let Some(namespace) = namespace
         && !helm_has_flag(projected.args.as_slice(), &["-n", "--namespace"])
     {
-        projected.args.extend([String::from("--namespace"), namespace]);
+        projected
+            .args
+            .extend([String::from("--namespace"), namespace]);
     }
     if !values_files.is_empty() && !helm_has_flag(projected.args.as_slice(), &["-f", "--values"]) {
         for path in values_files {
@@ -7170,9 +7168,9 @@ fn execute_task_with_hooks(
         .command()
         .map(|command| projected_structured_command_for_task(task, backend_kind, command));
     let projected_launch_command = match execution.launch() {
-        Some(crate::schema::TaskLaunchSpec::Command(command)) => {
-            Some(projected_structured_command_for_task(task, backend_kind, command))
-        }
+        Some(crate::schema::TaskLaunchSpec::Command(command)) => Some(
+            projected_structured_command_for_task(task, backend_kind, command),
+        ),
         _ => None,
     };
     let mut shell_command = match execution.launch() {
@@ -7184,7 +7182,9 @@ fn execute_task_with_hooks(
                     .is_empty()
                 || path_export.is_some()) =>
         {
-            let command = projected_command.as_ref().expect("checked command execution");
+            let command = projected_command
+                .as_ref()
+                .expect("checked command execution");
             Some(shell_quote_command_argv(
                 &backend,
                 command.exe.as_str(),
@@ -8654,19 +8654,20 @@ fn read_helm_chart_repositories(
         fs::read_to_string(&chart_path).map_err(|source_error| RunError::FileActionFailed {
             task: task_name.to_string(),
             message: format!(
-            "could not read Helm chart manifest `{}`: {source_error}",
-            chart_path.display()
-        ),
-        })?;
-    let parsed: HelmChartManifest = serde_yaml::from_str(contents.as_str()).map_err(
-        |source_error| RunError::FileActionFailed {
-            task: task_name.to_string(),
-            message: format!(
-                "could not parse Helm chart manifest `{}`: {source_error}",
+                "could not read Helm chart manifest `{}`: {source_error}",
                 chart_path.display()
             ),
-        },
-    )?;
+        })?;
+    let parsed: HelmChartManifest =
+        serde_yaml::from_str(contents.as_str()).map_err(|source_error| {
+            RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not parse Helm chart manifest `{}`: {source_error}",
+                    chart_path.display()
+                ),
+            }
+        })?;
     let mut repositories = Vec::new();
     for dependency in parsed.dependencies {
         let Some(repository) = dependency.repository.as_deref().map(str::trim) else {
@@ -11576,7 +11577,12 @@ pub(crate) fn tool_version_probe_arg_sets(
             &["--version"],
             &["-version"],
         ],
-        "kubectl" => &[&["version", "--client"], &["--version"], &["version"], &["-version"]],
+        "kubectl" => &[
+            &["version", "--client"],
+            &["--version"],
+            &["version"],
+            &["-version"],
+        ],
         _ => &[&["--version"], &["version"], &["-version"]],
     }
 }
@@ -11646,9 +11652,7 @@ fn backend_runtime_version_probe_command(
     let quoted = shell_quote(command_name);
     let version_probe_commands = tool_runtime_version_probe_commands(command_name, quoted.as_str());
     if cfg!(windows) && matches!(backend, ResolvedExecutionBackend::Native { .. }) {
-        return format!(
-            "where {quoted} >NUL 2>&1 && ({version_probe_commands}) || exit /B 127"
-        );
+        return format!("where {quoted} >NUL 2>&1 && ({version_probe_commands}) || exit /B 127");
     }
     format!(
         "if command -v {quoted} >/dev/null 2>&1; then ({version_probe_commands}); else exit 127; fi"
