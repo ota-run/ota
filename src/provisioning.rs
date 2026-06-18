@@ -226,8 +226,23 @@ fn release_asset_url(
         })?;
 
     Ok(template
+        .url()
         .replace("{version}", action_effective_version(action))
         .replace("{name}", action.install_name()))
+}
+
+fn release_asset_platform_source<'a>(
+    action: &ProvisioningAction,
+    target: &ProvisioningExecutionTarget,
+    config: &'a ReleaseAssetSourceConfig,
+) -> Result<&'a ReleaseAssetPlatformSource, ProvisioningBackendError> {
+    let platform = release_asset_platform_key(target);
+    config
+        .asset_by_platform
+        .get(platform.as_str())
+        .ok_or_else(|| ProvisioningBackendError::UnsupportedSource {
+            provisioning_source: format!("{} (unsupported platform `{platform}`)", action.source),
+        })
 }
 
 fn release_asset_relative_destination(
@@ -342,10 +357,55 @@ static CHOCO_BOOTSTRAP_BACKEND: ChocoBootstrapProvisioningBackend =
 static SCOOP_BOOTSTRAP_BACKEND: ScoopBootstrapProvisioningBackend =
     ScoopBootstrapProvisioningBackend;
 
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ReleaseAssetArchiveFormat {
+    TarGz,
+    Zip,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseAssetArchiveSpec {
+    format: ReleaseAssetArchiveFormat,
+    executable_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReleaseAssetPlatformAsset {
+    url: String,
+    #[serde(default)]
+    archive: Option<ReleaseAssetArchiveSpec>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum ReleaseAssetPlatformSource {
+    Direct(String),
+    Detailed(ReleaseAssetPlatformAsset),
+}
+
+impl ReleaseAssetPlatformSource {
+    fn url(&self) -> &str {
+        match self {
+            Self::Direct(url) => url,
+            Self::Detailed(asset) => &asset.url,
+        }
+    }
+
+    fn archive(&self) -> Option<&ReleaseAssetArchiveSpec> {
+        match self {
+            Self::Direct(_) => None,
+            Self::Detailed(asset) => asset.archive.as_ref(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReleaseAssetSourceConfig {
-    asset_by_platform: std::collections::BTreeMap<String, String>,
+    asset_by_platform: std::collections::BTreeMap<String, ReleaseAssetPlatformSource>,
     #[serde(default)]
     version_args: Vec<String>,
 }
@@ -1226,11 +1286,13 @@ impl ReleaseAssetProvisioningBackend {
         config: &ReleaseAssetSourceConfig,
     ) -> Result<String, ProvisioningBackendError> {
         let url = release_asset_url(action, target, config)?;
+        let source = release_asset_platform_source(action, target, config)?;
         let destination = release_asset_relative_destination(action, target);
-        let temp_path = format!("{destination}.tmp");
+        let temp_path = format!("{destination}.download");
+        let extract_dir = format!("{destination}.extract");
 
-        Ok(if release_asset_target_os(target) == "windows" {
-            format!(
+        Ok(match (release_asset_target_os(target), source.archive()) {
+            ("windows", None) => format!(
                 r#"$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $dest = '{destination}'
@@ -1242,9 +1304,62 @@ Move-Item -Force $tmp $dest"#,
                 destination = destination.replace('\'', "''"),
                 temp_path = temp_path.replace('\'', "''"),
                 url = url.replace('\'', "''"),
-            )
-        } else {
-            format!(
+            ),
+            ("windows", Some(archive)) => match archive.format {
+                ReleaseAssetArchiveFormat::TarGz => format!(
+                    r#"$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$dest = '{destination}'
+$tmp = '{temp_path}'
+$extract = '{extract_dir}'
+$dir = Split-Path -Parent $dest
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+if (Test-Path $extract) {{ Remove-Item -Recurse -Force $extract }}
+New-Item -ItemType Directory -Force -Path $extract | Out-Null
+Invoke-WebRequest -UseBasicParsing -Uri '{url}' -OutFile $tmp
+tar -xzf $tmp -C $extract
+$source = Join-Path $extract '{executable_path}'
+if (!(Test-Path $source)) {{ throw 'archive executable not found' }}
+Move-Item -Force $source $dest
+Remove-Item -Force $tmp
+Remove-Item -Recurse -Force $extract"#,
+                    destination = destination.replace('\'', "''"),
+                    temp_path = temp_path.replace('\'', "''"),
+                    extract_dir = extract_dir.replace('\'', "''"),
+                    url = url.replace('\'', "''"),
+                    executable_path = archive
+                        .executable_path
+                        .replace('/', "\\")
+                        .replace('\'', "''"),
+                ),
+                ReleaseAssetArchiveFormat::Zip => format!(
+                    r#"$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$dest = '{destination}'
+$tmp = '{temp_path}'
+$extract = '{extract_dir}'
+$dir = Split-Path -Parent $dest
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+if (Test-Path $extract) {{ Remove-Item -Recurse -Force $extract }}
+New-Item -ItemType Directory -Force -Path $extract | Out-Null
+Invoke-WebRequest -UseBasicParsing -Uri '{url}' -OutFile $tmp
+Expand-Archive -Path $tmp -DestinationPath $extract -Force
+$source = Join-Path $extract '{executable_path}'
+if (!(Test-Path $source)) {{ throw 'archive executable not found' }}
+Move-Item -Force $source $dest
+Remove-Item -Force $tmp
+Remove-Item -Recurse -Force $extract"#,
+                    destination = destination.replace('\'', "''"),
+                    temp_path = temp_path.replace('\'', "''"),
+                    extract_dir = extract_dir.replace('\'', "''"),
+                    url = url.replace('\'', "''"),
+                    executable_path = archive
+                        .executable_path
+                        .replace('/', "\\")
+                        .replace('\'', "''"),
+                ),
+            },
+            (_, None) => format!(
                 r#"set -eu
 dest={destination}
 tmp={temp_path}
@@ -1262,7 +1377,73 @@ mv "$tmp" "$dest""#,
                 destination = shell_quote(&destination),
                 temp_path = shell_quote(&temp_path),
                 url = shell_quote(&url),
-            )
+            ),
+            (_, Some(archive)) => match archive.format {
+                ReleaseAssetArchiveFormat::TarGz => format!(
+                    r#"set -eu
+dest={destination}
+tmp={temp_path}
+extract_dir={extract_dir}
+mkdir -p "$(dirname "$dest")"
+rm -rf "$extract_dir"
+mkdir -p "$extract_dir"
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL -o "$tmp" {url}
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "$tmp" {url}
+else
+  echo "curl or wget is required to provision release assets" >&2
+  exit 127
+fi
+tar -xzf "$tmp" -C "$extract_dir"
+src="$extract_dir"/{executable_path}
+if [ ! -f "$src" ]; then
+  echo "archive executable not found: {executable_path}" >&2
+  exit 1
+fi
+chmod +x "$src"
+mv "$src" "$dest"
+rm -f "$tmp"
+rm -rf "$extract_dir""#,
+                    destination = shell_quote(&destination),
+                    temp_path = shell_quote(&temp_path),
+                    extract_dir = shell_quote(&extract_dir),
+                    url = shell_quote(&url),
+                    executable_path = shell_quote(&archive.executable_path),
+                ),
+                ReleaseAssetArchiveFormat::Zip => format!(
+                    r#"set -eu
+dest={destination}
+tmp={temp_path}
+extract_dir={extract_dir}
+mkdir -p "$(dirname "$dest")"
+rm -rf "$extract_dir"
+mkdir -p "$extract_dir"
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL -o "$tmp" {url}
+elif command -v wget >/dev/null 2>&1; then
+  wget -qO "$tmp" {url}
+else
+  echo "curl or wget is required to provision release assets" >&2
+  exit 127
+fi
+unzip -q "$tmp" -d "$extract_dir"
+src="$extract_dir"/{executable_path}
+if [ ! -f "$src" ]; then
+  echo "archive executable not found: {executable_path}" >&2
+  exit 1
+fi
+chmod +x "$src"
+mv "$src" "$dest"
+rm -f "$tmp"
+rm -rf "$extract_dir""#,
+                    destination = shell_quote(&destination),
+                    temp_path = shell_quote(&temp_path),
+                    extract_dir = shell_quote(&extract_dir),
+                    url = shell_quote(&url),
+                    executable_path = shell_quote(&archive.executable_path),
+                ),
+            },
         })
     }
 
@@ -1285,14 +1466,30 @@ mv "$tmp" "$dest""#,
         config: &ReleaseAssetSourceConfig,
     ) -> Result<String, ProvisioningBackendError> {
         let _ = release_asset_url(action, target, config)?;
-        Ok(if release_asset_target_os(target) == "windows" {
-            String::from(
+        let source = release_asset_platform_source(action, target, config)?;
+        Ok(match (release_asset_target_os(target), source.archive()) {
+            ("windows", None) => String::from(
                 "if (Get-Command powershell -ErrorAction SilentlyContinue) { exit 0 } else { exit 127 }",
-            )
-        } else {
-            String::from(
+            ),
+            ("windows", Some(archive)) => match archive.format {
+                ReleaseAssetArchiveFormat::TarGz => String::from(
+                    "if ((Get-Command powershell -ErrorAction SilentlyContinue) -and (Get-Command tar -ErrorAction SilentlyContinue)) { exit 0 } else { exit 127 }",
+                ),
+                ReleaseAssetArchiveFormat::Zip => String::from(
+                    "if (Get-Command powershell -ErrorAction SilentlyContinue) { exit 0 } else { exit 127 }",
+                ),
+            },
+            (_, None) => String::from(
                 "if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then exit 0; else echo \"curl or wget is required to provision release assets\" >&2; exit 127; fi",
-            )
+            ),
+            (_, Some(archive)) => match archive.format {
+                ReleaseAssetArchiveFormat::TarGz => String::from(
+                    "if (command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1) && command -v tar >/dev/null 2>&1; then exit 0; else echo \"curl or wget and tar are required to provision release asset archives\" >&2; exit 127; fi",
+                ),
+                ReleaseAssetArchiveFormat::Zip => String::from(
+                    "if (command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1) && command -v unzip >/dev/null 2>&1; then exit 0; else echo \"curl or wget and unzip are required to provision release asset archives\" >&2; exit 127; fi",
+                ),
+            },
         })
     }
 }
@@ -4868,11 +5065,7 @@ mod tests {
         make_executable(&shim_dir.path().join("mise"));
 
         let original_path = env::var("PATH").unwrap_or_default();
-        let mut new_path = shim_dir.path().display().to_string();
-        if !original_path.is_empty() {
-            new_path.push(':');
-            new_path.push_str(&original_path);
-        }
+        let new_path = format!("{}:/bin:/usr/bin", shim_dir.path().display());
         unsafe {
             env::set_var("PATH", new_path);
         }
@@ -6095,6 +6288,246 @@ version_args:
                 .exists()
         );
         assert!(output.stdout.contains("v4.52.5") || output.stderr.contains("v4.52.5"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_container_release_asset_archive_request() {
+        let _guard = env_mutex_lock();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        let script = r#"#!/bin/sh
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  args="$*"
+  case "$args" in
+    *"tar -xzf"*)
+      /bin/mkdir -p ./.ota/state/source-managed/bin.extract
+      /bin/mkdir -p ./.ota/state/source-managed/bin
+      cat > ./.ota/state/source-managed/bin.extract/migrate <<'EOF'
+#!/bin/sh
+if [ "$1" = "-version" ]; then
+  echo '4.19.1'
+  exit 0
+fi
+exit 1
+EOF
+      /bin/chmod +x ./.ota/state/source-managed/bin.extract/migrate
+      /bin/cp ./.ota/state/source-managed/bin.extract/migrate ./.ota/state/source-managed/bin/migrate
+      exit 0
+      ;;
+    *".ota/state/source-managed/bin/migrate"*)
+      echo '4.19.1'
+      exit 0
+      ;;
+  esac
+fi
+exit 1
+"#;
+        fs::write(&docker, script).unwrap();
+        make_executable(&docker);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "migrate".to_string(),
+                requested_version: "4.19.1".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
+                package: None,
+                source: "release-asset".to_string(),
+                source_config: Some(
+                    serde_yaml::from_str::<std::collections::BTreeMap<String, Value>>(
+                        r#"
+asset_by_platform:
+  linux_x86_64:
+    url: https://example.com/releases/v{version}/migrate.linux-amd64.tar.gz
+    archive:
+      format: tar_gz
+      executable_path: migrate
+  linux_aarch64:
+    url: https://example.com/releases/v{version}/migrate.linux-arm64.tar.gz
+    archive:
+      format: tar_gz
+      executable_path: migrate
+  macos_x86_64:
+    url: https://example.com/releases/v{version}/migrate.darwin-amd64.tar.gz
+    archive:
+      format: tar_gz
+      executable_path: migrate
+  macos_aarch64:
+    url: https://example.com/releases/v{version}/migrate.darwin-arm64.tar.gz
+    archive:
+      format: tar_gz
+      executable_path: migrate
+version_args:
+  - -version
+"#,
+                    )
+                    .unwrap(),
+                ),
+                approved_version: Some("4.19.1".to_string()),
+                policy_match: Some("4.19.1".to_string()),
+            }],
+        };
+
+        let workdir = TempDir::new().unwrap();
+        let output = apply_provisioning_request_with_target(
+            &request,
+            workdir.path(),
+            &ProvisioningExecutionTarget::Container {
+                image: "premium/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
+            },
+            ProvisioningOutputMode::Capture,
+        )
+        .unwrap();
+
+        assert!(
+            workdir
+                .path()
+                .join(".ota/state/source-managed/bin/migrate")
+                .exists()
+        );
+        assert!(output.stdout.contains("4.19.1") || output.stderr.contains("4.19.1"));
+
+        unsafe {
+            env::set_var("PATH", original_path);
+        }
+    }
+
+    #[test]
+    fn applies_container_release_asset_zip_archive_request() {
+        let _guard = env_mutex_lock();
+        let shim_dir = TempDir::new().unwrap();
+        let docker = shim_dir.path().join("docker");
+        let script = r#"#!/bin/sh
+if [ "$1" = "info" ]; then
+  exit 0
+fi
+if [ "$1" = "run" ]; then
+  args="$*"
+  case "$args" in
+    *"unzip -q"*)
+      /bin/mkdir -p ./.ota/state/source-managed/bin.extract
+      /bin/mkdir -p ./.ota/state/source-managed/bin
+      cat > ./.ota/state/source-managed/bin.extract/migrate <<'EOF'
+#!/bin/sh
+if [ "$1" = "-version" ]; then
+  echo '4.19.1'
+  exit 0
+fi
+exit 1
+EOF
+      /bin/chmod +x ./.ota/state/source-managed/bin.extract/migrate
+      /bin/cp ./.ota/state/source-managed/bin.extract/migrate ./.ota/state/source-managed/bin/migrate
+      exit 0
+      ;;
+    *".ota/state/source-managed/bin/migrate"*)
+      echo '4.19.1'
+      exit 0
+      ;;
+  esac
+fi
+exit 1
+"#;
+        fs::write(&docker, script).unwrap();
+        make_executable(&docker);
+
+        let original_path = env::var("PATH").unwrap_or_default();
+        let mut new_path = shim_dir.path().display().to_string();
+        if !original_path.is_empty() {
+            new_path.push(':');
+            new_path.push_str(&original_path);
+        }
+        unsafe {
+            env::set_var("PATH", new_path);
+        }
+
+        let request = ProvisioningBackendRequest {
+            actions: vec![ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: "migrate".to_string(),
+                requested_version: "4.19.1".to_string(),
+                normalized_requirement: None,
+                resolved_version: None,
+                package: None,
+                source: "release-asset".to_string(),
+                source_config: Some(
+                    serde_yaml::from_str::<std::collections::BTreeMap<String, Value>>(
+                        r#"
+asset_by_platform:
+  linux_x86_64:
+    url: https://example.com/releases/v{version}/migrate.linux-amd64.zip
+    archive:
+      format: zip
+      executable_path: migrate
+  linux_aarch64:
+    url: https://example.com/releases/v{version}/migrate.linux-arm64.zip
+    archive:
+      format: zip
+      executable_path: migrate
+  macos_x86_64:
+    url: https://example.com/releases/v{version}/migrate.darwin-amd64.zip
+    archive:
+      format: zip
+      executable_path: migrate
+  macos_aarch64:
+    url: https://example.com/releases/v{version}/migrate.darwin-arm64.zip
+    archive:
+      format: zip
+      executable_path: migrate
+version_args:
+  - -version
+"#,
+                    )
+                    .unwrap(),
+                ),
+                approved_version: Some("4.19.1".to_string()),
+                policy_match: Some("4.19.1".to_string()),
+            }],
+        };
+
+        let workdir = TempDir::new().unwrap();
+        let output = apply_provisioning_request_with_target(
+            &request,
+            workdir.path(),
+            &ProvisioningExecutionTarget::Container {
+                image: "premium/test:latest".to_string(),
+                engine: "docker".to_string(),
+                lifecycle: Lifecycle::Ephemeral,
+                container_name: None,
+            },
+            ProvisioningOutputMode::Capture,
+        )
+        .unwrap();
+
+        assert!(
+            workdir
+                .path()
+                .join(".ota/state/source-managed/bin/migrate")
+                .exists()
+        );
+        assert!(output.stdout.contains("4.19.1") || output.stderr.contains("4.19.1"));
 
         unsafe {
             env::set_var("PATH", original_path);

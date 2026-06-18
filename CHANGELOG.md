@@ -30,6 +30,12 @@
   tools can now own exact downloadable binary fulfillment directly in the repo contract instead of
   only through org policy; validator, doctor, selected-path preview JSON, and run-path
   provisioning now all honor the same surface
+- widened `provider: release_asset` so platform assets may also declare archive extraction
+  metadata; ota now supports downloading a release archive, extracting one declared executable,
+  and installing that executable into the managed tool path for the selected task/workflow lane
+- widened archive-backed `provider: release_asset` again so `archive.format` now supports `zip`
+  alongside `tar_gz`, closing the first-class Windows-style release archive lane for standalone
+  CLI ownership
 - fixed execution-context requirement projection so container-selected and other non-native task
   paths preserve top-level detailed tool acquisition metadata instead of collapsing to bare
   version-only tool requirements during preview and doctor selection

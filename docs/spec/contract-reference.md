@@ -986,6 +986,19 @@ tools:
           windows_x86_64: https://example.com/releases/v{version}/yq_windows_amd64.exe
         version_args:
           - --version
+  migrate:
+    version: "4.19.1"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          macos_aarch64:
+            url: https://github.com/golang-migrate/migrate/releases/download/v{version}/migrate.darwin-arm64.tar.gz
+            archive:
+              format: tar_gz
+              executable_path: migrate
+        version_args:
+          - -version
 ```
 
 Rules:
@@ -1008,6 +1021,11 @@ Rules:
 - `provider: release_asset` is provisioning-owned rather than activation-owned; it must declare
   `source_config.asset_by_platform`, may declare optional `source_config.version_args`, and must
   not declare `package`, `version`, `shell`, or `run`
+- each `source_config.asset_by_platform.<platform>` entry may be either a direct asset URL string
+  or an object with `url` plus optional archive extraction metadata
+- `source_config.asset_by_platform.<platform>.archive.format` currently supports `tar_gz` and `zip`
+- `source_config.asset_by_platform.<platform>.archive.executable_path` tells ota which file inside
+  the extracted archive becomes the final executable in `.ota/state/source-managed/bin`
 - package-manager-backed tool acquisition (`apt`, `brew`, `winget`, `choco`, `scoop`) is
   provisioning-owned rather than activation-owned; ota keeps the tool identity under `tools` and
   emits a provisioning request for the selected task/workflow path instead of treating the tool as
@@ -1028,7 +1046,9 @@ Rules:
   when the repo truth is "this tool becomes available through this command", not "install it any
   way you want"
 - `provider: release_asset` tells ota to download an approved executable artifact into its
-  source-managed tool path when the selected task/workflow path requires that tool
+  source-managed tool path when the selected task/workflow path requires that tool; when a
+  platform asset declares `archive`, ota downloads the archive, extracts the declared executable,
+  and installs that executable into the same managed path
 - package-manager-backed acquisition belongs in `tools`, not `native_prerequisites`; use
   `native_prerequisites` for host-native bundles such as compiler stacks, Xcode CLT, or Visual
   Studio Build Tools

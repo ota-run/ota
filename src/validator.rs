@@ -1633,10 +1633,64 @@ fn validate_release_asset_tool_source_config(
                 "tool `{name}`{location} acquisition `release-asset` has unsupported platform `{platform}`; expected one of: linux_x86_64, linux_aarch64, macos_x86_64, macos_aarch64, windows_x86_64, windows_aarch64"
             )));
         }
-        if asset.as_str().map(str::trim).is_none_or(str::is_empty) {
+        if let Some(asset_url) = asset.as_str() {
+            if asset_url.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `release-asset` platform `{platform}` must declare a non-empty asset URL"
+                )));
+            }
+            continue;
+        }
+
+        let Some(asset_mapping) = asset.as_mapping() else {
+            errors.push(ValidationError::new(format!(
+                "tool `{name}`{location} acquisition `release-asset` platform `{platform}` must be a URL string or an object with `url`"
+            )));
+            continue;
+        };
+
+        let Some(url) = asset_mapping
+            .get(serde_yaml::Value::String(String::from("url")))
+            .and_then(serde_yaml::Value::as_str)
+        else {
+            errors.push(ValidationError::new(format!(
+                "tool `{name}`{location} acquisition `release-asset` platform `{platform}` object must declare `url`"
+            )));
+            continue;
+        };
+
+        if url.trim().is_empty() {
             errors.push(ValidationError::new(format!(
                 "tool `{name}`{location} acquisition `release-asset` platform `{platform}` must declare a non-empty asset URL"
             )));
+        }
+
+        if let Some(archive) = asset_mapping
+            .get(serde_yaml::Value::String(String::from("archive")))
+            .and_then(serde_yaml::Value::as_mapping)
+        {
+            let format = archive
+                .get(serde_yaml::Value::String(String::from("format")))
+                .and_then(serde_yaml::Value::as_str);
+            if format.is_none_or(|value| value.trim().is_empty()) {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `release-asset` platform `{platform}` archive must declare `format`"
+                )));
+            } else if !matches!(format, Some("tar_gz" | "zip")) {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `release-asset` platform `{platform}` archive format `{}` is unsupported; expected `tar_gz` or `zip`",
+                    format.unwrap_or_default()
+                )));
+            }
+
+            let executable_path = archive
+                .get(serde_yaml::Value::String(String::from("executable_path")))
+                .and_then(serde_yaml::Value::as_str);
+            if executable_path.is_none_or(|value| value.trim().is_empty()) {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `release-asset` platform `{platform}` archive must declare non-empty `executable_path`"
+                )));
+            }
         }
     }
 
@@ -27981,6 +28035,66 @@ tools:
 
         validate_contract(&contract)
             .expect("release-asset tool acquisition source_config should validate");
+    }
+
+    #[test]
+    fn accepts_release_asset_archive_tool_acquisition_source_config() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  migrate:
+    version: "4.19.1"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64:
+            url: https://example.com/releases/v{version}/migrate.linux-amd64.tar.gz
+            archive:
+              format: tar_gz
+              executable_path: migrate
+        version_args:
+          - -version
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("release-asset archive tool acquisition source_config should validate");
+    }
+
+    #[test]
+    fn accepts_release_asset_zip_tool_acquisition_source_config() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  migrate:
+    version: "4.19.1"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          windows_x86_64:
+            url: https://example.com/releases/v{version}/migrate.windows-amd64.zip
+            archive:
+              format: zip
+              executable_path: migrate.exe
+        version_args:
+          - -version
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("release-asset zip tool acquisition source_config should validate");
     }
 
     #[test]
