@@ -1450,6 +1450,26 @@ impl Contract {
             .unwrap_or_else(|| requirement.clone())
     }
 
+    pub(crate) fn resolved_context_requirement_surface(
+        &self,
+        context: &ExecutionContext,
+    ) -> RequirementSurface {
+        let mut surface = RequirementSurface::default();
+        for (name, requirement) in &context.requirements.runtimes {
+            surface.runtimes.insert(
+                name.clone(),
+                self.resolve_scoped_runtime_requirement(name, requirement),
+            );
+        }
+        for (name, requirement) in &context.requirements.tools {
+            surface.tools.insert(
+                name.clone(),
+                self.resolve_scoped_tool_requirement(name, requirement),
+            );
+        }
+        surface
+    }
+
     pub fn all_requirement_surface(&self) -> RequirementSurface {
         let mut surface = RequirementSurface {
             runtimes: self.runtimes.clone(),
@@ -1459,10 +1479,7 @@ impl Contract {
 
         if let Some(execution) = self.execution.as_ref() {
             for context in execution.contexts.values() {
-                surface
-                    .runtimes
-                    .extend(context.requirements.runtimes.clone());
-                surface.tools.extend(context.requirements.tools.clone());
+                surface.merge(&self.resolved_context_requirement_surface(context));
             }
         }
 
@@ -1488,10 +1505,7 @@ impl Contract {
                     continue;
                 }
 
-                surface
-                    .runtimes
-                    .extend(context.requirements.runtimes.clone());
-                surface.tools.extend(context.requirements.tools.clone());
+                surface.merge(&self.resolved_context_requirement_surface(context));
             }
         }
 
@@ -2334,6 +2348,7 @@ pub struct ToolAcquisitionSpec {
 pub enum ToolAcquisitionProvider {
     Corepack,
     Command,
+    ReleaseAsset,
     Apt,
     Brew,
     Winget,
@@ -2346,6 +2361,7 @@ impl ToolAcquisitionProvider {
         match self {
             Self::Corepack => "corepack",
             Self::Command => "command",
+            Self::ReleaseAsset => "release-asset",
             Self::Apt => "apt",
             Self::Brew => "brew",
             Self::Winget => "winget",
@@ -2360,6 +2376,7 @@ impl ToolAcquisitionProvider {
 
     pub const fn provisioning_source(self) -> Option<&'static str> {
         match self {
+            Self::ReleaseAsset => Some("release-asset"),
             Self::Apt => Some("apt"),
             Self::Brew => Some("brew"),
             Self::Winget => Some("winget"),

@@ -16375,7 +16375,8 @@ fn selected_task_requirement_surface(
 ) -> Option<RequirementSurface> {
     let effective = effective_task_execution(contract, task_name, overrides);
     let task = contract.tasks.get(task_name)?;
-    let scoped = task.scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
+    let scoped =
+        task.scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
     let mut selected_tool_names = scoped.tools.keys().cloned().collect::<BTreeSet<_>>();
     let mut surface = scoped;
     for (name, requirement) in &surface.runtimes.clone() {
@@ -16420,11 +16421,7 @@ fn selected_task_requirement_surface(
         for tool_name in context.requirements.tools.keys() {
             selected_tool_names.insert(tool_name.clone());
         }
-        surface.merge(&RequirementSurface {
-            runtimes: context.requirements.runtimes.clone(),
-            tools: context.requirements.tools.clone(),
-            presence_only_tools: BTreeSet::new(),
-        });
+        surface.merge(&contract.resolved_context_requirement_surface(context));
     }
     if matches!(effective.backend, Backend::Native) {
         let scoped_native = task
@@ -50808,6 +50805,96 @@ tasks:
     }
 
     #[test]
+    fn run_dry_run_json_includes_direct_release_asset_tool_provisioning_request() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract = r#"
+version: 1
+project:
+  name: demo
+tools:
+  yq:
+    version: "4.52.5"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/yq_linux_amd64
+          linux_aarch64: https://example.com/releases/v{version}/yq_linux_arm64
+          macos_x86_64: https://example.com/releases/v{version}/yq_darwin_amd64
+          macos_aarch64: https://example.com/releases/v{version}/yq_darwin_arm64
+          windows_x86_64: https://example.com/releases/v{version}/yq_windows_amd64.exe
+          windows_aarch64: https://example.com/releases/v{version}/yq_windows_arm64.exe
+        version_args:
+          - --version
+tasks:
+  render:
+    command:
+      exe: yq
+      args:
+        - --version
+    requirements:
+      tools:
+        yq: "4.52.5"
+"#;
+        fs::write(repo.path().join("ota.yaml"), contract).expect("write contract");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                if cfg!(windows) {
+                    std::ffi::OsString::from(r"C:\Windows\System32")
+                } else {
+                    std::ffi::OsString::from("/usr/bin:/bin:/usr/sbin:/sbin")
+                },
+            );
+        }
+
+        let output = super::run_command(
+            "render",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(
+            json["provisioning_request"]["actions"][0]["source"],
+            "release-asset"
+        );
+        assert_eq!(
+            json["provisioning_request"]["actions"][0]["kind"],
+            "select_source"
+        );
+        assert!(json["provisioning_request"]["actions"][0]["package"].is_null());
+        assert!(
+            json["provisioning_request"]["actions"][0]["source_config"]["asset_by_platform"]
+                .is_object()
+        );
+    }
+
+    #[test]
     fn selected_task_requirement_surface_forces_explicit_tool_selection_required() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -51504,6 +51591,65 @@ tasks:
             surface.tools.get("uv").expect("uv requirement").version(),
             ">=0.11.8"
         );
+    }
+
+    #[test]
+    fn selected_task_requirement_surface_projects_top_level_release_asset_tool_for_container_context()
+     {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tools:
+  yq:
+    version: "4.52.5"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/yq_linux_amd64
+          linux_aarch64: https://example.com/releases/v{version}/yq_linux_arm64
+          macos_x86_64: https://example.com/releases/v{version}/yq_darwin_amd64
+          macos_aarch64: https://example.com/releases/v{version}/yq_darwin_arm64
+          windows_x86_64: https://example.com/releases/v{version}/yq_windows_amd64.exe
+          windows_aarch64: https://example.com/releases/v{version}/yq_windows_arm64.exe
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/dev:latest
+      requirements:
+        tools:
+          yq: "4.52.5"
+tasks:
+  render:
+    context: app
+    command:
+      exe: yq
+      args:
+        - --version
+"#,
+        )
+        .unwrap();
+
+        let surface = super::selected_task_requirement_surface(
+            &contract,
+            "render",
+            ExecutionOverrides::default(),
+        )
+        .expect("selected task surface");
+
+        let acquisition = surface
+            .tools
+            .get("yq")
+            .and_then(|requirement| requirement.acquisition())
+            .expect("yq acquisition");
+        assert_eq!(acquisition.provider.as_str(), "release-asset");
     }
 
     #[test]
@@ -86397,11 +86543,7 @@ fn selected_workflow_task_requirement_surface(
             for name in context.requirements.tools.keys() {
                 selected_tool_names.insert(name.clone());
             }
-            surface.merge(&RequirementSurface {
-                runtimes: context.requirements.runtimes.clone(),
-                tools: context.requirements.tools.clone(),
-                presence_only_tools: BTreeSet::new(),
-            });
+            surface.merge(&contract.resolved_context_requirement_surface(context));
         }
         if matches!(effective.backend, Backend::Native) {
             let scoped_native = task.scoped_native_requirements_for_execution(
@@ -86662,11 +86804,12 @@ fn activation_action_command(action: &RequirementActivationAction) -> String {
             }
         }
         ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::ReleaseAsset
         | ToolAcquisitionProvider::Brew
         | ToolAcquisitionProvider::Winget
         | ToolAcquisitionProvider::Choco
         | ToolAcquisitionProvider::Scoop => {
-            unreachable!("package-manager-backed tool acquisition is provisioning-owned, not activation-owned")
+            unreachable!("provisioning-owned tool acquisition is not activation-owned")
         }
     }
 }
@@ -86709,6 +86852,7 @@ fn finding_targets_activation_action(
                 && finding.why.contains(action.tool_name.as_str())
         }
         ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::ReleaseAsset
         | ToolAcquisitionProvider::Brew
         | ToolAcquisitionProvider::Winget
         | ToolAcquisitionProvider::Choco
@@ -86753,6 +86897,7 @@ fn activation_action_needs_local_bootstrap(action: &RequirementActivationAction)
         }
         ToolAcquisitionProvider::Command => false,
         ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::ReleaseAsset
         | ToolAcquisitionProvider::Brew
         | ToolAcquisitionProvider::Winget
         | ToolAcquisitionProvider::Choco
@@ -87466,12 +87611,13 @@ fn render_up_preview_activation_action(action: &RequirementActivationAction) -> 
                 .unwrap_or("command")
         ),
         ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::ReleaseAsset
         | ToolAcquisitionProvider::Brew
         | ToolAcquisitionProvider::Winget
         | ToolAcquisitionProvider::Choco
-        | ToolAcquisitionProvider::Scoop => unreachable!(
-            "package-manager-backed tool acquisition is provisioning-owned, not activation-owned"
-        ),
+        | ToolAcquisitionProvider::Scoop => {
+            unreachable!("provisioning-owned tool acquisition is not activation-owned")
+        }
     }
 }
 
@@ -87491,12 +87637,13 @@ fn render_up_preview_skipped_activation_action(action: &RequirementActivationAct
             action.tool_name
         ),
         ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::ReleaseAsset
         | ToolAcquisitionProvider::Brew
         | ToolAcquisitionProvider::Winget
         | ToolAcquisitionProvider::Choco
-        | ToolAcquisitionProvider::Scoop => unreachable!(
-            "package-manager-backed tool acquisition is provisioning-owned, not activation-owned"
-        ),
+        | ToolAcquisitionProvider::Scoop => {
+            unreachable!("provisioning-owned tool acquisition is not activation-owned")
+        }
     }
 }
 
@@ -87691,11 +87838,10 @@ fn build_up_preview(
     for action in selected_up_native_activation_actions(contract, overrides, workflow_name) {
         actions.push(render_up_preview_native_activation_action(&action));
     }
-    for action in requirement_surface_activation_actions(&up_activation_requirement_surface(
-        contract,
-        overrides,
-        workflow_name,
-    ), current_os()) {
+    for action in requirement_surface_activation_actions(
+        &up_activation_requirement_surface(contract, overrides, workflow_name),
+        current_os(),
+    ) {
         if policy_provisioned_tools.contains(action.tool_name.as_str()) {
             skipped.push(render_up_preview_skipped_activation_action(&action));
         }
@@ -88915,12 +89061,13 @@ fn activation_failure_finding(action: &RequirementActivationAction, exit_code: i
             ),
         },
         ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::ReleaseAsset
         | ToolAcquisitionProvider::Brew
         | ToolAcquisitionProvider::Winget
         | ToolAcquisitionProvider::Choco
-        | ToolAcquisitionProvider::Scoop => unreachable!(
-            "package-manager-backed tool acquisition is provisioning-owned, not activation-owned"
-        ),
+        | ToolAcquisitionProvider::Scoop => {
+            unreachable!("provisioning-owned tool acquisition is not activation-owned")
+        }
     }
 }
 
@@ -88937,11 +89084,12 @@ fn run_activation_action(
             run_command_activation_action(&action.acquisition, working_dir, mode)
         }
         ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::ReleaseAsset
         | ToolAcquisitionProvider::Brew
         | ToolAcquisitionProvider::Winget
         | ToolAcquisitionProvider::Choco
         | ToolAcquisitionProvider::Scoop => Err(String::from(
-            "package-manager-backed tool acquisition is provisioning-owned, not activation-owned",
+            "provisioning-owned tool acquisition is not activation-owned",
         )),
     }
 }

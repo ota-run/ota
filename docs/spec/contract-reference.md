@@ -973,6 +973,19 @@ tools:
       provider: command
       shell: sh
       run: curl -fsSL https://bun.sh/install | sh
+  yq:
+    version: "4.52.5"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/yq_linux_amd64
+          linux_aarch64: https://example.com/releases/v{version}/yq_linux_arm64
+          macos_x86_64: https://example.com/releases/v{version}/yq_darwin_amd64
+          macos_aarch64: https://example.com/releases/v{version}/yq_darwin_arm64
+          windows_x86_64: https://example.com/releases/v{version}/yq_windows_amd64.exe
+        version_args:
+          - --version
 ```
 
 Rules:
@@ -985,28 +998,37 @@ Rules:
 - `platforms` entries must also appear in `only_on` when `only_on` is declared
 - `acquisition` optionally declares how ota can activate or provision the tool safely when a
   selected task/workflow requires it
-- `acquisition.provider`: supported values are `corepack`, `command`, `apt`, `brew`, `winget`,
-  `choco`, and `scoop`
+- `acquisition.provider`: supported values are `corepack`, `command`, `release_asset`, `apt`,
+  `brew`, `winget`, `choco`, and `scoop`
 - `acquisition.package` and `acquisition.version` are required for `provider: corepack`
 - `tool node` cannot use `provider: corepack`; declare Node under `toolchains.node` instead, and
   use structured `fulfillment` there when ota should own package-manager activation on the
   selected path.
 - `acquisition.shell` and `acquisition.run` are required for `provider: command`
+- `provider: release_asset` is provisioning-owned rather than activation-owned; it must declare
+  `source_config.asset_by_platform`, may declare optional `source_config.version_args`, and must
+  not declare `package`, `version`, `shell`, or `run`
 - package-manager-backed tool acquisition (`apt`, `brew`, `winget`, `choco`, `scoop`) is
   provisioning-owned rather than activation-owned; ota keeps the tool identity under `tools` and
   emits a provisioning request for the selected task/workflow path instead of treating the tool as
   a native prerequisite
+- `release_asset` uses the tool key as the executable identity and projects an exact selected-path
+  `release-asset` provisioning request instead of asking authors to hide binary downloads in shell
+  glue
 - package-manager-backed tool acquisition may also declare provider-owned `source_config` when the
   package manager itself needs explicit source truth such as a Homebrew tap, Winget source,
   Chocolatey feed, Scoop bucket, or apt sources list
 - package-manager-backed tool acquisition may declare `package` when the install identifier differs
   from the tool key; it must not declare `version`, `shell`, or `run`
-- `source_config` must not be empty and is only valid on package-manager-backed acquisition
+- `source_config` must not be empty and is valid on package-manager-backed acquisition and
+  `release_asset`
 - `provider: corepack` activates package-manager-managed tools such as `pnpm` through
   `corepack enable && corepack prepare <package>@<version> --activate`
 - `provider: command` runs one explicit shell command as the acquisition lane for that tool; use it
   when the repo truth is "this tool becomes available through this command", not "install it any
   way you want"
+- `provider: release_asset` tells ota to download an approved executable artifact into its
+  source-managed tool path when the selected task/workflow path requires that tool
 - package-manager-backed acquisition belongs in `tools`, not `native_prerequisites`; use
   `native_prerequisites` for host-native bundles such as compiler stacks, Xcode CLT, or Visual
   Studio Build Tools

@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- widened repo-level `tools.<name>.acquisition` with `provider: release_asset`, so standalone CLI
+  tools can now own exact downloadable binary fulfillment directly in the repo contract instead of
+  only through org policy; validator, doctor, selected-path preview JSON, and run-path
+  provisioning now all honor the same surface
+- fixed execution-context requirement projection so container-selected and other non-native task
+  paths preserve top-level detailed tool acquisition metadata instead of collapsing to bare
+  version-only tool requirements during preview and doctor selection
 - publish selected-path `provisioning` and `provisioning_request` in `ota run --dry-run --json`
   so direct tool acquisition source truth is machine-readable in task preview output
 - allow `tools.<name>.acquisition.source_config` for package-manager-backed standalone CLI

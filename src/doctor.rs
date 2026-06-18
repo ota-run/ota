@@ -495,7 +495,10 @@ fn selected_backend_precondition_selections(
             selections.last_mut().expect("selection was just pushed")
         };
         let selected_tool_names = selected_tool_names_by_backend
-            .entry((backend_key(backend).to_string(), selection_context_name.clone()))
+            .entry((
+                backend_key(backend).to_string(),
+                selection_context_name.clone(),
+            ))
             .or_default();
 
         let scoped_surface = task.scoped_requirement_surface_for_execution(backend, context_name);
@@ -558,11 +561,9 @@ fn selected_backend_precondition_selections(
             for tool_name in context.requirements.tools.keys() {
                 selected_tool_names.insert(tool_name.clone());
             }
-            selection.requirement_surface.merge(&RequirementSurface {
-                runtimes: context.requirements.runtimes.clone(),
-                tools: context.requirements.tools.clone(),
-                presence_only_tools: BTreeSet::new(),
-            });
+            selection
+                .requirement_surface
+                .merge(&contract.resolved_context_requirement_surface(context));
         }
     }
 
@@ -577,12 +578,10 @@ fn selected_backend_precondition_selections(
             tools.extend(selection.requirement_surface.tools.clone());
             selection.requirement_surface.tools = tools;
         }
-        if let Some(selected_tool_names) = selected_tool_names_by_backend
-            .get(&(
-                backend_key(selection.backend).to_string(),
-                selection.context_name.clone(),
-            ))
-        {
+        if let Some(selected_tool_names) = selected_tool_names_by_backend.get(&(
+            backend_key(selection.backend).to_string(),
+            selection.context_name.clone(),
+        )) {
             for tool_name in selected_tool_names {
                 if let Some(requirement) = selection.requirement_surface.tools.get_mut(tool_name) {
                     requirement.force_required();
@@ -733,11 +732,9 @@ fn selected_task_backend_precondition_selections(
             for tool_name in context.requirements.tools.keys() {
                 selected_tool_names.insert(tool_name.clone());
             }
-            selection.requirement_surface.merge(&RequirementSurface {
-                runtimes: context.requirements.runtimes.clone(),
-                tools: context.requirements.tools.clone(),
-                presence_only_tools: BTreeSet::new(),
-            });
+            selection
+                .requirement_surface
+                .merge(&contract.resolved_context_requirement_surface(context));
         }
     }
 
@@ -752,12 +749,10 @@ fn selected_task_backend_precondition_selections(
             tools.extend(selection.requirement_surface.tools.clone());
             selection.requirement_surface.tools = tools;
         }
-        if let Some(selected_tool_names) = selected_tool_names_by_backend
-            .get(&(
-                backend_key(selection.backend).to_string(),
-                selection.context_name.clone(),
-            ))
-        {
+        if let Some(selected_tool_names) = selected_tool_names_by_backend.get(&(
+            backend_key(selection.backend).to_string(),
+            selection.context_name.clone(),
+        )) {
             for tool_name in selected_tool_names {
                 if let Some(requirement) = selection.requirement_surface.tools.get_mut(tool_name) {
                     requirement.force_required();
@@ -856,7 +851,8 @@ fn scoped_precondition_selection(
             task,
             backend,
         );
-        if let Some(exe) = task.effective_command_launch_executable_for_backend(backend, current_os())
+        if let Some(exe) =
+            task.effective_command_launch_executable_for_backend(backend, current_os())
         {
             selected_tool_names.insert(exe);
         }
@@ -867,11 +863,9 @@ fn scoped_precondition_selection(
                 .and_then(|execution| execution.contexts.get(context_name))
         {
             selected_tool_names.extend(context.requirements.tools.keys().cloned());
-            selection.requirement_surface.merge(&RequirementSurface {
-                runtimes: context.requirements.runtimes.clone(),
-                tools: context.requirements.tools.clone(),
-                presence_only_tools: BTreeSet::new(),
-            });
+            selection
+                .requirement_surface
+                .merge(&contract.resolved_context_requirement_surface(context));
         }
     }
 
@@ -1089,6 +1083,7 @@ fn tool_acquisition_command(acquisition: &ToolAcquisitionSpec) -> String {
                 }
             }
         }
+        ToolAcquisitionProvider::ReleaseAsset => String::from("ota up"),
         ToolAcquisitionProvider::Apt => format!(
             "apt-get install -y {}",
             acquisition.package.as_deref().unwrap_or("<package>")
@@ -1124,6 +1119,7 @@ fn tool_acquisition_provider_requirement(acquisition: &ToolAcquisitionSpec) -> &
                 .shell
                 .expect("validated command acquisition shell"),
         ),
+        ToolAcquisitionProvider::ReleaseAsset => "curl or wget",
         ToolAcquisitionProvider::Apt => "apt-get",
         ToolAcquisitionProvider::Brew => "brew",
         ToolAcquisitionProvider::Winget => "winget",
@@ -1146,16 +1142,20 @@ fn direct_tool_acquisition_provisioning_actions(
             let acquisition = requirement.acquisition_for_os(target_os)?;
             let source = acquisition.provider.provisioning_source()?;
             Some(ProvisioningAction {
-                kind: crate::policy_pack::ProvisioningActionKind::Install,
+                kind: if matches!(acquisition.provider, ToolAcquisitionProvider::ReleaseAsset) {
+                    crate::policy_pack::ProvisioningActionKind::SelectSource
+                } else {
+                    crate::policy_pack::ProvisioningActionKind::Install
+                },
                 target_kind: ProvisioningTargetKind::Tool,
                 name: name.clone(),
                 requested_version: requirement.version_for_os(target_os).to_string(),
                 normalized_requirement: None,
                 resolved_version: None,
-                package: acquisition
-                    .package
-                    .clone()
-                    .or_else(|| Some(name.clone())),
+                package: acquisition.package.clone().or_else(|| {
+                    (!matches!(acquisition.provider, ToolAcquisitionProvider::ReleaseAsset))
+                        .then(|| name.clone())
+                }),
                 source: source.to_string(),
                 source_config: acquisition.source_config.clone(),
                 approved_version: None,
@@ -1170,7 +1170,8 @@ fn merge_direct_tool_acquisition_provisioning(
     requirement_surface: &RequirementSurface,
     target_os: &str,
 ) -> Option<ProvisioningDiagnostics> {
-    let direct_actions = direct_tool_acquisition_provisioning_actions(requirement_surface, target_os);
+    let direct_actions =
+        direct_tool_acquisition_provisioning_actions(requirement_surface, target_os);
     if direct_actions.is_empty() {
         return provisioning;
     }
@@ -1391,11 +1392,7 @@ fn remote_doctor_probe_contexts(
                 tools: contract.tools.clone(),
                 presence_only_tools: BTreeSet::new(),
             });
-        requirement_surface.merge(&RequirementSurface {
-            runtimes: context.requirements.runtimes.clone(),
-            tools: context.requirements.tools.clone(),
-            presence_only_tools: BTreeSet::new(),
-        });
+        requirement_surface.merge(&contract.resolved_context_requirement_surface(context));
         let selected_toolchain_names = selected_task_surface
             .map(|selection| selection.toolchain_names.clone())
             .unwrap_or_else(|| contract.toolchains.keys().cloned().collect());
@@ -15011,6 +15008,59 @@ tasks:
     }
 
     #[test]
+    fn container_mode_precondition_surface_projects_top_level_release_asset_tool_from_context() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  yq:
+    version: "4.52.5"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/yq_linux_amd64
+          linux_aarch64: https://example.com/releases/v{version}/yq_linux_arm64
+          macos_x86_64: https://example.com/releases/v{version}/yq_darwin_amd64
+          macos_aarch64: https://example.com/releases/v{version}/yq_darwin_arm64
+          windows_x86_64: https://example.com/releases/v{version}/yq_windows_amd64.exe
+          windows_aarch64: https://example.com/releases/v{version}/yq_windows_arm64.exe
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: ghcr.io/ota/dev:latest
+      requirements:
+        tools:
+          yq: "4.52.5"
+tasks:
+  render:
+    context: app
+    command:
+      exe: yq
+      args:
+        - --version
+"#,
+        )
+        .unwrap();
+
+        let surface =
+            super::precondition_requirement_surface(&contract, DoctorMode::Container, None);
+        let acquisition = surface
+            .tools
+            .get("yq")
+            .and_then(|requirement| requirement.acquisition())
+            .expect("yq acquisition");
+        assert_eq!(acquisition.provider.as_str(), "release-asset");
+    }
+
+    #[test]
     fn selected_workflow_preconditions_do_not_fall_back_to_all_toolchains() {
         let contract = parse_contract_str(
             synthetic_contract_path(),
@@ -15699,10 +15749,82 @@ tasks:
                     .and_then(|value| value.as_str())
                     == Some("vendor/tap")
         }));
-        assert!(report
-            .findings
-            .iter()
-            .any(|finding| finding.why.contains("helm")));
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|finding| finding.why.contains("helm"))
+        );
+    }
+
+    #[test]
+    fn doctor_emits_direct_release_asset_tool_acquisition_provisioning_request() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  yq:
+    version: "4.52.5"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/yq_linux_amd64
+          linux_aarch64: https://example.com/releases/v{version}/yq_linux_arm64
+          macos_x86_64: https://example.com/releases/v{version}/yq_darwin_amd64
+          macos_aarch64: https://example.com/releases/v{version}/yq_darwin_arm64
+          windows_x86_64: https://example.com/releases/v{version}/yq_windows_amd64.exe
+        version_args:
+          - --version
+tasks:
+  render:
+    run: yq --version
+    requirements:
+      tools:
+        yq: "4.52.5"
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions(&contract, synthetic_contract_path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        let provisioning = report
+            .provisioning
+            .as_ref()
+            .expect("direct release-asset tool acquisition provisioning should be present");
+        assert!(provisioning.request.actions.iter().any(|action| {
+            action.kind == ProvisioningActionKind::SelectSource
+                && action.target_kind == ProvisioningTargetKind::Tool
+                && action.name == "yq"
+                && action.source == "release-asset"
+                && action.package.is_none()
+                && action
+                    .source_config
+                    .as_ref()
+                    .and_then(|config| config.get("asset_by_platform"))
+                    .is_some()
+        }));
     }
 
     #[test]

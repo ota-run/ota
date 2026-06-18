@@ -1584,6 +1584,77 @@ fn is_shell_safe_corepack_token(value: &str) -> bool {
         })
 }
 
+fn validate_release_asset_tool_source_config(
+    name: &str,
+    location: &str,
+    source_config: Option<&BTreeMap<String, serde_yaml::Value>>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(source_config) = source_config else {
+        errors.push(ValidationError::new(format!(
+            "tool `{name}`{location} acquisition `release-asset` must declare `source_config`"
+        )));
+        return;
+    };
+
+    let asset_by_platform = source_config
+        .get("asset_by_platform")
+        .and_then(serde_yaml::Value::as_mapping);
+    let Some(asset_by_platform) = asset_by_platform else {
+        errors.push(ValidationError::new(format!(
+            "tool `{name}`{location} acquisition `release-asset` must declare `source_config.asset_by_platform`"
+        )));
+        return;
+    };
+
+    if asset_by_platform.is_empty() {
+        errors.push(ValidationError::new(format!(
+            "tool `{name}`{location} acquisition `release-asset` must declare at least one `source_config.asset_by_platform` entry"
+        )));
+    }
+
+    for (platform, asset) in asset_by_platform {
+        let Some(platform) = platform.as_str() else {
+            errors.push(ValidationError::new(format!(
+                "tool `{name}`{location} acquisition `release-asset` asset platform keys must be strings"
+            )));
+            continue;
+        };
+        if !matches!(
+            platform,
+            "linux_x86_64"
+                | "linux_aarch64"
+                | "macos_x86_64"
+                | "macos_aarch64"
+                | "windows_x86_64"
+                | "windows_aarch64"
+        ) {
+            errors.push(ValidationError::new(format!(
+                "tool `{name}`{location} acquisition `release-asset` has unsupported platform `{platform}`; expected one of: linux_x86_64, linux_aarch64, macos_x86_64, macos_aarch64, windows_x86_64, windows_aarch64"
+            )));
+        }
+        if asset.as_str().map(str::trim).is_none_or(str::is_empty) {
+            errors.push(ValidationError::new(format!(
+                "tool `{name}`{location} acquisition `release-asset` platform `{platform}` must declare a non-empty asset URL"
+            )));
+        }
+    }
+
+    if let Some(version_args) = source_config
+        .get("version_args")
+        .and_then(serde_yaml::Value::as_sequence)
+    {
+        if version_args
+            .iter()
+            .any(|value| value.as_str().map(str::trim).is_none_or(str::is_empty))
+        {
+            errors.push(ValidationError::new(format!(
+                "tool `{name}`{location} acquisition `release-asset` must not contain empty `source_config.version_args` entries"
+            )));
+        }
+    }
+}
+
 fn validate_tool_acquisition(
     name: &str,
     acquisition: &crate::schema::ToolAcquisitionSpec,
@@ -1594,6 +1665,7 @@ fn validate_tool_acquisition(
     let provider_name = match acquisition.provider {
         crate::schema::ToolAcquisitionProvider::Corepack => "corepack",
         crate::schema::ToolAcquisitionProvider::Command => "command",
+        crate::schema::ToolAcquisitionProvider::ReleaseAsset => "release-asset",
         crate::schema::ToolAcquisitionProvider::Apt => "apt",
         crate::schema::ToolAcquisitionProvider::Brew => "brew",
         crate::schema::ToolAcquisitionProvider::Winget => "winget",
@@ -1721,6 +1793,34 @@ fn validate_tool_acquisition(
                     "tool `{name}`{location} acquisition `command` must declare `run`"
                 )));
             }
+        }
+        crate::schema::ToolAcquisitionProvider::ReleaseAsset => {
+            if acquisition.package.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `release-asset` must not declare `package`; the contract key remains the executable name"
+                )));
+            }
+            if acquisition.version.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `release-asset` must not declare `version`; standalone release-asset ownership uses the tool requirement version"
+                )));
+            }
+            if acquisition.shell.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `release-asset` must not declare `shell`"
+                )));
+            }
+            if acquisition.run.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "tool `{name}`{location} acquisition `release-asset` must not declare `run`"
+                )));
+            }
+            validate_release_asset_tool_source_config(
+                name,
+                location.as_str(),
+                acquisition.source_config.as_ref(),
+                errors,
+            );
         }
         crate::schema::ToolAcquisitionProvider::Apt
         | crate::schema::ToolAcquisitionProvider::Brew
@@ -27854,6 +27954,64 @@ tools:
 
         validate_contract(&contract)
             .expect("package-manager tool acquisition source_config should validate");
+    }
+
+    #[test]
+    fn accepts_release_asset_tool_acquisition_source_config() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  yq:
+    version: "4.52.5"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/yq_linux_amd64
+          macos_aarch64: https://example.com/releases/v{version}/yq_darwin_arm64
+        version_args:
+          - --version
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("release-asset tool acquisition source_config should validate");
+    }
+
+    #[test]
+    fn rejects_release_asset_tool_acquisition_without_source_config() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  yq:
+    version: "4.52.5"
+    acquisition:
+      provider: release_asset
+"#,
+        )
+        .unwrap();
+
+        let messages = validate_contract(&contract)
+            .unwrap_err()
+            .errors()
+            .iter()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| {
+                message == "tool `yq` acquisition `release-asset` must declare `source_config`"
+            }),
+            "{messages:?}"
+        );
     }
 
     #[test]
