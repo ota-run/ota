@@ -1567,6 +1567,9 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
                 crate::adapter_inputs::AdapterInputFamily::Bake => {
                     "hard-coded Bake file selection"
                 }
+                crate::adapter_inputs::AdapterInputFamily::Helm => {
+                    "hard-coded Helm adapter ownership"
+                }
             }),
             paint_key("Why:"),
             render_validate_warning_detail(&advisory.why()),

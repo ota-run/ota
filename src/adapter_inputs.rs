@@ -22,8 +22,8 @@
 
 use crate::schema::{
     Backend, TaskAdapterInputsSpec, TaskBakeAdapterInputsSpec, TaskCommandSpec,
-    TaskComposeAdapterInputsSpec, TaskLaunchSpec, TaskModeBranchSpec, TaskSpec, WorkflowEnvSpec,
-    WorkflowSpec,
+    TaskComposeAdapterInputsSpec, TaskHelmAdapterInputsSpec, TaskLaunchSpec, TaskModeBranchSpec,
+    TaskSpec, WorkflowEnvSpec, WorkflowSpec,
 };
 use std::collections::BTreeMap;
 
@@ -179,14 +179,64 @@ impl WorkflowOverlaySpec for TaskBakeAdapterInputsSpec {
     }
 }
 
+impl WorkflowOverlaySpec for TaskHelmAdapterInputsSpec {
+    fn workflow_slot(adapter_inputs: &TaskAdapterInputsSpec) -> Option<&Self> {
+        adapter_inputs.helm.as_ref()
+    }
+
+    fn task_slot(task: &TaskSpec) -> Option<&Self> {
+        task.adapter_inputs.helm.as_ref()
+    }
+
+    fn task_slot_mut(task: &mut TaskSpec) -> &mut Option<Self> {
+        &mut task.adapter_inputs.helm
+    }
+
+    fn branch_slot(branch: &TaskModeBranchSpec) -> Option<&Self> {
+        branch.adapter_inputs.helm.as_ref()
+    }
+
+    fn branch_slot_mut(branch: &mut TaskModeBranchSpec) -> &mut Option<Self> {
+        &mut branch.adapter_inputs.helm
+    }
+
+    fn workflow_overlay_bound(&self) -> bool {
+        self.workflow_overlay_bound
+    }
+
+    fn set_workflow_overlay_bound(&mut self, bound: bool) {
+        self.workflow_overlay_bound = bound;
+    }
+
+    fn merge_workflow_overlay(&mut self, overlay: &Self) {
+        if self.cwd.is_none() {
+            self.cwd = overlay.cwd.clone();
+        }
+        prepend_unique_strings(&mut self.values_files, &overlay.values_files);
+        if self.chart.is_none() {
+            self.chart = overlay.chart.clone();
+        }
+        if self.release_name.is_none() {
+            self.release_name = overlay.release_name.clone();
+        }
+        if self.namespace.is_none() {
+            self.namespace = overlay.namespace.clone();
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AdapterInputFamily {
     Compose,
     Bake,
+    Helm,
 }
 
-pub(crate) const ADAPTER_INPUT_FAMILIES: [AdapterInputFamily; 2] =
-    [AdapterInputFamily::Compose, AdapterInputFamily::Bake];
+pub(crate) const ADAPTER_INPUT_FAMILIES: [AdapterInputFamily; 3] = [
+    AdapterInputFamily::Compose,
+    AdapterInputFamily::Bake,
+    AdapterInputFamily::Helm,
+];
 
 #[repr(usize)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,9 +248,14 @@ pub(crate) enum AdapterInputField {
     ComposeProjectName,
     BakeCwd,
     BakeFiles,
+    HelmCwd,
+    HelmValuesFiles,
+    HelmChart,
+    HelmReleaseName,
+    HelmNamespace,
 }
 
-pub(crate) const ADAPTER_INPUT_FIELDS: [AdapterInputField; 7] = [
+pub(crate) const ADAPTER_INPUT_FIELDS: [AdapterInputField; 12] = [
     AdapterInputField::ComposeCwd,
     AdapterInputField::ComposeEnvFiles,
     AdapterInputField::ComposeFiles,
@@ -208,6 +263,11 @@ pub(crate) const ADAPTER_INPUT_FIELDS: [AdapterInputField; 7] = [
     AdapterInputField::ComposeProjectName,
     AdapterInputField::BakeCwd,
     AdapterInputField::BakeFiles,
+    AdapterInputField::HelmCwd,
+    AdapterInputField::HelmValuesFiles,
+    AdapterInputField::HelmChart,
+    AdapterInputField::HelmReleaseName,
+    AdapterInputField::HelmNamespace,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,7 +280,7 @@ struct AdapterInputFieldDescriptor {
     runtime_file_label: Option<&'static str>,
 }
 
-const ADAPTER_INPUT_FIELD_DESCRIPTORS: [AdapterInputFieldDescriptor; 7] = [
+const ADAPTER_INPUT_FIELD_DESCRIPTORS: [AdapterInputFieldDescriptor; 12] = [
     AdapterInputFieldDescriptor {
         field: AdapterInputField::ComposeCwd,
         code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_CWD_OWNERSHIP",
@@ -276,6 +336,46 @@ const ADAPTER_INPUT_FIELD_DESCRIPTORS: [AdapterInputFieldDescriptor; 7] = [
         field_name: "files",
         runtime_file_kind: Some("bake_adapter_file"),
         runtime_file_label: Some("bake file"),
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::HelmCwd,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_HELM_CWD_OWNERSHIP",
+        family_name: "helm",
+        field_name: "cwd",
+        runtime_file_kind: None,
+        runtime_file_label: None,
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::HelmValuesFiles,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_HELM_VALUES_FILES_OWNERSHIP",
+        family_name: "helm",
+        field_name: "values_files",
+        runtime_file_kind: Some("helm_values_file"),
+        runtime_file_label: Some("Helm values file"),
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::HelmChart,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_HELM_CHART_OWNERSHIP",
+        family_name: "helm",
+        field_name: "chart",
+        runtime_file_kind: None,
+        runtime_file_label: None,
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::HelmReleaseName,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_HELM_RELEASE_NAME_OWNERSHIP",
+        family_name: "helm",
+        field_name: "release_name",
+        runtime_file_kind: None,
+        runtime_file_label: None,
+    },
+    AdapterInputFieldDescriptor {
+        field: AdapterInputField::HelmNamespace,
+        code: "OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_HELM_NAMESPACE_OWNERSHIP",
+        family_name: "helm",
+        field_name: "namespace",
+        runtime_file_kind: None,
+        runtime_file_label: None,
     },
 ];
 
@@ -375,6 +475,31 @@ impl AdapterInputField {
                 .map(|bake| bake.files)
                 .filter(|values| !values.is_empty())
                 .map(|values| render_adapter_input_value_list(&values)),
+            Self::HelmCwd => adapter_inputs
+                .effective_helm()
+                .and_then(|helm| helm.cwd)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            Self::HelmValuesFiles => adapter_inputs
+                .effective_helm()
+                .map(|helm| helm.values_files)
+                .filter(|values| !values.is_empty())
+                .map(|values| render_adapter_input_value_list(&values)),
+            Self::HelmChart => adapter_inputs
+                .effective_helm()
+                .and_then(|helm| helm.chart)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            Self::HelmReleaseName => adapter_inputs
+                .effective_helm()
+                .and_then(|helm| helm.release_name)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            Self::HelmNamespace => adapter_inputs
+                .effective_helm()
+                .and_then(|helm| helm.namespace)
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
         }
     }
 
@@ -414,6 +539,34 @@ impl AdapterInputField {
                 .adapter_inputs
                 .effective_bake()
                 .is_some_and(|bake| !bake.workflow_overlay_bound && !bake.files.is_empty()),
+            Self::HelmCwd => task
+                .adapter_inputs
+                .effective_helm()
+                .filter(|helm| !helm.workflow_overlay_bound)
+                .and_then(|helm| helm.cwd)
+                .is_some_and(|value| !value.trim().is_empty()),
+            Self::HelmValuesFiles => task
+                .adapter_inputs
+                .effective_helm()
+                .is_some_and(|helm| !helm.workflow_overlay_bound && !helm.values_files.is_empty()),
+            Self::HelmChart => task
+                .adapter_inputs
+                .effective_helm()
+                .filter(|helm| !helm.workflow_overlay_bound)
+                .and_then(|helm| helm.chart)
+                .is_some_and(|value| !value.trim().is_empty()),
+            Self::HelmReleaseName => task
+                .adapter_inputs
+                .effective_helm()
+                .filter(|helm| !helm.workflow_overlay_bound)
+                .and_then(|helm| helm.release_name)
+                .is_some_and(|value| !value.trim().is_empty()),
+            Self::HelmNamespace => task
+                .adapter_inputs
+                .effective_helm()
+                .filter(|helm| !helm.workflow_overlay_bound)
+                .and_then(|helm| helm.namespace)
+                .is_some_and(|value| !value.trim().is_empty()),
         }
     }
 
@@ -451,6 +604,34 @@ impl AdapterInputField {
                 .adapter_inputs
                 .effective_bake()
                 .is_some_and(|bake| !bake.workflow_overlay_bound && !bake.files.is_empty()),
+            Self::HelmCwd => branch
+                .adapter_inputs
+                .effective_helm()
+                .filter(|helm| !helm.workflow_overlay_bound)
+                .and_then(|helm| helm.cwd)
+                .is_some_and(|value| !value.trim().is_empty()),
+            Self::HelmValuesFiles => branch
+                .adapter_inputs
+                .effective_helm()
+                .is_some_and(|helm| !helm.workflow_overlay_bound && !helm.values_files.is_empty()),
+            Self::HelmChart => branch
+                .adapter_inputs
+                .effective_helm()
+                .filter(|helm| !helm.workflow_overlay_bound)
+                .and_then(|helm| helm.chart)
+                .is_some_and(|value| !value.trim().is_empty()),
+            Self::HelmReleaseName => branch
+                .adapter_inputs
+                .effective_helm()
+                .filter(|helm| !helm.workflow_overlay_bound)
+                .and_then(|helm| helm.release_name)
+                .is_some_and(|value| !value.trim().is_empty()),
+            Self::HelmNamespace => branch
+                .adapter_inputs
+                .effective_helm()
+                .filter(|helm| !helm.workflow_overlay_bound)
+                .and_then(|helm| helm.namespace)
+                .is_some_and(|value| !value.trim().is_empty()),
         }
     }
 
@@ -479,10 +660,23 @@ impl AdapterInputField {
             Self::BakeCwd => branch_first_scalar_value(task, backend, |spec| {
                 spec.effective_bake().and_then(|bake| bake.cwd)
             }),
+            Self::HelmCwd => branch_first_scalar_value(task, backend, |spec| {
+                spec.effective_helm().and_then(|helm| helm.cwd)
+            }),
+            Self::HelmChart => branch_first_scalar_value(task, backend, |spec| {
+                spec.effective_helm().and_then(|helm| helm.chart)
+            }),
+            Self::HelmReleaseName => branch_first_scalar_value(task, backend, |spec| {
+                spec.effective_helm().and_then(|helm| helm.release_name)
+            }),
+            Self::HelmNamespace => branch_first_scalar_value(task, backend, |spec| {
+                spec.effective_helm().and_then(|helm| helm.namespace)
+            }),
             Self::ComposeEnvFiles
             | Self::ComposeFiles
             | Self::ComposeProfiles
-            | Self::BakeFiles => None,
+            | Self::BakeFiles
+            | Self::HelmValuesFiles => None,
         }
     }
 
@@ -508,7 +702,18 @@ impl AdapterInputField {
                     .map(|bake| bake.files)
                     .unwrap_or_default()
             })),
-            Self::ComposeCwd | Self::ComposeProjectName | Self::BakeCwd => None,
+            Self::HelmValuesFiles => Some(merged_branch_vector_values(task, backend, |spec| {
+                spec.effective_helm()
+                    .map(|helm| helm.values_files)
+                    .unwrap_or_default()
+            })),
+            Self::ComposeCwd
+            | Self::ComposeProjectName
+            | Self::BakeCwd
+            | Self::HelmCwd
+            | Self::HelmChart
+            | Self::HelmReleaseName
+            | Self::HelmNamespace => None,
         }
     }
 
@@ -519,7 +724,13 @@ impl AdapterInputField {
             Self::ComposeProfiles => Some("COMPOSE_PROFILES"),
             Self::ComposeProjectName => Some("COMPOSE_PROJECT_NAME"),
             Self::BakeFiles => Some("BUILDX_BAKE_FILE"),
-            Self::ComposeCwd | Self::BakeCwd => None,
+            Self::HelmValuesFiles => Some("HELM_VALUES_FILES"),
+            Self::ComposeCwd
+            | Self::BakeCwd
+            | Self::HelmCwd
+            | Self::HelmChart
+            | Self::HelmReleaseName
+            | Self::HelmNamespace => None,
         }
     }
 
@@ -545,7 +756,19 @@ impl AdapterInputField {
                 (!values.is_empty()).then(|| values.join(","))
             }
             Self::ComposeProjectName => self.backend_value(task, backend),
-            Self::ComposeCwd | Self::BakeCwd => None,
+            Self::HelmValuesFiles => {
+                let values = rebase_repo_relative_adapter_paths(
+                    &self.backend_paths(task, backend),
+                    adapter_cwd,
+                );
+                (!values.is_empty()).then(|| render_adapter_file_env_value(&values))
+            }
+            Self::ComposeCwd
+            | Self::BakeCwd
+            | Self::HelmCwd
+            | Self::HelmChart
+            | Self::HelmReleaseName
+            | Self::HelmNamespace => None,
         }
     }
 }
@@ -638,6 +861,44 @@ fn merge_legacy_workflow_adapter_inputs(
             }
         }
     }
+    if let Some(legacy_helm) = legacy.helm.as_ref() {
+        if let Some(overlay) = target.overlays.get_mut("helm") {
+            if overlay.cwd.is_none() {
+                overlay.cwd = legacy_helm.cwd.clone();
+            }
+            if overlay.values_files.is_empty() {
+                overlay.values_files = legacy_helm.values_files.clone();
+            }
+            if overlay.chart.is_none() {
+                overlay.chart = legacy_helm.chart.clone();
+            }
+            if overlay.release_name.is_none() {
+                overlay.release_name = legacy_helm.release_name.clone();
+            }
+            if overlay.namespace.is_none() {
+                overlay.namespace = legacy_helm.namespace.clone();
+            }
+        } else {
+            let helm = target
+                .helm
+                .get_or_insert_with(TaskHelmAdapterInputsSpec::default);
+            if helm.cwd.is_none() {
+                helm.cwd = legacy_helm.cwd.clone();
+            }
+            if helm.values_files.is_empty() {
+                helm.values_files = legacy_helm.values_files.clone();
+            }
+            if helm.chart.is_none() {
+                helm.chart = legacy_helm.chart.clone();
+            }
+            if helm.release_name.is_none() {
+                helm.release_name = legacy_helm.release_name.clone();
+            }
+            if helm.namespace.is_none() {
+                helm.namespace = legacy_helm.namespace.clone();
+            }
+        }
+    }
 }
 
 fn merge_generic_workflow_adapter_inputs(
@@ -703,6 +964,7 @@ impl AdapterInputFamily {
         match self {
             Self::Compose => "compose",
             Self::Bake => "bake",
+            Self::Helm => "helm",
         }
     }
 
@@ -710,6 +972,7 @@ impl AdapterInputFamily {
         match self {
             Self::Compose => "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP",
             Self::Bake => "OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP",
+            Self::Helm => "OTA_CONTRACT_ADVISORY_REPLACEABLE_HELM_OWNERSHIP",
         }
     }
 
@@ -717,6 +980,7 @@ impl AdapterInputFamily {
         match self {
             Self::Compose => "OTA_CONTRACT_ADVISORY_EMPTY_COMPOSE_ADAPTER_INPUT_MARKER",
             Self::Bake => "OTA_CONTRACT_ADVISORY_EMPTY_BAKE_ADAPTER_INPUT_MARKER",
+            Self::Helm => "OTA_CONTRACT_ADVISORY_EMPTY_HELM_ADAPTER_INPUT_MARKER",
         }
     }
 
@@ -725,6 +989,7 @@ impl AdapterInputFamily {
         match self {
             Self::Compose => lower.contains("docker compose") || lower.contains("podman compose"),
             Self::Bake => lower.contains("docker buildx bake"),
+            Self::Helm => lower.contains("helm "),
         }
     }
 
@@ -749,6 +1014,7 @@ impl AdapterInputFamily {
                         .get(1)
                         .is_some_and(|arg| arg.trim().eq_ignore_ascii_case("bake"))
             }
+            Self::Helm => command.exe.trim().eq_ignore_ascii_case("helm"),
         }
     }
 
@@ -783,6 +1049,15 @@ impl AdapterInputFamily {
                     || (lower.trim_start().starts_with("cd ")
                         && (lower.contains("&& docker buildx bake")
                             || lower.contains("; docker buildx bake")))
+            }
+            Self::Helm => {
+                (lower.contains("helm ")
+                    && (lower.contains(" -f ")
+                        || lower.contains(" --values ")
+                        || lower.contains(" -n ")
+                        || lower.contains(" --namespace ")))
+                    || (lower.trim_start().starts_with("cd ")
+                        && (lower.contains("&& helm ") || lower.contains("; helm ")))
             }
         }
     }
@@ -824,6 +1099,13 @@ impl AdapterInputFamily {
                         .iter()
                         .any(|arg| matches!(arg.trim(), "-f" | "--file"))
             }
+            Self::Helm => {
+                command.exe.trim().eq_ignore_ascii_case("helm")
+                    && command
+                        .args
+                        .iter()
+                        .any(|arg| matches!(arg.trim(), "-f" | "--values" | "-n" | "--namespace"))
+            }
         }
     }
 
@@ -831,6 +1113,7 @@ impl AdapterInputFamily {
         match self {
             Self::Compose => task.compose_adapter_cwd_for_backend(backend),
             Self::Bake => task.bake_adapter_cwd_for_backend(backend),
+            Self::Helm => task.helm_adapter_cwd_for_backend(backend),
         }
     }
 
@@ -838,6 +1121,7 @@ impl AdapterInputFamily {
         match self {
             Self::Compose => task_declares_family_inputs::<TaskComposeAdapterInputsSpec>(task),
             Self::Bake => task_declares_family_inputs::<TaskBakeAdapterInputsSpec>(task),
+            Self::Helm => task_declares_family_inputs::<TaskHelmAdapterInputsSpec>(task),
         }
     }
 
@@ -845,6 +1129,7 @@ impl AdapterInputFamily {
         match self {
             Self::Compose => branch_declares_family_inputs::<TaskComposeAdapterInputsSpec>(branch),
             Self::Bake => branch_declares_family_inputs::<TaskBakeAdapterInputsSpec>(branch),
+            Self::Helm => branch_declares_family_inputs::<TaskHelmAdapterInputsSpec>(branch),
         }
     }
 
@@ -858,6 +1143,10 @@ impl AdapterInputFamily {
                 .as_task_adapter_inputs()
                 .effective_bake()
                 .is_some_and(|bake| !bake.is_empty()),
+            Self::Helm => overlay
+                .as_task_adapter_inputs()
+                .effective_helm()
+                .is_some_and(|helm| !helm.is_empty()),
         }
     }
 
@@ -888,6 +1177,10 @@ impl AdapterInputFamily {
                 workflow_adapter_inputs,
             ),
             Self::Bake => self.bind_workflow_overlay_spec::<TaskBakeAdapterInputsSpec>(
+                task,
+                workflow_adapter_inputs,
+            ),
+            Self::Helm => self.bind_workflow_overlay_spec::<TaskHelmAdapterInputsSpec>(
                 task,
                 workflow_adapter_inputs,
             ),
@@ -1147,13 +1440,19 @@ mod tests {
     fn adapter_input_file_fields_keep_runtime_metadata() {
         for field in ADAPTER_INPUT_FIELDS {
             match field {
-                AdapterInputField::ComposeCwd | AdapterInputField::BakeCwd => {
+                AdapterInputField::ComposeCwd
+                | AdapterInputField::BakeCwd
+                | AdapterInputField::HelmCwd
+                | AdapterInputField::HelmChart
+                | AdapterInputField::HelmReleaseName
+                | AdapterInputField::HelmNamespace => {
                     assert!(field.runtime_file_kind().is_none());
                     assert!(field.runtime_file_label().is_none());
                 }
                 AdapterInputField::ComposeEnvFiles
                 | AdapterInputField::ComposeFiles
-                | AdapterInputField::BakeFiles => {
+                | AdapterInputField::BakeFiles
+                | AdapterInputField::HelmValuesFiles => {
                     assert!(field.runtime_file_kind().is_some());
                     assert!(field.runtime_file_label().is_some());
                 }
@@ -1190,6 +1489,7 @@ mod tests {
                     files: vec![String::from("docker-bake.hcl")],
                     workflow_overlay_bound: false,
                 }),
+                helm: None,
             },
             inputs: BTreeMap::new(),
             targets: BTreeMap::new(),
@@ -1243,6 +1543,7 @@ mod tests {
                                 files: vec![String::from("docker-bake.native.hcl")],
                                 workflow_overlay_bound: false,
                             }),
+                            helm: None,
                         },
                     }),
                     container: None,
@@ -1302,6 +1603,7 @@ mod tests {
                     workflow_overlay_bound: false,
                 }),
                 bake: None,
+                helm: None,
             },
             inputs: BTreeMap::new(),
             targets: BTreeMap::new(),
@@ -1369,6 +1671,7 @@ mod tests {
                     files: Vec::new(),
                     workflow_overlay_bound: false,
                 }),
+                helm: None,
             },
             inputs: BTreeMap::new(),
             targets: BTreeMap::new(),
@@ -1416,6 +1719,10 @@ mod tests {
                         files: Vec::new(),
                         profiles: vec![String::from("web")],
                         project_name: None,
+                        values_files: Vec::new(),
+                        chart: None,
+                        release_name: None,
+                        namespace: None,
                     },
                 )]),
                 compose: Some(TaskComposeAdapterInputsSpec {
@@ -1427,6 +1734,7 @@ mod tests {
                     workflow_overlay_bound: false,
                 }),
                 bake: None,
+                helm: None,
             },
             env: Some(WorkflowEnvSpec {
                 profile: None,

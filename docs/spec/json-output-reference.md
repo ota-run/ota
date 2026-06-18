@@ -570,6 +570,10 @@ Notes:
 - `tasks[*].adapter_inputs.bake.cwd` and `tasks[*].adapter_inputs.bake.files` are present when one
   task owns Bake adapter root or Bake file selection; Ota projects these through adapter-aware
   runtime input instead of shell `cd ... &&` / `-f` glue
+- `tasks[*].adapter_inputs.helm.cwd`, `.values_files`, `.chart`, `.release_name`, and
+  `.namespace` are present when one task owns Helm adapter root, values-file selection, chart
+  selection, release naming, or namespace truth; Ota projects these through adapter-aware runtime
+  input instead of shell `cd ... && helm ...`, chart positionals, or `--namespace`
 - `tasks[*].launch` is present when one task uses structured `launch` instead of shell `run` or
   `script`; it exposes the launch kind plus the structured command or packaged container metadata
 - task-target probe entries also expose `target.observer` and `target.resolution_plane`; the

@@ -55,14 +55,16 @@ tasks:
   render:
     context: host
     description: Render the chart without mutating the cluster
+    adapter_inputs:
+      helm:
+        cwd: deploy/helm
+        chart: deploy/helm
+        release_name: appsmith
+        namespace: appsmith
     command:
       exe: helm
       args:
         - template
-        - appsmith
-        - deploy/helm
-        - --namespace
-        - appsmith
     depends_on:
       - setup
     requirements:
@@ -71,14 +73,16 @@ tasks:
   install:
     context: host
     description: Install the chart into Kubernetes
+    adapter_inputs:
+      helm:
+        cwd: deploy/helm
+        chart: deploy/helm
+        release_name: appsmith
+        namespace: appsmith
     command:
       exe: helm
       args:
         - install
-        - appsmith
-        - deploy/helm
-        - --namespace
-        - appsmith
         - --create-namespace
     depends_on:
       - setup

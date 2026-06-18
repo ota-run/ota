@@ -3546,6 +3546,27 @@ fn validate_adapter_input_paths(
     }
 }
 
+fn validate_adapter_input_optional_path(
+    task_name: Option<&str>,
+    field: &str,
+    path: Option<&str>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(path) = path.map(str::trim).filter(|value| !value.is_empty()) else {
+        return;
+    };
+    if is_safe_repo_relative_file_path(path) {
+        return;
+    }
+    let message = match task_name {
+        Some(task_name) => format!(
+            "task `{task_name}` `{field}` must be a repo-relative path that does not escape the repo"
+        ),
+        None => format!("`{field}` must be a repo-relative path that does not escape the repo"),
+    };
+    errors.push(ValidationError::new(message));
+}
+
 fn validate_adapter_input_values_non_empty(
     task_name: Option<&str>,
     scope: &str,
@@ -3644,6 +3665,45 @@ fn validate_bake_adapter_inputs(
     );
 }
 
+fn validate_helm_adapter_inputs(
+    task_name: Option<&str>,
+    scope: &str,
+    helm: &crate::schema::TaskHelmAdapterInputsSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    validate_adapter_input_cwd(
+        task_name,
+        &format!("{scope}.helm.cwd"),
+        helm.cwd.as_deref(),
+        errors,
+    );
+    validate_adapter_input_paths(
+        task_name,
+        &format!("{scope}.helm"),
+        "values_files",
+        &helm.values_files,
+        errors,
+    );
+    validate_adapter_input_optional_path(
+        task_name,
+        &format!("{scope}.helm.chart"),
+        helm.chart.as_deref(),
+        errors,
+    );
+    validate_adapter_input_optional_non_empty(
+        task_name,
+        &format!("{scope}.helm.release_name"),
+        helm.release_name.as_deref(),
+        errors,
+    );
+    validate_adapter_input_optional_non_empty(
+        task_name,
+        &format!("{scope}.helm.namespace"),
+        helm.namespace.as_deref(),
+        errors,
+    );
+}
+
 fn validate_adapter_overlay_inputs(
     task_name: Option<&str>,
     scope: &str,
@@ -3684,6 +3744,31 @@ fn validate_adapter_overlay_inputs(
         overlay.project_name.as_deref(),
         errors,
     );
+    validate_adapter_input_paths(
+        task_name,
+        &format!("{scope}.overlays.{family}"),
+        "values_files",
+        &overlay.values_files,
+        errors,
+    );
+    validate_adapter_input_optional_path(
+        task_name,
+        &format!("{scope}.overlays.{family}.chart"),
+        overlay.chart.as_deref(),
+        errors,
+    );
+    validate_adapter_input_optional_non_empty(
+        task_name,
+        &format!("{scope}.overlays.{family}.release_name"),
+        overlay.release_name.as_deref(),
+        errors,
+    );
+    validate_adapter_input_optional_non_empty(
+        task_name,
+        &format!("{scope}.overlays.{family}.namespace"),
+        overlay.namespace.as_deref(),
+        errors,
+    );
     match family {
         "compose" => {}
         "bake" => {
@@ -3722,13 +3807,110 @@ fn validate_adapter_overlay_inputs(
                     ),
                 }));
             }
+            if !overlay.values_files.is_empty() {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.bake.values_files` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.bake.values_files` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                }));
+            }
+            if overlay.chart.as_deref().map(str::trim).is_some_and(|value| !value.is_empty()) {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.bake.chart` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.bake.chart` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                }));
+            }
+            if overlay
+                .release_name
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+            {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.bake.release_name` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.bake.release_name` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                }));
+            }
+            if overlay
+                .namespace
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+            {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.bake.namespace` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.bake.namespace` is not supported; Bake overlays only accept `cwd` and `files`"
+                    ),
+                }));
+            }
+        }
+        "helm" => {
+            if !overlay.env_files.is_empty() {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.helm.env_files` is not supported; Helm overlays accept `cwd`, `values_files`, `chart`, `release_name`, and `namespace`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.helm.env_files` is not supported; Helm overlays accept `cwd`, `values_files`, `chart`, `release_name`, and `namespace`"
+                    ),
+                }));
+            }
+            if !overlay.files.is_empty() {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.helm.files` is not supported; Helm overlays accept `cwd`, `values_files`, `chart`, `release_name`, and `namespace`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.helm.files` is not supported; Helm overlays accept `cwd`, `values_files`, `chart`, `release_name`, and `namespace`"
+                    ),
+                }));
+            }
+            if !overlay.profiles.is_empty() {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.helm.profiles` is not supported; Helm overlays accept `cwd`, `values_files`, `chart`, `release_name`, and `namespace`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.helm.profiles` is not supported; Helm overlays accept `cwd`, `values_files`, `chart`, `release_name`, and `namespace`"
+                    ),
+                }));
+            }
+            if overlay
+                .project_name
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+            {
+                errors.push(ValidationError::new(match task_name {
+                    Some(task_name) => format!(
+                        "task `{task_name}` `{scope}.overlays.helm.project_name` is not supported; Helm overlays accept `cwd`, `values_files`, `chart`, `release_name`, and `namespace`"
+                    ),
+                    None => format!(
+                        "`{scope}.overlays.helm.project_name` is not supported; Helm overlays accept `cwd`, `values_files`, `chart`, `release_name`, and `namespace`"
+                    ),
+                }));
+            }
         }
         other => errors.push(ValidationError::new(match task_name {
             Some(task_name) => format!(
-                "task `{task_name}` `{scope}.overlays.{other}` uses unsupported adapter family `{other}`; shipped overlay families are `compose` and `bake`"
+                "task `{task_name}` `{scope}.overlays.{other}` uses unsupported adapter family `{other}`; shipped overlay families are `compose`, `bake`, and `helm`"
             ),
             None => format!(
-                "`{scope}.overlays.{other}` uses unsupported adapter family `{other}`; shipped overlay families are `compose` and `bake`"
+                "`{scope}.overlays.{other}` uses unsupported adapter family `{other}`; shipped overlay families are `compose`, `bake`, and `helm`"
             ),
         })),
     }
@@ -3773,11 +3955,29 @@ fn validate_adapter_inputs(
             ),
         }));
     }
+    if adapter_inputs.overlay("helm").is_some()
+        && adapter_inputs
+            .helm
+            .as_ref()
+            .is_some_and(|helm| !helm.is_empty())
+    {
+        errors.push(ValidationError::new(match task_name {
+            Some(task_name) => format!(
+                "task `{task_name}` declares both `{scope}.overlays.helm` and `{scope}.helm`; keep Helm adapter overlay ownership on the canonical `overlays.helm` surface"
+            ),
+            None => format!(
+                "`{scope}.overlays.helm` duplicates `{scope}.helm`; keep Helm adapter overlay ownership on the canonical `overlays.helm` surface"
+            ),
+        }));
+    }
     if let Some(compose) = adapter_inputs.compose.as_ref() {
         validate_compose_adapter_inputs(task_name, scope, compose, errors);
     }
     if let Some(bake) = adapter_inputs.bake.as_ref() {
         validate_bake_adapter_inputs(task_name, scope, bake, errors);
+    }
+    if let Some(helm) = adapter_inputs.helm.as_ref() {
+        validate_helm_adapter_inputs(task_name, scope, helm, errors);
     }
 }
 
@@ -7464,6 +7664,10 @@ impl ContractAdvisory {
                     "task `{}` hard-codes Bake file selection in its task body",
                     advisory.task_name
                 ),
+                AdapterInputFamily::Helm => format!(
+                    "task `{}` hard-codes Helm adapter ownership in its task body",
+                    advisory.task_name
+                ),
             },
             ContractAdvisory::NativePackageManagerLikelyWrongPlatform(advisory) => format!(
                 "native prerequisite `{}` platform `{}` declares likely wrong-OS package manager `{}`",
@@ -9527,6 +9731,10 @@ fn replaceable_adapter_ownership_why(
             "task `{}` hard-codes Bake file selection or adapter-root shell glue inside its task body (`{}`), which hides `docker buildx bake` adapter input ownership from Ota instead of declaring it under task or workflow `adapter_inputs.overlays.bake.*`",
             advisory.task_name, advisory.command
         ),
+        AdapterInputFamily::Helm => format!(
+            "task `{}` hard-codes Helm values files, namespace, chart selection, release naming, or adapter-root shell glue inside its task body (`{}`), which hides Helm adapter input ownership from Ota instead of declaring it under task or workflow `adapter_inputs.overlays.helm.*`",
+            advisory.task_name, advisory.command
+        ),
     }
 }
 
@@ -9540,6 +9748,10 @@ fn replaceable_adapter_ownership_next(
         ),
         AdapterInputFamily::Bake => format!(
             "move Bake adapter ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.overlays.bake.*` when the task owns `docker buildx bake` cwd or file selection truth, or `workflows.<name>.adapter_inputs.overlays.bake.*` when one selected workflow owns the shared workflow adapter overlay",
+            advisory.task_name
+        ),
+        AdapterInputFamily::Helm => format!(
+            "move Helm adapter ownership out of task `{}` body: use `tasks.{0}.adapter_inputs.overlays.helm.*` when the task owns Helm cwd, chart, values files, release naming, or namespace truth, or `workflows.<name>.adapter_inputs.overlays.helm.*` when one selected workflow owns the shared workflow adapter overlay",
             advisory.task_name
         ),
     }
@@ -16262,6 +16474,42 @@ tasks:
     }
 
     #[test]
+    fn validates_task_helm_adapter_inputs_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  helm:render:
+    adapter_inputs:
+      helm:
+        cwd: deploy/helm
+        values_files:
+          - deploy/helm/values.dev.yaml
+        chart: deploy/helm/chart
+        release_name: ota
+        namespace: preview
+    execution:
+      modes:
+        native:
+          adapter_inputs:
+            helm:
+              values_files:
+                - deploy/helm/values.native.yaml
+    command:
+      exe: helm
+      args:
+        - template
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("task helm adapter inputs should validate");
+    }
+
+    #[test]
     fn rejects_invalid_task_env_files_shape() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -16390,6 +16638,67 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `image:build` `adapter_inputs.bake.files[0]` must be a repo-relative path that does not escape the repo"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_task_helm_adapter_inputs_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  helm:render:
+    adapter_inputs:
+      helm:
+        cwd: ../charts
+        values_files:
+          - ../values.dev.yaml
+        chart: ../chart
+        release_name: "   "
+        namespace: "   "
+    run: helm template
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid helm adapter inputs should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `helm:render` `adapter_inputs.helm.cwd` must be a repo-relative path that does not escape the repo"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `helm:render` `adapter_inputs.helm.values_files[0]` must be a repo-relative path that does not escape the repo"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `helm:render` `adapter_inputs.helm.chart` must be a repo-relative path that does not escape the repo"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `helm:render` `adapter_inputs.helm.release_name` must not be empty"
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `helm:render` `adapter_inputs.helm.namespace` must not be empty"
             )),
             "{rendered:?}"
         );

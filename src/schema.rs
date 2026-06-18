@@ -4015,6 +4015,80 @@ impl TaskSpec {
             })
     }
 
+    pub fn helm_adapter_values_files_for_backend(&self, backend: Backend) -> Vec<String> {
+        let mut merged = self
+            .adapter_inputs
+            .effective_helm()
+            .map(|helm| helm.values_files)
+            .unwrap_or_default();
+        if let Some(branch) = self.mode_execution_branch(backend)
+            && let Some(helm) = branch.adapter_inputs.effective_helm()
+        {
+            merged.extend(helm.values_files);
+        }
+        merged
+    }
+
+    pub fn helm_adapter_cwd_for_backend(&self, backend: Backend) -> Option<String> {
+        self.mode_execution_branch(backend)
+            .and_then(|branch| branch.adapter_inputs.effective_helm())
+            .and_then(|helm| helm.cwd)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.adapter_inputs
+                    .effective_helm()
+                    .and_then(|helm| helm.cwd)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
+    }
+
+    pub fn helm_adapter_chart_for_backend(&self, backend: Backend) -> Option<String> {
+        self.mode_execution_branch(backend)
+            .and_then(|branch| branch.adapter_inputs.effective_helm())
+            .and_then(|helm| helm.chart)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.adapter_inputs
+                    .effective_helm()
+                    .and_then(|helm| helm.chart)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
+    }
+
+    pub fn helm_adapter_release_name_for_backend(&self, backend: Backend) -> Option<String> {
+        self.mode_execution_branch(backend)
+            .and_then(|branch| branch.adapter_inputs.effective_helm())
+            .and_then(|helm| helm.release_name)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.adapter_inputs
+                    .effective_helm()
+                    .and_then(|helm| helm.release_name)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
+    }
+
+    pub fn helm_adapter_namespace_for_backend(&self, backend: Backend) -> Option<String> {
+        self.mode_execution_branch(backend)
+            .and_then(|branch| branch.adapter_inputs.effective_helm())
+            .and_then(|helm| helm.namespace)
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.adapter_inputs
+                    .effective_helm()
+                    .and_then(|helm| helm.namespace)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
+    }
+
     pub fn env_bindings_for_backend_with_context_name(
         &self,
         _execution: Option<&Execution>,
@@ -5969,6 +6043,8 @@ pub struct TaskAdapterInputsSpec {
     pub compose: Option<TaskComposeAdapterInputsSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bake: Option<TaskBakeAdapterInputsSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub helm: Option<TaskHelmAdapterInputsSpec>,
 }
 
 impl TaskAdapterInputsSpec {
@@ -5988,6 +6064,10 @@ impl TaskAdapterInputsSpec {
                 .bake
                 .as_ref()
                 .is_none_or(TaskBakeAdapterInputsSpec::is_empty)
+            && self
+                .helm
+                .as_ref()
+                .is_none_or(TaskHelmAdapterInputsSpec::is_empty)
     }
 
     pub fn overlay(&self, family: &str) -> Option<&TaskAdapterOverlaySpec> {
@@ -6020,6 +6100,19 @@ impl TaskAdapterInputsSpec {
         }
         self.bake.clone().filter(|bake| !bake.is_empty())
     }
+
+    pub fn effective_helm(&self) -> Option<TaskHelmAdapterInputsSpec> {
+        if let Some(overlay) = self.overlay("helm") {
+            let mut helm = TaskHelmAdapterInputsSpec::default();
+            helm.cwd = overlay.cwd.clone();
+            helm.values_files = overlay.values_files.clone();
+            helm.chart = overlay.chart.clone();
+            helm.release_name = overlay.release_name.clone();
+            helm.namespace = overlay.namespace.clone();
+            return (!helm.is_empty()).then_some(helm);
+        }
+        self.helm.clone().filter(|helm| !helm.is_empty())
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -6035,6 +6128,14 @@ pub struct TaskAdapterOverlaySpec {
     pub profiles: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
 }
 
 impl TaskAdapterOverlaySpec {
@@ -6045,6 +6146,18 @@ impl TaskAdapterOverlaySpec {
             && self.profiles.is_empty()
             && self
                 .project_name
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
+            && self.values_files.is_empty()
+            && self.chart.as_deref().map(str::trim).is_none_or(str::is_empty)
+            && self
+                .release_name
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
+            && self
+                .namespace
                 .as_deref()
                 .map(str::trim)
                 .is_none_or(str::is_empty)
@@ -6059,6 +6172,7 @@ impl TaskAdapterInputsSpec {
             .map(|(family, _)| family.as_str())
             .chain(self.compose.as_ref().filter(|spec| !spec.is_empty()).map(|_| "compose"))
             .chain(self.bake.as_ref().filter(|spec| !spec.is_empty()).map(|_| "bake"))
+            .chain(self.helm.as_ref().filter(|spec| !spec.is_empty()).map(|_| "helm"))
     }
 }
 
@@ -6107,6 +6221,41 @@ pub struct TaskBakeAdapterInputsSpec {
 impl TaskBakeAdapterInputsSpec {
     pub fn is_empty(&self) -> bool {
         self.cwd.as_deref().map(str::trim).is_none_or(str::is_empty) && self.files.is_empty()
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskHelmAdapterInputsSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chart: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip)]
+    pub workflow_overlay_bound: bool,
+}
+
+impl TaskHelmAdapterInputsSpec {
+    pub fn is_empty(&self) -> bool {
+        self.cwd.as_deref().map(str::trim).is_none_or(str::is_empty)
+            && self.values_files.is_empty()
+            && self.chart.as_deref().map(str::trim).is_none_or(str::is_empty)
+            && self
+                .release_name
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
+            && self
+                .namespace
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty)
     }
 }
 

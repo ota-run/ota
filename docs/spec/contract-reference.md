@@ -1865,7 +1865,7 @@ Task-effect rules:
 - `prepare.source.kind: uv` currently executes the narrow canonical uv hydration lane: `uv sync`
 - `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
-- `prepare.source.kind: helm` currently executes the narrow canonical Helm chart hydration lane: `helm dependency build .`
+- `prepare.source.kind: helm` currently executes the narrow canonical Helm chart hydration lane: ota reads `Chart.yaml`, seeds any declared HTTP(S) chart repositories into isolated repo-owned Helm repository state under `.ota/state/helm/...`, then runs `helm dependency build .`
 - `prepare.source.kind: maven` currently executes the narrow canonical Maven hydration lane: `./mvnw -q dependency:resolve` or `./mvnw -q dependency:go-offline` when wrapper-owned, otherwise `mvn -q dependency:resolve` or `mvn -q dependency:go-offline`
 - `prepare.source.kind: gradle` currently executes the narrow canonical Gradle hydration lane: `./gradlew dependencies` when wrapper-owned, otherwise `gradle dependencies`
 - `prepare.source.kind: cargo` currently executes the narrow canonical Cargo hydration lane: `cargo fetch`
@@ -1922,8 +1922,13 @@ tasks:
 - `adapter_inputs.overlays.compose.project_name`: canonical optional compose project name projected to the selected task mode through `COMPOSE_PROJECT_NAME`
 - `adapter_inputs.overlays.bake.cwd`: canonical optional repo-relative adapter working directory ota should enter before executing the selected `docker buildx bake` task path; declared Bake files stay repo-relative in the contract and are projected relative to this adapter root at runtime
 - `adapter_inputs.overlays.bake.files`: canonical optional ordered repo-relative Bake file list projected to the selected task mode through `BUILDX_BAKE_FILE`
-- `adapter_inputs.compose.*` / `adapter_inputs.bake.*`: compatibility aliases for existing contracts; prefer `adapter_inputs.overlays.<family>.*` for new authoring
-- the public map shape is generalized, but shipped runtime semantics currently exist only for overlay families `compose` and `bake`; other family keys are rejected by validation until ota ships their runtime and governance model
+- `adapter_inputs.overlays.helm.cwd`: canonical optional repo-relative Helm adapter working directory ota should enter before executing the selected Helm task path; declared chart and values-file paths stay repo-relative in the contract and are projected relative to this adapter root at runtime
+- `adapter_inputs.overlays.helm.values_files`: canonical optional ordered repo-relative Helm values-file list ota projects into the selected Helm task path as repeated `-f` / `--values` arguments
+- `adapter_inputs.overlays.helm.chart`: canonical optional repo-relative Helm chart path ota projects into the selected Helm task path instead of hard-coding chart selection in argv
+- `adapter_inputs.overlays.helm.release_name`: canonical optional Helm release name ota projects into the selected Helm task path instead of hard-coding release naming in argv
+- `adapter_inputs.overlays.helm.namespace`: canonical optional Helm namespace ota projects into the selected Helm task path instead of hard-coding `--namespace` in argv
+- `adapter_inputs.compose.*` / `adapter_inputs.bake.*` / `adapter_inputs.helm.*`: compatibility aliases for existing contracts; prefer `adapter_inputs.overlays.<family>.*` for new authoring
+- the public map shape is generalized, and shipped runtime semantics currently exist for overlay families `compose`, `bake`, and `helm`; other family keys are rejected by validation until ota ships their runtime and governance model
 - `modes.<mode>.env`: optional env map merged over task-level `env`
 - `modes.<mode>.env_files`: optional ordered repo-relative dotenv overlays appended after task-level `env_files`
 - `modes.<mode>.adapter_inputs.overlays.compose.cwd`: optional compose adapter working-directory override for that mode
@@ -1933,6 +1938,11 @@ tasks:
 - `modes.<mode>.adapter_inputs.overlays.compose.project_name`: optional compose project name override for that mode
 - `modes.<mode>.adapter_inputs.overlays.bake.cwd`: optional Bake adapter working-directory override for that mode
 - `modes.<mode>.adapter_inputs.overlays.bake.files`: optional ordered repo-relative Bake file list appended after task-level `adapter_inputs.overlays.bake.files`
+- `modes.<mode>.adapter_inputs.overlays.helm.cwd`: optional Helm adapter working-directory override for that mode
+- `modes.<mode>.adapter_inputs.overlays.helm.values_files`: optional ordered repo-relative Helm values-file list appended after task-level `adapter_inputs.overlays.helm.values_files`
+- `modes.<mode>.adapter_inputs.overlays.helm.chart`: optional repo-relative Helm chart override for that mode
+- `modes.<mode>.adapter_inputs.overlays.helm.release_name`: optional Helm release-name override for that mode
+- `modes.<mode>.adapter_inputs.overlays.helm.namespace`: optional Helm namespace override for that mode
 - `modes.<mode>.run`: optional single-line command override for that mode
 - `modes.<mode>.script`: optional multiline script override for that mode
 - `modes.<mode>.command`: optional structured finite command override for that mode
@@ -1958,10 +1968,12 @@ tasks:
 - when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`command`/`prepare`/`launch`, and `runtime`
 - use `env_files` for task-process dotenv overlays; use `adapter_inputs.overlays.compose.*` when one task path owns `docker compose` adapter root, interpolation input, compose file selection, compose profiles, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
 - use `adapter_inputs.overlays.bake.*` when one task path owns `docker buildx bake` adapter root or file selection and that truth should project through a first-class adapter surface instead of shell `cd ... &&` / `-f`
+- use `adapter_inputs.overlays.helm.*` when one task path owns Helm chart root, values-file selection, release naming, or namespace truth and that truth should project through a first-class adapter surface instead of shell `cd ... && helm ...`, chart positionals, or `--namespace`
 - keep `adapter_inputs.overlays.<family>` non-empty: empty family markers are a governance smell and validate/doctor warn on them; either declare concrete adapter-owned fields or omit the family entirely
-- do not infer that arbitrary families are executable just because the map is generic; today ota only executes overlay semantics for `compose` and `bake`, and validator rejects unsupported families
+- do not infer that arbitrary families are executable just because the map is generic; today ota only executes overlay semantics for `compose`, `bake`, and `helm`, and validator rejects unsupported families
 - validate/doctor warn when Compose adapter root or file/profile/project truth stays hard-coded in shell `docker compose --project-directory ...`, `cd ... && docker compose ...`, `--env-file`, `-f`, `--file`, `--profile`, `-p`, or `--project-name` instead of `adapter_inputs.overlays.compose.*`
 - validate/doctor warn when Bake file truth stays hard-coded in shell `docker buildx bake -f` / `--file` flags, or when Bake adapter root stays hard-coded in shell `cd ... && docker buildx bake ...`, instead of `adapter_inputs.overlays.bake.*`
+- validate/doctor warn when Helm chart, values-file, namespace, or adapter-root truth stays hard-coded in shell `cd ... && helm ...`, Helm `-f` / `--values`, or Helm `-n` / `--namespace` flags, instead of `adapter_inputs.overlays.helm.*`
 - when a selected branch omits `run`/`script`/`command`/`prepare`/`launch`, ota falls back to the task-level execution body (including OS variants)
 - when a task declares `execution.modes`, an explicit `--mode` must resolve to a declared branch
   unless it matches `default_mode`; unsupported explicit overrides fail early with a mode-branch error
@@ -2964,8 +2976,15 @@ Fields:
   workflow should project into selected `docker buildx bake` task paths when that path does not already declare one
 - `<name>.adapter_inputs.overlays.bake.files`: canonical optional ordered repo-relative adapter-owned Bake file
   overlays the workflow should project into selected `docker buildx bake` task paths
-- `<name>.adapter_inputs.compose.*` / `<name>.adapter_inputs.bake.*`: compatibility aliases for existing workflow contracts; prefer `<name>.adapter_inputs.overlays.<family>.*` for new authoring
-- the workflow overlay map is generalized structurally, but shipped workflow runtime semantics currently exist only for `compose` and `bake`; unsupported overlay families fail validation instead of silently acting as inert metadata
+- `<name>.adapter_inputs.overlays.helm.cwd`: canonical optional repo-relative adapter working directory the
+  workflow should project into selected Helm task paths when that path does not already declare one
+- `<name>.adapter_inputs.overlays.helm.values_files`: canonical optional ordered repo-relative adapter-owned Helm values-file overlays
+  the workflow should project into selected Helm task paths
+- `<name>.adapter_inputs.overlays.helm.chart`: canonical optional repo-relative Helm chart path the workflow should project into selected Helm task paths
+- `<name>.adapter_inputs.overlays.helm.release_name`: canonical optional Helm release name the workflow should project into selected Helm task paths
+- `<name>.adapter_inputs.overlays.helm.namespace`: canonical optional Helm namespace the workflow should project into selected Helm task paths
+- `<name>.adapter_inputs.compose.*` / `<name>.adapter_inputs.bake.*` / `<name>.adapter_inputs.helm.*`: compatibility aliases for existing workflow contracts; prefer `<name>.adapter_inputs.overlays.<family>.*` for new authoring
+- the workflow overlay map is generalized structurally, and shipped workflow runtime semantics currently exist for `compose`, `bake`, and `helm`; unsupported overlay families fail validation instead of silently acting as inert metadata
 - `<name>.env.profile`: optional env profile name from `env.profiles`
 - `<name>.env.compose_env_file_services`: optional compose-managed services that should consume the
   selected workflow profile's rendered dotenv artifact as `services.<service>.manager.env_file`
@@ -3014,8 +3033,8 @@ Workflow env adapter rules:
 - treat `<name>.adapter_inputs.*` as the shared workflow adapter overlay surface: declare the
   base adapter-owned truth there once, then let task-local adapter inputs carry only the narrower
   additions that are specific to one selected path
-- ota resolves that workflow overlay through one adapter-field registry across the shipped Compose
-  and Bake families, so workflow/task/mode precedence, duplicate-ownership governance, and runtime
+- ota resolves that workflow overlay through one adapter-field registry across the shipped Compose,
+  Bake, and Helm families, so workflow/task/mode precedence, duplicate-ownership governance, and runtime
   env projection stay aligned on one contract-owned field map instead of family-specific drift
 - use `<name>.adapter_inputs.overlays.compose.*` when one workflow owns adapter-scoped compose input
   truth for the selected runnable path and task-local compose adapter inputs should only carry
@@ -3023,6 +3042,7 @@ Workflow env adapter rules:
 - use `<name>.adapter_inputs.overlays.bake.*` when one workflow owns the base Bake adapter root or file stack for
   selected `docker buildx bake` task paths and task-local adapter inputs should only carry narrower
   additions
+- use `<name>.adapter_inputs.overlays.helm.*` when one workflow owns the base Helm adapter root, values-file stack, chart selection, release naming, or namespace for selected Helm task paths and task-local adapter inputs should only carry narrower additions
 - this keeps compose adapter input ownership on the workflow surface instead of duplicating
   the same `manager.env_file` path across services
 - when the selected workflow run path includes a compose-running task, ota also projects that
@@ -3046,6 +3066,13 @@ Workflow env adapter rules:
 - ota prepends `<name>.adapter_inputs.overlays.bake.files` ahead of task-local
   `adapter_inputs.overlays.bake.files`, preserving narrower Bake file additions without forcing workflow
   truth back into shell `docker buildx bake -f` flags
+- ota applies `<name>.adapter_inputs.overlays.helm.cwd` only when the selected Helm task path does not
+  already declare one, so one workflow can own a chart-rooted Helm lane without forcing shell
+  `cd ... && helm ...` glue back into task bodies
+- ota prepends `<name>.adapter_inputs.overlays.helm.values_files` ahead of task-local
+  `adapter_inputs.overlays.helm.values_files`, preserving narrower values-file additions without forcing workflow
+  truth back into shell Helm `-f` flags
+- ota applies `<name>.adapter_inputs.overlays.helm.chart`, `.release_name`, and `.namespace` only when the selected Helm task path does not already declare them
 - every referenced service must declare `manager.kind: compose`
 - the selected profile must declare `render.dotenv`
 - if a referenced service also declares `manager.env_file`, it must match the workflow-owned
@@ -3054,6 +3081,7 @@ Workflow env adapter rules:
   escape the repo
 - `<name>.adapter_inputs.overlays.compose.profiles[*]` must not be empty
 - `<name>.adapter_inputs.overlays.bake.files` must stay repo-relative and must not escape the repo
+- `<name>.adapter_inputs.overlays.helm.values_files` and `.chart` must stay repo-relative and must not escape the repo
 - `<name>.adapter_inputs` requires the selected workflow run path to include task paths
   that support each declared adapter input family
 

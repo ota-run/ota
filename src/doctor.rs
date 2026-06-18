@@ -9314,23 +9314,22 @@ fn compact_probe_failure_message(message: &str) -> String {
 }
 
 fn version_command_string(name: &str) -> String {
-    if name == "go" {
-        String::from("go version")
-    } else {
-        format!("{name} --version")
+    let args = crate::runner::tool_version_probe_arg_sets(name)
+        .first()
+        .copied()
+        .unwrap_or(&["--version"]);
+    if args.is_empty() {
+        return name.to_string();
     }
+    format!("{name} {}", args.join(" "))
 }
 
 fn version_probe_command_string(name: &str) -> String {
     let quoted_name = shell_single_quote(name);
-    let exec = if name == "go" {
-        String::from("\"$resolved\" version")
-    } else {
-        String::from("\"$resolved\" --version")
-    };
+    let exec = crate::runner::tool_runtime_version_probe_commands(name, "\"$resolved\"");
 
     format!(
-        "printf '%s\\n' '{CONTAINER_PROBE_STARTED_MARKER}' >&2\nresolved=\"$(command -v {quoted_name} 2>/dev/null)\" || exit 127\nprintf '%s%s\\n' '{CONTAINER_PROBE_PATH_MARKER}' \"$resolved\" >&2\nexec {exec}"
+        "printf '%s\\n' '{CONTAINER_PROBE_STARTED_MARKER}' >&2\nresolved=\"$(command -v {quoted_name} 2>/dev/null)\" || exit 127\nprintf '%s%s\\n' '{CONTAINER_PROBE_PATH_MARKER}' \"$resolved\" >&2\n({exec})"
     )
 }
 
@@ -11424,26 +11423,46 @@ fn command_version_probe_in_working_dir(name: &str, working_dir: &Path) -> Comma
         .filter(|path| !should_probe_via_command_name(name, path))
         .map(Path::to_path_buf);
     let program = version_probe_program(name, resolved_path.as_deref());
-    let outcome = version_command(name, program, working_dir).output();
+    let mut parseable_attempt_observed = false;
+    let mut last_probe_failed = None;
+    let mut outcome = CommandVersionProbeOutcome::Missing;
+    for args in crate::runner::tool_version_probe_arg_sets(name) {
+        let attempt = version_command(program, working_dir, args).output();
+        outcome = match attempt {
+            Ok(output) if output.status.success() => {
+                let combined = format!(
+                    "{} {}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                if let Some(version) = extract_version_token(&combined) {
+                    CommandVersionProbeOutcome::Version(version)
+                } else {
+                    parseable_attempt_observed = true;
+                    continue;
+                }
+            }
+            Ok(output) => {
+                last_probe_failed = Some(CommandVersionProbeOutcome::ProbeFailed {
+                    exit_code: output.status.code(),
+                    error: None,
+                });
+                continue;
+            }
+            Err(error) => {
+                last_probe_failed = Some(CommandVersionProbeOutcome::ProbeFailed {
+                    exit_code: None,
+                    error: Some(error.to_string()),
+                });
+                continue;
+            }
+        };
+        break;
+    }
     let outcome = match outcome {
-        Ok(output) if output.status.success() => {
-            let combined = format!(
-                "{} {}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            extract_version_token(&combined)
-                .map(CommandVersionProbeOutcome::Version)
-                .unwrap_or(CommandVersionProbeOutcome::Unparseable)
-        }
-        Ok(output) => CommandVersionProbeOutcome::ProbeFailed {
-            exit_code: output.status.code(),
-            error: None,
-        },
-        Err(error) => CommandVersionProbeOutcome::ProbeFailed {
-            exit_code: None,
-            error: Some(error.to_string()),
-        },
+        CommandVersionProbeOutcome::Version(_) => outcome,
+        _ if parseable_attempt_observed => CommandVersionProbeOutcome::Unparseable,
+        _ => last_probe_failed.unwrap_or(CommandVersionProbeOutcome::Missing),
     };
 
     CommandVersionProbe {
@@ -11602,7 +11621,7 @@ fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
     deduped
 }
 
-fn version_command(name: &str, program: &OsStr, working_dir: &Path) -> Command {
+fn version_command(program: &OsStr, working_dir: &Path, args: &[&str]) -> Command {
     #[cfg(windows)]
     let mut command = {
         let is_wrapper = Path::new(program)
@@ -11622,18 +11641,10 @@ fn version_command(name: &str, program: &OsStr, working_dir: &Path) -> Command {
     #[cfg(not(windows))]
     let mut command = Command::new(program);
     command.current_dir(working_dir);
-    for arg in tool_version_probe_args(name) {
+    for arg in args {
         command.arg(arg);
     }
     command
-}
-
-fn tool_version_probe_args(name: &str) -> &'static [&'static str] {
-    match name {
-        "go" => &["version"],
-        "kubectl" => &["version", "--client"],
-        _ => &["--version"],
-    }
 }
 
 fn version_probe_program<'a>(name: &'a str, resolved_path: Option<&'a Path>) -> &'a OsStr {
@@ -13974,6 +13985,83 @@ tasks:
                 .findings
                 .iter()
                 .any(|finding| finding.summary == "Unparseable version for tool: kubectl"),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn probes_helm_with_version_short() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            "helm",
+            if cfg!(windows) {
+                "@echo off\r\nif \"%1\"==\"version\" if \"%2\"==\"--short\" (\r\necho v3.21.1+gc56dd00\r\nexit /b 0\r\n)\r\nif \"%1\"==\"dependency\" if \"%2\"==\"build\" exit /b 0\r\nexit /b 1\r\n"
+            } else {
+                "#!/bin/sh\nif [ \"$1\" = \"version\" ] && [ \"$2\" = \"--short\" ]; then\n  echo 'v3.21.1+gc56dd00'\n  exit 0\nfi\nif [ \"$1\" = \"dependency\" ] && [ \"$2\" = \"build\" ]; then\n  exit 0\nfi\nexit 1\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else if cfg!(unix) {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  helm: "*"
+tasks:
+  test:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: helm
+        cwd: deploy/helm
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(report.ok, "{report:?}");
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Tool probe failed: helm"),
+            "{report:?}"
+        );
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.summary == "Unparseable version for tool: helm"),
             "{report:?}"
         );
     }

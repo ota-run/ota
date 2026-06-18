@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- widened first-class adapter ownership with `adapter_inputs.overlays.helm.*`, so Helm task paths
+  can now declare contract-owned `cwd`, `values_files`, `chart`, `release_name`, and `namespace`
+  truth instead of hard-coding that selection in argv or shell
+- Helm dependency hydration now owns clean-host repository bootstrap too: ota reads chart
+  repositories from `Chart.yaml`, seeds them into isolated repo-owned Helm state under
+  `.ota/state/helm/...`, and then runs `helm dependency build .` without depending on preexisting
+  user-global `helm repo add` state
+- Fix Helm tool version probing to use `helm version --short` before generic fallback probes, so
+  Helm-backed contract requirements and dependency hydration lanes do not fail on healthy hosts
+  due to the invalid generic `helm --version` probe path.
+
 - fixed `ota skills install` so Codex and Claude installs now stage the full canonical Ota skill
   payload instead of a partial bundle; the installer now includes the referenced `agents/` and
   `references/` support files and validates that the staged skill tree is complete before replace

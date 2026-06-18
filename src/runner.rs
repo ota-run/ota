@@ -40,7 +40,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::adapter_inputs::{
-    ADAPTER_INPUT_FIELDS, task_adapter_env_bindings, task_effective_adapter_cwd,
+    ADAPTER_INPUT_FIELDS, rebase_repo_relative_adapter_paths, task_adapter_env_bindings,
+    task_effective_adapter_cwd,
 };
 #[cfg(windows)]
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -2461,6 +2462,176 @@ fn effective_task_execution_working_dir(
     task_effective_adapter_cwd(task, backend)
         .map(|cwd| working_dir.join(cwd))
         .unwrap_or_else(|| working_dir.to_path_buf())
+}
+
+fn projected_structured_command_for_task(
+    task: &TaskSpec,
+    backend: Backend,
+    command: &crate::schema::TaskCommandSpec,
+) -> crate::schema::TaskCommandSpec {
+    if !command.exe.trim().eq_ignore_ascii_case("helm") {
+        return command.clone();
+    }
+    project_helm_adapter_inputs(task, backend, command)
+}
+
+fn project_helm_adapter_inputs(
+    task: &TaskSpec,
+    backend: Backend,
+    command: &crate::schema::TaskCommandSpec,
+) -> crate::schema::TaskCommandSpec {
+    let subcommand = helm_subcommand(command.args.as_slice());
+    let Some(subcommand) = subcommand else {
+        return command.clone();
+    };
+    let adapter_cwd = task.helm_adapter_cwd_for_backend(backend);
+    let values_files = rebase_repo_relative_adapter_paths(
+        &task.helm_adapter_values_files_for_backend(backend),
+        adapter_cwd.clone(),
+    );
+    let chart = task
+        .helm_adapter_chart_for_backend(backend)
+        .map(|value| rebase_repo_relative_adapter_paths(&[value], adapter_cwd.clone()))
+        .and_then(|values| values.into_iter().next());
+    let release_name = task.helm_adapter_release_name_for_backend(backend);
+    let namespace = task.helm_adapter_namespace_for_backend(backend);
+    if values_files.is_empty()
+        && chart.is_none()
+        && release_name.is_none()
+        && namespace.is_none()
+    {
+        return command.clone();
+    }
+
+    let mut projected = command.clone();
+    if let Some(namespace) = namespace
+        && !helm_has_flag(projected.args.as_slice(), &["-n", "--namespace"])
+    {
+        projected.args.extend([String::from("--namespace"), namespace]);
+    }
+    if !values_files.is_empty() && !helm_has_flag(projected.args.as_slice(), &["-f", "--values"]) {
+        for path in values_files {
+            projected.args.push(String::from("-f"));
+            projected.args.push(path);
+        }
+    }
+    match subcommand {
+        HelmProjectedSubcommand::Lint | HelmProjectedSubcommand::DependencyBuild => {
+            let prefix_len = match subcommand {
+                HelmProjectedSubcommand::DependencyBuild => 2,
+                _ => 1,
+            };
+            if let Some(chart) = chart
+                && !helm_has_positional_after_prefix(projected.args.as_slice(), prefix_len, 1)
+            {
+                projected.args.push(chart);
+            }
+        }
+        HelmProjectedSubcommand::Template => {
+            if let Some(release_name) = release_name
+                && !helm_has_positional_after_prefix(projected.args.as_slice(), 1, 1)
+            {
+                projected.args.push(release_name);
+            }
+            if let Some(chart) = chart
+                && !helm_has_positional_after_prefix(projected.args.as_slice(), 1, 2)
+            {
+                projected.args.push(chart);
+            }
+        }
+        HelmProjectedSubcommand::Install | HelmProjectedSubcommand::Upgrade => {
+            if let Some(release_name) = release_name
+                && !helm_has_positional_after_prefix(projected.args.as_slice(), 1, 1)
+            {
+                projected.args.push(release_name);
+            }
+            if let Some(chart) = chart
+                && !helm_has_positional_after_prefix(projected.args.as_slice(), 1, 2)
+            {
+                projected.args.push(chart);
+            }
+        }
+        HelmProjectedSubcommand::Uninstall => {
+            if let Some(release_name) = release_name
+                && !helm_has_positional_after_prefix(projected.args.as_slice(), 1, 1)
+            {
+                projected.args.push(release_name);
+            }
+        }
+    }
+    projected
+}
+
+#[derive(Clone, Copy)]
+enum HelmProjectedSubcommand {
+    Lint,
+    Template,
+    Install,
+    Upgrade,
+    Uninstall,
+    DependencyBuild,
+}
+
+fn helm_subcommand(args: &[String]) -> Option<HelmProjectedSubcommand> {
+    let first = args.first()?.trim();
+    if first.eq_ignore_ascii_case("lint") {
+        return Some(HelmProjectedSubcommand::Lint);
+    }
+    if first.eq_ignore_ascii_case("template") {
+        return Some(HelmProjectedSubcommand::Template);
+    }
+    if first.eq_ignore_ascii_case("install") {
+        return Some(HelmProjectedSubcommand::Install);
+    }
+    if first.eq_ignore_ascii_case("upgrade") {
+        return Some(HelmProjectedSubcommand::Upgrade);
+    }
+    if first.eq_ignore_ascii_case("uninstall") {
+        return Some(HelmProjectedSubcommand::Uninstall);
+    }
+    if first.eq_ignore_ascii_case("dependency")
+        && args
+            .get(1)
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("build"))
+    {
+        return Some(HelmProjectedSubcommand::DependencyBuild);
+    }
+    None
+}
+
+fn helm_has_flag(args: &[String], flags: &[&str]) -> bool {
+    args.iter().any(|arg| {
+        let trimmed = arg.trim();
+        flags.iter().any(|flag| trimmed.eq_ignore_ascii_case(flag))
+    })
+}
+
+fn helm_has_positional_after_prefix(
+    args: &[String],
+    prefix_len: usize,
+    required_positionals: usize,
+) -> bool {
+    let mut positionals = 0usize;
+    let mut skip_value_for_flag = false;
+    for arg in args.iter().skip(prefix_len) {
+        let trimmed = arg.trim();
+        if skip_value_for_flag {
+            skip_value_for_flag = false;
+            continue;
+        }
+        if trimmed.starts_with('-') {
+            skip_value_for_flag = matches!(
+                trimmed,
+                "-f" | "--values" | "-n" | "--namespace" | "--kube-context"
+            );
+            continue;
+        }
+        positionals += 1;
+        if positionals >= required_positionals {
+            return true;
+        }
+    }
+    false
 }
 
 fn join_backend_cwd_with_adapter_cwd(
@@ -6995,6 +7166,15 @@ fn execute_task_with_hooks(
     if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
         preflight_native_runtime_listener_binds(task_name, runtime)?;
     }
+    let projected_command = execution
+        .command()
+        .map(|command| projected_structured_command_for_task(task, backend_kind, command));
+    let projected_launch_command = match execution.launch() {
+        Some(crate::schema::TaskLaunchSpec::Command(command)) => {
+            Some(projected_structured_command_for_task(task, backend_kind, command))
+        }
+        _ => None,
+    };
     let mut shell_command = match execution.launch() {
         _ if execution.command().is_some()
             && (!matches!(backend, ResolvedExecutionBackend::Native { .. })
@@ -7004,7 +7184,7 @@ fn execute_task_with_hooks(
                     .is_empty()
                 || path_export.is_some()) =>
         {
-            let command = execution.command().expect("checked command execution");
+            let command = projected_command.as_ref().expect("checked command execution");
             Some(shell_quote_command_argv(
                 &backend,
                 command.exe.as_str(),
@@ -7020,6 +7200,7 @@ fn execute_task_with_hooks(
                     .is_empty()
                 || path_export.is_some() =>
         {
+            let command = projected_launch_command.as_ref().unwrap_or(command);
             Some(shell_quote_command_argv(
                 &backend,
                 command.exe.as_str(),
@@ -7069,6 +7250,7 @@ fn execute_task_with_hooks(
         if let Some(command) = shell_command {
             PreparedTaskExecution::Shell { command }
         } else {
+            let command = projected_command.as_ref().unwrap_or(command);
             PreparedTaskExecution::NativeCommand {
                 exe: command.exe.clone(),
                 args: command.args.clone(),
@@ -7080,6 +7262,7 @@ fn execute_task_with_hooks(
                 if let Some(command) = shell_command {
                     PreparedTaskExecution::Shell { command }
                 } else {
+                    let command = projected_launch_command.as_ref().unwrap_or(command);
                     PreparedTaskExecution::NativeCommand {
                         exe: command.exe.clone(),
                         args: command.args.clone(),
@@ -8240,6 +8423,26 @@ fn execute_prepare_task(
         });
     }
 
+    if let crate::schema::TaskPrepareSpec::DependencyHydration(spec) = prepare
+        && let crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) = &spec.source
+    {
+        return execute_helm_dependency_hydration_prepare(
+            contract,
+            task,
+            task_name,
+            runtime,
+            source,
+            working_dir,
+            env_overrides,
+            path_export,
+            secret_env_names,
+            backend,
+            deferred_backend_fulfillment,
+            host_port_override,
+            mode,
+        );
+    }
+
     let command = prepare_task_shell_command(task_name, prepare, backend)?;
     execute_task_command(
         contract,
@@ -8256,6 +8459,252 @@ fn execute_prepare_task(
         host_port_override,
         mode,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_helm_dependency_hydration_prepare(
+    contract: Option<&Contract>,
+    task: Option<&crate::schema::TaskSpec>,
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+    source: &crate::schema::TaskHelmHydrationSourceSpec,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    path_export: Option<&str>,
+    secret_env_names: &BTreeSet<String>,
+    backend: &ResolvedExecutionBackend,
+    deferred_backend_fulfillment: Option<&DeferredContainerBackendFulfillment>,
+    host_port_override: Option<u16>,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    let resolved_working_dir = absolute_working_dir(task_name, working_dir)?;
+    let helm_state =
+        ensure_helm_repository_state(task_name, source, resolved_working_dir.as_path())?;
+    let repositories =
+        read_helm_chart_repositories(task_name, source, resolved_working_dir.as_path())?;
+    let chart_working_dir = resolved_working_dir.join(source.cwd.trim());
+    let mut helm_env = env_overrides.clone();
+    helm_env.insert(
+        String::from("HELM_REPOSITORY_CONFIG"),
+        helm_state.repository_config.display().to_string(),
+    );
+    helm_env.insert(
+        String::from("HELM_REPOSITORY_CACHE"),
+        helm_state.repository_cache.display().to_string(),
+    );
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    for (index, repository) in repositories.iter().enumerate() {
+        let alias = helm_repository_alias(repository.as_str(), index);
+        let args = vec![
+            String::from("repo"),
+            String::from("add"),
+            String::from("--force-update"),
+            alias,
+            repository.clone(),
+        ];
+        let output = execute_task_command(
+            contract,
+            task,
+            task_name,
+            runtime,
+            &prepared_structured_command_for_backend(backend, "helm", args),
+            resolved_working_dir.as_path(),
+            &helm_env,
+            path_export,
+            secret_env_names,
+            backend,
+            deferred_backend_fulfillment,
+            host_port_override,
+            mode.clone(),
+        )?;
+        stdout.push_str(&output.stdout);
+        stderr.push_str(&output.stderr);
+        if output.exit_code != 0 {
+            return Ok(TaskCommandOutput {
+                exit_code: output.exit_code,
+                stdout,
+                stderr,
+                target: None,
+                runtime: None,
+                service_termination: None,
+                execution_note: None,
+                interrupted: output.interrupted,
+            });
+        }
+    }
+
+    let output = execute_task_command(
+        contract,
+        task,
+        task_name,
+        runtime,
+        &prepared_structured_command_for_backend(
+            backend,
+            "helm",
+            vec![
+                String::from("dependency"),
+                String::from("build"),
+                String::from("."),
+            ],
+        ),
+        chart_working_dir.as_path(),
+        &helm_env,
+        path_export,
+        secret_env_names,
+        backend,
+        deferred_backend_fulfillment,
+        host_port_override,
+        mode,
+    )?;
+    stdout.push_str(&output.stdout);
+    stderr.push_str(&output.stderr);
+    Ok(TaskCommandOutput {
+        exit_code: output.exit_code,
+        stdout,
+        stderr,
+        target: output.target,
+        runtime: output.runtime,
+        service_termination: output.service_termination,
+        execution_note: output.execution_note,
+        interrupted: output.interrupted,
+    })
+}
+
+fn absolute_working_dir(task_name: &str, working_dir: &Path) -> Result<PathBuf, RunError> {
+    if working_dir.is_absolute() {
+        return Ok(working_dir.to_path_buf());
+    }
+    env::current_dir()
+        .map(|cwd| cwd.join(working_dir))
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not resolve absolute working directory: {source}"),
+        })
+}
+
+struct HelmRepositoryState {
+    repository_config: PathBuf,
+    repository_cache: PathBuf,
+}
+
+fn ensure_helm_repository_state(
+    task_name: &str,
+    source: &crate::schema::TaskHelmHydrationSourceSpec,
+    working_dir: &Path,
+) -> Result<HelmRepositoryState, RunError> {
+    let mut hasher = DefaultHasher::new();
+    source.cwd.hash(&mut hasher);
+    let state_root = working_dir
+        .join(".ota")
+        .join("state")
+        .join("helm")
+        .join(format!("{:016x}", hasher.finish()));
+    let repository_cache = state_root.join("cache");
+    fs::create_dir_all(&repository_cache).map_err(|source_error| RunError::FileActionFailed {
+        task: task_name.to_string(),
+        message: format!("could not create Helm repository cache state: {source_error}"),
+    })?;
+    let repository_config = state_root.join("repositories.yaml");
+    if let Some(parent) = repository_config.parent() {
+        fs::create_dir_all(parent).map_err(|source_error| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not create Helm repository state directory: {source_error}"),
+        })?;
+    }
+    let initialize_repository_config = !repository_config.exists()
+        || fs::metadata(&repository_config)
+            .map(|metadata| metadata.len() == 0)
+            .unwrap_or(true);
+    if initialize_repository_config {
+        fs::write(
+            &repository_config,
+            "apiVersion: v1\ngenerated: \"1970-01-01T00:00:00Z\"\nrepositories: []\n",
+        )
+        .map_err(|source_error| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not initialize Helm repository config: {source_error}"),
+        })?;
+    }
+    Ok(HelmRepositoryState {
+        repository_config,
+        repository_cache,
+    })
+}
+
+#[derive(Deserialize)]
+struct HelmChartManifest {
+    #[serde(default)]
+    dependencies: Vec<HelmChartDependencyManifest>,
+}
+
+#[derive(Deserialize)]
+struct HelmChartDependencyManifest {
+    repository: Option<String>,
+}
+
+fn read_helm_chart_repositories(
+    task_name: &str,
+    source: &crate::schema::TaskHelmHydrationSourceSpec,
+    working_dir: &Path,
+) -> Result<Vec<String>, RunError> {
+    let chart_path = working_dir.join(source.cwd.trim()).join("Chart.yaml");
+    let contents =
+        fs::read_to_string(&chart_path).map_err(|source_error| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+            "could not read Helm chart manifest `{}`: {source_error}",
+            chart_path.display()
+        ),
+        })?;
+    let parsed: HelmChartManifest = serde_yaml::from_str(contents.as_str()).map_err(
+        |source_error| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not parse Helm chart manifest `{}`: {source_error}",
+                chart_path.display()
+            ),
+        },
+    )?;
+    let mut repositories = Vec::new();
+    for dependency in parsed.dependencies {
+        let Some(repository) = dependency.repository.as_deref().map(str::trim) else {
+            continue;
+        };
+        if repository.is_empty() {
+            continue;
+        }
+        if repository.starts_with("file://") || repository.starts_with("oci://") {
+            continue;
+        }
+        if !repositories.iter().any(|existing| existing == repository) {
+            repositories.push(repository.to_string());
+        }
+    }
+    Ok(repositories)
+}
+
+fn helm_repository_alias(repository: &str, index: usize) -> String {
+    let mut hasher = DefaultHasher::new();
+    repository.hash(&mut hasher);
+    format!("ota-helm-{index}-{:08x}", hasher.finish() as u32)
+}
+
+fn prepared_structured_command_for_backend(
+    backend: &ResolvedExecutionBackend,
+    exe: &str,
+    args: Vec<String>,
+) -> PreparedTaskExecution {
+    match backend {
+        ResolvedExecutionBackend::Native { .. } => PreparedTaskExecution::NativeCommand {
+            exe: exe.to_string(),
+            args,
+        },
+        _ => PreparedTaskExecution::Shell {
+            command: shell_quote_command_argv(backend, exe, &args),
+        },
+    }
 }
 
 fn prepare_task_shell_command(
@@ -11071,7 +11520,7 @@ fn probe_native_backend_command_version(
     let mut parseable_attempt_observed = false;
     let probe_program = native_backend_probe_program(command_name, resolved_path.as_deref());
 
-    for args in native_backend_version_probe_args(command_name) {
+    for args in tool_version_probe_arg_sets(command_name) {
         let output = native_backend_probe_output(probe_program, args, working_dir);
         match output {
             Ok(output) => {
@@ -11116,11 +11565,19 @@ fn probe_native_backend_command_version(
     ))
 }
 
-fn native_backend_version_probe_args(command_name: &str) -> Vec<&'static [&'static str]> {
+pub(crate) fn tool_version_probe_arg_sets(
+    command_name: &str,
+) -> &'static [&'static [&'static str]] {
     match command_name {
-        "go" => vec![&["version"]],
-        "kubectl" => vec![&["version", "--client"], &["--version"], &["version"], &["-version"]],
-        _ => vec![&["--version"], &["version"], &["-version"]],
+        "go" => &[&["version"]],
+        "helm" => &[
+            &["version", "--short"],
+            &["version"],
+            &["--version"],
+            &["-version"],
+        ],
+        "kubectl" => &[&["version", "--client"], &["--version"], &["version"], &["-version"]],
+        _ => &[&["--version"], &["version"], &["-version"]],
     }
 }
 
@@ -11241,8 +11698,11 @@ fn probe_named_container_command_version(
     ))
 }
 
-fn tool_runtime_version_probe_commands(command_name: &str, quoted_command: &str) -> String {
-    native_backend_version_probe_args(command_name)
+pub(crate) fn tool_runtime_version_probe_commands(
+    command_name: &str,
+    quoted_command: &str,
+) -> String {
+    tool_version_probe_arg_sets(command_name)
         .into_iter()
         .map(|args| {
             let suffix = args
@@ -53346,6 +53806,105 @@ tasks:
         assert_eq!(
             command,
             "cd 'docker' && 'podman' compose -f 'compose.dev.yml' pull 'redis' 'database'"
+        );
+    }
+
+    #[test]
+    fn projected_structured_command_projects_helm_adapter_inputs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  helm:render:
+    adapter_inputs:
+      helm:
+        cwd: deploy/helm
+        values_files:
+          - deploy/helm/values.dev.yaml
+        chart: deploy/helm/chart
+        release_name: ota
+        namespace: preview
+    command:
+      exe: helm
+      args:
+        - template
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("helm:render").unwrap();
+        let projected = super::projected_structured_command_for_task(
+            task,
+            Backend::Native,
+            task.command.as_ref().unwrap(),
+        );
+
+        assert_eq!(projected.exe, "helm");
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("template"),
+                String::from("--namespace"),
+                String::from("preview"),
+                String::from("-f"),
+                String::from("values.dev.yaml"),
+                String::from("ota"),
+                String::from("chart"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_structured_command_preserves_existing_helm_flags_and_positionals() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  helm:render:
+    adapter_inputs:
+      helm:
+        cwd: deploy/helm
+        values_files:
+          - deploy/helm/values.dev.yaml
+        chart: deploy/helm/chart
+        release_name: ota
+        namespace: preview
+    command:
+      exe: helm
+      args:
+        - template
+        - --namespace
+        - live
+        - existing-release
+        - existing-chart
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("helm:render").unwrap();
+        let projected = super::projected_structured_command_for_task(
+            task,
+            Backend::Native,
+            task.command.as_ref().unwrap(),
+        );
+
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("template"),
+                String::from("--namespace"),
+                String::from("live"),
+                String::from("existing-release"),
+                String::from("existing-chart"),
+                String::from("-f"),
+                String::from("values.dev.yaml"),
+            ]
         );
     }
 
