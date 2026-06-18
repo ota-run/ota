@@ -730,6 +730,10 @@ pub struct RunPreviewSuccess<'a> {
     pub toolchains: Vec<ToolchainSelectionSummary>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub native_prerequisites: Vec<ExecutionReceiptNativePrerequisite>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provisioning: Option<&'a ProvisioningPlan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provisioning_request: Option<&'a ProvisioningBackendRequest>,
     pub plan: RunPreviewPlan,
 }
 

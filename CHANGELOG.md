@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+- publish selected-path `provisioning` and `provisioning_request` in `ota run --dry-run --json`
+  so direct tool acquisition source truth is machine-readable in task preview output
 - allow `tools.<name>.acquisition.source_config` for package-manager-backed standalone CLI
   ownership and pass that provider truth through doctor provisioning requests
 - widened `tools.<name>.acquisition` with package-manager-backed standalone CLI ownership across

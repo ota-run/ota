@@ -2238,6 +2238,12 @@ impl ToolRequirement {
         }
     }
 
+    pub fn force_required(&mut self) {
+        if let Self::Detailed(detail) = self {
+            detail.required = true;
+        }
+    }
+
     pub fn acquisition(&self) -> Option<&ToolAcquisitionSpec> {
         match self {
             Self::Simple(_) => None,

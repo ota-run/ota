@@ -156,6 +156,8 @@
             "$ref": "./receipt.json#/oneOf/0/properties/receipt/properties/native_prerequisites/items"
           }
         },
+        "provisioning": { "$ref": "./doctor.json#/properties/provisioning" },
+        "provisioning_request": { "$ref": "./doctor.json#/properties/provisioning_request" },
         "plan": { "$ref": "#/$defs/plan" }
       }
     },

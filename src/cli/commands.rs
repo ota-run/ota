@@ -15634,6 +15634,8 @@ fn render_run_preview_target(
                         env: env_report.env,
                         toolchains,
                         native_prerequisites,
+                        provisioning: None,
+                        provisioning_request: None,
                         plan,
                     }),
                     stderr: None,
@@ -15729,6 +15731,14 @@ fn render_run_preview_target(
                 env: env_report.env,
                 toolchains,
                 native_prerequisites,
+                provisioning: preconditions_report
+                    .provisioning
+                    .as_ref()
+                    .map(|value| &value.plan),
+                provisioning_request: preconditions_report
+                    .provisioning
+                    .as_ref()
+                    .map(|value| &value.request),
                 plan,
             }),
             stderr: None,
@@ -16365,8 +16375,9 @@ fn selected_task_requirement_surface(
 ) -> Option<RequirementSurface> {
     let effective = effective_task_execution(contract, task_name, overrides);
     let task = contract.tasks.get(task_name)?;
-    let mut surface =
-        task.scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
+    let scoped = task.scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
+    let mut selected_tool_names = scoped.tools.keys().cloned().collect::<BTreeSet<_>>();
+    let mut surface = scoped;
     for (name, requirement) in &surface.runtimes.clone() {
         surface.runtimes.insert(
             name.clone(),
@@ -16397,6 +16408,7 @@ fn selected_task_requirement_surface(
     if let Some(exe) =
         task.effective_command_launch_executable_for_backend(effective.backend, current_os())
     {
+        selected_tool_names.insert(exe.clone());
         surface
             .tools
             .entry(exe)
@@ -16405,6 +16417,9 @@ fn selected_task_requirement_surface(
     if let Some(context_name) = effective.context_name
         && let Some((_, context)) = named_execution_context(contract, context_name)
     {
+        for tool_name in context.requirements.tools.keys() {
+            selected_tool_names.insert(tool_name.clone());
+        }
         surface.merge(&RequirementSurface {
             runtimes: context.requirements.runtimes.clone(),
             tools: context.requirements.tools.clone(),
@@ -16418,6 +16433,11 @@ fn selected_task_requirement_surface(
             scoped_native,
             requirement_target_os_for_backend(effective.backend),
         ));
+    }
+    for tool_name in &selected_tool_names {
+        if let Some(requirement) = surface.tools.get_mut(tool_name) {
+            requirement.force_required();
+        }
     }
     let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
     let mut toolchain_names = selected_task_scoped_toolchain_names(contract, task_name, overrides)
@@ -50629,6 +50649,203 @@ tasks:
         assert_eq!(json["task"], "ci");
         assert_eq!(json["resolved"]["backend"], "native");
         assert!(json["plan"]["actions"].is_array());
+    }
+
+    #[test]
+    fn run_dry_run_json_includes_direct_tool_provisioning_request() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let (contract, expected_source, expected_package, expected_key, expected_value) =
+            match super::current_os() {
+                "macos" => (
+                    r#"
+version: 1
+project:
+  name: demo
+tools:
+  helm:
+    version: ">=3.8"
+    acquisition:
+      provider: brew
+      package: helm
+      source_config:
+        tap_name: vendor/tap
+        tap_url: https://github.com/vendor/homebrew-tap
+tasks:
+  render:
+    command:
+      exe: helm
+      args:
+        - template
+    requirements:
+      tools:
+        helm: ">=3.8"
+"#,
+                    "brew",
+                    "helm",
+                    "tap_name",
+                    "vendor/tap",
+                ),
+                "windows" => (
+                    r#"
+version: 1
+project:
+  name: demo
+tools:
+  helm:
+    version: ">=3.8"
+    acquisition:
+      provider: winget
+      package: Helm.Helm
+      source_config:
+        source_name: winget
+tasks:
+  render:
+    command:
+      exe: helm
+      args:
+        - template
+    requirements:
+      tools:
+        helm: ">=3.8"
+"#,
+                    "winget",
+                    "Helm.Helm",
+                    "source_name",
+                    "winget",
+                ),
+                _ => (
+                    r#"
+version: 1
+project:
+  name: demo
+tools:
+  helm:
+    version: ">=3.8"
+    acquisition:
+      provider: apt
+      package: helm
+      source_config:
+        sources_list:
+          - deb https://packages.example.invalid stable main
+tasks:
+  render:
+    command:
+      exe: helm
+      args:
+        - template
+    requirements:
+      tools:
+        helm: ">=3.8"
+"#,
+                    "apt",
+                    "helm",
+                    "sources_list",
+                    "deb https://packages.example.invalid stable main",
+                ),
+            };
+        fs::write(repo.path().join("ota.yaml"), contract).expect("write contract");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                if cfg!(windows) {
+                    std::ffi::OsString::from(r"C:\Windows\System32")
+                } else {
+                    std::ffi::OsString::from("/usr/bin:/bin:/usr/sbin:/sbin")
+                },
+            );
+        }
+
+        let output = super::run_command(
+            "render",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 1);
+        assert!(
+            !output.stdout.trim().is_empty(),
+            "stdout was empty; stderr={:?}",
+            output.stderr
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(
+            json["provisioning_request"]["actions"][0]["source"],
+            expected_source
+        );
+        assert_eq!(
+            json["provisioning_request"]["actions"][0]["package"],
+            expected_package
+        );
+        let source_config = &json["provisioning_request"]["actions"][0]["source_config"];
+        match expected_key {
+            "sources_list" => assert_eq!(source_config[expected_key][0], expected_value),
+            _ => assert_eq!(source_config[expected_key], expected_value),
+        }
+    }
+
+    #[test]
+    fn selected_task_requirement_surface_forces_explicit_tool_selection_required() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tools:
+  helm:
+    version: ">=3.8"
+    required: false
+tasks:
+  render:
+    command:
+      exe: helm
+      args:
+        - template
+    requirements:
+      tools:
+        helm: ">=3.8"
+"#,
+        )
+        .unwrap();
+
+        let surface = super::selected_task_requirement_surface(
+            &contract,
+            "render",
+            ExecutionOverrides::default(),
+        )
+        .expect("selected task surface");
+
+        assert!(
+            surface
+                .tools
+                .get("helm")
+                .expect("helm requirement")
+                .required_for_os(super::current_os())
+        );
     }
 
     #[test]
@@ -86211,6 +86428,11 @@ fn selected_workflow_task_requirement_surface(
         surface
             .tools
             .retain(|tool_name, _| selected_tool_names.contains(tool_name));
+    }
+    for tool_name in &selected_tool_names {
+        if let Some(requirement) = surface.tools.get_mut(tool_name) {
+            requirement.force_required();
+        }
     }
 
     let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();

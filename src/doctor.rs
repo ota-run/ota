@@ -214,6 +214,14 @@ fn current_host_platform() -> &'static str {
     }
 }
 
+fn backend_key(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Native => "native",
+        Backend::Container => "container",
+        Backend::Remote => "remote",
+    }
+}
+
 fn current_host_arch() -> &'static str {
     match std::env::consts::ARCH {
         "x86_64" | "amd64" => "x64",
@@ -457,6 +465,8 @@ fn selected_backend_precondition_selections(
     });
 
     let mut selections = Vec::<BackendPreconditionSelection>::new();
+    let mut selected_tool_names_by_backend =
+        BTreeMap::<(String, Option<String>), BTreeSet<String>>::new();
 
     for task_name in task_names {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
@@ -484,6 +494,9 @@ fn selected_backend_precondition_selections(
             });
             selections.last_mut().expect("selection was just pushed")
         };
+        let selected_tool_names = selected_tool_names_by_backend
+            .entry((backend_key(backend).to_string(), selection_context_name.clone()))
+            .or_default();
 
         let scoped_surface = task.scoped_requirement_surface_for_execution(backend, context_name);
         for (name, requirement) in &scoped_surface.runtimes {
@@ -493,6 +506,7 @@ fn selected_backend_precondition_selections(
             );
         }
         for (name, requirement) in &scoped_surface.tools {
+            selected_tool_names.insert(name.clone());
             selection.requirement_surface.tools.insert(
                 name.clone(),
                 contract.resolve_scoped_tool_requirement(name, requirement),
@@ -529,6 +543,11 @@ fn selected_backend_precondition_selections(
             task,
             backend,
         );
+        if let Some(exe) =
+            task.effective_command_launch_executable_for_backend(backend, current_os())
+        {
+            selected_tool_names.insert(exe);
+        }
 
         if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
             && let Some(context) = contract
@@ -536,6 +555,9 @@ fn selected_backend_precondition_selections(
                 .as_ref()
                 .and_then(|execution| execution.contexts.get(context_name))
         {
+            for tool_name in context.requirements.tools.keys() {
+                selected_tool_names.insert(tool_name.clone());
+            }
             selection.requirement_surface.merge(&RequirementSurface {
                 runtimes: context.requirements.runtimes.clone(),
                 tools: context.requirements.tools.clone(),
@@ -554,6 +576,18 @@ fn selected_backend_precondition_selections(
             let mut tools = contract.tools.clone();
             tools.extend(selection.requirement_surface.tools.clone());
             selection.requirement_surface.tools = tools;
+        }
+        if let Some(selected_tool_names) = selected_tool_names_by_backend
+            .get(&(
+                backend_key(selection.backend).to_string(),
+                selection.context_name.clone(),
+            ))
+        {
+            for tool_name in selected_tool_names {
+                if let Some(requirement) = selection.requirement_surface.tools.get_mut(tool_name) {
+                    requirement.force_required();
+                }
+            }
         }
     }
 
@@ -598,6 +632,8 @@ fn selected_task_backend_precondition_selections(
     });
 
     let mut selections = Vec::<BackendPreconditionSelection>::new();
+    let mut selected_tool_names_by_backend =
+        BTreeMap::<(String, Option<String>), BTreeSet<String>>::new();
 
     for task_name in task_names {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
@@ -623,6 +659,12 @@ fn selected_task_backend_precondition_selections(
             });
             selections.last_mut().expect("selection was just pushed")
         };
+        let selected_tool_names = selected_tool_names_by_backend
+            .entry((
+                backend_key(effective.backend).to_string(),
+                selection_context_name.clone(),
+            ))
+            .or_default();
 
         let scoped_surface = task
             .scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
@@ -633,6 +675,7 @@ fn selected_task_backend_precondition_selections(
             );
         }
         for (name, requirement) in &scoped_surface.tools {
+            selected_tool_names.insert(name.clone());
             selection.requirement_surface.tools.insert(
                 name.clone(),
                 contract.resolve_scoped_tool_requirement(name, requirement),
@@ -675,6 +718,11 @@ fn selected_task_backend_precondition_selections(
             task,
             effective.backend,
         );
+        if let Some(exe) =
+            task.effective_command_launch_executable_for_backend(effective.backend, current_os())
+        {
+            selected_tool_names.insert(exe);
+        }
 
         if let Some(context_name) = effective.context_name
             && let Some(context) = contract
@@ -682,6 +730,9 @@ fn selected_task_backend_precondition_selections(
                 .as_ref()
                 .and_then(|execution| execution.contexts.get(context_name))
         {
+            for tool_name in context.requirements.tools.keys() {
+                selected_tool_names.insert(tool_name.clone());
+            }
             selection.requirement_surface.merge(&RequirementSurface {
                 runtimes: context.requirements.runtimes.clone(),
                 tools: context.requirements.tools.clone(),
@@ -700,6 +751,18 @@ fn selected_task_backend_precondition_selections(
             let mut tools = contract.tools.clone();
             tools.extend(selection.requirement_surface.tools.clone());
             selection.requirement_surface.tools = tools;
+        }
+        if let Some(selected_tool_names) = selected_tool_names_by_backend
+            .get(&(
+                backend_key(selection.backend).to_string(),
+                selection.context_name.clone(),
+            ))
+        {
+            for tool_name in selected_tool_names {
+                if let Some(requirement) = selection.requirement_surface.tools.get_mut(tool_name) {
+                    requirement.force_required();
+                }
+            }
         }
     }
 
@@ -745,6 +808,7 @@ fn scoped_precondition_selection(
         toolchain_names: contract.selected_workflow_required_toolchain_names(workflow_name),
         ..ScopedPreconditionSelection::default()
     };
+    let mut selected_tool_names = BTreeSet::new();
 
     for task_name in task_names {
         let Some(task) = contract.tasks.get(task_name.as_str()) else {
@@ -754,6 +818,12 @@ fn scoped_precondition_selection(
         selection
             .requirement_surface
             .merge(&task.scoped_requirement_surface_for_execution(backend, context_name));
+        selected_tool_names.extend(
+            task.scoped_requirement_surface_for_execution(backend, context_name)
+                .tools
+                .keys()
+                .cloned(),
+        );
         let scoped_env = task.scoped_env_requirements_for_execution(backend, context_name);
         if !scoped_env.is_empty() {
             selection.env_scoped = true;
@@ -786,12 +856,17 @@ fn scoped_precondition_selection(
             task,
             backend,
         );
+        if let Some(exe) = task.effective_command_launch_executable_for_backend(backend, current_os())
+        {
+            selected_tool_names.insert(exe);
+        }
         if let Some(context_name) = task.context_for_backend(contract.execution.as_ref(), backend)
             && let Some(context) = contract
                 .execution
                 .as_ref()
                 .and_then(|execution| execution.contexts.get(context_name))
         {
+            selected_tool_names.extend(context.requirements.tools.keys().cloned());
             selection.requirement_surface.merge(&RequirementSurface {
                 runtimes: context.requirements.runtimes.clone(),
                 tools: context.requirements.tools.clone(),
@@ -809,6 +884,11 @@ fn scoped_precondition_selection(
         let mut tools = contract.tools.clone();
         tools.extend(selection.requirement_surface.tools.clone());
         selection.requirement_surface.tools = tools;
+    }
+    for tool_name in &selected_tool_names {
+        if let Some(requirement) = selection.requirement_surface.tools.get_mut(tool_name) {
+            requirement.force_required();
+        }
     }
 
     selection
@@ -14988,6 +15068,48 @@ workflows:
                 .get("docker")
                 .map(|requirement| requirement.version().to_string()),
             Some(String::from("*"))
+        );
+    }
+
+    #[test]
+    fn selected_workflow_preconditions_force_explicit_optional_tools_required() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  helm:
+    version: ">=3.8"
+    required: false
+tasks:
+  render:
+    command:
+      exe: helm
+      args:
+        - template
+    requirements:
+      tools:
+        helm: ">=3.8"
+workflows:
+  default: chart
+  chart:
+    run:
+      task: render
+"#,
+        )
+        .unwrap();
+
+        let surface =
+            super::precondition_requirement_surface(&contract, DoctorMode::Native, Some("chart"));
+
+        assert!(
+            surface
+                .tools
+                .get("helm")
+                .expect("helm requirement")
+                .required_for_os(super::current_os())
         );
     }
 

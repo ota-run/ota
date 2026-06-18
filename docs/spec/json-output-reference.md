@@ -2084,6 +2084,10 @@ executed for that toolchain during the recorded run path.
 same selected task path, execution backend, env requirements, toolchains, native prerequisites,
 dependency order, and preview actions that text `RUN PREVIEW` uses, but it does not execute setup,
 dependencies, containers, or task processes.
+When that selected path also carries direct provisioning truth, the payload includes additive
+top-level `provisioning` and `provisioning_request` fields using the same machine-readable shape as
+`ota doctor --json`, so agents do not need to re-derive selected-path host fulfillment from
+free-form `requirement_lines`.
 
 The published schema for this surface is
 [json-schemas/run-preview.json](json-schemas/run-preview.json). It covers single-target ready or
@@ -2163,6 +2167,22 @@ shared readiness verdict.
       "status": "task"
     }
   ],
+  "provisioning_request": {
+    "actions": [
+      {
+        "kind": "install",
+        "target_kind": "tool",
+        "name": "helm",
+        "requested_version": ">=3.8",
+        "package": "helm",
+        "source": "brew",
+        "source_config": {
+          "tap_name": "vendor/tap",
+          "tap_url": "https://github.com/vendor/homebrew-tap"
+        }
+      }
+    ]
+  },
   "plan": {
     "dependency_chain": ["ci"],
     "actions": ["would execute `npm test` on the host"]
