@@ -1436,15 +1436,15 @@ fn remote_doctor_probe_contexts(
             );
         let provisioning_actions = merged_provisioning_actions_for_requirement_surface(
             loaded_policy
-            .map(|loaded| {
-                loaded
-                    .pack
-                    .selected_provisioning_actions_for_requirement_surface_os(
-                        &target_os,
-                        &policy_requirement_surface,
-                    )
-            })
-            .unwrap_or_default(),
+                .map(|loaded| {
+                    loaded
+                        .pack
+                        .selected_provisioning_actions_for_requirement_surface_os(
+                            &target_os,
+                            &policy_requirement_surface,
+                        )
+                })
+                .unwrap_or_default(),
             &provisioning_requirement_surface,
             &target_os,
         );
@@ -1549,15 +1549,15 @@ fn remote_doctor_probe_contexts(
         );
     let provisioning_actions = merged_provisioning_actions_for_requirement_surface(
         loaded_policy
-        .map(|loaded| {
-            loaded
-                .pack
-                .selected_provisioning_actions_for_requirement_surface_os(
-                    &target_os,
-                    &policy_requirement_surface,
-                )
-        })
-        .unwrap_or_default(),
+            .map(|loaded| {
+                loaded
+                    .pack
+                    .selected_provisioning_actions_for_requirement_surface_os(
+                        &target_os,
+                        &policy_requirement_surface,
+                    )
+            })
+            .unwrap_or_default(),
         &provisioning_requirement_surface,
         &target_os,
     );
@@ -4061,25 +4061,26 @@ fn diagnose_contract_with_scope(
                 let selection_provisioning_actions =
                     merged_provisioning_actions_for_requirement_surface(
                         loaded_policy
-                    .as_ref()
-                    .map(|loaded| {
-                        let policy_requirement_surface = policy_requirement_surface_for_toolchains(
-                            contract,
-                            &selection.requirement_surface,
-                            &selection.toolchain_names,
-                            policy_target_os_for_mode(mode),
-                        );
-                        loaded
-                            .pack
-                            .selected_provisioning_actions_for_requirement_surface_os(
-                                policy_target_os_for_mode(mode),
-                                &policy_requirement_surface,
-                            )
-                    })
-                    .unwrap_or_default(),
-                    &provisioning_requirement_surface,
-                    policy_target_os_for_mode(mode),
-                );
+                            .as_ref()
+                            .map(|loaded| {
+                                let policy_requirement_surface =
+                                    policy_requirement_surface_for_toolchains(
+                                        contract,
+                                        &selection.requirement_surface,
+                                        &selection.toolchain_names,
+                                        policy_target_os_for_mode(mode),
+                                    );
+                                loaded
+                                    .pack
+                                    .selected_provisioning_actions_for_requirement_surface_os(
+                                        policy_target_os_for_mode(mode),
+                                        &policy_requirement_surface,
+                                    )
+                            })
+                            .unwrap_or_default(),
+                        &provisioning_requirement_surface,
+                        policy_target_os_for_mode(mode),
+                    );
                 diagnose_env(
                     contract,
                     loaded_policy
@@ -4246,25 +4247,26 @@ fn diagnose_contract_with_scope(
                 let additional_provisioning_actions =
                     merged_provisioning_actions_for_requirement_surface(
                         loaded_policy
-                    .as_ref()
-                    .map(|loaded| {
-                        let policy_requirement_surface = policy_requirement_surface_for_toolchains(
-                            contract,
-                            &additional_selection.requirement_surface,
-                            &additional_selection.toolchain_names,
-                            policy_target_os_for_mode(additional_mode),
-                        );
-                        loaded
-                            .pack
-                            .selected_provisioning_actions_for_requirement_surface_os(
-                                policy_target_os_for_mode(additional_mode),
-                                &policy_requirement_surface,
-                            )
-                    })
-                    .unwrap_or_default(),
-                    &provisioning_requirement_surface,
-                    policy_target_os_for_mode(additional_mode),
-                );
+                            .as_ref()
+                            .map(|loaded| {
+                                let policy_requirement_surface =
+                                    policy_requirement_surface_for_toolchains(
+                                        contract,
+                                        &additional_selection.requirement_surface,
+                                        &additional_selection.toolchain_names,
+                                        policy_target_os_for_mode(additional_mode),
+                                    );
+                                loaded
+                                    .pack
+                                    .selected_provisioning_actions_for_requirement_surface_os(
+                                        policy_target_os_for_mode(additional_mode),
+                                        &policy_requirement_surface,
+                                    )
+                            })
+                            .unwrap_or_default(),
+                        &provisioning_requirement_surface,
+                        policy_target_os_for_mode(additional_mode),
+                    );
                 if matches!(additional_mode, DoctorMode::Native | DoctorMode::Container) {
                     diagnose_env(
                         contract,
@@ -9327,12 +9329,8 @@ fn container_installability_failure(
     provisioning_actions: &[ProvisioningAction],
 ) -> Option<ProvisioningFailureDiagnosis> {
     let container_probe = container_probe?;
-    let action = selected_provisioning_action(
-        target_kind,
-        display_name,
-        requirement,
-        provisioning_actions,
-    )?;
+    let action =
+        selected_provisioning_action(target_kind, display_name, requirement, provisioning_actions)?;
     let target = ProvisioningExecutionTarget::Container {
         image: container_probe.image.clone(),
         engine: container_probe.engine.clone(),
@@ -9498,12 +9496,8 @@ fn remote_installability_failure(
     provisioning_actions: &[ProvisioningAction],
 ) -> Option<ProvisioningFailureDiagnosis> {
     let target = remote_provisioning_target(remote_probe, remote_context_name)?;
-    let action = selected_provisioning_action(
-        target_kind,
-        display_name,
-        requirement,
-        provisioning_actions,
-    )?;
+    let action =
+        selected_provisioning_action(target_kind, display_name, requirement, provisioning_actions)?;
     match probe_provisioning_installability_with_target(
         action,
         contract_working_dir(contract_path),
@@ -15904,14 +15898,18 @@ tasks:
 
     #[test]
     fn container_mode_does_not_report_release_asset_tool_missing_when_selected_path_can_provision_it()
-    {
+     {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let bin_dir = fixture.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
         write_fake_command(
             &bin_dir,
-            if cfg!(windows) { "docker.cmd" } else { "docker" },
+            if cfg!(windows) {
+                "docker.cmd"
+            } else {
+                "docker"
+            },
             if cfg!(windows) {
                 r#"@echo off
 if "%1"=="info" exit /b 0
@@ -16013,11 +16011,8 @@ tasks:
         )
         .unwrap();
 
-        let report = diagnose_preconditions_with_mode(
-            &contract,
-            &contract_path,
-            DoctorMode::Container,
-        );
+        let report =
+            diagnose_preconditions_with_mode(&contract, &contract_path, DoctorMode::Container);
 
         match original_path {
             Some(path) => unsafe {
