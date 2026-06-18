@@ -35128,6 +35128,9 @@ fn collect_prepare_field_paths(
                 TaskDependencyHydrationSourceSpec::GoModules(_source) => {
                     fields.push(format!("{prefix}.source.cwd"));
                 }
+                TaskDependencyHydrationSourceSpec::Helm(_source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                }
                 TaskDependencyHydrationSourceSpec::Maven(source) => {
                     fields.push(format!("{prefix}.source.cwd"));
                     if source.wrapper {

@@ -8365,6 +8365,10 @@ fn prepare_task_shell_command(
                 "cd {} && go mod download",
                 shell_quote_command_word(source.cwd.trim(), quote_style)
             )),
+            crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => Ok(format!(
+                "cd {} && helm dependency build .",
+                shell_quote_command_word(source.cwd.trim(), quote_style)
+            )),
             crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => Ok(format!(
                 "cd {} && {} -q{} {}",
                 shell_quote_command_word(source.cwd.trim(), quote_style),
@@ -52984,6 +52988,84 @@ tasks:
                     .dir
                     .path()
                     .join("api")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_executes_helm_dependency_build_from_declared_cwd() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: helm
+        cwd: deploy/helm
+    requirements:
+      tools:
+        helm: "*"
+    effects:
+      writes:
+        - deploy/helm/charts
+      network: true
+      network_kind: dependency_hydration
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join("deploy/helm")).unwrap();
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let helm_body = if cfg!(windows) {
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo version.BuildInfo{Version:\"v3.18.4\"}\r\n  exit /b 0\r\n)\r\n>> \"%OTA_HELM_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'version.BuildInfo{Version:\"v3.18.4\"}\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_HELM_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "helm", helm_body);
+        let log_path = fixture.dir.path().join("helm.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_HELM_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_HELM_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "install")
+            .expect("prepare task should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_HELM_LOG", value) },
+            None => unsafe { env::remove_var("OTA_HELM_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(logged.contains("dependency build ."), "{logged}");
+        assert!(
+            logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("deploy/helm")
                     .display()
                     .to_string()
                     .as_str()

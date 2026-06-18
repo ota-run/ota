@@ -1819,6 +1819,8 @@ Task-effect rules:
     - `prepare.source.no_root`: optional `poetry install --no-root`
     - `prepare.source.kind: go_modules`
     - `prepare.source.cwd`: required repo-relative working directory for the `go mod download` invocation
+    - `prepare.source.kind: helm`
+    - `prepare.source.cwd`: required repo-relative working directory for the `helm dependency build .` invocation
     - `prepare.source.kind: maven`
     - `prepare.source.cwd`: required repo-relative working directory for the Maven invocation
     - `prepare.source.wrapper`: optional explicit wrapper ownership; when `true`, ota runs `./mvnw ...`, otherwise it runs `mvn ...`
@@ -1848,6 +1850,7 @@ Task-effect rules:
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: uv` currently requires `requirements.toolchains: [python]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: poetry` currently requires `requirements.toolchains: [python]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: go_modules` currently requires `requirements.toolchains: [go]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: helm` currently requires `requirements.tools.helm`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: maven` currently requires `requirements.toolchains: [java]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`; when `prepare.source.wrapper` is absent or false, it also requires `requirements.tools.maven`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: gradle` currently requires `requirements.toolchains: [java]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`; when `prepare.source.wrapper` is absent or false, it also requires `requirements.tools.gradle`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: cargo` currently requires `requirements.toolchains: [rust]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`
@@ -1862,6 +1865,7 @@ Task-effect rules:
 - `prepare.source.kind: uv` currently executes the narrow canonical uv hydration lane: `uv sync`
 - `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
+- `prepare.source.kind: helm` currently executes the narrow canonical Helm chart hydration lane: `helm dependency build .`
 - `prepare.source.kind: maven` currently executes the narrow canonical Maven hydration lane: `./mvnw -q dependency:resolve` or `./mvnw -q dependency:go-offline` when wrapper-owned, otherwise `mvn -q dependency:resolve` or `mvn -q dependency:go-offline`
 - `prepare.source.kind: gradle` currently executes the narrow canonical Gradle hydration lane: `./gradlew dependencies` when wrapper-owned, otherwise `gradle dependencies`
 - `prepare.source.kind: cargo` currently executes the narrow canonical Cargo hydration lane: `cargo fetch`

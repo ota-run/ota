@@ -1076,6 +1076,15 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "additionalProperties": false,
           "required": ["kind", "cwd"],
           "properties": {
+            "kind": { "const": "helm" },
+            "cwd": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "cwd"],
+          "properties": {
             "kind": { "const": "cargo" },
             "cwd": { "type": "string" }
           }

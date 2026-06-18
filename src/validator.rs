@@ -4268,6 +4268,54 @@ fn validate_task_prepare(
                         )));
                     }
                 }
+                crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => {
+                    if spec.medium
+                        != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: helm` must use `prepare.medium: package_dependencies`"
+                        )));
+                    }
+                    if !spec.targets.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: helm` must omit `prepare.targets`; ota executes the declared Helm chart hydration lane structurally"
+                        )));
+                    }
+                    if source.cwd.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `helm` must declare a non-empty `prepare.source.cwd`"
+                        )));
+                    } else {
+                        validate_repo_relative_file_action_path(
+                            task_name,
+                            "prepare.source.cwd",
+                            source.cwd.as_str(),
+                            errors,
+                        );
+                    }
+                    if !requirements.tools.contains_key("helm") {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: helm` must declare `requirements.tools.helm`"
+                        )));
+                    }
+                    if !effects.network {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network: true`"
+                        )));
+                    }
+                    if effects.network_kind
+                        != Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
+                        )));
+                    }
+                    if effects.writes.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: helm` must declare at least one durable repo write in `effects.writes`"
+                        )));
+                    }
+                }
                 crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => {
                     if spec.medium
                         != crate::schema::TaskDependencyHydrationMedium::PackageDependencies
@@ -9388,7 +9436,9 @@ fn obvious_replaceable_dependency_hydration_command(command: &TaskCommandSpec) -
 }
 
 fn obvious_replaceable_dependency_hydration_argv(argv: &[String]) -> bool {
-    obvious_yarn_inline_builds_hydration_argv(argv) || obvious_npm_force_hydration_argv(argv)
+    obvious_yarn_inline_builds_hydration_argv(argv)
+        || obvious_npm_force_hydration_argv(argv)
+        || obvious_helm_dependency_build_hydration_argv(argv)
 }
 
 fn obvious_yarn_inline_builds_hydration_argv(argv: &[String]) -> bool {
@@ -9411,6 +9461,14 @@ fn obvious_npm_force_hydration_argv(argv: &[String]) -> bool {
         && argv[offset] == "npm"
         && matches!(argv[offset + 1].as_str(), "install" | "ci")
         && argv[offset + 2] == "--force"
+}
+
+fn obvious_helm_dependency_build_hydration_argv(argv: &[String]) -> bool {
+    argv.len() == 4
+        && argv[0] == "helm"
+        && argv[1] == "dependency"
+        && argv[2] == "build"
+        && !argv[3].trim().is_empty()
 }
 
 fn obvious_systemd_service_shell(command: &str) -> bool {
@@ -21517,6 +21575,37 @@ tasks:
     }
 
     #[test]
+    fn accepts_prepare_only_helm_hydration_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: helm
+        cwd: deploy/helm
+    requirements:
+      tools:
+        helm: "*"
+    effects:
+      writes:
+        - deploy/helm/charts
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("helm hydration should validate");
+    }
+
+    #[test]
     fn accepts_prepare_only_maven_wrapper_hydration_task() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -29895,6 +29984,36 @@ tasks:
             ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
                 if value.task_name == "install"
                     && value.command == "npm ci --force"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_dependency_hydration_ownership_advisory_for_helm_dependency_build_command()
+    {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    command:
+      exe: helm
+      args:
+        - dependency
+        - build
+        - deploy/helm
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
+                if value.task_name == "setup"
+                    && value.command == "helm dependency build deploy/helm"
         )));
     }
 

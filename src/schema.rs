@@ -4880,6 +4880,12 @@ impl TaskPrepareSpec {
                     source.command_preview(),
                     source.cwd.trim()
                 ),
+                TaskDependencyHydrationSourceSpec::Helm(source) => format!(
+                    "hydrate {} with {} in `{}`",
+                    spec.medium.label(),
+                    source.command_preview(),
+                    source.cwd.trim()
+                ),
                 TaskDependencyHydrationSourceSpec::Maven(source) => format!(
                     "hydrate {} with {} in `{}`",
                     spec.medium.label(),
@@ -5007,6 +5013,7 @@ pub enum TaskDependencyHydrationSourceSpec {
     Uv(TaskUvHydrationSourceSpec),
     Poetry(TaskPoetryHydrationSourceSpec),
     GoModules(TaskGoModulesHydrationSourceSpec),
+    Helm(TaskHelmHydrationSourceSpec),
     Maven(TaskMavenHydrationSourceSpec),
     Gradle(TaskGradleHydrationSourceSpec),
     Cargo(TaskCargoHydrationSourceSpec),
@@ -5149,6 +5156,18 @@ pub struct TaskGoModulesHydrationSourceSpec {
 impl TaskGoModulesHydrationSourceSpec {
     pub fn command_preview(&self) -> String {
         String::from("go mod download")
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskHelmHydrationSourceSpec {
+    pub cwd: String,
+}
+
+impl TaskHelmHydrationSourceSpec {
+    pub fn command_preview(&self) -> String {
+        String::from("helm dependency build .")
     }
 }
 
@@ -6888,6 +6907,14 @@ tasks:
             cwd: String::from("."),
         };
         assert_eq!(uv.command_preview(), "uv sync");
+    }
+
+    #[test]
+    fn helm_prepare_preview_uses_structural_dependency_build_command() {
+        let helm = super::TaskHelmHydrationSourceSpec {
+            cwd: String::from("deploy/helm"),
+        };
+        assert_eq!(helm.command_preview(), "helm dependency build .");
     }
 
     #[test]
