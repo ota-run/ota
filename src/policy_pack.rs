@@ -1967,10 +1967,7 @@ fn resolve_network_effect_governance_decision(
                 return (decision, String::from("policies.effects.tasks.network"));
             }
         }
-        (
-            EffectGovernanceScope::SafeTask,
-            crate::schema::TaskNetworkEffectKind::ToolBootstrap,
-        ) => {
+        (EffectGovernanceScope::SafeTask, crate::schema::TaskNetworkEffectKind::ToolBootstrap) => {
             if let Some(decision) = safe.network {
                 return (
                     decision,

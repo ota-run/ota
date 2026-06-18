@@ -152,11 +152,7 @@ fn tasks_schema_includes_agent_and_variant_fields() {
             .iter()
             .any(|entry| entry == "dependency_hydration")
     );
-    assert!(
-        task_kind_enum
-            .iter()
-            .any(|entry| entry == "tool_bootstrap")
-    );
+    assert!(task_kind_enum.iter().any(|entry| entry == "tool_bootstrap"));
     assert!(task_kind_enum.iter().any(|entry| entry == "aggregate"));
     assert!(
         task_kind_enum
