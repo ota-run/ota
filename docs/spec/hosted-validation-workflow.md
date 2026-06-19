@@ -68,22 +68,43 @@ For workspace inventory and readiness summaries, `ota workspace list --json` can
 lightweight preflight signal. For ticketing or automated follow-up, `ota workspace explain --json`
 gives an ordered plan without mutating state.
 
-## Testing unreleased ota builds
+## Contract-owned GitHub Actions install
 
-When a case-study matrix or maintainer branch needs to test an unreleased ota change, prefer the
-shipped source-install action instead of hand-rolling checkout/build/install steps in each repo
-workflow.
+If the repo already declares `agent.bootstrap.ota.source`, prefer the shipped
+`install-ota-from-contract` action instead of restating install truth in workflow YAML.
 
 ```yaml
-- name: Install ota from source
-  uses: ota-run/ota/.github/actions/install-ota-from-source@<sha>
-  with:
-    repository: ota-run/ota
-    ref: <branch-or-sha-under-test>
+- uses: actions/checkout@v6
+- name: Install ota from contract
+  uses: ota-run/ota/.github/actions/install-ota-from-contract@<sha>
 ```
 
-That keeps the workflow thin and makes the one branch/sha under test explicit at the callsite,
-instead of scattering Cargo install details across multiple case-study repos.
+That keeps `ota.yaml` as the single install source of truth for both agent bootstrap and GitHub
+Actions jobs that later run direct `ota` commands.
+
+## Testing unreleased ota builds
+
+When a case-study matrix or maintainer branch needs to test an unreleased ota change, keep that
+truth in `agent.bootstrap.ota.source` and let the contract-owned install action consume it.
+
+```yaml
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: git_rev
+        rev: 756b2b982e42de1b09a76a6d53c59962a94c2a30
+```
+
+```yaml
+- uses: actions/checkout@v6
+- name: Install ota from contract
+  uses: ota-run/ota/.github/actions/install-ota-from-contract@<sha>
+```
+
+Use the older `install-ota-from-source` action only when the workflow intentionally needs a
+repository/ref input outside repo-owned contract truth, such as Ota-maintainer workflows that
+exercise arbitrary refs without editing a case-study contract first.
 
 ## Infrastructure boundary
 

@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added a first-party `install-ota-from-contract` GitHub Actions helper that reads
+  `agent.bootstrap.ota.source` from the checked-out repo contract and runs the matching official
+  installer flow, so workflow jobs that need direct `ota` commands no longer have to duplicate
+  `OTA_VERSION`, `OTA_GIT_REV`, `OTA_GIT_BRANCH`, or `--from-git` install truth in YAML
 - sharpened container-mode doctor probe guidance for repo-local executables backed by unresolved
   dependency hydration, so high-confidence Bundler and `node_modules` hydration failures now tell
   authors to hydrate the selected container dependency lane first instead of surfacing only a

@@ -59,6 +59,15 @@ Use direct `ota` commands in workflow steps when:
 - the workflow must run `ota up`, `ota run`, or other mutating/setup commands
 - you need full control over task orchestration inside the job
 
+When a job needs direct `ota` commands, prefer installing ota from repo-owned
+`agent.bootstrap.ota.source` truth:
+
+```yaml
+- uses: actions/checkout@v6
+- name: Install ota from contract
+  uses: ota-run/ota/.github/actions/install-ota-from-contract@<sha>
+```
+
 ## Quick start
 
 ```yaml
@@ -133,6 +142,15 @@ The action supports:
 - `ota-version` to pin the installed ota release explicitly
 
 The action currently supports Linux, macOS, and Windows GitHub Actions runners.
+
+## Direct command jobs
+
+`ota-run/action@v1` is the reporting wrapper. When a later job needs direct `ota up`, `ota run`,
+or `ota proof` commands, use the contract-owned installer action instead of duplicating `OTA_VERSION`,
+`OTA_GIT_REV`, `OTA_GIT_BRANCH`, or `--from-git` choices in workflow YAML.
+
+That action reads `agent.bootstrap.ota.source` from the checked-out `ota.yaml` and runs the
+matching official installer flow.
 
 ## Inputs
 

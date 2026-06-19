@@ -3587,6 +3587,9 @@ Agent semantics:
   - `kind: version` is the normal released proof lane
   - `kind: git_rev` is the deterministic unreleased proof lane
   - `kind: branch` is the active pressure-testing lane and is intentionally non-deterministic
+- GitHub Actions jobs that need direct `ota` commands should consume that same truth through the
+  shipped `ota-run/ota/.github/actions/install-ota-from-contract@<sha>` action instead of
+  hardcoding release/source install choices separately in workflow YAML
 - `bootstrap.ota.sh` and `bootstrap.ota.powershell` remain compatibility fields; when omitted,
   ota renders the approved shell and PowerShell install commands from `bootstrap.ota.source`
 - `notes` is free-form repo guidance for humans and AI agents
