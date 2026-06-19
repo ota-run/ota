@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- tightened `ota tasks` human output so task listings now show the effective runnable default mode,
+  include first-class `command` bodies in command previews, and keep alternate mode invocations
+  aligned with that effective mode instead of surfacing empty `Default Mode: -` task blocks
 - documented the new standalone `ota-run/action@v1` `source: contract` install mode in the
   GitHub Actions and hosted-validation specs, so first-party docs now cover both the canonical
   `setup + action install: never` split and the wrapper-owned contract-consumption path

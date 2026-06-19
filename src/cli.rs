@@ -19317,14 +19317,15 @@ tasks:
 
         assert_eq!(output.exit_code, 0);
         assert!(stdout.contains("Command: `ota run build`"));
+        assert!(stdout.contains("Default Mode: native"));
         assert!(lines[ci_idx - 1].trim().is_empty());
         assert!(lines[build_idx + 1].starts_with("  Context:"));
-        assert!(lines[build_idx + 2].starts_with("  Default Mode:"));
+        assert_eq!(lines[build_idx + 2], "  Default Mode: native");
         assert!(lines[build_idx + 3].starts_with("  Command: `ota run build`"));
         assert!(lines[build_idx + 4].starts_with("  Mode Branches:"));
         assert!(lines[build_idx + 5].starts_with("  Description: Build the site for production"));
         assert!(lines[ci_idx + 1].starts_with("  Context:"));
-        assert!(lines[ci_idx + 2].starts_with("  Default Mode:"));
+        assert_eq!(lines[ci_idx + 2], "  Default Mode: native");
         assert!(lines[ci_idx + 3].starts_with("  Command: `ota run ci`"));
         assert!(lines[ci_idx + 4].starts_with("  Mode Branches:"));
         assert!(lines[ci_idx + 5].starts_with("  Description: Canonical local verification"));
@@ -19436,6 +19437,7 @@ tasks:
         assert!(stdout.contains("TASKS "));
         assert!(stdout.contains("✦ dev"));
         assert!(stdout.contains("Context: app"));
+        assert!(stdout.contains("Default Mode: native"));
         assert!(stdout.contains("Command: `ota run dev`"));
         assert!(stdout.contains("Description: Start the dev server"));
         assert!(stdout.contains("Notes:"));
@@ -19688,6 +19690,43 @@ tasks:
         assert!(
             modes_idx > mode_branches_idx,
             "expected Modes block after Mode Branches"
+        );
+    }
+
+    #[test]
+    fn tasks_text_previews_command_bodies_and_effective_default_mode() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: app
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  lint:
+    description: Run lint checks
+    command:
+      exe: cargo
+      args:
+        - clippy
+        - --all-targets
+        - --no-deps
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Default Mode: container"), "{stdout}");
+        assert!(
+            stdout.contains("Command Preview: cargo clippy --all-targets --no-deps"),
+            "{stdout}"
         );
     }
 

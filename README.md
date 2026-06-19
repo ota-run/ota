@@ -636,7 +636,8 @@ ota run test --mode container --lifecycle persistent
 ota run test --mode container --ephemeral
 ```
 
-Use `ota tasks --use` to see the exact runnable task commands for the current contract:
+Use `ota tasks --use` to see the exact runnable task commands for the current contract, including
+the effective default mode and any alternate `--mode ...` invocations Ota supports for that task:
 
 ```bash
 ota tasks --use

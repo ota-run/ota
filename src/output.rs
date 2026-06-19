@@ -3070,6 +3070,8 @@ pub struct TaskSummary<'a> {
     pub context: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_mode: Option<&'static str>,
+    #[serde(skip_serializing)]
+    pub effective_default_mode: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3246,6 +3248,7 @@ impl<'a> TaskSummary<'a> {
             name,
             context: effective.context_name,
             default_mode: task.mode_default_backend().map(task_mode_name),
+            effective_default_mode: task_mode_name(selected_backend),
             description: task.description.as_deref(),
             notes: task.notes.as_deref(),
             category: task.category.as_deref(),

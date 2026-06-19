@@ -36121,7 +36121,7 @@ fn render_tasks_text(
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Default Mode:"),
-            task.default_mode.unwrap_or("-")
+            render_task_default_mode(task)
         ));
         if let Some(description) = task.description {
             output.push_str(&format!("\n  {} {description}", paint_key("Description:")));
@@ -36303,6 +36303,19 @@ fn render_task_launch_preview(launch: &crate::output::TaskLaunchSummary<'_>) -> 
     }
 }
 
+fn render_task_command_text(command: &crate::output::TaskCommandSummary<'_>) -> String {
+    let mut preview = command.exe.to_string();
+    if !command.args.is_empty() {
+        preview.push(' ');
+        preview.push_str(&command.args.join(" "));
+    }
+    preview
+}
+
+fn render_task_default_mode(task: &TaskSummary<'_>) -> &'static str {
+    task.default_mode.unwrap_or(task.effective_default_mode)
+}
+
 fn render_task_command_preview(task: &TaskSummary<'_>) -> String {
     task.run
         .map(str::to_string)
@@ -36310,6 +36323,7 @@ fn render_task_command_preview(task: &TaskSummary<'_>) -> String {
             task.script
                 .map(|script| script.lines().next().unwrap_or(script).trim().to_string())
         })
+        .or_else(|| task.command.as_ref().map(render_task_command_text))
         .or_else(|| task.launch.as_ref().map(render_task_launch_preview))
         .or_else(|| task.action.as_ref().map(render_task_action_text))
         .or_else(|| task.prepare.as_ref().map(render_task_prepare_text))
@@ -36340,9 +36354,7 @@ fn render_task_aggregate_text(aggregate: &crate::output::TaskAggregateSummary) -
 }
 
 fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
-    let Some(default_mode) = task.default_mode else {
-        return Vec::new();
-    };
+    let default_mode = render_task_default_mode(task);
 
     let mut override_modes = task
         .modes
@@ -36692,7 +36704,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Default Mode:"),
-            task.default_mode.unwrap_or("-")
+            render_task_default_mode(task)
         ));
         output.push_str(&format!(
             "\n  {} `{}`",
@@ -48027,6 +48039,7 @@ tasks:
             name: "api:automation:tests",
             context: Some("tooling"),
             default_mode: None,
+            effective_default_mode: "native",
             description: Some("Run the live API automation suite"),
             notes: None,
             category: None,
@@ -48101,6 +48114,7 @@ tasks:
             name: "api:automation:tests",
             context: Some("tooling"),
             default_mode: None,
+            effective_default_mode: "native",
             description: Some("Run the live API automation suite"),
             notes: None,
             category: None,
@@ -48156,6 +48170,7 @@ tasks:
             name: "verify",
             context: Some("host"),
             default_mode: None,
+            effective_default_mode: "native",
             description: Some("Run the canonical verification entrypoint"),
             notes: None,
             category: Some("test"),
@@ -48224,6 +48239,7 @@ tasks:
             name: "dev",
             context: Some("app"),
             default_mode: None,
+            effective_default_mode: "native",
             description: Some("Run the app"),
             notes: None,
             category: None,
@@ -48301,6 +48317,7 @@ tasks:
             name: "setup",
             context: Some("host"),
             default_mode: None,
+            effective_default_mode: "native",
             description: Some("Prepare the repo"),
             notes: None,
             category: None,
@@ -48354,6 +48371,7 @@ tasks:
             name: "setup",
             context: Some("host"),
             default_mode: None,
+            effective_default_mode: "native",
             description: Some("Prepare the repo"),
             notes: None,
             category: None,
@@ -48461,6 +48479,7 @@ tasks:
             name: "setup:yarn",
             context: Some("host"),
             default_mode: None,
+            effective_default_mode: "native",
             description: Some("Hydrate Yarn dependencies"),
             notes: None,
             category: None,
@@ -48511,6 +48530,7 @@ tasks:
             name: "setup:bun",
             context: Some("host"),
             default_mode: None,
+            effective_default_mode: "native",
             description: Some("Hydrate Bun dependencies"),
             notes: None,
             category: None,
@@ -48583,6 +48603,7 @@ tasks:
             name: "setup:yarn",
             context: Some("host"),
             default_mode: None,
+            effective_default_mode: "native",
             description: Some("Hydrate Yarn dependencies"),
             notes: None,
             category: None,
@@ -48648,6 +48669,7 @@ tasks:
             name: "setup:npm",
             context: Some("host"),
             default_mode: None,
+            effective_default_mode: "native",
             description: Some("Hydrate npm dependencies with force"),
             notes: None,
             category: None,
@@ -48999,6 +49021,7 @@ workflows:
                 name: "quickstart",
                 context: Some("host"),
                 default_mode: None,
+                effective_default_mode: "native",
                 description: Some("Run packaged quickstart"),
                 notes: None,
                 category: None,
