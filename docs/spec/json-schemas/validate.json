@@ -18,6 +18,35 @@
             "error_count": { "type": "integer" },
             "warn_count": { "type": "integer" }
           }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "warning_details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "category",
+              "owner",
+              "severity",
+              "summary",
+              "why",
+              "next"
+            ],
+            "properties": {
+              "code": { "type": "string" },
+              "category": { "type": "string" },
+              "owner": { "type": "string" },
+              "severity": { "type": "string" },
+              "summary": { "type": "string" },
+              "why": { "type": "string" },
+              "next": { "type": "string" }
+            }
+          }
         }
       }
     },
@@ -35,6 +64,35 @@
           "properties": {
             "error_count": { "type": "integer" },
             "warn_count": { "type": "integer" }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "warning_details": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "category",
+              "owner",
+              "severity",
+              "summary",
+              "why",
+              "next"
+            ],
+            "properties": {
+              "code": { "type": "string" },
+              "category": { "type": "string" },
+              "owner": { "type": "string" },
+              "severity": { "type": "string" },
+              "summary": { "type": "string" },
+              "why": { "type": "string" },
+              "next": { "type": "string" }
+            }
           }
         },
         "errors": {

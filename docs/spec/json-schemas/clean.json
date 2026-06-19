@@ -14,6 +14,7 @@
         "removed_drift_dependency_isolation_volumes",
         "skipped_ambiguous_persistent_containers",
         "skipped_ambiguous_dependency_isolation_volumes",
+        "stopped_host_services",
         "total_removed",
         "total_skipped_ambiguous"
       ],
@@ -25,6 +26,7 @@
         "removed_drift_dependency_isolation_volumes": { "type": "integer" },
         "skipped_ambiguous_persistent_containers": { "type": "integer" },
         "skipped_ambiguous_dependency_isolation_volumes": { "type": "integer" },
+        "stopped_host_services": { "type": "integer" },
         "total_removed": { "type": "integer" },
         "total_skipped_ambiguous": { "type": "integer" }
       }
@@ -32,11 +34,15 @@
     "report": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "summary", "queried_engines"],
+      "required": ["ok", "path", "summary", "host_services", "queried_engines"],
       "properties": {
         "ok": { "const": true },
         "path": { "type": "string" },
         "summary": { "$ref": "#/$defs/summary" },
+        "host_services": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "queried_engines": {
           "type": "array",
           "items": { "type": "string" }
@@ -148,11 +154,15 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "summary", "queried_engines"],
+      "required": ["ok", "path", "summary", "host_services", "queried_engines"],
       "properties": {
         "ok": { "const": true },
         "path": { "type": "string" },
         "summary": { "$ref": "#/$defs/summary" },
+        "host_services": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "queried_engines": {
           "type": "array",
           "items": { "type": "string" }

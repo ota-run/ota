@@ -3867,9 +3867,11 @@ Single-target success:
     "removed_drift_dependency_isolation_volumes": 0,
     "skipped_ambiguous_persistent_containers": 0,
     "skipped_ambiguous_dependency_isolation_volumes": 0,
+    "stopped_host_services": 0,
     "total_removed": 2,
     "total_skipped_ambiguous": 0
   },
+  "host_services": [],
   "queried_engines": [
     "docker"
   ]
@@ -3894,9 +3896,11 @@ Monorepo root success:
         "removed_drift_dependency_isolation_volumes": 0,
         "skipped_ambiguous_persistent_containers": 0,
         "skipped_ambiguous_dependency_isolation_volumes": 0,
+        "stopped_host_services": 0,
         "total_removed": 0,
         "total_skipped_ambiguous": 0
       },
+      "host_services": [],
       "queried_engines": [
         "docker"
       ]
@@ -3915,9 +3919,11 @@ Monorepo root success:
             "removed_drift_dependency_isolation_volumes": 0,
             "skipped_ambiguous_persistent_containers": 0,
             "skipped_ambiguous_dependency_isolation_volumes": 0,
+            "stopped_host_services": 0,
             "total_removed": 1,
             "total_skipped_ambiguous": 0
           },
+          "host_services": [],
           "queried_engines": [
             "docker"
           ]

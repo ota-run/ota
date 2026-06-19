@@ -6970,6 +6970,17 @@ fn execute_task_with_hooks(
         state,
     )?;
 
+    maybe_activate_corepack_shims_on_run_path(
+        contract,
+        contract_path,
+        task_name,
+        task,
+        &backend,
+        &prep_env,
+        current_os,
+        state,
+    )?;
+
     let backend_fulfillment_preparation = maybe_fulfill_backend_requirements_on_run_path(
         contract,
         contract_path,
@@ -6984,17 +6995,6 @@ fn execute_task_with_hooks(
         state,
     )?;
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
-
-    maybe_activate_corepack_shims_on_run_path(
-        contract,
-        contract_path,
-        task_name,
-        task,
-        &backend,
-        &prep_env,
-        current_os,
-        state,
-    )?;
 
     if !(requested_relation && requested_overrides.skip_deps) {
         for dependency in &task.depends_on {
@@ -10125,6 +10125,13 @@ fn maybe_activate_corepack_shims_on_run_path(
     state: &mut TaskRunState,
 ) -> Result<(), RunError> {
     if matches!(backend, ResolvedExecutionBackend::Container { .. }) {
+        return Ok(());
+    }
+    if probe_backend_command_version(backend, contract_working_dir(contract_path), "node")
+        .ok()
+        .flatten()
+        .is_none()
+    {
         return Ok(());
     }
 
@@ -54345,6 +54352,12 @@ tasks:
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.12.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'v22.12.0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "node", node_body);
         let log_path = fixture.dir.path().join("corepack.log");
         let corepack_body = if cfg!(windows) {
             format!(
@@ -54437,6 +54450,12 @@ tasks:
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.12.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'v22.12.0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "node", node_body);
         let log_path = fixture.dir.path().join("commands.log");
         let corepack_path = if cfg!(windows) {
             bin_dir.join("corepack.cmd")
@@ -54532,6 +54551,12 @@ tasks:
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.12.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'v22.12.0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "node", node_body);
         let log_path = fixture.dir.path().join("corepack.log");
         let corepack_body = if cfg!(windows) {
             format!(
@@ -54611,6 +54636,12 @@ tasks:
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.12.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'v22.12.0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "node", node_body);
         let log_path = fixture.dir.path().join("corepack.log");
         let corepack_body = if cfg!(windows) {
             format!(
@@ -54660,6 +54691,99 @@ tasks:
         }
 
         assert!(!log_path.exists());
+    }
+
+    #[test]
+    fn dependency_hydration_prepare_activates_corepack_owned_pnpm_before_backend_fulfillment() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+    fulfillment:
+      source: corepack
+      mode: run
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+    requirements:
+      toolchains:
+        - node
+    effects:
+      network: true
+      network_kind: dependency_hydration
+      writes:
+        - node_modules
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let node_body = if cfg!(windows) {
+            "@echo off\r\necho v22.12.0\r\n"
+        } else {
+            "#!/bin/sh\nprintf 'v22.12.0\\n'\n"
+        };
+        write_fake_bin(&bin_dir, "node", node_body);
+        let activation_log = fixture.dir.path().join("corepack.log");
+        let pnpm_log = fixture.dir.path().join("pnpm.log");
+        let pnpm_path = if cfg!(windows) {
+            bin_dir.join("pnpm.cmd")
+        } else {
+            bin_dir.join("pnpm")
+        };
+        let corepack_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\n>>\"{activation}\" echo %*\r\nif /I \"%1\"==\"prepare\" (\r\n  >\"{pnpm}\" (\r\n    echo @echo off\r\n    echo if \"%%1\"==\"--version\" ^(\r\n    echo   echo 10.24.0\r\n    echo   exit /b 0\r\n    echo ^)\r\n    echo ^>^>\"{pnpm_log}\" echo %%CD%%^|%%*\r\n    echo exit /b 0\r\n  )\r\n)\r\nexit /b 0\r\n",
+                activation = activation_log.display(),
+                pnpm = pnpm_path.display(),
+                pnpm_log = pnpm_log.display(),
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{activation}'\nif [ \"$1\" = \"prepare\" ]; then\ncat <<'EOF' > '{pnpm}'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.24.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{pnpm_log}'\nEOF\nchmod +x '{pnpm}'\nfi\nexit 0\n",
+                activation = activation_log.display(),
+                pnpm = pnpm_path.display(),
+                pnpm_log = pnpm_log.display(),
+            )
+        };
+        write_fake_bin(&bin_dir, "corepack", &corepack_body);
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        unsafe {
+            env::set_var("PATH", env::join_paths(path_entries).unwrap());
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "install").unwrap();
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let activation = fs::read_to_string(&activation_log).unwrap();
+        assert!(activation.contains("enable"), "{activation}");
+        assert!(activation.contains("prepare pnpm@10.24.0 --activate"), "{activation}");
+        let logged = fs::read_to_string(&pnpm_log).unwrap();
+        assert!(logged.contains("install"), "{logged}");
     }
 
     #[test]
