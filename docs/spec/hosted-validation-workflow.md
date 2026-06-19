@@ -70,17 +70,19 @@ gives an ordered plan without mutating state.
 
 ## Contract-owned GitHub Actions install
 
-If the repo already declares `agent.bootstrap.ota.source`, prefer the shipped
-`install-ota-from-contract` action instead of restating install truth in workflow YAML.
+If the repo already declares `agent.bootstrap.ota.source`, prefer `ota-run/setup@v1` in
+`source: contract` mode instead of restating install truth in workflow YAML.
 
 ```yaml
 - uses: actions/checkout@v6
-- name: Install ota from contract
-  uses: ota-run/ota/.github/actions/install-ota-from-contract@<sha>
+- uses: ota-run/setup@v1
+  with:
+    source: contract
 ```
 
 That keeps `ota.yaml` as the single install source of truth for both agent bootstrap and GitHub
-Actions jobs that later run direct `ota` commands.
+Actions jobs that later run direct `ota` commands, while keeping GitHub install behavior on the
+single public `ota-run/setup` action surface.
 
 ## Testing unreleased ota builds
 
@@ -98,13 +100,13 @@ agent:
 
 ```yaml
 - uses: actions/checkout@v6
-- name: Install ota from contract
-  uses: ota-run/ota/.github/actions/install-ota-from-contract@<sha>
+- uses: ota-run/setup@v1
+  with:
+    source: contract
 ```
 
-Use the older `install-ota-from-source` action only when the workflow intentionally needs a
-repository/ref input outside repo-owned contract truth, such as Ota-maintainer workflows that
-exercise arbitrary refs without editing a case-study contract first.
+Use a workflow-owned explicit `ota-run/setup@v1` input or other maintainer-specific source-install
+lane only when the workflow intentionally needs install truth outside repo-owned contract truth.
 
 ## Infrastructure boundary
 

@@ -64,8 +64,9 @@ When a job needs direct `ota` commands, prefer installing ota from repo-owned
 
 ```yaml
 - uses: actions/checkout@v6
-- name: Install ota from contract
-  uses: ota-run/ota/.github/actions/install-ota-from-contract@<sha>
+- uses: ota-run/setup@v1
+  with:
+    source: contract
 ```
 
 ## Quick start
@@ -149,8 +150,8 @@ The action currently supports Linux, macOS, and Windows GitHub Actions runners.
 or `ota proof` commands, use the contract-owned installer action instead of duplicating `OTA_VERSION`,
 `OTA_GIT_REV`, `OTA_GIT_BRANCH`, or `--from-git` choices in workflow YAML.
 
-That action reads `agent.bootstrap.ota.source` from the checked-out `ota.yaml` and runs the
-matching official installer flow.
+That setup mode reads `agent.bootstrap.ota.source` from the checked-out `ota.yaml` and runs the
+matching official installer flow through the single public `ota-run/setup` surface.
 
 ## Inputs
 
