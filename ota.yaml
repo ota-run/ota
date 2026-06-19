@@ -407,8 +407,8 @@ agent:
     ota:
       note: Only install ota if it is missing and installation is approved.
       source:
-        kind: version
-        version: v1.6.21
+        kind: git_rev
+        rev: 367a3f16270d2db5cdd506210fd7212d302f87c4
   notes: |
     Treat Ota as the default workflow, the way npm is the default in Node repos.
     Use `ota validate` to verify the contract.

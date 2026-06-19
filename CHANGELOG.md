@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- aligned the Ota repo's own `agent.bootstrap.ota.source` with deterministic unreleased proof
+  truth by pinning active `1.6.21` work to an exact git revision instead of claiming unreleased
+  `v1.6.21` release availability
+
 - documented the unified GitHub install contract around `ota-run/setup@v1` contract mode, so
   repos can keep `agent.bootstrap.ota.source` as the single install truth without introducing a
   second GitHub-specific helper surface
