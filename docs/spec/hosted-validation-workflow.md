@@ -84,6 +84,23 @@ That keeps `ota.yaml` as the single install source of truth for both agent boots
 Actions jobs that later run direct `ota` commands, while keeping GitHub install behavior on the
 single public `ota-run/setup` action surface.
 
+When a GitHub Actions workflow intentionally wants the reporting wrapper to own installation too,
+`ota-run/action@v1` can consume the same repo truth directly instead of restating version or
+source-install inputs:
+
+```yaml
+- uses: actions/checkout@v6
+- uses: ota-run/action@v1
+  with:
+    command: receipt
+    source: contract
+    contract-path: ota.yaml
+```
+
+Prefer `ota-run/setup@v1` plus `ota-run/action@v1 install: never` as the steady-state split when
+later steps also need direct `ota` commands. Use standalone `ota-run/action@v1 source: contract`
+when the job only needs the GitHub-native wrapper.
+
 ## Testing unreleased ota builds
 
 When a case-study matrix or maintainer branch needs to test an unreleased ota change, keep that

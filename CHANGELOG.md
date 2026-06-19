@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- documented the new standalone `ota-run/action@v1` `source: contract` install mode in the
+  GitHub Actions and hosted-validation specs, so first-party docs now cover both the canonical
+  `setup + action install: never` split and the wrapper-owned contract-consumption path
 - aligned the Ota repo's own `agent.bootstrap.ota.source` with deterministic unreleased proof
   truth by pinning active `1.6.21` work to an exact git revision instead of claiming unreleased
   `v1.6.21` release availability

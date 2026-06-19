@@ -69,6 +69,18 @@ When a job needs direct `ota` commands, prefer installing ota from repo-owned
     source: contract
 ```
 
+When a workflow intentionally skips `ota-run/setup@v1` but still wants the GitHub wrapper to
+honor repo-owned bootstrap truth, `ota-run/action@v1` can consume the same contract directly:
+
+```yaml
+- uses: actions/checkout@v6
+- uses: ota-run/action@v1
+  with:
+    command: receipt
+    source: contract
+    contract-path: ota.yaml
+```
+
 ## Quick start
 
 ```yaml
@@ -104,6 +116,8 @@ Current `v1` behavior:
 
 - runs `ota receipt --json --archive` or `ota doctor --json`
 - installs ota by default on every run unless `install: never` is set
+- supports both workflow-owned explicit install truth and contract-owned install truth through
+  `source: explicit | contract`
 - writes a GitHub step summary through `ota annotations --format markdown`
 - emits GitHub annotations through `ota annotations --format github`
 - optionally creates or updates a sticky pull-request comment
@@ -138,9 +152,14 @@ scan as a durable artifact, and keeps later automation pointed at the receipt su
 
 The action supports:
 
-- `install: always` (default) to run the official installer for the requested ota version on every run
+- `install: auto` (default) to reuse an existing ota binary in explicit mode or install the
+  contract-declared source in contract mode
+- `install: always` to run the official installer on every run
 - `install: never` to fail closed unless ota is already available on the runner
-- `ota-version` to pin the installed ota release explicitly
+- `source: explicit` to keep workflow-owned install truth through `ota-version`
+- `source: contract` to read `agent.bootstrap.ota.source` from `ota.yaml`
+- `contract-path` to point at the target `ota.yaml` when `source=contract`
+- `ota-version` to pin the installed ota release explicitly in explicit mode
 
 The action currently supports Linux, macOS, and Windows GitHub Actions runners.
 
@@ -168,8 +187,12 @@ matching official installer flow through the single public `ota-run/setup` surfa
 - `artifact-name` sets the uploaded artifact name; default: `ota-readiness`
 - `artifact-retention-days` sets optional artifact retention in days
 - `fail-on-error` fails the action when ota reports a blocked outcome; default: `true`
-- `install` controls installation behavior with `always` or `never`; default: `always`
+- `install` controls installation behavior with `auto`, `always`, or `never`; default: `auto`
+- `source` chooses `explicit` or `contract`; default: `explicit`
+- `contract-path` points at `ota.yaml` or a repo directory containing it when `source=contract`;
+  default: `ota.yaml`
 - `ota-version` pins installer-driven ota installation to a specific release such as `v1.4.3`
+  when `source=explicit`
 - `ota-bin` overrides the ota binary name or path after resolution; default: `ota`
 - `output-path` chooses where the captured ota JSON payload is written; default:
   `.ota-action-output.json`
