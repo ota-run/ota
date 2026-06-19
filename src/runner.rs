@@ -54781,7 +54781,10 @@ tasks:
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
         let activation = fs::read_to_string(&activation_log).unwrap();
         assert!(activation.contains("enable"), "{activation}");
-        assert!(activation.contains("prepare pnpm@10.24.0 --activate"), "{activation}");
+        assert!(
+            activation.contains("prepare pnpm@10.24.0 --activate"),
+            "{activation}"
+        );
         let logged = fs::read_to_string(&pnpm_log).unwrap();
         assert!(logged.contains("install"), "{logged}");
     }
