@@ -389,6 +389,7 @@ struct ScopedPreconditionSelection {
     native_names: BTreeSet<String>,
     env_names: BTreeSet<String>,
     env_scoped: bool,
+    dependency_hydration_owned: bool,
 }
 
 fn merge_effective_launch_command_tool_requirement(
@@ -410,6 +411,7 @@ struct BackendPreconditionSelection {
     native_names: BTreeSet<String>,
     env_names: BTreeSet<String>,
     env_scoped: bool,
+    dependency_hydration_owned: bool,
 }
 
 impl From<BackendPreconditionSelection> for ScopedPreconditionSelection {
@@ -420,8 +422,43 @@ impl From<BackendPreconditionSelection> for ScopedPreconditionSelection {
             native_names: value.native_names,
             env_names: value.env_names,
             env_scoped: value.env_scoped,
+            dependency_hydration_owned: value.dependency_hydration_owned,
         }
     }
+}
+
+fn prepare_spec_owns_dependency_hydration(prepare: &crate::schema::TaskPrepareSpec) -> bool {
+    match prepare {
+        crate::schema::TaskPrepareSpec::DependencyHydration(_) => true,
+        crate::schema::TaskPrepareSpec::Sequence(sequence) => sequence
+            .steps
+            .iter()
+            .any(prepare_spec_owns_dependency_hydration),
+        _ => false,
+    }
+}
+
+fn task_execution_owns_dependency_hydration(
+    task: &crate::schema::TaskSpec,
+    backend: Backend,
+) -> bool {
+    task.resolved_execution_for_backend(backend, current_os())
+        .and_then(|execution| execution.prepare())
+        .is_some_and(prepare_spec_owns_dependency_hydration)
+}
+
+fn looks_like_repo_local_executable(name: &str) -> bool {
+    name.starts_with("./") || name.starts_with("../") || name.contains('/') || name.contains('\\')
+}
+
+fn should_skip_presence_only_container_hydration_probe_failure(
+    unresolved_executable: &str,
+    dependency_hydration_owned: bool,
+    error: Option<&str>,
+) -> bool {
+    dependency_hydration_owned
+        && looks_like_repo_local_executable(unresolved_executable)
+        && container_repo_dependency_hydration_probe_error(error).is_some()
 }
 
 fn selected_backend_precondition_selections(
@@ -491,6 +528,7 @@ fn selected_backend_precondition_selections(
                 native_names: BTreeSet::new(),
                 env_names: BTreeSet::new(),
                 env_scoped: scoped_env,
+                dependency_hydration_owned: false,
             });
             selections.last_mut().expect("selection was just pushed")
         };
@@ -501,6 +539,8 @@ fn selected_backend_precondition_selections(
             ))
             .or_default();
 
+        selection.dependency_hydration_owned |=
+            task_execution_owns_dependency_hydration(task, backend);
         let scoped_surface = task.scoped_requirement_surface_for_execution(backend, context_name);
         for (name, requirement) in &scoped_surface.runtimes {
             selection.requirement_surface.runtimes.insert(
@@ -655,6 +695,7 @@ fn selected_task_backend_precondition_selections(
                 native_names: BTreeSet::new(),
                 env_names: BTreeSet::new(),
                 env_scoped: scoped_env,
+                dependency_hydration_owned: false,
             });
             selections.last_mut().expect("selection was just pushed")
         };
@@ -665,6 +706,8 @@ fn selected_task_backend_precondition_selections(
             ))
             .or_default();
 
+        selection.dependency_hydration_owned |=
+            task_execution_owns_dependency_hydration(task, effective.backend);
         let scoped_surface = task
             .scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
         for (name, requirement) in &scoped_surface.runtimes {
@@ -810,6 +853,8 @@ fn scoped_precondition_selection(
             continue;
         };
         let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+        selection.dependency_hydration_owned |=
+            task_execution_owns_dependency_hydration(task, backend);
         selection
             .requirement_surface
             .merge(&task.scoped_requirement_surface_for_execution(backend, context_name));
@@ -983,6 +1028,7 @@ fn selected_remote_task_requirement_selection(
             native_names: BTreeSet::new(),
             env_names: BTreeSet::new(),
             env_scoped: false,
+            dependency_hydration_owned: false,
         }
     };
 
@@ -4001,6 +4047,7 @@ fn diagnose_contract_with_scope(
                             &remote_probe.target_os,
                             Some(&required_tools),
                         ),
+                        false,
                         &remote_probe.target_os,
                         contract_path,
                         loaded_policy.as_ref(),
@@ -4048,6 +4095,7 @@ fn diagnose_contract_with_scope(
                     native_names: precondition_selection.native_names.clone(),
                     env_names: precondition_selection.env_names.clone(),
                     env_scoped: precondition_selection.env_scoped,
+                    dependency_hydration_owned: precondition_selection.dependency_hydration_owned,
                 }]
             } else {
                 active_container_selections.into_iter().cloned().collect()
@@ -4132,6 +4180,7 @@ fn diagnose_contract_with_scope(
                     contract,
                     &selection.toolchain_names,
                     &provisioning_requirement_surface,
+                    selection.dependency_hydration_owned,
                     policy_target_os_for_mode(mode),
                     contract_path,
                     loaded_policy.as_ref(),
@@ -4191,6 +4240,7 @@ fn diagnose_contract_with_scope(
                     policy_target_os_for_mode(mode),
                     Some(&required_tools),
                 ),
+                precondition_selection.dependency_hydration_owned,
                 policy_target_os_for_mode(mode),
                 contract_path,
                 loaded_policy.as_ref(),
@@ -4324,6 +4374,7 @@ fn diagnose_contract_with_scope(
                     contract,
                     &additional_selection.toolchain_names,
                     &provisioning_requirement_surface,
+                    additional_selection.dependency_hydration_owned,
                     policy_target_os_for_mode(additional_mode),
                     contract_path,
                     loaded_policy.as_ref(),
@@ -6681,6 +6732,7 @@ fn diagnose_runtimes(
             loaded_policy,
             target_os,
             false,
+            false,
             provisioning_actions,
             findings,
         );
@@ -6692,6 +6744,7 @@ fn diagnose_tools(
     contract: &Contract,
     selected_toolchains: &BTreeSet<String>,
     requirement_surface: &RequirementSurface,
+    dependency_hydration_owned: bool,
     target_os: &str,
     contract_path: &Path,
     loaded_policy: Option<&LoadedOrgPolicyPack>,
@@ -6754,6 +6807,7 @@ fn diagnose_tools(
             loaded_policy,
             target_os,
             run_path_fulfillment_allowed,
+            dependency_hydration_owned,
             provisioning_actions,
             findings,
         );
@@ -6778,6 +6832,7 @@ fn diagnose_tools(
             loaded_policy,
             target_os,
             false,
+            dependency_hydration_owned,
             provisioning_actions,
             findings,
         );
@@ -6891,6 +6946,7 @@ fn diagnose_toolchains(
             None,
             target_os,
             run_path_fulfillment_source.is_some(),
+            false,
             &[],
             findings,
         );
@@ -8519,6 +8575,7 @@ fn diagnose_command_version(
     loaded_policy: Option<&LoadedOrgPolicyPack>,
     target_os: &str,
     run_path_fulfillment_allowed: bool,
+    dependency_hydration_owned: bool,
     provisioning_actions: &[ProvisioningAction],
     findings: &mut Vec<Finding>,
 ) -> bool {
@@ -8610,6 +8667,16 @@ fn diagnose_command_version(
     let Some(actual) = actual else {
         if presence_only && let Some(probe) = version_probe.as_ref() {
             match &probe.outcome {
+                CommandVersionProbeOutcome::ProbeFailed { error, .. }
+                    if mode == DoctorMode::Container
+                        && should_skip_presence_only_container_hydration_probe_failure(
+                            unresolved_executable.as_str(),
+                            dependency_hydration_owned,
+                            error.as_deref(),
+                        ) =>
+                {
+                    return probe_started;
+                }
                 CommandVersionProbeOutcome::Unparseable => return probe_started,
                 CommandVersionProbeOutcome::ProbeFailed {
                     exit_code: Some(_),
@@ -8676,6 +8743,7 @@ fn diagnose_command_version(
                 loaded_policy,
                 target_os,
                 false,
+                dependency_hydration_owned,
                 provisioning_actions,
                 findings,
             );
@@ -8702,6 +8770,7 @@ fn diagnose_command_version(
                 loaded_policy,
                 target_os,
                 false,
+                dependency_hydration_owned,
                 provisioning_actions,
                 findings,
             );
@@ -8731,6 +8800,7 @@ fn diagnose_command_version(
                 loaded_policy,
                 target_os,
                 false,
+                dependency_hydration_owned,
                 provisioning_actions,
                 findings,
             );
@@ -9132,6 +9202,7 @@ fn diagnose_command_version(
             loaded_policy,
             target_os,
             false,
+            dependency_hydration_owned,
             provisioning_actions,
             findings,
         );
@@ -9161,6 +9232,7 @@ fn diagnose_command_version(
             loaded_policy,
             target_os,
             false,
+            dependency_hydration_owned,
             provisioning_actions,
             findings,
         );
@@ -14690,6 +14762,37 @@ tasks:
         assert_eq!(finding.evidence().path, "npm");
         assert_eq!(finding.evidence().source, "container_target");
         assert_eq!(finding.owner(), "container_target");
+    }
+
+    #[test]
+    fn skips_repo_local_presence_only_container_probe_failures_when_hydration_is_owned() {
+        assert!(
+            super::should_skip_presence_only_container_hydration_probe_failure(
+                "bin/brakeman",
+                true,
+                Some(
+                    "/usr/local/lib/ruby/3.3.0/bundler/definition.rb:599:in `materialize': Could not find brakeman-8.0.4 in locally installed gems (Bundler::GemNotFound)",
+                ),
+            )
+        );
+        assert!(
+            !super::should_skip_presence_only_container_hydration_probe_failure(
+                "brakeman",
+                true,
+                Some(
+                    "/usr/local/lib/ruby/3.3.0/bundler/definition.rb:599:in `materialize': Could not find brakeman-8.0.4 in locally installed gems (Bundler::GemNotFound)",
+                ),
+            )
+        );
+        assert!(
+            !super::should_skip_presence_only_container_hydration_probe_failure(
+                "bin/brakeman",
+                false,
+                Some(
+                    "/usr/local/lib/ruby/3.3.0/bundler/definition.rb:599:in `materialize': Could not find brakeman-8.0.4 in locally installed gems (Bundler::GemNotFound)",
+                ),
+            )
+        );
     }
 
     #[test]
