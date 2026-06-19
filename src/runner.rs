@@ -11209,7 +11209,11 @@ fn detect_missing_backend_requirements(
     let mut missing = Vec::new();
 
     for (name, required_version) in runtimes {
-        match probe_backend_command_version(backend, working_dir, name.as_str()) {
+        match probe_backend_runtime_requirement_version(
+            backend,
+            working_dir,
+            name.as_str(),
+        ) {
             Ok(None) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Runtime,
                 name: name.clone(),
@@ -11302,7 +11306,7 @@ fn detect_missing_named_container_requirements(
     let mut missing = Vec::new();
 
     for (name, required_version) in runtimes {
-        match probe_named_container_command_version(
+        match probe_named_container_runtime_requirement_version(
             engine,
             container_name,
             task_name,
@@ -11492,6 +11496,70 @@ fn task_tool_executable_name(name: &str) -> &str {
         "maven" => "mvn",
         "bundler" => "bundle",
         _ => name,
+    }
+}
+
+fn task_runtime_executable_candidates(name: &str) -> Vec<String> {
+    match name {
+        "python" => vec![String::from("python3"), String::from("python")],
+        "rust" => vec![String::from("rustc")],
+        _ => vec![name.to_string()],
+    }
+}
+
+fn probe_backend_runtime_requirement_version(
+    backend: &ResolvedExecutionBackend,
+    working_dir: &Path,
+    runtime_name: &str,
+) -> Result<Option<String>, String> {
+    let mut last_error = None;
+    for executable in task_runtime_executable_candidates(runtime_name) {
+        match probe_backend_command_version(backend, working_dir, executable.as_str()) {
+            Ok(Some(version)) => return Ok(Some(version)),
+            Ok(None) => continue,
+            Err(error) => {
+                if last_error.is_none() {
+                    last_error = Some(error);
+                }
+            }
+        }
+    }
+
+    if let Some(error) = last_error {
+        Err(error)
+    } else {
+        Ok(None)
+    }
+}
+
+fn probe_named_container_runtime_requirement_version(
+    engine: &str,
+    container_name: &str,
+    task_name: &str,
+    runtime_name: &str,
+) -> Result<Option<String>, String> {
+    let mut last_error = None;
+    for executable in task_runtime_executable_candidates(runtime_name) {
+        match probe_named_container_command_version(
+            engine,
+            container_name,
+            task_name,
+            executable.as_str(),
+        ) {
+            Ok(Some(version)) => return Ok(Some(version)),
+            Ok(None) => continue,
+            Err(error) => {
+                if last_error.is_none() {
+                    last_error = Some(error);
+                }
+            }
+        }
+    }
+
+    if let Some(error) = last_error {
+        Err(error)
+    } else {
+        Ok(None)
     }
 }
 
@@ -32827,6 +32895,45 @@ tasks:
         }
 
         assert_eq!(version.as_deref(), Some("24.8.0"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn native_backend_runtime_requirement_probe_maps_rust_to_rustc() {
+        let _guard = env_mutex_lock();
+        let temp = TempDir::new().unwrap();
+        let bin_dir = temp.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "rustc", "#!/bin/sh\nprintf 'rustc 1.94.1\\n'\n");
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        } else {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+        }
+
+        let version = super::probe_backend_runtime_requirement_version(
+            &super::ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            temp.path(),
+            "rust",
+        )
+        .expect("native rust runtime probe should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(version.as_deref(), Some("1.94.1"));
     }
 
     #[test]
