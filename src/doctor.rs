@@ -8791,19 +8791,28 @@ fn diagnose_command_version(
                             let image = container_probe
                                 .map(|probe| probe.image.as_str())
                                 .unwrap_or("unknown");
-                            let why = match (error.as_deref(), exit_code) {
-                                (Some(message), _) => format!(
-                                    "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the command could not be executed: {message}",
+                            let why = if let Some(message) =
+                                container_repo_dependency_hydration_probe_error(error.as_deref())
+                            {
+                                format!(
+                                    "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the command resolved through repo-local dependency state that is not hydrated in the selected container path yet: {message}",
                                     probe.command
-                                ),
-                                (None, Some(code)) => format!(
-                                    "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the command exited with code {code} before ota could read a version",
-                                    probe.command
-                                ),
-                                (None, None) => format!(
-                                    "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the command failed before ota could read a version",
-                                    probe.command
-                                ),
+                                )
+                            } else {
+                                match (error.as_deref(), exit_code) {
+                                    (Some(message), _) => format!(
+                                        "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the command could not be executed: {message}",
+                                        probe.command
+                                    ),
+                                    (None, Some(code)) => format!(
+                                        "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the command exited with code {code} before ota could read a version",
+                                        probe.command
+                                    ),
+                                    (None, None) => format!(
+                                        "ota probed `{resolved_path}` inside container image `{image}` with `{}`, but the command failed before ota could read a version",
+                                        probe.command
+                                    ),
+                                }
                             };
                             let next = container_probe_failure_next_step(
                                 probe.command.as_str(),
@@ -9484,12 +9493,29 @@ fn container_probe_failure_next_step(
     rerun_doctor: &str,
     error_message: Option<&str>,
 ) -> String {
+    if container_repo_dependency_hydration_probe_error(error_message).is_some() {
+        return format!(
+            "hydrate the selected repo dependency lane inside the selected container path first (for example the setup step that installs repo dependencies), then rerun `{rerun_doctor}`"
+        );
+    }
     if let Some(mismatch_hint) = container_manifest_platform_mismatch_hint(error_message) {
         return format!("{mismatch_hint}, then rerun `{rerun_doctor}`");
     }
     format!(
         "run `{probe_command}` inside the selected container image, inspect `{resolved_path}`, and make sure the probe succeeds before rerunning `{rerun_doctor}`"
     )
+}
+
+fn container_repo_dependency_hydration_probe_error(error_message: Option<&str>) -> Option<&str> {
+    let message = error_message?;
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("bundler::gemnotfound")
+        || (lower.contains("could not find") && lower.contains("in locally installed gems"))
+        || lower.contains("local package.json exists, but node_modules missing")
+    {
+        return Some(message);
+    }
+    None
 }
 
 fn container_manifest_platform_mismatch_hint(error_message: Option<&str>) -> Option<String> {
@@ -23955,6 +23981,34 @@ policies:
             ),
             None
         );
+    }
+
+    #[test]
+    fn container_probe_failure_next_step_points_to_hydration_for_repo_dependency_errors() {
+        let next = super::container_probe_failure_next_step(
+            "bin/brakeman --version",
+            "bin/brakeman",
+            "ota doctor --mode container --workflow verify-static",
+            Some(
+                "/usr/local/lib/ruby/3.3.0/bundler/definition.rb:599:in `materialize': Could not find brakeman-8.0.4 in locally installed gems (Bundler::GemNotFound)",
+            ),
+        );
+        assert!(next.contains(
+            "hydrate the selected repo dependency lane inside the selected container path first"
+        ));
+        assert!(next.contains("ota doctor --mode container --workflow verify-static"));
+    }
+
+    #[test]
+    fn container_probe_failure_next_step_keeps_generic_probe_guidance_without_hydration_signal() {
+        let next = super::container_probe_failure_next_step(
+            "npm --version",
+            "/usr/local/bin/npm",
+            "ota doctor --mode container",
+            Some("permission denied"),
+        );
+        assert!(next.contains("run `npm --version` inside the selected container image"));
+        assert!(!next.contains("hydrate the selected repo dependency lane"));
     }
 
     #[test]

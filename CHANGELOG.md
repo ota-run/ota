@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- sharpened container-mode doctor probe guidance for repo-local executables backed by unresolved
+  dependency hydration, so high-confidence Bundler and `node_modules` hydration failures now tell
+  authors to hydrate the selected container dependency lane first instead of surfacing only a
+  generic probe failure
 - widened `agent.bootstrap.ota` with first-class `source.kind: version | git_rev | branch`, so
   repo contracts can now declare released proof pins, deterministic unreleased proof pins, and
   active pressure-testing branch truth structurally instead of hiding ota install ownership only
