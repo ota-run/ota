@@ -40,15 +40,16 @@ use crate::execution::{
 };
 use crate::parser::{load_contract_for_member, monorepo_contract_origin_for_path};
 use crate::schema::{
-    AgentPosture, Backend, CheckKind, ContainerBackend, Contract, EnvConfig, ExecutionContext,
-    ExecutionSharedBackend, ExecutionSharedBackendFulfillment, ExecutionSharedBackendScope,
-    ExtensionKind, Lifecycle, NativePrerequisitePlatformSpec, OrchestratorKind, RuntimeRequirement,
-    ServiceProducerSpec, ServiceSpec, TaskCommandSpec, TaskLaunchSpec, TaskModeBranchSpec,
-    TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
-    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
-    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement,
-    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainProvider, ToolchainSpec,
-    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
+    AgentBootstrapOtaSource, AgentPosture, Backend, CheckKind, ContainerBackend, Contract,
+    EnvConfig, ExecutionContext, ExecutionSharedBackend, ExecutionSharedBackendFulfillment,
+    ExecutionSharedBackendScope, ExtensionKind, Lifecycle, NativePrerequisitePlatformSpec,
+    OrchestratorKind, RuntimeRequirement, ServiceProducerSpec, ServiceSpec, TaskCommandSpec,
+    TaskLaunchSpec, TaskModeBranchSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode,
+    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
+    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
+    TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode,
+    ToolchainFulfillmentSource, ToolchainProvider, ToolchainSpec, parse_memory_size_bytes,
+    parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
     declared_toolchain_contract, fulfillment_source_legacy_provider,
@@ -7420,6 +7421,7 @@ pub enum ContractAdvisory {
     SensitiveWriteException(SensitiveWriteExceptionAdvisory),
     NonCanonicalExternalStateToken(NonCanonicalExternalStateTokenAdvisory),
     AgentBootstrapUnpinned(AgentBootstrapUnpinnedAdvisory),
+    AgentBootstrapBranchTracking(AgentBootstrapBranchTrackingAdvisory),
     AgentSafeTaskNetwork(AgentSafeTaskNetworkAdvisory),
     AgentSafeTaskExternalState(AgentSafeTaskExternalStateAdvisory),
 }
@@ -7638,6 +7640,12 @@ pub struct AgentBootstrapUnpinnedAdvisory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentBootstrapBranchTrackingAdvisory {
+    pub field: String,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentSafeTaskNetworkAdvisory {
     pub task_name: String,
     pub network_kind: TaskNetworkEffectKind,
@@ -7749,6 +7757,9 @@ impl ContractAdvisory {
             }
             ContractAdvisory::AgentBootstrapUnpinned(_) => {
                 "OTA_CONTRACT_ADVISORY_AGENT_BOOTSTRAP_UNPINNED"
+            }
+            ContractAdvisory::AgentBootstrapBranchTracking(_) => {
+                "OTA_CONTRACT_ADVISORY_AGENT_BOOTSTRAP_BRANCH_TRACKING"
             }
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => match advisory.network_kind {
                 TaskNetworkEffectKind::DependencyHydration => {
@@ -7922,6 +7933,10 @@ impl ContractAdvisory {
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
                 format!("`{}` should pin the ota release version", advisory.field)
             }
+            ContractAdvisory::AgentBootstrapBranchTracking(advisory) => format!(
+                "`{}` tracks ota branch `{}` for pressure testing",
+                advisory.field, advisory.branch
+            ),
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
                 format!("{}", agent_safe_network_summary(advisory))
             }
@@ -8086,6 +8101,10 @@ impl ContractAdvisory {
                 "`{}` installs ota from a moving target without an explicit version pin",
                 advisory.field
             ),
+            ContractAdvisory::AgentBootstrapBranchTracking(advisory) => format!(
+                "`{}` tracks ota branch `{}` instead of a pinned release or exact git revision",
+                advisory.field, advisory.branch
+            ),
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
                 format!("{}", agent_safe_network_why(advisory))
             }
@@ -8130,6 +8149,7 @@ impl ContractAdvisory {
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::NonCanonicalExternalStateToken(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
+            | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
@@ -8168,6 +8188,7 @@ impl ContractAdvisory {
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::NonCanonicalExternalStateToken(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
+            | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
@@ -8207,6 +8228,7 @@ impl ContractAdvisory {
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::NonCanonicalExternalStateToken(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
+            | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
             | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
         }
@@ -8365,8 +8387,12 @@ impl ContractAdvisory {
                 advisory.token, advisory.canonical_token
             ),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
-                "set `{}` to an explicit ota install pin, for example by pinning `OTA_VERSION=vX.Y.Z` (or a `--version`/`-Version` flag), or by using `OTA_GIT_REV=<exact-commit>` for unreleased source pressure tests, to keep agent bootstrap deterministic",
+                "set `{}` to explicit ota install truth, for example `source.kind: version` with `version: vX.Y.Z`, or `source.kind: git_rev` with `rev: <exact-commit>` for deterministic unreleased proof, to keep agent bootstrap deterministic",
                 advisory.field
+            ),
+            ContractAdvisory::AgentBootstrapBranchTracking(advisory) => format!(
+                "keep branch tracking (`{}`) only for active pressure lanes, and switch to `source.kind: git_rev` or `source.kind: version` when you need deterministic proof",
+                advisory.branch
             ),
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
                 format!("{}", agent_safe_network_next(advisory))
@@ -10722,36 +10748,88 @@ fn collect_agent_bootstrap_unpinned_advisories(contract: &Contract) -> Vec<Contr
     };
 
     let mut advisories = Vec::new();
+    if let Some(source) = ota.source.as_ref() {
+        match source {
+            AgentBootstrapOtaSource::Branch { branch } => {
+                advisories.push(ContractAdvisory::AgentBootstrapBranchTracking(
+                    AgentBootstrapBranchTrackingAdvisory {
+                        field: String::from("agent.bootstrap.ota.source"),
+                        branch: branch.clone(),
+                    },
+                ));
+            }
+            AgentBootstrapOtaSource::Version { .. } | AgentBootstrapOtaSource::GitRev { .. } => {}
+        }
+        return advisories;
+    }
+
     if let Some(command) = ota.sh.as_deref().map(str::trim)
         && !command.is_empty()
-        && !ota_bootstrap_command_has_version_pin(command)
     {
-        advisories.push(ContractAdvisory::AgentBootstrapUnpinned(
-            AgentBootstrapUnpinnedAdvisory {
-                field: String::from("agent.bootstrap.ota.sh"),
-            },
-        ));
+        match ota_bootstrap_command_source(command) {
+            Some(AgentBootstrapOtaSource::Branch { branch }) => {
+                advisories.push(ContractAdvisory::AgentBootstrapBranchTracking(
+                    AgentBootstrapBranchTrackingAdvisory {
+                        field: String::from("agent.bootstrap.ota.sh"),
+                        branch,
+                    },
+                ))
+            }
+            Some(
+                AgentBootstrapOtaSource::Version { .. } | AgentBootstrapOtaSource::GitRev { .. },
+            ) => {}
+            None => advisories.push(ContractAdvisory::AgentBootstrapUnpinned(
+                AgentBootstrapUnpinnedAdvisory {
+                    field: String::from("agent.bootstrap.ota.sh"),
+                },
+            )),
+        }
     }
     if let Some(command) = ota.powershell.as_deref().map(str::trim)
         && !command.is_empty()
-        && !ota_bootstrap_command_has_version_pin(command)
     {
-        advisories.push(ContractAdvisory::AgentBootstrapUnpinned(
-            AgentBootstrapUnpinnedAdvisory {
-                field: String::from("agent.bootstrap.ota.powershell"),
-            },
-        ));
+        match ota_bootstrap_command_source(command) {
+            Some(AgentBootstrapOtaSource::Branch { branch }) => {
+                advisories.push(ContractAdvisory::AgentBootstrapBranchTracking(
+                    AgentBootstrapBranchTrackingAdvisory {
+                        field: String::from("agent.bootstrap.ota.powershell"),
+                        branch,
+                    },
+                ))
+            }
+            Some(
+                AgentBootstrapOtaSource::Version { .. } | AgentBootstrapOtaSource::GitRev { .. },
+            ) => {}
+            None => advisories.push(ContractAdvisory::AgentBootstrapUnpinned(
+                AgentBootstrapUnpinnedAdvisory {
+                    field: String::from("agent.bootstrap.ota.powershell"),
+                },
+            )),
+        }
     }
     advisories
 }
 
-fn ota_bootstrap_command_has_version_pin(command: &str) -> bool {
+fn ota_bootstrap_command_source(command: &str) -> Option<AgentBootstrapOtaSource> {
     let normalized = command.trim();
     if normalized.is_empty() {
-        return false;
+        return None;
     }
 
     let lowercase = normalized.to_ascii_lowercase();
+    let has_branch_marker = [
+        "ota_git_branch=",
+        "ota_git_branch =",
+        "$env:ota_git_branch=",
+        "$env:ota_git_branch =",
+    ]
+    .iter()
+    .any(|marker| lowercase.contains(marker));
+    if has_branch_marker {
+        return extract_ota_bootstrap_branch(normalized)
+            .map(|branch| AgentBootstrapOtaSource::Branch { branch });
+    }
+
     let has_version_marker = [
         "ota_version=",
         "ota_version =",
@@ -10763,7 +10841,8 @@ fn ota_bootstrap_command_has_version_pin(command: &str) -> bool {
     .iter()
     .any(|marker| lowercase.contains(marker));
     if has_version_marker && contains_semver_triplet(normalized) {
-        return true;
+        return extract_ota_bootstrap_version(normalized)
+            .map(|version| AgentBootstrapOtaSource::Version { version });
     }
 
     let has_git_rev_marker = [
@@ -10774,7 +10853,57 @@ fn ota_bootstrap_command_has_version_pin(command: &str) -> bool {
     ]
     .iter()
     .any(|marker| lowercase.contains(marker));
-    has_git_rev_marker && contains_hex_commitish(normalized)
+    if has_git_rev_marker && contains_hex_commitish(normalized) {
+        return extract_ota_bootstrap_git_rev(normalized)
+            .map(|rev| AgentBootstrapOtaSource::GitRev { rev });
+    }
+
+    None
+}
+
+fn extract_ota_bootstrap_version(command: &str) -> Option<String> {
+    extract_ota_bootstrap_marker_value(command, &["OTA_VERSION=", "$env:OTA_VERSION="])
+}
+
+fn extract_ota_bootstrap_git_rev(command: &str) -> Option<String> {
+    extract_ota_bootstrap_marker_value(command, &["OTA_GIT_REV=", "$env:OTA_GIT_REV="])
+}
+
+fn extract_ota_bootstrap_branch(command: &str) -> Option<String> {
+    extract_ota_bootstrap_marker_value(command, &["OTA_GIT_BRANCH=", "$env:OTA_GIT_BRANCH="])
+}
+
+fn extract_ota_bootstrap_marker_value(command: &str, markers: &[&str]) -> Option<String> {
+    markers.iter().find_map(|marker| {
+        let index = command.find(marker)?;
+        let remainder = &command[index + marker.len()..];
+        let trimmed = remainder.trim_start();
+        let quoted = trimmed
+            .strip_prefix('\'')
+            .and_then(|value| value.split('\'').next())
+            .or_else(|| {
+                trimmed
+                    .strip_prefix('"')
+                    .and_then(|value| value.split('"').next())
+            });
+        if let Some(value) = quoted {
+            let normalized = value.trim();
+            return (!normalized.is_empty()).then(|| normalized.to_string());
+        }
+
+        let value = trimmed
+            .split(|character: char| {
+                character.is_whitespace()
+                    || character == ';'
+                    || character == '|'
+                    || character == '&'
+                    || character == ')'
+            })
+            .next()
+            .unwrap_or_default()
+            .trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
 }
 
 fn contains_semver_triplet(value: &str) -> bool {
@@ -14179,6 +14308,7 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
 
     if let Some(bootstrap) = agent.bootstrap.as_ref() {
         if let Some(ota) = bootstrap.ota.as_ref() {
+            let source = ota.source.as_ref();
             let sh = ota
                 .sh
                 .as_deref()
@@ -14190,9 +14320,9 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
 
-            if sh.is_none() && powershell.is_none() {
+            if source.is_none() && sh.is_none() && powershell.is_none() {
                 errors.push(ValidationError::new(
-                    "`agent.bootstrap.ota` must declare `sh` or `powershell`",
+                    "`agent.bootstrap.ota` must declare `source`, `sh`, or `powershell`",
                 ));
             }
 
@@ -14202,6 +14332,10 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 errors.push(ValidationError::new(
                     "`agent.bootstrap.ota.note` must not be empty",
                 ));
+            }
+
+            if let Some(source) = source {
+                validate_agent_bootstrap_source(source, errors);
             }
         } else {
             errors.push(ValidationError::new(
@@ -14220,6 +14354,52 @@ fn validate_agent(contract: &Contract, errors: &mut Vec<ValidationError>) {
             if name.trim().is_empty() {
                 errors.push(ValidationError::new(
                     "task env binding keys must not be empty",
+                ));
+            }
+        }
+    }
+}
+
+fn validate_agent_bootstrap_source(
+    source: &AgentBootstrapOtaSource,
+    errors: &mut Vec<ValidationError>,
+) {
+    match source {
+        AgentBootstrapOtaSource::Version { version } => {
+            let trimmed = version.trim();
+            if trimmed.is_empty() {
+                errors.push(ValidationError::new(
+                    "`agent.bootstrap.ota.source.version` must not be empty",
+                ));
+            } else if !trimmed.starts_with('v')
+                || Version::parse(trimmed.trim_start_matches('v')).is_err()
+            {
+                errors.push(ValidationError::new(
+                    "`agent.bootstrap.ota.source.version` must be a pinned ota release like `v1.6.21`",
+                ));
+            }
+        }
+        AgentBootstrapOtaSource::GitRev { rev } => {
+            let trimmed = rev.trim();
+            if trimmed.is_empty() {
+                errors.push(ValidationError::new(
+                    "`agent.bootstrap.ota.source.rev` must not be empty",
+                ));
+            } else if trimmed.len() != 40
+                || !trimmed
+                    .as_bytes()
+                    .iter()
+                    .all(|byte| byte.is_ascii_hexdigit())
+            {
+                errors.push(ValidationError::new(
+                    "`agent.bootstrap.ota.source.rev` must be a full 40-character git commit SHA",
+                ));
+            }
+        }
+        AgentBootstrapOtaSource::Branch { branch } => {
+            if branch.trim().is_empty() {
+                errors.push(ValidationError::new(
+                    "`agent.bootstrap.ota.source.branch` must not be empty",
                 ));
             }
         }
@@ -31145,6 +31325,64 @@ agent:
                 .iter()
                 .any(|advisory| matches!(advisory, ContractAdvisory::AgentBootstrapUnpinned(_)))
         );
+    }
+
+    #[test]
+    fn collects_agent_bootstrap_branch_tracking_advisory_for_structured_branch_source() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: branch
+        branch: 1.6.21-implementation
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentBootstrapBranchTracking(value)
+                if value.field == "agent.bootstrap.ota.source"
+                    && value.branch == "1.6.21-implementation"
+        )));
+    }
+
+    #[test]
+    fn rejects_agent_bootstrap_source_with_invalid_git_revision() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: cargo test
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: git_rev
+        rev: short-sha
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.message
+                == "`agent.bootstrap.ota.source.rev` must be a full 40-character git commit SHA"
+        }));
     }
 
     #[test]

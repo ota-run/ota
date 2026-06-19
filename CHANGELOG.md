@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- widened `agent.bootstrap.ota` with first-class `source.kind: version | git_rev | branch`, so
+  repo contracts can now declare released proof pins, deterministic unreleased proof pins, and
+  active pressure-testing branch truth structurally instead of hiding ota install ownership only
+  inside raw shell strings; ota now renders shell and PowerShell installer commands from
+  structured source truth, validates source-specific pin semantics, and warns when branch
+  tracking is used as non-deterministic pressure bootstrap drift
+
 - widened repo-level `tools.<name>.acquisition` with `provider: release_asset`, so standalone CLI
   tools can now own exact downloadable binary fulfillment directly in the repo contract instead of
   only through org policy; validator, doctor, selected-path preview JSON, and run-path

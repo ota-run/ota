@@ -1680,6 +1680,18 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::AgentBootstrapBranchTracking(value) => format!(
+            "{} field `{}` branch `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.field,
+            value.branch,
+            paint_key("Risk:"),
+            render_validate_warning_detail("non-deterministic pressure bootstrap"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::AgentSafeTaskNetwork(value) => format!(
             "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -35687,6 +35699,12 @@ fn init_contract_provenance(
                     "ota.init#starter_agent_bootstrap",
                 ));
             }
+            if ota.source.is_some() {
+                provenance.push(template_field_provenance(
+                    "agent.bootstrap.ota.source",
+                    "ota.init#starter_agent_bootstrap",
+                ));
+            }
             if ota.sh.is_some() {
                 provenance.push(template_field_provenance(
                     "agent.bootstrap.ota.sh",
@@ -41944,7 +41962,7 @@ fn render_agents_markdown(
             && let Some(ota) = bootstrap.ota.as_ref()
         {
             output.push_str("\n## Bootstrap\n\n");
-            if let Some(note) = ota.note {
+            if let Some(note) = ota.note.as_deref() {
                 output.push_str(note);
                 output.push('\n');
                 output.push('\n');
@@ -41953,12 +41971,36 @@ fn render_agents_markdown(
                     "Only install `ota` if it is missing and installation is approved.\n\n",
                 );
             }
-            if let Some(sh) = ota.sh {
+            if let Some(source) = ota.source.as_ref() {
+                output.push_str("- `source.kind`: `");
+                match source.kind {
+                    "version" => {
+                        output.push_str("version`\n");
+                        output.push_str("- `source.version`: `");
+                        output.push_str(source.version.as_deref().unwrap_or_default());
+                        output.push_str("`\n");
+                    }
+                    "git_rev" => {
+                        output.push_str("git_rev`\n");
+                        output.push_str("- `source.rev`: `");
+                        output.push_str(source.rev.as_deref().unwrap_or_default());
+                        output.push_str("`\n");
+                    }
+                    "branch" => {
+                        output.push_str("branch`\n");
+                        output.push_str("- `source.branch`: `");
+                        output.push_str(source.branch.as_deref().unwrap_or_default());
+                        output.push_str("`\n");
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(sh) = ota.sh.as_deref() {
                 output.push_str("- `sh`: `");
                 output.push_str(sh);
                 output.push_str("`\n");
             }
-            if let Some(powershell) = ota.powershell {
+            if let Some(powershell) = ota.powershell.as_deref() {
                 output.push_str("- `powershell`: `");
                 output.push_str(powershell);
                 output.push_str("`\n");

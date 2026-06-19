@@ -1624,6 +1624,12 @@ Success:
     "bootstrap": {
       "ota": {
         "note": "Only install ota if it is missing and installation is approved.",
+        "source": {
+          "kind": "version",
+          "version": "v1.6.16",
+          "deterministic": true,
+          "pressure_only": false
+        },
         "sh": "curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=v1.6.16 sh",
         "powershell": "$env:OTA_VERSION='v1.6.16'; irm https://dist.ota.run/install.ps1 | iex"
       }
@@ -1870,6 +1876,12 @@ Failure:
     "bootstrap": {
       "ota": {
         "note": "Only install ota if it is missing and installation is approved.",
+        "source": {
+          "kind": "version",
+          "version": "v1.6.16",
+          "deterministic": true,
+          "pressure_only": false
+        },
         "sh": "curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=v1.6.16 sh",
         "powershell": "$env:OTA_VERSION='v1.6.16'; irm https://dist.ota.run/install.ps1 | iex"
       }

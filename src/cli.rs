@@ -18729,6 +18729,38 @@ agent:
     }
 
     #[test]
+    fn tasks_json_infers_structured_bootstrap_source_from_legacy_shell_commands() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    run: echo ok
+agent:
+  bootstrap:
+    ota:
+      sh: curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=v1.6.21 sh
+      powershell: $env:OTA_VERSION = "v1.6.21"; irm https://dist.ota.run/install.ps1 | iex
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--json", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(
+            json["agent"]["bootstrap"]["ota"]["source"]["kind"],
+            "version"
+        );
+        assert_eq!(
+            json["agent"]["bootstrap"]["ota"]["source"]["version"],
+            "v1.6.21"
+        );
+    }
+
+    #[test]
     fn tasks_json_reports_script_tasks() {
         let fixture = ContractFixture::new(
             r#"
@@ -26660,12 +26692,12 @@ requires-python = ">=3.12"
         assert_eq!(json["config"]["agent"]["verify_after_changes"][0], "test");
         let ota_version = format!("v{}", env!("CARGO_PKG_VERSION"));
         assert_eq!(
-            json["config"]["agent"]["bootstrap"]["ota"]["sh"],
-            format!("curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION={ota_version} sh")
+            json["config"]["agent"]["bootstrap"]["ota"]["source"]["kind"],
+            "version"
         );
         assert_eq!(
-            json["config"]["agent"]["bootstrap"]["ota"]["powershell"],
-            format!("$env:OTA_VERSION='{ota_version}'; irm https://dist.ota.run/install.ps1 | iex")
+            json["config"]["agent"]["bootstrap"]["ota"]["source"]["version"],
+            ota_version
         );
     }
 
@@ -26709,7 +26741,7 @@ requires-python = ">=3.12"
 
         let starter_bootstrap = provenance
             .iter()
-            .find(|entry| entry["field"] == "agent.bootstrap.ota.sh")
+            .find(|entry| entry["field"] == "agent.bootstrap.ota.source")
             .expect("starter bootstrap provenance");
         assert_eq!(starter_bootstrap["provenance"], "template-derived");
         assert_eq!(starter_bootstrap["provenance_key"], "template_derived");

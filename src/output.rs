@@ -2996,17 +2996,69 @@ pub struct AgentBootstrapTargetSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sh: Option<&'a str>,
+    pub source: Option<AgentBootstrapOtaSourceSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub powershell: Option<&'a str>,
+    pub sh: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub powershell: Option<String>,
 }
 
 impl<'a> AgentBootstrapTargetSummary<'a> {
     pub fn from_config(bootstrap: &'a crate::schema::AgentBootstrapTargetConfig) -> Self {
         Self {
             note: bootstrap.note.as_deref(),
-            sh: bootstrap.sh.as_deref(),
-            powershell: bootstrap.powershell.as_deref(),
+            source: bootstrap
+                .effective_source()
+                .as_ref()
+                .map(AgentBootstrapOtaSourceSummary::from_source),
+            sh: bootstrap.rendered_sh().map(|value| value.into_owned()),
+            powershell: bootstrap
+                .rendered_powershell()
+                .map(|value| value.into_owned()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentBootstrapOtaSourceSummary<'a> {
+    pub kind: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub deterministic: bool,
+    pub pressure_only: bool,
+}
+
+impl<'a> AgentBootstrapOtaSourceSummary<'a> {
+    fn from_source(source: &crate::schema::AgentBootstrapOtaSource) -> Self {
+        match source {
+            crate::schema::AgentBootstrapOtaSource::Version { version } => Self {
+                kind: "version",
+                version: Some(version.clone()),
+                rev: None,
+                branch: None,
+                deterministic: true,
+                pressure_only: false,
+            },
+            crate::schema::AgentBootstrapOtaSource::GitRev { rev } => Self {
+                kind: "git_rev",
+                version: None,
+                rev: Some(rev.clone()),
+                branch: None,
+                deterministic: true,
+                pressure_only: false,
+            },
+            crate::schema::AgentBootstrapOtaSource::Branch { branch } => Self {
+                kind: "branch",
+                version: None,
+                rev: None,
+                branch: Some(branch.clone()),
+                deterministic: false,
+                pressure_only: true,
+            },
         }
     }
 }

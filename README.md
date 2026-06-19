@@ -126,11 +126,24 @@ Pin a release:
 curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=vX.Y.Z sh
 ```
 
+Track an unreleased branch tip during active pressure testing:
+
+```bash
+curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_BRANCH=1.6.21-implementation sh -s -- --from-git
+```
+
 Windows PowerShell:
 
 ```powershell
 $env:OTA_VERSION = "vX.Y.Z"
 irm https://dist.ota.run/install.ps1 | iex
+```
+
+Active pressure testing from a branch tip:
+
+```powershell
+$env:OTA_GIT_BRANCH = "1.6.21-implementation"
+& ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit
 ```
 
 Update an existing install:

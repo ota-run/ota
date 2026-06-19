@@ -3467,14 +3467,38 @@ agent:
   bootstrap:
     ota:
       note: Only install ota if it is missing and installation is approved.
-      sh: curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=v1.6.16 sh
-      powershell: $env:OTA_VERSION='v1.6.16'; irm https://dist.ota.run/install.ps1 | iex
+      source:
+        kind: version
+        version: v1.6.16
   notes: Keep agent edits narrow and add regressions for behavioral changes.
 ```
 
-For unreleased source pressure tests, the same bootstrap surface may pin an exact git revision
-deterministically through `OTA_GIT_REV=<40-char-commit>` / `$env:OTA_GIT_REV='<40-char-commit>'`
-with `--from-git` / `-FromGit` instead of a released `OTA_VERSION=...` install.
+For deterministic unreleased proof, the same bootstrap surface may pin an exact git revision:
+
+```yaml
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: git_rev
+        rev: e71931d6a41cc52a15966e0125725b67a05cc073
+```
+
+For active pressure testing, the bootstrap surface may intentionally track a branch tip:
+
+```yaml
+agent:
+  bootstrap:
+    ota:
+      source:
+        kind: branch
+        branch: 1.6.21-implementation
+```
+
+Ota renders the matching shell and PowerShell installer commands from `bootstrap.ota.source`.
+Legacy `bootstrap.ota.sh` / `bootstrap.ota.powershell` commands are still accepted for
+compatibility, and Ota will infer `version`, `git_rev`, or `branch` truth from those commands
+when it can.
 
 Current validation rules:
 
@@ -3495,9 +3519,14 @@ Current validation rules:
 - `inferred_boundary.provenance.writable_paths` entries must not be empty when present
 - `inferred_boundary.provenance.protected_paths` entries must not be empty when present
 - `inferred_boundary` must include at least one provenance entry when present
-- `bootstrap.ota` must include at least one install command when present
+- `bootstrap.ota` must include at least one of `source`, `sh`, or `powershell` when present
+- `bootstrap.ota.source.kind: version` must declare a pinned ota release like `v1.6.21`
+- `bootstrap.ota.source.kind: git_rev` must declare a full 40-character commit SHA
+- `bootstrap.ota.source.kind: branch` must declare a non-empty branch name
 - unpinned `bootstrap.ota.sh` / `bootstrap.ota.powershell` commands now warn during `ota validate`
   so repo agent bootstrap stays deterministic across release drift
+- `bootstrap.ota.source.kind: branch` also warns during `ota validate` / `ota doctor`, because
+  branch tracking is pressure truth rather than deterministic proof truth
 
 Current implementation treats this as contract surface and validation input. It is not yet a full agent runtime layer.
 
@@ -3554,7 +3583,12 @@ Agent semantics:
 - `inferred_boundary.provenance` explains which starter or detector heuristics produced the current writable and protected boundary
 - `bootstrap.ota` provides an approved `ota` install path for agents when the binary is missing
 - `bootstrap.ota.note` should explain when that install path may be used
-- `bootstrap.ota.sh` and `bootstrap.ota.powershell` should give the approved shell and PowerShell install commands
+- `bootstrap.ota.source` is the canonical install truth for ota bootstrap
+  - `kind: version` is the normal released proof lane
+  - `kind: git_rev` is the deterministic unreleased proof lane
+  - `kind: branch` is the active pressure-testing lane and is intentionally non-deterministic
+- `bootstrap.ota.sh` and `bootstrap.ota.powershell` remain compatibility fields; when omitted,
+  ota renders the approved shell and PowerShell install commands from `bootstrap.ota.source`
 - `notes` is free-form repo guidance for humans and AI agents
 - `ota detect --merge` and `ota detect --rewrite` refuse to write protected paths declared by the existing contract
 
@@ -3563,7 +3597,9 @@ Authoring ergonomics:
 - readiness slice (default): keep `posture: readiness_strict`, keep lockfiles/env/config/topology/CI/contract under `protected_paths`, and leave `exceptions.sensitive_writes` empty
 - contract-authoring slice: allow writable `ota.yaml` intentionally and acknowledge it with `exceptions.sensitive_writes: [ota.yaml]`
 - infra-authoring slice: allow writable CI/topology files intentionally and acknowledge only those specific sensitive paths
-- use `bootstrap.ota` only when you want agents to self-install ota if missing; keep install commands pinned and keep the note explicit about when install is allowed
+- use `bootstrap.ota` only when you want agents to self-install ota if missing; prefer
+  `bootstrap.ota.source` over raw shell strings, keep deterministic proof on `version` or
+  `git_rev`, and use `branch` only for active pressure lanes
 
 ## `metadata`
 

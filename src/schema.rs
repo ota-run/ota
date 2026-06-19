@@ -20,6 +20,7 @@
 //
 //   If you need additional information or have any questions, please email: os@ota.run
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -6620,9 +6621,173 @@ pub struct AgentBootstrapTargetConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<AgentBootstrapOtaSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sh: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub powershell: Option<String>,
+}
+
+impl AgentBootstrapTargetConfig {
+    pub fn rendered_sh(&self) -> Option<Cow<'_, str>> {
+        self.sh
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(Cow::Borrowed)
+            .or_else(|| {
+                self.source
+                    .as_ref()
+                    .map(|source| Cow::Owned(source.render_sh()))
+            })
+    }
+
+    pub fn rendered_powershell(&self) -> Option<Cow<'_, str>> {
+        self.powershell
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(Cow::Borrowed)
+            .or_else(|| {
+                self.source
+                    .as_ref()
+                    .map(|source| Cow::Owned(source.render_powershell()))
+            })
+    }
+
+    pub fn effective_source(&self) -> Option<AgentBootstrapOtaSource> {
+        self.source
+            .clone()
+            .or_else(|| {
+                self.sh
+                    .as_deref()
+                    .and_then(parse_ota_bootstrap_source_from_command)
+            })
+            .or_else(|| {
+                self.powershell
+                    .as_deref()
+                    .and_then(parse_ota_bootstrap_source_from_command)
+            })
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AgentBootstrapOtaSource {
+    Version { version: String },
+    GitRev { rev: String },
+    Branch { branch: String },
+}
+
+impl AgentBootstrapOtaSource {
+    pub fn render_sh(&self) -> String {
+        match self {
+            Self::Version { version } => {
+                format!("curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION={version} sh")
+            }
+            Self::GitRev { rev } => format!(
+                "curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_REV={rev} sh -s -- --from-git"
+            ),
+            Self::Branch { branch } => format!(
+                "curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_BRANCH={branch} sh -s -- --from-git"
+            ),
+        }
+    }
+
+    pub fn render_powershell(&self) -> String {
+        match self {
+            Self::Version { version } => {
+                format!("$env:OTA_VERSION='{version}'; irm https://dist.ota.run/install.ps1 | iex")
+            }
+            Self::GitRev { rev } => format!(
+                "$env:OTA_GIT_REV='{rev}'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit"
+            ),
+            Self::Branch { branch } => format!(
+                "$env:OTA_GIT_BRANCH='{branch}'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit"
+            ),
+        }
+    }
+
+    pub fn deterministic(&self) -> bool {
+        !matches!(self, Self::Branch { .. })
+    }
+
+    pub fn pressure_only(&self) -> bool {
+        matches!(self, Self::Branch { .. })
+    }
+}
+
+fn parse_ota_bootstrap_source_from_command(command: &str) -> Option<AgentBootstrapOtaSource> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    extract_marker_value(
+        trimmed,
+        &[
+            "OTA_GIT_BRANCH=",
+            "OTA_GIT_BRANCH =",
+            "$env:OTA_GIT_BRANCH=",
+            "$env:OTA_GIT_BRANCH =",
+        ],
+    )
+    .map(|branch| AgentBootstrapOtaSource::Branch { branch })
+    .or_else(|| {
+        extract_marker_value(
+            trimmed,
+            &[
+                "OTA_GIT_REV=",
+                "OTA_GIT_REV =",
+                "$env:OTA_GIT_REV=",
+                "$env:OTA_GIT_REV =",
+            ],
+        )
+        .map(|rev| AgentBootstrapOtaSource::GitRev { rev })
+    })
+    .or_else(|| {
+        extract_marker_value(
+            trimmed,
+            &[
+                "OTA_VERSION=",
+                "OTA_VERSION =",
+                "$env:OTA_VERSION=",
+                "$env:OTA_VERSION =",
+            ],
+        )
+        .map(|version| AgentBootstrapOtaSource::Version { version })
+    })
+}
+
+fn extract_marker_value(command: &str, markers: &[&str]) -> Option<String> {
+    markers.iter().find_map(|marker| {
+        let index = command.find(marker)?;
+        let remainder = &command[index + marker.len()..];
+        let trimmed = remainder.trim_start();
+        let quoted = trimmed
+            .strip_prefix('\'')
+            .and_then(|value| value.split('\'').next())
+            .or_else(|| {
+                trimmed
+                    .strip_prefix('"')
+                    .and_then(|value| value.split('"').next())
+            });
+        if let Some(value) = quoted {
+            let normalized = value.trim();
+            return (!normalized.is_empty()).then(|| normalized.to_string());
+        }
+
+        let value = trimmed
+            .split(|character: char| {
+                character.is_whitespace()
+                    || character == ';'
+                    || character == '|'
+                    || character == '&'
+                    || character == ')'
+            })
+            .next()
+            .unwrap_or_default()
+            .trim();
+        (!value.is_empty()).then(|| value.to_string())
+    })
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]

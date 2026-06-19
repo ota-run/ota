@@ -1347,14 +1347,11 @@ fn starter_agent_bootstrap() -> AgentBootstrapConfig {
             note: Some(String::from(
                 "Only install ota if it is missing and installation is approved.",
             )),
-            sh: Some(format!(
-                "curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION={} sh",
-                ota_version
-            )),
-            powershell: Some(format!(
-                "$env:OTA_VERSION='{}'; irm https://dist.ota.run/install.ps1 | iex",
-                ota_version
-            )),
+            source: Some(crate::schema::AgentBootstrapOtaSource::Version {
+                version: ota_version,
+            }),
+            sh: None,
+            powershell: None,
         }),
     }
 }

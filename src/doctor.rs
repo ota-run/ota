@@ -1116,9 +1116,9 @@ fn tool_acquisition_provider_available(acquisition: &ToolAcquisitionSpec) -> boo
         ToolAcquisitionProvider::Corepack => {
             command_available("corepack") || corepack_provider_bootstrap_available()
         }
-        ToolAcquisitionProvider::Command => command_available(tool_acquisition_provider_requirement(
-            acquisition,
-        )),
+        ToolAcquisitionProvider::Command => {
+            command_available(tool_acquisition_provider_requirement(acquisition))
+        }
         ToolAcquisitionProvider::ReleaseAsset => {
             command_available("curl") || command_available("wget")
         }
@@ -4607,6 +4607,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
                 ContractAdvisory::AgentBootstrapUnpinned(advisory)
             }
+            ContractAdvisory::AgentBootstrapBranchTracking(advisory) => {
+                ContractAdvisory::AgentBootstrapBranchTracking(advisory)
+            }
             ContractAdvisory::AgentSafeTaskNetwork(advisory) => {
                 if !selected_task_names.is_empty()
                     && !selected_task_names.contains(advisory.task_name.as_str())
@@ -4701,6 +4704,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
             format!("`{}` should pin the ota release version", advisory.field)
         }
+        ContractAdvisory::AgentBootstrapBranchTracking(advisory) => format!(
+            "`{}` tracks ota branch `{}` for pressure testing",
+            advisory.field, advisory.branch
+        ),
         ContractAdvisory::AgentSafeTaskNetwork(advisory) => match advisory.network_kind {
             TaskNetworkEffectKind::DependencyHydration => format!(
                 "Agent-safe task `{}` performs network dependency hydration",
