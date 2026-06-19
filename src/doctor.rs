@@ -1111,6 +1111,27 @@ fn corepack_provider_bootstrap_available() -> bool {
     !command_available("corepack") && command_available("npm")
 }
 
+fn tool_acquisition_provider_available(acquisition: &ToolAcquisitionSpec) -> bool {
+    match acquisition.provider {
+        ToolAcquisitionProvider::Corepack => {
+            command_available("corepack") || corepack_provider_bootstrap_available()
+        }
+        ToolAcquisitionProvider::Command => command_available(tool_acquisition_provider_requirement(
+            acquisition,
+        )),
+        ToolAcquisitionProvider::ReleaseAsset => {
+            command_available("curl") || command_available("wget")
+        }
+        ToolAcquisitionProvider::Apt
+        | ToolAcquisitionProvider::Brew
+        | ToolAcquisitionProvider::Winget
+        | ToolAcquisitionProvider::Choco
+        | ToolAcquisitionProvider::Scoop => {
+            command_available(tool_acquisition_provider_requirement(acquisition))
+        }
+    }
+}
+
 fn tool_acquisition_provider_requirement(acquisition: &ToolAcquisitionSpec) -> &'static str {
     match acquisition.provider {
         ToolAcquisitionProvider::Corepack => "corepack",
@@ -8568,9 +8589,8 @@ fn diagnose_command_version(
         .map(|context_name| format!("{display_name} (context {context_name})"))
         .unwrap_or_else(|| display_name.to_string());
     let acquisition_provider_missing = matches!(mode, DoctorMode::Native)
-        && tool_acquisition.is_some_and(|acquisition| {
-            !command_available(tool_acquisition_provider_requirement(acquisition))
-        });
+        && tool_acquisition
+            .is_some_and(|acquisition| !tool_acquisition_provider_available(acquisition));
     let actual = if let Some(probe) = version_probe.as_ref() {
         match &probe.outcome {
             CommandVersionProbeOutcome::Version(actual) => Some(actual.clone()),
@@ -15894,6 +15914,77 @@ tasks:
                     .and_then(|config| config.get("asset_by_platform"))
                     .is_some()
         }));
+    }
+
+    #[test]
+    fn doctor_does_not_false_flag_release_asset_activation_provider_when_curl_is_present() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "curl.cmd" } else { "curl" },
+            if cfg!(windows) {
+                "@echo off\r\nexit /b 0\r\n"
+            } else {
+                "#!/bin/sh\nexit 0\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  yq:
+    version: "4.52.5"
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/yq_linux_amd64
+          linux_aarch64: https://example.com/releases/v{version}/yq_linux_arm64
+          macos_x86_64: https://example.com/releases/v{version}/yq_darwin_amd64
+          macos_aarch64: https://example.com/releases/v{version}/yq_darwin_arm64
+          windows_x86_64: https://example.com/releases/v{version}/yq_windows_amd64.exe
+        version_args:
+          - --version
+tasks:
+  render:
+    run: yq --version
+    requirements:
+      tools:
+        yq: "4.52.5"
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions(&contract, synthetic_contract_path());
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|finding| finding.code() == "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"),
+            "{report:?}"
+        );
     }
 
     #[test]
