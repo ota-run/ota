@@ -36081,7 +36081,7 @@ fn set_env_source_bool_field(root: &mut Mapping, segments: &[&str], value: &str)
     true
 }
 
-pub(crate) fn render_tasks_text(
+fn render_tasks_text(
     path: &str,
     workflow: Option<&WorkflowSummary<'_>>,
     agent: Option<&AgentSummary<'_>>,

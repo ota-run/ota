@@ -15283,11 +15283,6 @@ tasks:
 version: 1
 project:
   name: ota
-execution:
-  default_context: app
-  contexts:
-    app:
-      backend: native
 tasks:
   build:
     run: cargo build
@@ -19453,73 +19448,31 @@ tasks:
 
     #[test]
     fn tasks_and_workflows_hide_empty_placeholder_rows() {
-        let env = std::collections::BTreeMap::new();
-        let inputs = std::collections::BTreeMap::new();
-        let task = crate::output::TaskSummary {
-            name: "build",
-            context: None,
-            default_mode: None,
-            effective_default_mode: "native",
-            description: Some("Build the site"),
-            notes: None,
-            category: None,
-            env: &env,
-            env_files: Vec::new(),
-            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
-            kind: "command",
-            run: None,
-            script: None,
-            command: Some(crate::output::TaskCommandSummary {
-                exe: "npm",
-                args: vec!["run", "build"],
-            }),
-            launch: None,
-            action: None,
-            prepare: None,
-            aggregate: None,
-            effects: crate::output::TaskEffectsSummary::default(),
-            selected_variant_os: None,
-            depends_on: Vec::new(),
-            requires_services: Vec::new(),
-            when_checks: Vec::new(),
-            after_success: Vec::new(),
-            after_failure: Vec::new(),
-            after_always: Vec::new(),
-            safe_for_agent: false,
-            internal: false,
-            variants: Vec::new(),
-            modes: Vec::new(),
-            supports_native_mode_override: false,
-        };
-        let workflow = crate::output::WorkflowSummary {
-            name: "docs",
-            intent: None,
-            description: Some("Docs workflow"),
-            notes: None,
-            prepare_task: None,
-            prepare_action: None,
-            setup_task: None,
-            run_task: Some("build"),
-            run_task_launch: None,
-            required_services: Vec::new(),
-            readiness_checks: Vec::new(),
-            readiness_probes: Vec::new(),
-            readiness_surfaces: Vec::new(),
-            signal_readiness_checks: Vec::new(),
-            signal_readiness_probes: Vec::new(),
-            signal_readiness_surfaces: Vec::new(),
-            exposes: Vec::new(),
-            expose_surfaces: Vec::new(),
-            expose_entries: Vec::new(),
-        };
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    description: Build the site
+    command:
+      exe: npm
+      args:
+        - run
+        - build
+workflows:
+  default: docs
+  docs:
+    description: Docs workflow
+    run:
+      task: build
+"#,
+        );
 
-        let stdout = strip_ansi(&crate::cli::commands::render_tasks_text(
-            ".",
-            Some(&workflow),
-            None,
-            &[task],
-        ));
+        let output = run_with(["ota", "tasks", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
         assert!(!stdout.contains("Context: -"), "{stdout}");
         assert!(!stdout.contains("Command Preview: -"), "{stdout}");
         assert!(!stdout.contains("Effects: -"), "{stdout}");
