@@ -36180,6 +36180,12 @@ fn render_tasks_text(
             "Mode Branches:",
             render_non_placeholder(&mode_branches),
         );
+        if !mode_commands.is_empty() {
+            output.push_str(&format!("\n  {}", paint_key("Runnable Modes:")));
+            for line in &mode_commands {
+                output.push_str(&format!("\n    {line}"));
+            }
+        }
         if task.internal {
             output.push_str(&format!("\n  {} internal", paint_key("Visibility:")));
         }
@@ -36224,12 +36230,6 @@ fn render_tasks_text(
                 paint_key("Notes:"),
                 render_multiline_field(notes)
             ));
-        }
-        if !mode_commands.is_empty() {
-            output.push_str(&format!("\n  {}", paint_key("Modes:")));
-            for command in mode_commands {
-                output.push_str(&format!("\n    {command}"));
-            }
         }
     }
 
@@ -36757,7 +36757,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         }
         if !mode_commands.is_empty() {
             output.push_str(&format!("\n  {}", paint_key("Runnable Modes:")));
-            for command in mode_commands {
+            for command in &mode_commands {
                 output.push_str(&format!("\n    {command}"));
             }
         }

@@ -19787,6 +19787,60 @@ tasks:
     }
 
     #[test]
+    fn tasks_text_shows_runnable_modes_for_multi_mode_tasks() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  lint:
+    context: host
+    command:
+      exe: npm
+      args:
+        - run
+        - lint
+    execution:
+      default_mode: container
+      modes:
+        container:
+          context: app
+          command:
+            exe: npm
+            args:
+              - run
+              - lint
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Default Mode: container"), "{stdout}");
+        assert!(stdout.contains("Use: `ota run lint`"), "{stdout}");
+        assert!(stdout.contains("Runnable Modes:"), "{stdout}");
+        assert!(
+            stdout.contains("default (container): `ota run lint`"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("native: `ota run lint --mode native`"),
+            "{stdout}"
+        );
+    }
+
+    #[test]
     fn tasks_use_shows_native_override_when_default_mode_is_container() {
         let fixture = ContractFixture::new(
             r#"
