@@ -11245,11 +11245,7 @@ fn detect_missing_backend_requirements(
     let mut missing = Vec::new();
 
     for (name, required_version) in runtimes {
-        match probe_backend_runtime_requirement_version(
-            backend,
-            working_dir,
-            name.as_str(),
-        ) {
+        match probe_backend_runtime_requirement_version(backend, working_dir, name.as_str()) {
             Ok(None) => missing.push(BackendRequirementGap {
                 kind: ProvisioningTargetKind::Runtime,
                 name: name.clone(),
@@ -54022,7 +54018,15 @@ tasks:
             "{logged}"
         );
         assert!(
-            !logged.contains(fixture.dir.path().join("deploy/helm/.ota").display().to_string().as_str()),
+            !logged.contains(
+                fixture
+                    .dir
+                    .path()
+                    .join("deploy/helm/.ota")
+                    .display()
+                    .to_string()
+                    .as_str()
+            ),
             "{logged}"
         );
     }

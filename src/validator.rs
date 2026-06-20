@@ -9911,9 +9911,7 @@ fn obvious_node_package_manager_hydration_argv(argv: &[String]) -> bool {
             if !matches!(mode, "install" | "ci") {
                 return false;
             }
-            argv.iter()
-                .skip(offset + 2)
-                .all(|arg| arg == "--force")
+            argv.iter().skip(offset + 2).all(|arg| arg == "--force")
         }
         _ => false,
     }
