@@ -36081,7 +36081,7 @@ fn set_env_source_bool_field(root: &mut Mapping, segments: &[&str], value: &str)
     true
 }
 
-fn render_tasks_text(
+pub(crate) fn render_tasks_text(
     path: &str,
     workflow: Option<&WorkflowSummary<'_>>,
     agent: Option<&AgentSummary<'_>>,
@@ -36111,13 +36111,11 @@ fn render_tasks_text(
     for task in tasks {
         let command_preview = render_task_command_preview(task);
         let mode_commands = render_task_mode_commands(task);
+        let effects = render_task_effects_text(&task.effects);
+        let mode_branches = render_task_mode_branches(task);
 
         output.push_str(&format!("\n\n{} {}", list_bullet(), paint(task.name, "1")));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Context:"),
-            task.context.unwrap_or("-")
-        ));
+        push_rendered_field(&mut output, "Context:", task.context.map(str::to_string));
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Default Mode:"),
@@ -36131,11 +36129,11 @@ fn render_tasks_text(
             paint_key("Use:"),
             paint_code(&format!("ota run {}", task.name))
         ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Command Preview:"),
-            command_preview
-        ));
+        push_rendered_field(
+            &mut output,
+            "Command Preview:",
+            render_non_placeholder(&command_preview),
+        );
         if !task.inputs.is_empty() {
             output.push_str(&format!("\n  {}", paint_key("Inputs")));
             output.push_str(&render_task_inputs_compact(task.inputs));
@@ -36173,69 +36171,53 @@ fn render_tasks_text(
         }
         output.push_str(&format!(
             "\n  {} {}",
-            paint_key("Effects:"),
-            render_task_effects_text(&task.effects)
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Mode Branches:"),
-            render_task_mode_branches(task)
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
             paint_key("Safe For Agent:"),
             if task.safe_for_agent { "true" } else { "false" }
         ));
+        push_rendered_field(&mut output, "Effects:", render_non_placeholder(&effects));
+        push_rendered_field(
+            &mut output,
+            "Mode Branches:",
+            render_non_placeholder(&mode_branches),
+        );
         if task.internal {
             output.push_str(&format!("\n  {} internal", paint_key("Visibility:")));
         }
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Selected OS:"),
-            task.selected_variant_os.unwrap_or("-")
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Depends On:"),
-            if task.depends_on.is_empty() {
-                String::from("-")
-            } else {
-                task.depends_on.join(",")
-            }
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Requires Services:"),
-            if task.requires_services.is_empty() {
-                String::from("-")
-            } else {
-                task.requires_services.join(",")
-            }
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("When Checks:"),
-            if task.when_checks.is_empty() {
-                String::from("-")
-            } else {
-                task.when_checks.join(",")
-            }
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("After Success:"),
-            render_task_relationships(&task.after_success)
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("After Failure:"),
-            render_task_relationships(&task.after_failure)
-        ));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("After Always:"),
-            render_task_relationships(&task.after_always)
-        ));
+        push_rendered_field(
+            &mut output,
+            "Selected OS:",
+            task.selected_variant_os.map(str::to_string),
+        );
+        push_rendered_field(
+            &mut output,
+            "Depends On:",
+            render_joined_or_none(&task.depends_on),
+        );
+        push_rendered_field(
+            &mut output,
+            "Requires Services:",
+            render_joined_or_none(&task.requires_services),
+        );
+        push_rendered_field(
+            &mut output,
+            "When Checks:",
+            render_joined_or_none(&task.when_checks),
+        );
+        push_rendered_field(
+            &mut output,
+            "After Success:",
+            render_non_placeholder(&render_task_relationships(&task.after_success)),
+        );
+        push_rendered_field(
+            &mut output,
+            "After Failure:",
+            render_non_placeholder(&render_task_relationships(&task.after_failure)),
+        );
+        push_rendered_field(
+            &mut output,
+            "After Always:",
+            render_non_placeholder(&render_task_relationships(&task.after_always)),
+        );
         if let Some(notes) = task.notes {
             output.push_str(&format!(
                 "\n  {} {}",
@@ -36329,6 +36311,21 @@ fn render_task_command_preview(task: &TaskSummary<'_>) -> String {
         .or_else(|| task.prepare.as_ref().map(render_task_prepare_text))
         .or_else(|| task.aggregate.as_ref().map(render_task_aggregate_text))
         .unwrap_or_else(|| String::from("-"))
+}
+
+fn render_joined_or_none(values: &[String]) -> Option<String> {
+    (!values.is_empty()).then(|| values.join(","))
+}
+
+fn render_non_placeholder(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty() && trimmed != "-").then(|| value.to_string())
+}
+
+fn push_rendered_field(output: &mut String, label: &str, value: Option<String>) {
+    if let Some(value) = value {
+        output.push_str(&format!("\n  {} {}", paint_key(label), value));
+    }
 }
 
 fn render_workflow_prepare_action_preview(action: &crate::output::TaskActionSummary<'_>) -> String {
@@ -36696,11 +36693,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     for task in tasks {
         let usage = render_task_use_command(task);
         output.push_str(&format!("\n\n{} {}", info_bullet(), paint(task.name, "1")));
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Context:"),
-            task.context.unwrap_or("-")
-        ));
+        push_rendered_field(&mut output, "Context:", task.context.map(str::to_string));
         output.push_str(&format!(
             "\n  {} {}",
             paint_key("Default Mode:"),
@@ -36726,11 +36719,11 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
                 render_task_prepare_text(prepare)
             ));
         }
-        output.push_str(&format!(
-            "\n  {} {}",
-            paint_key("Mode Branches:"),
-            render_task_mode_branches(task)
-        ));
+        push_rendered_field(
+            &mut output,
+            "Mode Branches:",
+            render_non_placeholder(&render_task_mode_branches(task)),
+        );
         if task.internal {
             output.push_str(&format!("\n  {} internal", paint_key("Visibility:")));
         }
@@ -36821,69 +36814,41 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
             render_task_launch_text(launch)
         ));
     }
-    output.push_str(&format!(
-        "\n  {} {}",
-        paint_key("Services:"),
-        if workflow.required_services.is_empty() {
-            String::from("-")
-        } else {
-            workflow.required_services.join(",")
-        }
-    ));
-    output.push_str(&format!(
-        "\n  {} {}",
-        paint_key("Readiness Checks:"),
-        if workflow.readiness_checks.is_empty() {
-            String::from("-")
-        } else {
-            workflow.readiness_checks.join(",")
-        }
-    ));
-    output.push_str(&format!(
-        "\n  {} {}",
-        paint_key("Readiness Probes:"),
-        if workflow.readiness_probes.is_empty() {
-            String::from("-")
-        } else {
-            workflow.readiness_probes.join(",")
-        }
-    ));
-    output.push_str(&format!(
-        "\n  {} {}",
-        paint_key("Readiness Surfaces:"),
-        if workflow.readiness_surfaces.is_empty() {
-            String::from("-")
-        } else {
-            workflow.readiness_surfaces.join(",")
-        }
-    ));
-    output.push_str(&format!(
-        "\n  {} {}",
-        paint_key("Signal Checks:"),
-        if workflow.signal_readiness_checks.is_empty() {
-            String::from("-")
-        } else {
-            workflow.signal_readiness_checks.join(",")
-        }
-    ));
-    output.push_str(&format!(
-        "\n  {} {}",
-        paint_key("Signal Probes:"),
-        if workflow.signal_readiness_probes.is_empty() {
-            String::from("-")
-        } else {
-            workflow.signal_readiness_probes.join(",")
-        }
-    ));
-    output.push_str(&format!(
-        "\n  {} {}",
-        paint_key("Signal Surfaces:"),
-        if workflow.signal_readiness_surfaces.is_empty() {
-            String::from("-")
-        } else {
-            workflow.signal_readiness_surfaces.join(",")
-        }
-    ));
+    push_rendered_field(
+        &mut output,
+        "Services:",
+        render_joined_or_none(&workflow.required_services),
+    );
+    push_rendered_field(
+        &mut output,
+        "Readiness Checks:",
+        render_joined_or_none(&workflow.readiness_checks),
+    );
+    push_rendered_field(
+        &mut output,
+        "Readiness Probes:",
+        render_joined_or_none(&workflow.readiness_probes),
+    );
+    push_rendered_field(
+        &mut output,
+        "Readiness Surfaces:",
+        render_joined_or_none(&workflow.readiness_surfaces),
+    );
+    push_rendered_field(
+        &mut output,
+        "Signal Checks:",
+        render_joined_or_none(&workflow.signal_readiness_checks),
+    );
+    push_rendered_field(
+        &mut output,
+        "Signal Probes:",
+        render_joined_or_none(&workflow.signal_readiness_probes),
+    );
+    push_rendered_field(
+        &mut output,
+        "Signal Surfaces:",
+        render_joined_or_none(&workflow.signal_readiness_surfaces),
+    );
     if let Some(notes) = workflow.notes
         && !notes.trim().is_empty()
     {
