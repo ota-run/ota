@@ -4327,7 +4327,7 @@ fn clean_execution_report_inner(
 ) -> Result<CleanExecutionReport, RunError> {
     let clean_task_name = OTA_CLEAN_INTERNAL_TASK_NAME;
     let working_dir = contract_working_dir(contract_path);
-    ensure_no_active_repo_execution_conflicts(clean_task_name, working_dir)?;
+    ensure_no_active_repo_execution_conflicts(clean_task_name, working_dir, cleanup_scope)?;
     let host_services_to_stop = host_managed_services_for_cleanup(contract, cleanup_scope);
     let cleanup_targets = persistent_cleanup_targets(contract, cleanup_scope)?;
     let repo_ownership_token = repo_ownership_token("clean", contract_path)?;
@@ -4928,9 +4928,13 @@ fn persistent_cleanup_targets(
 
 #[derive(Debug, Default)]
 struct PersistentCleanupScope {
+    task_names: BTreeSet<String>,
     context_names: BTreeSet<String>,
     shared_backend_names: BTreeSet<String>,
     service_names: BTreeSet<String>,
+    compose_projects: BTreeSet<String>,
+    persistent_backend_families: BTreeSet<String>,
+    env_materialization_paths: BTreeSet<String>,
 }
 
 fn persistent_cleanup_scope_for_workflow(
@@ -4943,8 +4947,27 @@ fn persistent_cleanup_scope_for_workflow(
         &contract.selected_workflow_required_service_names(workflow_name),
     );
     for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        scope.task_names.insert(task_name.clone());
         let effective =
             effective_task_execution(contract, task_name.as_str(), ExecutionOverrides::default());
+        let backend =
+            resolve_execution_backend(contract, task_name.as_str(), ExecutionOverrides::default())
+                .ok();
+        if let Some(backend) = backend.as_ref() {
+            let owner = repo_execution_lock_owner_for_backend(
+                contract,
+                task_name.as_str(),
+                ExecutionOverrides::default(),
+                backend,
+            );
+            scope.compose_projects.extend(owner.compose_projects);
+            scope
+                .persistent_backend_families
+                .extend(owner.persistent_backend_families);
+            scope
+                .env_materialization_paths
+                .extend(owner.env_materialization_paths);
+        }
         if effective.backend != Backend::Container {
             continue;
         }
@@ -25025,6 +25048,7 @@ fn unregister_active_repo_execution(working_dir: &Path, execution_id: &str) -> i
 fn ensure_no_active_repo_execution_conflicts(
     task_name: &str,
     working_dir: &Path,
+    cleanup_scope: Option<&PersistentCleanupScope>,
 ) -> Result<(), RunError> {
     let _registry_lock = acquire_repo_execution_lock(task_name, working_dir, "lock")?;
     let mut records = read_active_repo_execution_records(working_dir).map_err(|source| {
@@ -25051,6 +25075,10 @@ fn ensure_no_active_repo_execution_conflicts(
     let owners = records
         .into_iter()
         .map(|record| record.owner)
+        .filter(|owner| {
+            !cleanup_scope
+                .is_some_and(|scope| active_execution_owned_by_cleanup_scope(owner, scope))
+        })
         .collect::<Vec<_>>();
     if owners.is_empty() {
         Ok(())
@@ -25064,6 +25092,29 @@ fn ensure_no_active_repo_execution_conflicts(
             owners,
         })
     }
+}
+
+fn active_execution_owned_by_cleanup_scope(
+    owner: &RepoExecutionLockOwner,
+    scope: &PersistentCleanupScope,
+) -> bool {
+    scope.task_names.contains(owner.task.as_str())
+        && owner
+            .host_services
+            .iter()
+            .all(|service| scope.service_names.contains(service.as_str()))
+        && owner
+            .compose_projects
+            .iter()
+            .all(|project| scope.compose_projects.contains(project.as_str()))
+        && owner
+            .persistent_backend_families
+            .iter()
+            .all(|family| scope.persistent_backend_families.contains(family.as_str()))
+        && owner
+            .env_materialization_paths
+            .iter()
+            .all(|path| scope.env_materialization_paths.contains(path.as_str()))
 }
 
 fn legacy_repo_ota_state_file_path(working_dir: &Path, file_name: &str) -> PathBuf {
@@ -26447,6 +26498,165 @@ services:
                 assert_eq!(owners, vec![owner]);
             }
             other => panic!("expected clean to honor active execution registry, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn clean_execution_for_workflow_allows_selected_active_service_task_owner() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  compose:up:
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+    adapter_inputs:
+      compose:
+        project_name: app-local
+    runtime:
+      kind: service
+      surfaces:
+        app:
+          project:
+            host:
+              primary: true
+              port:
+                mode: fixed
+                value: 3000
+workflows:
+  default: docker
+  docker:
+    run:
+      task: compose:up
+"#,
+        );
+
+        let backend = resolve_execution_backend(
+            &fixture.contract,
+            "compose:up",
+            ExecutionOverrides::default(),
+        )
+        .expect("compose backend");
+        let owner = repo_execution_lock_owner_for_backend(
+            &fixture.contract,
+            "compose:up",
+            ExecutionOverrides::default(),
+            &backend,
+        );
+        let _guard = register_active_repo_execution("compose:up", fixture.dir.path(), &owner)
+            .expect("register owner");
+
+        let report = super::clean_execution_report_for_workflow(
+            &fixture.contract,
+            fixture.file_path(),
+            Some("docker"),
+        )
+        .expect("workflow cleanup should allow its owned active service task");
+
+        assert_eq!(report.total_removed(), 0);
+        assert!(
+            report
+                .queried_engines
+                .iter()
+                .any(|engine| engine == "docker" || engine == "podman")
+        );
+    }
+
+    #[test]
+    fn clean_execution_for_workflow_still_blocks_unrelated_active_execution_owner() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  compose:up:
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+    adapter_inputs:
+      compose:
+        project_name: app-local
+    runtime:
+      kind: service
+      surfaces:
+        app:
+          project:
+            host:
+              primary: true
+              port:
+                mode: fixed
+                value: 3000
+  worker:
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+    adapter_inputs:
+      compose:
+        project_name: worker-local
+    runtime:
+      kind: service
+      surfaces:
+        worker:
+          project:
+            host:
+              primary: true
+              port:
+                mode: fixed
+                value: 3100
+workflows:
+  default: docker
+  docker:
+    run:
+      task: compose:up
+"#,
+        );
+
+        let backend =
+            resolve_execution_backend(&fixture.contract, "worker", ExecutionOverrides::default())
+                .expect("worker backend");
+        let owner = repo_execution_lock_owner_for_backend(
+            &fixture.contract,
+            "worker",
+            ExecutionOverrides::default(),
+            &backend,
+        );
+        let _guard = register_active_repo_execution("worker", fixture.dir.path(), &owner)
+            .expect("register owner");
+
+        match super::clean_execution_report_for_workflow(
+            &fixture.contract,
+            fixture.file_path(),
+            Some("docker"),
+        ) {
+            Err(super::CleanExecutionError::Other(RunError::RepoExecutionConflict {
+                task,
+                reasons,
+                owners,
+                ..
+            })) => {
+                assert_eq!(task, super::OTA_CLEAN_INTERNAL_TASK_NAME);
+                assert_eq!(
+                    reasons,
+                    vec![super::RepoExecutionConflictReason::ActiveExecutionPresent]
+                );
+                assert_eq!(owners, vec![owner]);
+            }
+            other => panic!(
+                "expected unrelated active execution to block workflow cleanup, got {other:?}"
+            ),
         }
     }
 
