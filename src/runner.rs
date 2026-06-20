@@ -13198,6 +13198,9 @@ pub(crate) fn cleanup_selected_workflow_native_service_workloads(
         let Some(runtime) = task.service_runtime_for_backend(Backend::Native) else {
             continue;
         };
+        if !task_owns_native_host_service_workload(task) {
+            continue;
+        }
         let Some(note) =
             cleanup_interrupted_native_service_workload_and_note(task_name.as_str(), Some(runtime))
         else {
@@ -13217,6 +13220,26 @@ pub(crate) fn cleanup_selected_workflow_native_service_workloads(
     } else {
         Err(failures.join("; "))
     }
+}
+
+fn task_owns_native_host_service_workload(task: &TaskSpec) -> bool {
+    let adapter_owned_compose = |exe: &str, args: &[String]| {
+        matches!(exe, "docker" | "podman") && args.first().is_some_and(|arg| arg == "compose")
+    };
+
+    if let Some(command) = task.command.as_ref()
+        && adapter_owned_compose(command.exe.as_str(), &command.args)
+    {
+        return false;
+    }
+
+    if let Some(crate::schema::TaskLaunchSpec::Command(command)) = task.launch.as_ref()
+        && adapter_owned_compose(command.exe.as_str(), &command.args)
+    {
+        return false;
+    }
+
+    true
 }
 
 fn cleanup_interrupted_started_services_and_note(
@@ -42438,6 +42461,60 @@ workflows:
             !Path::new(&pidfile).exists(),
             "workflow cleanup should remove pidfile"
         );
+    }
+
+    #[cfg(all(unix, target_os = "linux"))]
+    #[test]
+    fn workflow_native_service_cleanup_skips_compose_owned_service_tasks() {
+        let _guard = env_mutex_lock();
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener address should resolve")
+            .port();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            &format!(
+                r#"
+version: 1
+project:
+  name: ota
+tasks:
+  compose:up:
+    launch:
+      kind: command
+      exe: docker
+      args:
+        - compose
+        - up
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: {port}
+workflows:
+  default: docker
+  docker:
+    run:
+      task: compose:up
+"#,
+            ),
+        )
+        .expect("compose workflow fixture contract should parse");
+
+        super::cleanup_selected_workflow_native_service_workloads(
+            &contract,
+            Some("docker"),
+            ExecutionOverrides::default(),
+        )
+        .expect("compose-owned runtime should be skipped");
+
+        drop(listener);
     }
 
     #[cfg(all(unix, target_os = "linux"))]
