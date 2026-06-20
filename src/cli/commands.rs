@@ -15790,7 +15790,15 @@ fn run_preview_summary(
     env_report: &EnvReport,
     preconditions_report: &DoctorReport,
 ) -> DoctorSummary {
-    let mut summary = doctor_summary(preconditions_report, DoctorVerdict::Ready);
+    let mut summary = doctor_preview_summary_for_provisioning(
+        preconditions_report,
+        DoctorVerdict::Ready,
+        preconditions_report
+            .provisioning
+            .as_ref()
+            .map(|provisioning| provisioning.request.actions.as_slice())
+            .unwrap_or(&[]),
+    );
     let has_doctor_env_finding = preconditions_report
         .findings
         .iter()
@@ -15820,6 +15828,37 @@ fn run_preview_summary(
         });
     }
     summary
+}
+
+fn doctor_preview_summary_for_provisioning(
+    report: &DoctorReport,
+    agent_verdict: DoctorVerdict,
+    provisioning_actions: &[crate::policy_pack::ProvisioningAction],
+) -> DoctorSummary {
+    let mut summary = doctor_summary(report, agent_verdict);
+    if matches!(summary.verdict, DoctorVerdict::NotReady)
+        && preview_errors_are_fully_provisionable(&report.findings, provisioning_actions)
+    {
+        summary.verdict = DoctorVerdict::Risky;
+    }
+    summary
+}
+
+fn preview_errors_are_fully_provisionable(
+    findings: &[Finding],
+    provisioning_actions: &[crate::policy_pack::ProvisioningAction],
+) -> bool {
+    let error_findings = findings
+        .iter()
+        .filter(|finding| finding.severity == FindingSeverity::Error)
+        .collect::<Vec<_>>();
+    !error_findings.is_empty()
+        && !provisioning_actions.is_empty()
+        && error_findings.iter().all(|finding| {
+            provisioning_actions
+                .iter()
+                .any(|action| finding_targets_provisioning_action(finding, action))
+        })
 }
 
 fn run_preview_env_primary_blocker(
@@ -36656,7 +36695,10 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
     }
 }
 
-fn render_task_mode_branches_filtered(task: &TaskSummary<'_>, include_default_mode: bool) -> String {
+fn render_task_mode_branches_filtered(
+    task: &TaskSummary<'_>,
+    include_default_mode: bool,
+) -> String {
     let default_mode = render_task_default_mode(task);
     let branches = task
         .modes
@@ -43057,7 +43099,7 @@ fn render_up_result(
             &preview.execution,
             &preview.plan,
             &preview.blockers,
-            result.report.ok,
+            result.ok,
             format,
         );
     }
@@ -50697,10 +50739,18 @@ tasks:
     fn run_dry_run_json_includes_direct_tool_provisioning_request() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
-        let (contract, expected_source, expected_package, expected_key, expected_value) =
-            match super::current_os() {
-                "macos" => (
-                    r#"
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        let (
+            contract,
+            provider_bin,
+            expected_source,
+            expected_package,
+            expected_key,
+            expected_value,
+        ) = match super::current_os() {
+            "macos" => (
+                r#"
 version: 1
 project:
   name: demo
@@ -50723,13 +50773,14 @@ tasks:
       tools:
         helm: ">=3.8"
 "#,
-                    "brew",
-                    "helm",
-                    "tap_name",
-                    "vendor/tap",
-                ),
-                "windows" => (
-                    r#"
+                "brew",
+                "brew",
+                "helm",
+                "tap_name",
+                "vendor/tap",
+            ),
+            "windows" => (
+                r#"
 version: 1
 project:
   name: demo
@@ -50751,13 +50802,14 @@ tasks:
       tools:
         helm: ">=3.8"
 "#,
-                    "winget",
-                    "Helm.Helm",
-                    "source_name",
-                    "winget",
-                ),
-                _ => (
-                    r#"
+                "winget",
+                "winget",
+                "Helm.Helm",
+                "source_name",
+                "winget",
+            ),
+            _ => (
+                r#"
 version: 1
 project:
   name: demo
@@ -50780,24 +50832,36 @@ tasks:
       tools:
         helm: ">=3.8"
 "#,
-                    "apt",
-                    "helm",
-                    "sources_list",
-                    "deb https://packages.example.invalid stable main",
-                ),
-            };
+                "apt-get",
+                "apt",
+                "helm",
+                "sources_list",
+                "deb https://packages.example.invalid stable main",
+            ),
+        };
         fs::write(repo.path().join("ota.yaml"), contract).expect("write contract");
+        write_executable_script(
+            &fake_command_path(&bin_dir, provider_bin),
+            if cfg!(windows) {
+                "@echo off\r\nexit /b 0\r\n"
+            } else {
+                "#!/bin/sh\nexit 0\n"
+            },
+        );
 
         let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if cfg!(windows) {
+            path_entries.push(PathBuf::from(r"C:\Windows\System32"));
+        } else {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+            path_entries.push(PathBuf::from("/usr/sbin"));
+            path_entries.push(PathBuf::from("/sbin"));
+        }
+        let joined_path = env::join_paths(path_entries).expect("join fake path");
         unsafe {
-            env::set_var(
-                "PATH",
-                if cfg!(windows) {
-                    std::ffi::OsString::from(r"C:\Windows\System32")
-                } else {
-                    std::ffi::OsString::from("/usr/bin:/bin:/usr/sbin:/sbin")
-                },
-            );
+            env::set_var("PATH", &joined_path);
         }
 
         let output = super::run_command(
@@ -50825,7 +50889,7 @@ tasks:
             },
         }
 
-        assert_eq!(output.exit_code, 1);
+        assert_eq!(output.exit_code, 0);
         assert!(
             !output.stdout.trim().is_empty(),
             "stdout was empty; stderr={:?}",
@@ -50833,7 +50897,7 @@ tasks:
         );
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
-        assert_eq!(json["preview_status"], "BLOCKED");
+        assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
         assert_eq!(
             json["provisioning_request"]["actions"][0]["source"],
             expected_source
@@ -50921,9 +50985,10 @@ tasks:
             },
         }
 
-        assert_eq!(output.exit_code, 1);
+        assert_eq!(output.exit_code, 0);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
         assert_eq!(
             json["provisioning_request"]["actions"][0]["source"],
             "release-asset"
@@ -56818,12 +56883,140 @@ tasks:
                 .actions
                 .contains(&String::from("provision `npm` `*` via `choco`"))
         );
+        assert_eq!(preview.summary.verdict, DoctorVerdict::Risky);
         assert!(
             !preview
                 .plan
                 .skipped
                 .contains(&String::from("skip `npm`; already satisfies the contract"))
         );
+    }
+
+    #[test]
+    fn execute_repo_up_dry_run_is_ok_when_all_blockers_are_provisionable() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(
+                &bin_dir,
+                if cfg!(windows) {
+                    "winget"
+                } else if cfg!(target_os = "macos") {
+                    "brew"
+                } else {
+                    "apt-get"
+                },
+            ),
+            if cfg!(windows) {
+                "@echo off\r\nexit /b 0\r\n"
+            } else {
+                "#!/bin/sh\nexit 0\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if cfg!(windows) {
+            path_entries.push(PathBuf::from(r"C:\Windows\System32"));
+        } else {
+            path_entries.push(PathBuf::from("/usr/bin"));
+            path_entries.push(PathBuf::from("/bin"));
+            path_entries.push(PathBuf::from("/usr/sbin"));
+            path_entries.push(PathBuf::from("/sbin"));
+        }
+        let joined_path = env::join_paths(path_entries).expect("join fake path");
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let contract = parse_contract_str(
+            &repo.path().join("ota.yaml"),
+            match super::current_os() {
+                "macos" => {
+                    r#"
+version: 1
+project:
+  name: preview-up
+tools:
+  kubectl:
+    version: "*"
+    acquisition:
+      provider: brew
+      package: kubernetes-cli
+tasks:
+  verify:
+    command:
+      exe: kubectl
+      args:
+        - version
+"#
+                }
+                "windows" => {
+                    r#"
+version: 1
+project:
+  name: preview-up
+tools:
+  kubectl:
+    version: "*"
+    acquisition:
+      provider: winget
+      package: Kubernetes.kubectl
+tasks:
+  verify:
+    command:
+      exe: kubectl
+      args:
+        - version
+"#
+                }
+                _ => {
+                    r#"
+version: 1
+project:
+  name: preview-up
+tools:
+  kubectl:
+    version: "*"
+    acquisition:
+      provider: apt
+      package: kubectl
+tasks:
+  verify:
+    command:
+      exe: kubectl
+      args:
+        - version
+"#
+                }
+            },
+        )
+        .expect("parse contract");
+
+        let result = execute_repo_up(
+            &contract,
+            &repo.path().join("ota.yaml"),
+            ExecutionOverrides::default(),
+            None,
+            None,
+            true,
+            RepoExecutionMode::Capture,
+        )
+        .expect("dry-run up result");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(result.ok);
+        let preview = result.preview.expect("preview result");
+        assert_eq!(preview.summary.verdict, DoctorVerdict::Risky);
     }
 
     #[test]
@@ -87897,9 +88090,10 @@ fn build_up_preview(
     actions.push(String::from("re-check repo readiness"));
 
     RepoUpPreview {
-        summary: doctor_summary(
+        summary: doctor_preview_summary_for_provisioning(
             preflight,
             crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
+            &selected_actions,
         ),
         contract_identity: repo_contract_identity(contract),
         execution: UpPreviewExecution {
@@ -89657,6 +89851,7 @@ fn execute_repo_up_with_behavior(
             workflow_name,
             &preflight,
         );
+        let preview_ok = !doctor_verdict_blocks_preview(preview.summary.verdict);
         let status = doctor_readiness_status_label(preview.summary.verdict);
         let receipt = preview_receipt(
             contract,
@@ -89667,7 +89862,7 @@ fn execute_repo_up_with_behavior(
             &preview.blockers,
         );
         return Ok(RepoUpResult {
-            ok: preflight.ok,
+            ok: preview_ok,
             status,
             phase: "preview",
             report: preflight,
