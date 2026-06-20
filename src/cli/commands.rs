@@ -80120,6 +80120,12 @@ fn spawn_proof_runtime_up_process(
         .stdout(Stdio::from(stdout_log))
         .stderr(Stdio::from(stderr_log));
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+    }
+
     command
         .spawn()
         .map_err(|error| format!("could not start `ota up --stream` for runtime proof: {error}"))
