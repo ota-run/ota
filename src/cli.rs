@@ -16893,14 +16893,16 @@ tasks:
             doctor_json["summary"]["primary_blocker"]["severity"],
             "warn"
         );
-        assert!(doctor_json["summary"]["primary_blocker"]["summary"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("container")
-            || doctor_json["summary"]["primary_blocker"]["summary"]
+        assert!(
+            doctor_json["summary"]["primary_blocker"]["summary"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("replaceable shell"));
+                .contains("container")
+                || doctor_json["summary"]["primary_blocker"]["summary"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("replaceable shell")
+        );
         let next = doctor_json["summary"]["primary_blocker"]["next"]
             .as_str()
             .expect("primary blocker next should be present");
@@ -16920,12 +16922,14 @@ tasks:
             .as_str()
             .expect("group action_next should be present");
         assert!(!group_next.trim().is_empty());
-        assert!(doctor_json["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|finding| finding["summary"]
-                == "Container readiness does not include host-only checks"));
+        assert!(
+            doctor_json["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| finding["summary"]
+                    == "Container readiness does not include host-only checks")
+        );
         assert_eq!(doctor_json["findings"][0]["severity"], "warn");
         let next_finding = doctor_json["findings"][0]["next"]
             .as_str()
@@ -22525,12 +22529,14 @@ tasks:
         assert_eq!(json["extensions"]["demo"]["kind"], "check_provider");
         assert_eq!(json["extensions"]["demo"]["command"], "ota-ext-demo");
         assert_eq!(json["extensions"]["demo"]["api_version"], 1);
-        assert!(json["findings"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|finding| finding["summary"]
-                == "Remote execution contexts are only partially evaluated in native mode"));
+        assert!(
+            json["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|finding| finding["summary"]
+                    == "Remote execution contexts are only partially evaluated in native mode")
+        );
     }
 
     #[cfg(not(windows))]
@@ -25904,9 +25910,15 @@ name = "fastapi"
             "install"
         );
         assert_eq!(json["config"]["tasks"]["dev"]["command"]["exe"], "npm");
-        assert_eq!(json["config"]["tasks"]["dev"]["command"]["args"], json!(["run", "dev"]));
+        assert_eq!(
+            json["config"]["tasks"]["dev"]["command"]["args"],
+            json!(["run", "dev"])
+        );
         assert_eq!(json["config"]["tasks"]["test"]["command"]["exe"], "npm");
-        assert_eq!(json["config"]["tasks"]["test"]["command"]["args"], json!(["test"]));
+        assert_eq!(
+            json["config"]["tasks"]["test"]["command"]["args"],
+            json!(["test"])
+        );
         assert!(json["config"]["tools"]["pnpm"].is_null());
         assert_eq!(json["config"]["tools"]["npm"], "*");
         let task_prepare = json["provenance"]
@@ -25965,9 +25977,15 @@ name = "fastapi"
             "*"
         );
         assert_eq!(json["config"]["tasks"]["dev"]["command"]["exe"], "bun");
-        assert_eq!(json["config"]["tasks"]["dev"]["command"]["args"], json!(["run", "dev"]));
+        assert_eq!(
+            json["config"]["tasks"]["dev"]["command"]["args"],
+            json!(["run", "dev"])
+        );
         assert_eq!(json["config"]["tasks"]["test"]["command"]["exe"], "bun");
-        assert_eq!(json["config"]["tasks"]["test"]["command"]["args"], json!(["run", "test"]));
+        assert_eq!(
+            json["config"]["tasks"]["test"]["command"]["args"],
+            json!(["run", "test"])
+        );
         assert_eq!(json["config"]["tools"]["bun"], "1.2");
         let task_prepare = json["provenance"]
             .as_array()
@@ -26867,12 +26885,18 @@ requires-python = ">=3.12"
             json["config"]["tasks"]["setup"]["prepare"]["source"]["wrapper"],
             true
         );
-        assert_eq!(json["config"]["tasks"]["build"]["command"]["exe"], "./gradlew");
+        assert_eq!(
+            json["config"]["tasks"]["build"]["command"]["exe"],
+            "./gradlew"
+        );
         assert_eq!(
             json["config"]["tasks"]["build"]["command"]["args"],
             json!(["build"])
         );
-        assert_eq!(json["config"]["tasks"]["test"]["command"]["exe"], "./gradlew");
+        assert_eq!(
+            json["config"]["tasks"]["test"]["command"]["exe"],
+            "./gradlew"
+        );
         assert_eq!(
             json["config"]["tasks"]["test"]["command"]["args"],
             json!(["test"])
@@ -33610,7 +33634,14 @@ tasks:
         assert_eq!(doctor.exit_code, 0);
         assert_json_top_level_keys(
             &doctor,
-            &["finding_groups", "findings", "mode", "ok", "path", "summary"],
+            &[
+                "finding_groups",
+                "findings",
+                "mode",
+                "ok",
+                "path",
+                "summary",
+            ],
         );
 
         let check = run_with(["ota", "check", "--json", fixture.path()]);
