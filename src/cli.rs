@@ -24895,7 +24895,9 @@ policies:
         let written = fs::read_to_string(fixture.file_path()).unwrap();
         assert!(written.contains("name: ota-web"));
         assert!(written.contains("pnpm: 10.1.0"));
-        assert!(written.contains("run: pnpm dev"));
+        assert!(written.contains("command:"));
+        assert!(written.contains("exe: pnpm"));
+        assert!(written.contains("- dev"));
         assert!(written.contains("notes: |"));
         assert!(written.contains("Run `ota run dev` to execute this task."));
     }
@@ -32004,9 +32006,7 @@ project:
         assert!(!written.contains("provider: corepack"));
         assert!(written.contains("version: '22'"));
         assert!(written.contains("pnpm: 10.1.0"));
-        assert!(written.contains("command:"));
-        assert!(written.contains("exe: pnpm"));
-        assert!(written.contains("- dev"));
+        assert!(written.contains("run: pnpm dev"));
         assert!(written.contains("field_ownership:"));
         assert!(written.contains("toolchains.node.version: merged"));
         assert!(written.contains("toolchains.node.package_managers.pnpm: merged"));
