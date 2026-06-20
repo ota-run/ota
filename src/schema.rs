@@ -4838,6 +4838,8 @@ pub struct TaskCommandLaunchSpec {
     pub exe: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 impl TaskCommandSpec {
@@ -4846,6 +4848,11 @@ impl TaskCommandSpec {
         for arg in &self.args {
             preview.push(' ');
             preview.push_str(arg);
+        }
+        if let Some(cwd) = self.cwd.as_deref().filter(|cwd| !cwd.trim().is_empty()) {
+            preview.push_str(" in `");
+            preview.push_str(cwd);
+            preview.push('`');
         }
         preview
     }
@@ -7122,6 +7129,7 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
                         String::from("start"),
                         String::from("postgresql@17"),
                     ],
+                    cwd: None,
                 }),
                 stop: Some(TaskCommandSpec {
                     exe: String::from("brew"),
@@ -7130,6 +7138,7 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
                         String::from("stop"),
                         String::from("postgresql@17"),
                     ],
+                    cwd: None,
                 }),
             }),
             ..ServiceSpec::default()

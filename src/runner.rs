@@ -2464,6 +2464,13 @@ fn effective_task_execution_working_dir(
         .unwrap_or_else(|| working_dir.to_path_buf())
 }
 
+fn apply_prepared_execution_cwd(working_dir: PathBuf, cwd: Option<&str>) -> PathBuf {
+    cwd.map(str::trim)
+        .filter(|cwd| !cwd.is_empty())
+        .map(|cwd| working_dir.join(cwd))
+        .unwrap_or(working_dir)
+}
+
 fn projected_structured_command_for_task(
     task: &TaskSpec,
     backend: Backend,
@@ -5118,10 +5125,12 @@ pub(crate) enum TaskExecutionMode {
 enum PreparedTaskExecution {
     Shell {
         command: String,
+        cwd: Option<String>,
     },
     NativeCommand {
         exe: String,
         args: Vec<String>,
+        cwd: Option<String>,
     },
     Preparation {
         prepare: crate::schema::TaskPrepareSpec,
@@ -7247,25 +7256,35 @@ fn execute_task_with_hooks(
             prepare: prepare.clone(),
         }
     } else if let Some(command) = execution.command() {
-        if let Some(command) = shell_command {
-            PreparedTaskExecution::Shell { command }
+        let command = projected_command.as_ref().unwrap_or(command);
+        let command_cwd = command.cwd.clone();
+        if let Some(shell_command) = shell_command {
+            PreparedTaskExecution::Shell {
+                command: shell_command,
+                cwd: command_cwd,
+            }
         } else {
-            let command = projected_command.as_ref().unwrap_or(command);
             PreparedTaskExecution::NativeCommand {
                 exe: command.exe.clone(),
                 args: command.args.clone(),
+                cwd: command.cwd.clone(),
             }
         }
     } else {
         match execution.launch() {
             Some(crate::schema::TaskLaunchSpec::Command(command)) => {
-                if let Some(command) = shell_command {
-                    PreparedTaskExecution::Shell { command }
+                let command = projected_launch_command.as_ref().unwrap_or(command);
+                let command_cwd = command.cwd.clone();
+                if let Some(shell_command) = shell_command {
+                    PreparedTaskExecution::Shell {
+                        command: shell_command,
+                        cwd: command_cwd,
+                    }
                 } else {
-                    let command = projected_launch_command.as_ref().unwrap_or(command);
                     PreparedTaskExecution::NativeCommand {
                         exe: command.exe.clone(),
                         args: command.args.clone(),
+                        cwd: command.cwd.clone(),
                     }
                 }
             }
@@ -7276,6 +7295,7 @@ fn execute_task_with_hooks(
             }
             None => PreparedTaskExecution::Shell {
                 command: shell_command.expect("shell execution should provide a command"),
+                cwd: None,
             },
         }
     };
@@ -8162,14 +8182,21 @@ fn execute_task_command(
 ) -> Result<TaskCommandOutput, RunError> {
     preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
     let backend_kind = resolved_execution_backend_kind(backend);
-    let effective_working_dir = task
+    let base_working_dir = task
         .map(|task| effective_task_execution_working_dir(task, backend_kind, working_dir))
         .unwrap_or_else(|| working_dir.to_path_buf());
+    let effective_working_dir = match execution {
+        PreparedTaskExecution::Shell { cwd, .. }
+        | PreparedTaskExecution::NativeCommand { cwd, .. } => {
+            apply_prepared_execution_cwd(base_working_dir, cwd.as_deref())
+        }
+        _ => base_working_dir,
+    };
 
     match (backend, execution) {
         (
             ResolvedExecutionBackend::Native { .. },
-            PreparedTaskExecution::NativeCommand { exe, args },
+            PreparedTaskExecution::NativeCommand { exe, args, .. },
         ) => {
             let mut resolved_env = env_overrides.clone();
             extend_missing_env(&mut resolved_env, runtime_bind_env_for_native(runtime));
@@ -8449,7 +8476,7 @@ fn execute_prepare_task(
         task,
         task_name,
         runtime,
-        &PreparedTaskExecution::Shell { command },
+        &PreparedTaskExecution::Shell { command, cwd: None },
         working_dir,
         env_overrides,
         path_export,
@@ -8701,9 +8728,11 @@ fn prepared_structured_command_for_backend(
         ResolvedExecutionBackend::Native { .. } => PreparedTaskExecution::NativeCommand {
             exe: exe.to_string(),
             args,
+            cwd: None,
         },
         _ => PreparedTaskExecution::Shell {
             command: shell_quote_command_argv(backend, exe, &args),
+            cwd: None,
         },
     }
 }
@@ -8919,7 +8948,7 @@ fn requested_interrupt_cleanup_command(
 ) -> Option<String> {
     matches!(backend, ResolvedExecutionBackend::BackendProvider { .. })
         .then(|| match execution {
-            PreparedTaskExecution::Shell { command } => Some(command.clone()),
+            PreparedTaskExecution::Shell { command, .. } => Some(command.clone()),
             _ => None,
         })
         .flatten()
@@ -9617,6 +9646,7 @@ pub(crate) fn run_backend_command_captured(
         None,
         &PreparedTaskExecution::Shell {
             command: command.to_string(),
+            cwd: None,
         },
         working_dir,
         &BTreeMap::new(),
@@ -9661,9 +9691,11 @@ pub(crate) fn run_backend_argv_command_captured_with_env(
         ResolvedExecutionBackend::Native { .. } => PreparedTaskExecution::NativeCommand {
             exe: exe.to_string(),
             args: args.to_vec(),
+            cwd: None,
         },
         _ => PreparedTaskExecution::Shell {
             command: shell_quote_command_argv(backend, exe, args),
+            cwd: None,
         },
     };
     execute_task_command(
@@ -10285,20 +10317,23 @@ fn wrap_prepared_execution_for_mise(
 ) -> Result<PreparedTaskExecution, RunError> {
     match selection.mode {
         crate::schema::TaskExecutionOrchestratorMode::Task => match execution {
-            PreparedTaskExecution::Shell { command } => Ok(PreparedTaskExecution::Shell {
+            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
                 command: wrap_mise_task_command(backend, command.as_str()),
+                cwd,
             }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
         },
         crate::schema::TaskExecutionOrchestratorMode::Exec => match execution {
-            PreparedTaskExecution::Shell { command } => Ok(PreparedTaskExecution::Shell {
+            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
                 command: wrap_mise_exec_shell_command(command.as_str()),
+                cwd,
             }),
-            PreparedTaskExecution::NativeCommand { exe, args } => {
+            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
                 Ok(PreparedTaskExecution::Shell {
                     command: wrap_mise_exec_argv_command(backend, exe.as_str(), &args),
+                    cwd,
                 })
             }
             _ => Err(RunError::InvalidTaskExecution {

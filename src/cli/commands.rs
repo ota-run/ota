@@ -36291,6 +36291,11 @@ fn render_task_command_text(command: &crate::output::TaskCommandSummary<'_>) -> 
         preview.push(' ');
         preview.push_str(&command.args.join(" "));
     }
+    if let Some(cwd) = command.cwd.filter(|cwd| !cwd.trim().is_empty()) {
+        preview.push_str(" in `");
+        preview.push_str(cwd);
+        preview.push('`');
+    }
     preview
 }
 

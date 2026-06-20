@@ -9998,11 +9998,17 @@ fn replaceable_adapter_ownership_next(
 }
 
 fn render_task_command_preview(command: &TaskCommandSpec) -> String {
-    std::iter::once(command.exe.as_str())
+    let mut preview = std::iter::once(command.exe.as_str())
         .chain(command.args.iter().map(String::as_str))
         .map(render_command_token_preview)
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    if let Some(cwd) = command.cwd.as_deref().filter(|cwd| !cwd.trim().is_empty()) {
+        preview.push_str(" in `");
+        preview.push_str(cwd);
+        preview.push('`');
+    }
+    preview
 }
 
 fn render_command_token_preview(token: &str) -> String {

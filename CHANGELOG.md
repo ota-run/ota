@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- widened structured task commands with `command.cwd` and `launch.kind: command` plus `launch.cwd`,
+  so finite tasks and structured service launches rooted in subdirectories no longer need fake
+  `cd ... && ...` shell bodies just to express working-directory truth; previews and task listings
+  now surface the declared command cwd directly
 - clarified bootstrap-source discoverability across the contract and install docs, so
   `agent.bootstrap.ota.source` now explicitly documents the exact shell and PowerShell mapping for
   `kind: version`, `kind: git_rev`, and `kind: branch`, and the setup/action/hosted-validation

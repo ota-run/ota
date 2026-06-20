@@ -2058,6 +2058,9 @@ tasks:
 
 - `command.exe`: required executable name or path; this is generic process truth rather than an npm-specific field, and may be `npm`, `pnpm`, `yarn`, `bun`, `node`, `python3`, `go`, `bundle`, `docker`, an absolute path, or a repo-local executable path
 - `command.args`: optional argument list
+- `command.cwd`: optional repo-relative working directory for that structured finite command; use it
+  when the task truth is one executable plus stable argv rooted in a repo subdirectory instead of
+  hiding `cd ... && ...` shell glue in `run` or `script`
 
 Ota does not maintain an allowlist for `command.exe`. The examples above are illustrative, not exhaustive; the executable may be any repo-truthful binary or path as long as the contract declares its requirements honestly.
 
@@ -2067,6 +2070,9 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 - `launch.kind: command`
   - `launch.exe`: required executable name or path
   - `launch.args`: optional argument list
+  - `launch.cwd`: optional repo-relative working directory for that structured long-running process
+    start; use it when the service launch truth is subdirectory-rooted but still one executable
+    plus stable argv
 - `launch.kind: container`
   - `launch.image`: required packaged runtime image
   - `launch.engine`: optional engine override; defaults to `docker`
@@ -2229,9 +2235,11 @@ reporting inside the contract surface.
   cross-platform instead of becoming shell-specific snippets
 - prefer `command` for finite task bodies such as `uv run pytest`, `poetry run pytest`,
   `bundle exec rake test`, or `npm run build` when the repo truth is one executable plus a stable
-  argument vector rather than shell composition
+  argument vector rather than shell composition; if that executable should run from a repo
+  subdirectory, prefer `command.cwd` over fake `cd ... && ...` shell glue
 - for long-running service processes, prefer `launch.kind: command` over opaque shell `run` or
-  `script`
+  `script`; if the service start is rooted in a repo subdirectory, prefer `launch.cwd` over fake
+  shell `cd ... && ...`
 - pair `launch.kind: command` with `runtime.kind: service` plus `runtime.surfaces` or
   `runtime.listeners`; `launch` starts the process, while `runtime` declares what becomes reachable
   and how readiness is proved

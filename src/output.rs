@@ -3406,6 +3406,8 @@ pub struct TaskCommandSummary<'a> {
     pub exe: &'a str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<&'a str>,
 }
 
 pub fn summarize_task_adapter_inputs(
@@ -3556,6 +3558,7 @@ fn summarize_task_command<'a>(
     command.map(|command| TaskCommandSummary {
         exe: command.exe.as_str(),
         args: command.args.iter().map(String::as_str).collect(),
+        cwd: command.cwd.as_deref(),
     })
 }
 

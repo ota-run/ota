@@ -19787,6 +19787,33 @@ tasks:
     }
 
     #[test]
+    fn tasks_text_previews_command_cwd() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  lint:
+    command:
+      exe: corepack
+      args:
+        - yarn
+        - lint
+      cwd: app/client
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(
+            stdout.contains("Command Preview: corepack yarn lint in `app/client`"),
+            "{stdout}"
+        );
+    }
+
+    #[test]
     fn tasks_text_shows_runnable_modes_for_multi_mode_tasks() {
         let fixture = ContractFixture::new(
             r#"
