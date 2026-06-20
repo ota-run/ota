@@ -132,6 +132,16 @@ Track an unreleased branch tip during active pressure testing:
 curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_BRANCH=1.6.21-implementation sh -s -- --from-git
 ```
 
+When a repo contract declares `agent.bootstrap.ota.source`, the canonical installer mapping is:
+
+- `kind: version` -> `OTA_VERSION=<version>` on the release installer lane
+- `kind: git_rev` -> `OTA_GIT_REV=<rev>` plus `--from-git`
+- `kind: branch` -> `OTA_GIT_BRANCH=<branch>` plus `--from-git`
+
+That same mapping is what `ota-run/setup@v1` and `ota-run/action@v1` consume in
+`source: contract` mode, and it is the mapping agents should follow when a contract is the first
+thing they see.
+
 Windows PowerShell:
 
 ```powershell

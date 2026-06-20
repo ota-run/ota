@@ -3587,6 +3587,23 @@ Agent semantics:
   - `kind: version` is the normal released proof lane
   - `kind: git_rev` is the deterministic unreleased proof lane
   - `kind: branch` is the active pressure-testing lane and is intentionally non-deterministic
+- first-time consumers should treat `bootstrap.ota.source` as directly executable bootstrap truth
+  through the official installer mapping:
+  - `kind: version` maps to the release installer lane
+    - POSIX shell:
+      `curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=<version> sh`
+    - PowerShell:
+      `$env:OTA_VERSION='<version>'; irm https://dist.ota.run/install.ps1 | iex`
+  - `kind: git_rev` maps to the git installer lane
+    - POSIX shell:
+      `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_REV=<rev> sh -s -- --from-git`
+    - PowerShell:
+      `$env:OTA_GIT_REV='<rev>'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
+  - `kind: branch` maps to the same git installer lane
+    - POSIX shell:
+      `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_BRANCH=<branch> sh -s -- --from-git`
+    - PowerShell:
+      `$env:OTA_GIT_BRANCH='<branch>'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
 - GitHub Actions jobs that need direct `ota` commands should consume that same truth through the
   public `ota-run/setup@v1` action in `source: contract` mode instead of hardcoding
   release/source install choices separately in workflow YAML

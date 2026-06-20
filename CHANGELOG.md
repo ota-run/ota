@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- clarified bootstrap-source discoverability across the contract and install docs, so
+  `agent.bootstrap.ota.source` now explicitly documents the exact shell and PowerShell mapping for
+  `kind: version`, `kind: git_rev`, and `kind: branch`, and the setup/action/hosted-validation
+  docs now point humans and agents at the same canonical install truth
 - tightened `ota tasks` human output so task listings now show the effective runnable default mode,
   include first-class `command` bodies in command previews, and keep alternate mode invocations
   aligned with that effective mode instead of surfacing empty `Default Mode: -` task blocks

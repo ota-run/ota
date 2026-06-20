@@ -163,6 +163,28 @@ The action supports:
 
 The action currently supports Linux, macOS, and Windows GitHub Actions runners.
 
+When `source: contract` is used, the action and `ota-run/setup@v1` both consume the same bootstrap
+mapping from `agent.bootstrap.ota.source`:
+
+- `kind: version`
+  - install through the release lane
+  - shell mapping:
+    `curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=<version> sh`
+  - PowerShell mapping:
+    `$env:OTA_VERSION='<version>'; irm https://dist.ota.run/install.ps1 | iex`
+- `kind: git_rev`
+  - install through the git lane
+  - shell mapping:
+    `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_REV=<rev> sh -s -- --from-git`
+  - PowerShell mapping:
+    `$env:OTA_GIT_REV='<rev>'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
+- `kind: branch`
+  - install through the same git lane
+  - shell mapping:
+    `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_BRANCH=<branch> sh -s -- --from-git`
+  - PowerShell mapping:
+    `$env:OTA_GIT_BRANCH='<branch>'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
+
 ## Direct command jobs
 
 `ota-run/action@v1` is the reporting wrapper. When a later job needs direct `ota up`, `ota run`,

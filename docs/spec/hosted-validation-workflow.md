@@ -84,6 +84,24 @@ That keeps `ota.yaml` as the single install source of truth for both agent boots
 Actions jobs that later run direct `ota` commands, while keeping GitHub install behavior on the
 single public `ota-run/setup` action surface.
 
+The contract-owned bootstrap mapping is the same one agents should use outside GitHub Actions:
+
+- `kind: version`
+  - shell:
+    `curl -fsSL https://dist.ota.run/install.sh | OTA_VERSION=<version> sh`
+  - PowerShell:
+    `$env:OTA_VERSION='<version>'; irm https://dist.ota.run/install.ps1 | iex`
+- `kind: git_rev`
+  - shell:
+    `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_REV=<rev> sh -s -- --from-git`
+  - PowerShell:
+    `$env:OTA_GIT_REV='<rev>'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
+- `kind: branch`
+  - shell:
+    `curl -fsSL https://dist.ota.run/install.sh | OTA_GIT_BRANCH=<branch> sh -s -- --from-git`
+  - PowerShell:
+    `$env:OTA_GIT_BRANCH='<branch>'; & ([scriptblock]::Create((irm https://dist.ota.run/install.ps1))) -FromGit`
+
 When a GitHub Actions workflow intentionally wants the reporting wrapper to own installation too,
 `ota-run/action@v1` can consume the same repo truth directly instead of restating version or
 source-install inputs:
