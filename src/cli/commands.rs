@@ -72058,6 +72058,80 @@ tasks:
     }
 
     #[test]
+    fn runtime_proof_child_env_carries_selected_toolchain_overrides() {
+        use std::ffi::{OsStr, OsString};
+
+        let _guard = env_mutex_lock();
+        let original_path = env::var_os("PATH");
+        let original_node = env::var_os("OTA_NODE_BIN_DIR");
+        let original_npm = env::var_os("OTA_NPM_BIN_DIR");
+        let original_uv = env::var_os("OTA_UV_BIN_DIR");
+        let original_python = env::var_os("OTA_PYTHON_BIN_DIR");
+        let original_npm_config = env::var_os("NPM_CONFIG_ENGINE_STRICT");
+
+        unsafe {
+            env::set_var("PATH", "/tmp/proof-path");
+            env::set_var("OTA_NODE_BIN_DIR", "/tmp/node-bin");
+            env::set_var("OTA_NPM_BIN_DIR", "/tmp/npm-bin");
+            env::set_var("OTA_UV_BIN_DIR", "/tmp/uv-bin");
+            env::set_var("OTA_PYTHON_BIN_DIR", "/tmp/python-bin");
+            env::set_var("NPM_CONFIG_ENGINE_STRICT", "false");
+        }
+
+        let selected = super::runtime_proof_child_env();
+
+        match original_path {
+            Some(value) => unsafe { env::set_var("PATH", value) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_node {
+            Some(value) => unsafe { env::set_var("OTA_NODE_BIN_DIR", value) },
+            None => unsafe { env::remove_var("OTA_NODE_BIN_DIR") },
+        }
+        match original_npm {
+            Some(value) => unsafe { env::set_var("OTA_NPM_BIN_DIR", value) },
+            None => unsafe { env::remove_var("OTA_NPM_BIN_DIR") },
+        }
+        match original_uv {
+            Some(value) => unsafe { env::set_var("OTA_UV_BIN_DIR", value) },
+            None => unsafe { env::remove_var("OTA_UV_BIN_DIR") },
+        }
+        match original_python {
+            Some(value) => unsafe { env::set_var("OTA_PYTHON_BIN_DIR", value) },
+            None => unsafe { env::remove_var("OTA_PYTHON_BIN_DIR") },
+        }
+        match original_npm_config {
+            Some(value) => unsafe { env::set_var("NPM_CONFIG_ENGINE_STRICT", value) },
+            None => unsafe { env::remove_var("NPM_CONFIG_ENGINE_STRICT") },
+        }
+
+        assert_eq!(
+            selected.get(OsStr::new("PATH")),
+            Some(&OsString::from("/tmp/proof-path"))
+        );
+        assert_eq!(
+            selected.get(OsStr::new("OTA_NODE_BIN_DIR")),
+            Some(&OsString::from("/tmp/node-bin"))
+        );
+        assert_eq!(
+            selected.get(OsStr::new("OTA_NPM_BIN_DIR")),
+            Some(&OsString::from("/tmp/npm-bin"))
+        );
+        assert_eq!(
+            selected.get(OsStr::new("OTA_UV_BIN_DIR")),
+            Some(&OsString::from("/tmp/uv-bin"))
+        );
+        assert_eq!(
+            selected.get(OsStr::new("OTA_PYTHON_BIN_DIR")),
+            Some(&OsString::from("/tmp/python-bin"))
+        );
+        assert_eq!(
+            selected.get(OsStr::new("NPM_CONFIG_ENGINE_STRICT")),
+            Some(&OsString::from("false"))
+        );
+    }
+
+    #[test]
     fn no_policy_backend_fulfillment_maps_to_tool_probe_blocker() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -80063,6 +80137,7 @@ fn spawn_proof_runtime_up_process(
 
     let mut command = Command::new(exe);
     command.current_dir(working_dir).arg("up").arg("--stream");
+    command.envs(runtime_proof_child_env());
 
     if let Some(backend) = overrides.backend {
         command.arg("--mode").arg(match backend {
@@ -80104,6 +80179,42 @@ fn spawn_proof_runtime_up_process(
     command
         .spawn()
         .map_err(|error| format!("could not start `ota up --stream` for runtime proof: {error}"))
+}
+
+fn runtime_proof_child_env() -> BTreeMap<OsString, OsString> {
+    let mut selected = BTreeMap::new();
+    for key in [
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "SystemRoot",
+        "ComSpec",
+        "PATHEXT",
+        "LD_LIBRARY_PATH",
+        "PKG_CONFIG_PATH",
+        "pythonLocation",
+        "Python_ROOT_DIR",
+        "Python2_ROOT_DIR",
+        "Python3_ROOT_DIR",
+        "UV_CACHE_DIR",
+        "OTA_PYTHON_BIN_DIR",
+        "OTA_UV_BIN_DIR",
+        "OTA_NODE_BIN_DIR",
+        "OTA_NPM_BIN_DIR",
+    ] {
+        if let Some(value) = env::var_os(key) {
+            selected.insert(OsString::from(key), value);
+        }
+    }
+    for (name, value) in env::vars_os() {
+        if name
+            .to_str()
+            .is_some_and(|name| name.starts_with("OTA_") || name.starts_with("NPM_CONFIG_"))
+        {
+            selected.entry(name).or_insert(value);
+        }
+    }
+    selected
 }
 
 fn spawn_up_detached_run_process(
