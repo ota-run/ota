@@ -36379,7 +36379,7 @@ fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
     }
 
     let mut commands = vec![format!(
-        "default: `{}`",
+        "default ({default_mode}): `{}`",
         paint_code(&format!("ota run {}", task.name))
     )];
 
@@ -36692,6 +36692,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
 
     for task in tasks {
         let usage = render_task_use_command(task);
+        let mode_branches = render_task_mode_branches(task);
         output.push_str(&format!("\n\n{} {}", info_bullet(), paint(task.name, "1")));
         push_rendered_field(&mut output, "Context:", task.context.map(str::to_string));
         output.push_str(&format!(
@@ -36701,7 +36702,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         ));
         output.push_str(&format!(
             "\n  {} `{}`",
-            paint_key("Command:"),
+            paint_key("Use:"),
             paint_code(&usage)
         ));
         let mode_commands = render_task_mode_commands(task);
@@ -36719,11 +36720,13 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
                 render_task_prepare_text(prepare)
             ));
         }
-        push_rendered_field(
-            &mut output,
-            "Mode Branches:",
-            render_non_placeholder(&render_task_mode_branches(task)),
-        );
+        if !mode_commands.is_empty() {
+            push_rendered_field(
+                &mut output,
+                "Mode Branches:",
+                render_non_placeholder(&mode_branches),
+            );
+        }
         if task.internal {
             output.push_str(&format!("\n  {} internal", paint_key("Visibility:")));
         }
@@ -36742,7 +36745,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             ));
         }
         if !mode_commands.is_empty() {
-            output.push_str(&format!("\n  {}", paint_key("Modes:")));
+            output.push_str(&format!("\n  {}", paint_key("Runnable Modes:")));
             for command in mode_commands {
                 output.push_str(&format!("\n    {command}"));
             }

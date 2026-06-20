@@ -18548,7 +18548,7 @@ tasks:
         let use_output = run_with(["ota", "tasks", "--use", "--all", fixture.path()]);
         assert_eq!(use_output.exit_code, 0);
         let use_text = strip_ansi(&use_output.stdout);
-        assert!(use_text.contains("Command: `ota run setup`"));
+        assert!(use_text.contains("Use: `ota run setup`"));
         assert!(use_text.contains("Visibility: internal"));
 
         let json_output = run_with(["ota", "tasks", "--all", "--json", fixture.path()]);
@@ -18675,8 +18675,8 @@ tasks:
         let output = run_with(["ota", "tasks", "--use", fixture.path()]);
         assert_eq!(output.exit_code, 0);
         let text = strip_ansi(&output.stdout);
-        assert!(text.contains("Command: `ota run dev`"));
-        assert!(!text.contains("Command: `ota run setup`"));
+        assert!(text.contains("Use: `ota run dev`"));
+        assert!(!text.contains("Use: `ota run setup`"));
     }
 
     #[test]
@@ -19316,14 +19316,14 @@ tasks:
             .expect("ci task present");
 
         assert_eq!(output.exit_code, 0);
-        assert!(stdout.contains("Command: `ota run build`"));
+        assert!(stdout.contains("Use: `ota run build`"));
         assert!(stdout.contains("Default Mode: native"));
         assert!(lines[ci_idx - 1].trim().is_empty());
         assert_eq!(lines[build_idx + 1], "  Default Mode: native");
-        assert!(lines[build_idx + 2].starts_with("  Command: `ota run build`"));
+        assert!(lines[build_idx + 2].starts_with("  Use: `ota run build`"));
         assert!(lines[build_idx + 3].starts_with("  Description: Build the site for production"));
         assert_eq!(lines[ci_idx + 1], "  Default Mode: native");
-        assert!(lines[ci_idx + 2].starts_with("  Command: `ota run ci`"));
+        assert!(lines[ci_idx + 2].starts_with("  Use: `ota run ci`"));
         assert!(lines[ci_idx + 3].starts_with("  Description: Canonical local verification"));
     }
 
@@ -19434,13 +19434,13 @@ tasks:
         assert!(stdout.contains("✦ dev"));
         assert!(stdout.contains("Context: app"));
         assert!(stdout.contains("Default Mode: native"));
-        assert!(stdout.contains("Command: `ota run dev`"));
+        assert!(stdout.contains("Use: `ota run dev`"));
         assert!(stdout.contains("Description: Start the dev server"));
         assert!(stdout.contains("Notes:"));
         assert!(stdout.contains("✦ start"));
-        assert!(stdout.contains("Command: `ota run start`"));
+        assert!(stdout.contains("Use: `ota run start`"));
         assert!(stdout.contains("✦ typecheck"));
-        assert!(stdout.contains("Command: `ota run typecheck`"));
+        assert!(stdout.contains("Use: `ota run typecheck`"));
         assert!(stdout.contains("verification.\n\n✦ start"));
         assert!(!stdout.contains("Command Preview:"));
         assert!(!stdout.contains("Mode Branches: -"));
@@ -19719,9 +19719,12 @@ tasks:
         let output = run_with(["ota", "tasks", "--use", fixture.path()]);
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Command: `ota run typecheck`"), "{stdout}");
-        assert!(stdout.contains("Modes:"), "{stdout}");
-        assert!(stdout.contains("default: `ota run typecheck`"), "{stdout}");
+        assert!(stdout.contains("Use: `ota run typecheck`"), "{stdout}");
+        assert!(stdout.contains("Runnable Modes:"), "{stdout}");
+        assert!(
+            stdout.contains("default (native): `ota run typecheck`"),
+            "{stdout}"
+        );
         assert!(
             stdout.contains("container: `ota run typecheck --mode container`"),
             "{stdout}"
@@ -19729,7 +19732,9 @@ tasks:
         let mode_branches_idx = stdout
             .find("Mode Branches:")
             .expect("mode branches line present");
-        let modes_idx = stdout.find("Modes:").expect("modes line present");
+        let modes_idx = stdout
+            .find("Runnable Modes:")
+            .expect("runnable modes line present");
         assert!(
             modes_idx > mode_branches_idx,
             "expected Modes block after Mode Branches"
@@ -19806,9 +19811,12 @@ tasks:
         let output = run_with(["ota", "tasks", "--use", fixture.path()]);
         assert_eq!(output.exit_code, 0);
         let stdout = strip_ansi(&output.stdout);
-        assert!(stdout.contains("Command: `ota run start`"), "{stdout}");
-        assert!(stdout.contains("Modes:"), "{stdout}");
-        assert!(stdout.contains("default: `ota run start`"), "{stdout}");
+        assert!(stdout.contains("Use: `ota run start`"), "{stdout}");
+        assert!(stdout.contains("Runnable Modes:"), "{stdout}");
+        assert!(
+            stdout.contains("default (container): `ota run start`"),
+            "{stdout}"
+        );
         assert!(
             stdout.contains("native: `ota run start --mode native`"),
             "{stdout}"
@@ -19817,6 +19825,46 @@ tasks:
             !stdout.contains("container: `ota run start --mode container`"),
             "{stdout}"
         );
+    }
+
+    #[test]
+    fn tasks_use_hides_default_only_mode_rows() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  deploy:
+    command:
+      exe: npm
+      args:
+        - run
+        - deploy
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          command:
+            exe: npm
+            args:
+              - run
+              - deploy
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", "--use", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(stdout.contains("Use: `ota run deploy`"), "{stdout}");
+        assert!(!stdout.contains("Mode Branches:"), "{stdout}");
+        assert!(!stdout.contains("Runnable Modes:"), "{stdout}");
     }
 
     #[test]
