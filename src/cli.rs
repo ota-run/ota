@@ -19830,6 +19830,7 @@ tasks:
         assert!(stdout.contains("Default Mode: container"), "{stdout}");
         assert!(stdout.contains("Use: `ota run lint`"), "{stdout}");
         assert!(stdout.contains("Runnable Modes:"), "{stdout}");
+        assert!(!stdout.contains("Mode Branches:"), "{stdout}");
         assert!(
             stdout.contains("default (container): `ota run lint`"),
             "{stdout}"
@@ -19838,6 +19839,53 @@ tasks:
             stdout.contains("native: `ota run lint --mode native`"),
             "{stdout}"
         );
+    }
+
+    #[test]
+    fn tasks_text_mode_branches_only_show_alternates() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/test:latest
+tasks:
+  typecheck:
+    context: host
+    run: npm run typecheck
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          run: npm run typecheck
+        container:
+          context: app
+          run: npm run typecheck
+"#,
+        );
+
+        let output = run_with(["ota", "tasks", fixture.path()]);
+        assert_eq!(output.exit_code, 0);
+        let stdout = strip_ansi(&output.stdout);
+        assert!(
+            stdout.contains("Mode Branches: container (context=app"),
+            "{stdout}"
+        );
+        assert!(
+            !stdout.contains("Mode Branches: native (context=host);"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("Runnable Modes:"), "{stdout}");
     }
 
     #[test]

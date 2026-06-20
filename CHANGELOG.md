@@ -32,9 +32,10 @@
   docs now point humans and agents at the same canonical install truth
 - tightened `ota tasks` human output so task listings now show the effective runnable default mode,
   include first-class `command` bodies in command previews, hide empty placeholder rows, and keep
-  `ota tasks --use` default plus alternate runnable mode guidance aligned with the effective mode
-  instead of surfacing empty `Default Mode: -` task blocks or redundant default-only mode rows;
-  multi-mode `ota tasks` output now also shows explicit alternate runnable invocations
+  `ota tasks` / `ota tasks --use` default plus alternate runnable mode guidance aligned with the
+  effective mode instead of surfacing empty `Default Mode: -` task blocks, redundant default-only
+  mode rows, or default-branch duplication inside `Mode Branches:`; multi-mode task output now
+  also shows explicit alternate runnable invocations
 - documented the new standalone `ota-run/action@v1` `source: contract` install mode in the
   GitHub Actions and hosted-validation specs, so first-party docs now cover both the canonical
   `setup + action install: never` split and the wrapper-owned contract-consumption path

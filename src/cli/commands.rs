@@ -36112,7 +36112,7 @@ fn render_tasks_text(
         let command_preview = render_task_command_preview(task);
         let mode_commands = render_task_mode_commands(task);
         let effects = render_task_effects_text(&task.effects);
-        let mode_branches = render_task_mode_branches(task);
+        let mode_branches = render_task_mode_branches_filtered(task, false);
 
         output.push_str(&format!("\n\n{} {}", list_bullet(), paint(task.name, "1")));
         push_rendered_field(&mut output, "Context:", task.context.map(str::to_string));
@@ -36687,10 +36687,6 @@ fn render_task_mode_branches_filtered(task: &TaskSummary<'_>, include_default_mo
         })
         .collect::<Vec<_>>()
         .join("; ")
-}
-
-fn render_task_mode_branches(task: &TaskSummary<'_>) -> String {
-    render_task_mode_branches_filtered(task, true)
 }
 
 fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
