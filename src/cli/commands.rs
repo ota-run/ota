@@ -70770,6 +70770,7 @@ workflows:
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn up_runs_workflow_owned_prepare_action_before_setup() {
         let _guard = env_mutex_lock();

@@ -15,9 +15,22 @@ Plan
   Next: install or align the listed runtimes and
         tools, then rerun `ota doctor`
 
+ 2. task `ci` uses replaceable shell `run` instead of `command` (1)
+  Why: task `ci` keeps a finite argv-shaped
+       command in shell `run` at `tasks.ci.run`
+       (`echo ci`), which is less governable and
+       less inspectable than the first-class
+       `command` surface
+  Provenance: repo contract
+  Next: replace `tasks.ci.run` with
+        `tasks.ci.command` using `exe: echo` and
+        `args: [`ci`]`; reserve `run`/`script`
+        for shell behavior that cannot be
+        modeled structurally
+
 Overview
- »  Findings: 1
- »  Actions: 1
+ »  Findings: 2
+ »  Actions: 2
  »  Errors: 2
- »  Warnings: 0
+ »  Warnings: 1
  »  Info: 0

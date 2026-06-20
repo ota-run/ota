@@ -11,7 +11,7 @@ Why: node resolved to `24.14.1` but the contract requires `22`; ota probed
      `./bin/node` with `node --version`
 Provenance: repo contract
 Next:
-  » run `nvm install 22 && nvm use 22`
+  » run `mise install node@22`
   » rerun `ota doctor`
 
 Execution
@@ -38,3 +38,12 @@ Why: `execution.lifecycle: ephemeral` is advisory in native mode only. Native ex
      still runs in the host shell.
 Provenance: repo contract
 Next: use `ota run <task>` for isolated execution; use `ota up` for readiness only
+
+◉ WARN  task `ci` uses replaceable shell `run` instead of `command` (1)
+Why: task `ci` keeps a finite argv-shaped command in shell `run` at `tasks.ci.run`
+     (`echo ci`), which is less governable and less inspectable than the first-class
+     `command` surface
+Provenance: repo contract
+Next: replace `tasks.ci.run` with `tasks.ci.command` using `exe: echo` and
+      `args: [`ci`]`; reserve `run`/`script` for shell behavior that cannot be modeled
+      structurally

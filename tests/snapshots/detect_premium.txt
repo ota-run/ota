@@ -6,9 +6,6 @@ Existing contract comparison:
 ✦  project.name: would update `existing` -> `ota-web`
     Owner: manual
     Source: package.json#name [high]
-✦  toolchains.node.provider: would add `corepack`
-    Owner: detected
-    Source: ota.detect#toolchains.node.provider [high]
 ✦  toolchains.node.version: would add `22`
     Owner: detected
     Source: .nvmrc [high]
@@ -25,16 +22,72 @@ project:
   name: ota-web
 toolchains:
   node:
-    provider: corepack
-    version: '22'
-    package_managers:
-      pnpm: 10.1.0
+    version: '*'
 tasks:
   dev:
     description: Start the local development loop.
-    run: pnpm dev
+    command:
+      exe: pnpm
+      args:
+      - dev
     notes: |
       Run `ota run dev` to execute this task.
+  setup:
+    description: Hydrate Node dependencies through npm.
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: install
+    requirements:
+      runtimes: {}
+      tools: {}
+      toolchains:
+      - node
+      native: []
+      env: []
+      checks: []
+      any_of: []
+    effects:
+      writes:
+      - node_modules
+      network: true
+      network_kind: dependency_hydration
+    notes: |-
+      Run `ota run setup` to execute this task.
+      Hydrate Node dependencies through npm.
+    internal: true
+agent:
+  posture: readiness_strict
+  entrypoint: setup
+  default_task: setup
+  safe_tasks:
+  - setup
+  verify_after_changes:
+  - setup
+  protected_paths:
+  - .nvmrc
+  - ota.yaml
+  - package.json
+  inferred_boundary:
+    reviewed: false
+    provenance:
+      protected_paths:
+      - detect:contract_file_default
+      - detect:detected_control_files
+  bootstrap:
+    ota:
+      note: Only install ota if it is missing and installation is approved.
+      source:
+        kind: version
+        version: v1.6.21
+  notes: |
+    Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo.
+    Use `ota validate` before changes and `ota doctor` after edits.
+    Use `ota run setup` to verify changes.
 
 Annotations:
 ✦ Field: project.name
@@ -59,13 +112,6 @@ Annotations:
   Signal: config
   Confidence: high
 
-✦ Field: toolchains.node.provider
-  Type: field
-  Value: corepack
-  Source: ota.detect#toolchains.node.provider
-  Signal: config
-  Confidence: high
-
 ✦ Field: toolchains.node.version
   Type: field
   Value: 22
@@ -77,8 +123,8 @@ Agent boundary
 ➤ Omitted
 Why:
  »  no safe task was inferred for this repo
- »  detected task `dev` is not treated as agent-safe by default
- »  Ota cannot prove what `pnpm dev` mutates, provisions, or starts
+ »  detected tasks `dev`, `setup` are not treated as agent-safe by default
+ »  Ota cannot prove what the detected tasks mutate, provision, or start
 
 Next:
   » add or expose one verifier task such as `test`, `typecheck`, or `lint` when it exists

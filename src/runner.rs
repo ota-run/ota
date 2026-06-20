@@ -2644,18 +2644,22 @@ fn join_backend_cwd_with_adapter_cwd(
     task: Option<&TaskSpec>,
     backend: Backend,
 ) -> Option<String> {
-    let adapter_cwd = task.and_then(|task| task_effective_adapter_cwd(task, backend))?;
-    let adapter_cwd = adapter_cwd.trim();
-    if adapter_cwd.is_empty() {
-        return None;
-    }
-    match backend_cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) {
-        Some(base) => Some(format!(
+    let backend_cwd = backend_cwd.map(str::trim).filter(|cwd| !cwd.is_empty());
+    let adapter_cwd_value = task.and_then(|task| task_effective_adapter_cwd(task, backend));
+    let adapter_cwd = adapter_cwd_value
+        .as_deref()
+        .map(str::trim)
+        .filter(|cwd| !cwd.is_empty());
+
+    match (backend_cwd, adapter_cwd) {
+        (Some(base), Some(adapter)) => Some(format!(
             "{}/{}",
             base.trim_end_matches('/'),
-            adapter_cwd.trim_start_matches("./")
+            adapter.trim_start_matches("./")
         )),
-        None => Some(adapter_cwd.to_string()),
+        (Some(base), None) => Some(base.to_string()),
+        (None, Some(adapter)) => Some(adapter.to_string()),
+        (None, None) => None,
     }
 }
 
@@ -51943,7 +51947,7 @@ case "$command" in
     [ -n "$cwd" ] || exit 1
     printf "exec %s\n" "$target" >> "$cwd/daytona-log.txt"
     cd "$cwd" || exit 1
-    exec /bin/sh -lc "$3"
+    exec "$@"
     ;;
 esac
 
