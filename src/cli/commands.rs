@@ -36651,13 +36651,20 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
     }
 }
 
-fn render_task_mode_branches(task: &TaskSummary<'_>) -> String {
-    if task.modes.is_empty() {
+fn render_task_mode_branches_filtered(task: &TaskSummary<'_>, include_default_mode: bool) -> String {
+    let default_mode = render_task_default_mode(task);
+    let branches = task
+        .modes
+        .iter()
+        .filter(|mode| include_default_mode || mode.mode != default_mode)
+        .collect::<Vec<_>>();
+
+    if branches.is_empty() {
         return String::from("-");
     }
 
-    task.modes
-        .iter()
+    branches
+        .into_iter()
         .map(|mode| {
             let mut details = Vec::new();
             if let Some(context) = mode.context {
@@ -36682,6 +36689,10 @@ fn render_task_mode_branches(task: &TaskSummary<'_>) -> String {
         .join("; ")
 }
 
+fn render_task_mode_branches(task: &TaskSummary<'_>) -> String {
+    render_task_mode_branches_filtered(task, true)
+}
+
 fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
     let mut output = format_command_header("TASKS", path);
     output.push('\n');
@@ -36692,7 +36703,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
 
     for task in tasks {
         let usage = render_task_use_command(task);
-        let mode_branches = render_task_mode_branches(task);
+        let mode_branches = render_task_mode_branches_filtered(task, false);
         output.push_str(&format!("\n\n{} {}", info_bullet(), paint(task.name, "1")));
         push_rendered_field(&mut output, "Context:", task.context.map(str::to_string));
         output.push_str(&format!(

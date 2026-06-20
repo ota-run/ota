@@ -19739,6 +19739,14 @@ tasks:
             modes_idx > mode_branches_idx,
             "expected Modes block after Mode Branches"
         );
+        assert!(
+            stdout.contains("Mode Branches: container (context=app"),
+            "{stdout}"
+        );
+        assert!(
+            !stdout.contains("Mode Branches: native (context=host);"),
+            "{stdout}"
+        );
     }
 
     #[test]
