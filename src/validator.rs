@@ -9093,6 +9093,9 @@ fn replaceable_finite_shell_command_advisory_for_task(
         } else {
             return None;
         };
+    if obvious_replaceable_dependency_hydration_shell(command) {
+        return None;
+    }
     let argv = obvious_replaceable_finite_shell_argv(command)?;
     let suggested_exe = argv.first()?.to_string();
     let suggested_args = argv.iter().skip(1).cloned().collect::<Vec<_>>();
@@ -9880,9 +9883,40 @@ fn obvious_replaceable_dependency_hydration_command(command: &TaskCommandSpec) -
 }
 
 fn obvious_replaceable_dependency_hydration_argv(argv: &[String]) -> bool {
-    obvious_yarn_inline_builds_hydration_argv(argv)
+    obvious_node_package_manager_hydration_argv(argv)
+        || obvious_yarn_inline_builds_hydration_argv(argv)
         || obvious_npm_force_hydration_argv(argv)
         || obvious_helm_dependency_build_hydration_argv(argv)
+}
+
+fn obvious_node_package_manager_hydration_argv(argv: &[String]) -> bool {
+    if argv.is_empty() {
+        return false;
+    }
+    let offset = if argv[0] == "corepack" { 1 } else { 0 };
+    if argv.len() < offset + 2 {
+        return false;
+    }
+    match argv[offset].as_str() {
+        "pnpm" => argv.len() == offset + 2 && argv[offset + 1] == "install",
+        "yarn" => {
+            argv[offset + 1] == "install"
+                && argv
+                    .iter()
+                    .skip(offset + 2)
+                    .all(|arg| matches!(arg.as_str(), "--immutable" | "--inline-builds"))
+        }
+        "npm" => {
+            let mode = argv[offset + 1].as_str();
+            if !matches!(mode, "install" | "ci") {
+                return false;
+            }
+            argv.iter()
+                .skip(offset + 2)
+                .all(|arg| arg == "--force")
+        }
+        _ => false,
+    }
 }
 
 fn obvious_yarn_inline_builds_hydration_argv(argv: &[String]) -> bool {
@@ -30895,6 +30929,66 @@ tasks:
             ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
                 if value.task_name == "install"
                     && value.command == "yarn install --inline-builds"
+        )));
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableFiniteShellCommand(value) if value.task_name == "install"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_dependency_hydration_ownership_advisory_for_pnpm_install_shell() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    run: pnpm install
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
+                if value.task_name == "install"
+                    && value.command == "pnpm install"
+        )));
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableFiniteShellCommand(value) if value.task_name == "install"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_dependency_hydration_ownership_advisory_for_yarn_immutable_shell() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    run: yarn install --immutable
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableDependencyHydrationOwnership(value)
+                if value.task_name == "install"
+                    && value.command == "yarn install --immutable"
+        )));
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableFiniteShellCommand(value) if value.task_name == "install"
         )));
     }
 
