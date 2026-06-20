@@ -8622,9 +8622,10 @@ fn ensure_helm_repository_state(
     working_dir: &Path,
 ) -> Result<HelmRepositoryState, RunError> {
     let mut hasher = DefaultHasher::new();
+    working_dir.hash(&mut hasher);
     source.cwd.hash(&mut hasher);
-    let state_root = working_dir
-        .join(".ota")
+    let state_root = env::temp_dir()
+        .join("ota")
         .join("state")
         .join("helm")
         .join(format!("{:016x}", hasher.finish()));
@@ -53966,12 +53967,17 @@ tasks:
 "#,
         );
         fs::create_dir_all(fixture.dir.path().join("deploy/helm")).unwrap();
+        fs::write(
+            fixture.dir.path().join("deploy/helm/Chart.yaml"),
+            "apiVersion: v2\nname: sample\nversion: 0.1.0\ndependencies:\n  - name: postgresql\n    repository: https://charts.bitnami.com/bitnami\n    version: 16.7.27\n",
+        )
+        .unwrap();
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
         let helm_body = if cfg!(windows) {
-            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo version.BuildInfo{Version:\"v3.18.4\"}\r\n  exit /b 0\r\n)\r\n>> \"%OTA_HELM_LOG%\" echo %CD%^|%*\r\n"
+            "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo version.BuildInfo{Version:\"v3.18.4\"}\r\n  exit /b 0\r\n)\r\n>> \"%OTA_HELM_LOG%\" echo %CD%^|%HELM_REPOSITORY_CONFIG%^|%HELM_REPOSITORY_CACHE%^|%*\r\n"
         } else {
-            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'version.BuildInfo{Version:\"v3.18.4\"}\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_HELM_LOG\"\n"
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf 'version.BuildInfo{Version:\"v3.18.4\"}\\n'\n  exit 0\nfi\nprintf '%s|%s|%s|%s\\n' \"$PWD\" \"$HELM_REPOSITORY_CONFIG\" \"$HELM_REPOSITORY_CACHE\" \"$*\" >> \"$OTA_HELM_LOG\"\n"
         };
         write_fake_bin(&bin_dir, "helm", helm_body);
         let log_path = fixture.dir.path().join("helm.log");
@@ -54013,6 +54019,10 @@ tasks:
                     .to_string()
                     .as_str()
             ),
+            "{logged}"
+        );
+        assert!(
+            !logged.contains(fixture.dir.path().join("deploy/helm/.ota").display().to_string().as_str()),
             "{logged}"
         );
     }

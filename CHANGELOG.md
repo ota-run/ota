@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- fixed structured Helm dependency hydration so repository-cache state no longer lives under the
+  chart tree and poison `helm dependency build` with oversized cached index files; the runner now
+  keeps Helm repo state out of chart inputs while preserving deterministic per-chart isolation
 - widened structured task commands with `command.cwd` and `launch.kind: command` plus `launch.cwd`,
   so finite tasks and structured service launches rooted in subdirectories no longer need fake
   `cd ... && ...` shell bodies just to express working-directory truth; previews and task listings
