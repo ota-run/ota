@@ -13181,6 +13181,44 @@ fn cleanup_interrupted_requested_task_service_workload_and_note(
     ))
 }
 
+pub(crate) fn cleanup_selected_workflow_native_service_workloads(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
+        let effective = effective_task_execution(contract, task_name.as_str(), overrides);
+        if effective.backend != Backend::Native {
+            continue;
+        }
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        let Some(runtime) = task.service_runtime_for_backend(Backend::Native) else {
+            continue;
+        };
+        let Some(note) =
+            cleanup_interrupted_native_service_workload_and_note(task_name.as_str(), Some(runtime))
+        else {
+            continue;
+        };
+        if !note.contains("cleaned up after interrupt") {
+            failures.push(format!(
+                "workflow task `{}`: {}",
+                task_name,
+                normalize_requested_service_cleanup_note(note)
+            ));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
 fn cleanup_interrupted_started_services_and_note(
     contract: &Contract,
     working_dir: &Path,
@@ -42322,6 +42360,83 @@ project:
         assert!(
             state.requested_task_interrupt_cleanup.is_none(),
             "requested cleanup intent should be consumed"
+        );
+    }
+
+    #[cfg(all(unix, target_os = "linux"))]
+    #[test]
+    fn workflow_native_service_cleanup_stops_selected_service_workload() {
+        use std::process::Command;
+
+        let _guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .expect("workflow fixture contract should parse");
+
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .spawn()
+            .expect("sleep should start");
+        let stat = fs::read_to_string(format!("/proc/{}/stat", child.id())).unwrap();
+        let start_time = stat
+            .split_whitespace()
+            .nth(21)
+            .expect("proc stat should contain start time");
+        let pidfile = super::persistent_service_workload_pidfile_path("dev");
+        fs::write(&pidfile, format!("{} {start_time}\n", child.id())).unwrap();
+
+        super::cleanup_selected_workflow_native_service_workloads(
+            &contract,
+            Some("app"),
+            ExecutionOverrides::default(),
+        )
+        .expect("workflow cleanup should succeed");
+
+        let mut exited = false;
+        for _ in 0..20 {
+            if child.try_wait().unwrap().is_some() {
+                exited = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if !exited {
+            let _ = Command::new("kill")
+                .args(["-KILL", &child.id().to_string()])
+                .status();
+        }
+
+        assert!(
+            exited,
+            "workflow cleanup should stop the lingering workload process"
+        );
+        assert!(
+            !Path::new(&pidfile).exists(),
+            "workflow cleanup should remove pidfile"
         );
     }
 

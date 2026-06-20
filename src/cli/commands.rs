@@ -136,7 +136,8 @@ use crate::runner::{
     RuntimeListenerResolutionKind, ServiceTermination, ServiceTerminationCause,
     SharedLocalBackendEvidence, StaleContainerOwnership, StreamLogFile, StreamLogTee,
     TaskExecutionRelation, TaskTargetResolutionEvidence, ToolchainFulfillmentEvidence,
-    clean_execution_report, clean_stale_execution, effective_execution,
+    clean_execution_report, clean_execution_report_for_workflow, clean_stale_execution,
+    cleanup_selected_workflow_native_service_workloads, effective_execution,
     effective_task_env_for_backend, effective_task_env_for_selection, effective_task_execution,
     ensure_task_adapter_inputs_ready, ensure_task_env_files_ready, env_resolution_source_label,
     ephemeral_container_name, host_runtime_readiness_observed, load_declared_env_sources,
@@ -2407,25 +2408,36 @@ pub fn proof_runtime(
                 );
                 let up_process_failure = up_process_failure.as_deref();
 
-                let repo_cleanup_error = if proof_runtime_selected_workflow_uses_container_backend(
+                let process_cleanup_error = stop_proof_runtime_up_process(&mut up_process)
+                    .err()
+                    .map(|error| error.to_string());
+                let workload_cleanup_error = cleanup_selected_workflow_native_service_workloads(
                     contract,
                     effective_workflow_name,
                     overrides,
-                ) {
-                    clean_execution_report(contract, &target.contract_path).err()
+                )
+                .err();
+                let repo_cleanup_error = if process_cleanup_error.is_none() {
+                    clean_execution_report_for_workflow(
+                        contract,
+                        &target.contract_path,
+                        effective_workflow_name,
+                    )
+                    .err()
                 } else {
                     None
                 };
                 let cleanup_failure_detail = repo_cleanup_error
                     .as_ref()
                     .and_then(proof_runtime_cleanup_failure_detail);
-                let cleanup_error = repo_cleanup_error
-                    .as_ref()
-                    .and_then(proof_runtime_cleanup_failure_message);
-                let process_cleanup_error = stop_proof_runtime_up_process(&mut up_process)
-                    .err()
-                    .map(|error| error.to_string());
-                let cleanup_error = cleanup_error.or(process_cleanup_error);
+                let cleanup_error =
+                    process_cleanup_error
+                        .or(workload_cleanup_error)
+                        .or_else(|| {
+                            repo_cleanup_error
+                                .as_ref()
+                                .and_then(proof_runtime_cleanup_failure_message)
+                        });
                 let cleanup_next = cleanup_error.as_ref().map(|_| {
                     format!(
                         "run `{}` to remove the remaining runtime state, then rerun proof",
@@ -46014,74 +46026,6 @@ workflows:
     }
 
     #[test]
-    fn proof_runtime_selected_workflow_container_cleanup_scope_is_backend_aware() {
-        let fixture = TempDir::new().unwrap();
-        let contract_path = fixture.path().join("ota.yaml");
-        fs::write(
-            &contract_path,
-            r#"
-version: 1
-project:
-  name: cleanup-scope
-execution:
-  default_context: host
-  contexts:
-    host:
-      backend: native
-    app:
-      backend: container
-      lifecycle: persistent
-      container:
-        image: node:22-bookworm
-tasks:
-  dev:
-    context: host
-    run: echo host
-  dev:app:
-    context: app
-    run: echo app
-workflows:
-  default: instant
-  instant:
-    run:
-      task: dev
-  app:
-    run:
-      task: dev:app
-"#,
-        )
-        .unwrap();
-        let contract =
-            parse_contract_str(&contract_path, &fs::read_to_string(&contract_path).unwrap())
-                .unwrap();
-
-        assert!(
-            !super::proof_runtime_selected_workflow_uses_container_backend(
-                &contract,
-                Some("instant"),
-                ExecutionOverrides::default(),
-            )
-        );
-        assert!(
-            super::proof_runtime_selected_workflow_uses_container_backend(
-                &contract,
-                Some("app"),
-                ExecutionOverrides::default(),
-            )
-        );
-        assert!(
-            super::proof_runtime_selected_workflow_uses_container_backend(
-                &contract,
-                Some("instant"),
-                ExecutionOverrides {
-                    backend: Some(Backend::Container),
-                    ..ExecutionOverrides::default()
-                },
-            )
-        );
-    }
-
-    #[test]
     fn proof_runtime_up_exit_primary_blocker_overrides_surface_blocker() {
         let summary = crate::output::DoctorSummary {
             verdict: DoctorVerdict::NotReady,
@@ -80930,20 +80874,6 @@ fn proof_runtime_cleanup_failure_detail(error: &CleanExecutionError) -> Option<J
         return None;
     }
     clean_failure_detail_json_value(error)
-}
-
-fn proof_runtime_selected_workflow_uses_container_backend(
-    contract: &Contract,
-    workflow_name: Option<&str>,
-    overrides: ExecutionOverrides,
-) -> bool {
-    contract
-        .selected_workflow_task_closure_names(workflow_name)
-        .into_iter()
-        .any(|task_name| {
-            effective_task_execution(contract, task_name.as_str(), overrides).backend
-                == Backend::Container
-        })
 }
 
 fn proof_runtime_blocking_primary_blocker(
