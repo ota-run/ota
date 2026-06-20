@@ -112,7 +112,10 @@ jobs:
               run: where cl
           tasks:
             setup:
-              run: where cl
+              command:
+                exe: where
+                args:
+                  - cl
               requirements:
                 native:
                   - msvc-shell
