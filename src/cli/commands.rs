@@ -51168,6 +51168,14 @@ tasks:
                 "#!/bin/sh\necho 'corepack 0.31.0'\n"
             },
         );
+        write_executable_script(
+            &fake_command_path(&bin_dir, "pnpm"),
+            if cfg!(windows) {
+                "@echo off\r\necho 10.26.0\r\n"
+            } else {
+                "#!/bin/sh\necho '10.26.0'\n"
+            },
+        );
         let original_path = env::var_os("PATH");
         let mut path_entries = vec![bin_dir.clone()];
         if let Some(existing) = original_path.as_ref() {
@@ -56911,7 +56919,7 @@ version: 1
 project:
   name: preview-up
 tools:
-  kubectl:
+  ota-preview-kubectl:
     version: "*"
     acquisition:
       provider: brew
@@ -56919,7 +56927,7 @@ tools:
 tasks:
   verify:
     command:
-      exe: kubectl
+      exe: ota-preview-kubectl
       args:
         - version
 "#
@@ -56930,7 +56938,7 @@ version: 1
 project:
   name: preview-up
 tools:
-  kubectl:
+  ota-preview-kubectl:
     version: "*"
     acquisition:
       provider: winget
@@ -56938,7 +56946,7 @@ tools:
 tasks:
   verify:
     command:
-      exe: kubectl
+      exe: ota-preview-kubectl
       args:
         - version
 "#
@@ -56949,7 +56957,7 @@ version: 1
 project:
   name: preview-up
 tools:
-  kubectl:
+  ota-preview-kubectl:
     version: "*"
     acquisition:
       provider: apt
@@ -56957,7 +56965,7 @@ tools:
 tasks:
   verify:
     command:
-      exe: kubectl
+      exe: ota-preview-kubectl
       args:
         - version
 "#
