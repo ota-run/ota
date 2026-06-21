@@ -8190,6 +8190,145 @@ tasks:
         assert!(paths.contains(&"project.name"));
         assert!(paths.contains(&"tasks.lint.run"));
         assert!(paths.contains(&"tasks.test.run"));
+        let project_change = json["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|change| change["path"] == "project.name")
+            .unwrap();
+        assert_eq!(project_change["category"], "topology");
+        assert_eq!(project_change["risk"], "low");
+        let task_change = json["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|change| change["path"] == "tasks.test.run")
+            .unwrap();
+        assert_eq!(task_change["category"], "task");
+        assert_eq!(task_change["risk"], "medium");
+    }
+
+    #[test]
+    fn diff_json_accepts_archived_receipt_snapshot_input() {
+        let base = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-base
+tasks:
+  test:
+    run: cargo test
+"#,
+        );
+        let archived = run_with(["ota", "receipt", "--json", "--archive", base.path()]);
+        assert_eq!(archived.exit_code, 0);
+        let archived_json: Value = serde_json::from_str(&archived.stdout).unwrap();
+        let archived_receipt = archived_json["archive_path"].as_str().unwrap().to_string();
+
+        let target = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-target
+tasks:
+  test:
+    run: cargo test --workspace
+"#,
+        );
+
+        let output = run_with(["ota", "diff", "--json", &archived_receipt, target.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let paths = json["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|change| change["path"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"project.name"));
+        assert!(paths.contains(&"tasks.test.run"));
+    }
+
+    #[test]
+    fn diff_json_rejects_unarchived_receipt_input_without_snapshot_ref() {
+        let fixture = ContractFixture::new_dir();
+        let receipt_path = fixture.dir.path().join("receipt.json");
+        fs::write(
+            &receipt_path,
+            r#"{
+  "ok": true,
+  "path": "./ota.yaml",
+  "mode": "receipt",
+  "summary": {
+    "error_count": 0,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 1
+  },
+  "receipt": {
+    "ok": true,
+    "path": "./ota.yaml",
+    "scope": "repo",
+    "contract": "./ota.yaml",
+    "contract_identity": {
+      "version": 1,
+      "project": {
+        "name": "receipt-base"
+      },
+      "counts": {
+        "runtimes": 0,
+        "tools": 0,
+        "env": 0,
+        "services": 0,
+        "checks": 0,
+        "tasks": 1
+      }
+    },
+    "contract_snapshot_hash": "sha256:deadbeef",
+    "steps": [
+      {
+        "order": 1,
+        "label": "readiness",
+        "status": "READY"
+      }
+    ],
+    "summary": {
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "findings": []
+}"#,
+        )
+        .unwrap();
+
+        let target = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-target
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "diff",
+            "--json",
+            receipt_path.to_str().unwrap(),
+            target.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("does not carry `receipt.contract_snapshot_ref`")
+        );
     }
 
     #[test]
@@ -9265,6 +9404,14 @@ tasks:
         let archive_path = json["archive_path"].as_str().unwrap();
         assert!(archive_path.contains(".ota/receipts/"));
         assert!(Path::new(archive_path).is_file());
+        let snapshot_hash = json["receipt"]["contract_snapshot_hash"].as_str().unwrap();
+        assert!(snapshot_hash.starts_with("sha256:"));
+        let snapshot_ref = json["receipt"]["contract_snapshot_ref"].as_str().unwrap();
+        assert!(snapshot_ref.contains(".ota/contracts/sha256-"));
+        let snapshot: Value =
+            serde_json::from_str(&fs::read_to_string(snapshot_ref).unwrap()).unwrap();
+        assert_eq!(snapshot["project"]["name"], "receipt-demo");
+        assert_eq!(snapshot["version"], 1);
     }
 
     #[test]
@@ -9824,6 +9971,199 @@ env:
                 );
             })
             .expect("spawn receipt latest diff worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn receipt_json_diff_correlates_contract_changes_from_archived_snapshot() {
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-contract-correlation"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
+version: 1
+project:
+  name: receipt-diff
+env:
+  vars:
+    OTA_BASELINE_REQUIRED:
+      required: true
+"#,
+                );
+
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+                let current_json: Value = serde_json::from_str(&current.stdout).unwrap();
+                let unchanged = current_json["findings"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|finding| finding["summary"] == "No tasks defined in contract")
+                    .cloned()
+                    .unwrap();
+
+                fixture.write(
+                    ".ota/contracts/sha256-old.json",
+                    r#"{
+  "version": 1,
+  "project": {
+    "name": "receipt-diff"
+  }
+}"#,
+                );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 1,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": "sha256:old",
+                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 1,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": [unchanged]
+                    }))
+                    .unwrap(),
+                );
+
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
+
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(
+                    json["summary"]["comparison"]["contract_snapshot_changed"],
+                    true
+                );
+                assert_eq!(
+                    json["contract_changes"][0]["path"],
+                    "env.vars.OTA_BASELINE_REQUIRED.required"
+                );
+                assert_eq!(json["contract_changes"][0]["status"], "add");
+                assert_eq!(
+                    json["likely_related_changes"][0]["path"],
+                    json["contract_changes"][0]["path"]
+                );
+                assert_eq!(
+                    json["introduced"][0]["summary"],
+                    "Missing environment variable: OTA_BASELINE_REQUIRED"
+                );
+            })
+            .expect("spawn receipt contract correlation worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn receipt_json_diff_fails_when_baseline_snapshot_ref_is_broken() {
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-broken-snapshot"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
+version: 1
+project:
+  name: receipt-diff
+"#,
+                );
+
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 1,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": "sha256:missing",
+                            "contract_snapshot_ref": ".ota/contracts/missing.json",
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 1,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": []
+                    }))
+                    .unwrap(),
+                );
+
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
+
+                assert_eq!(output.exit_code, 1);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert!(
+                    json["errors"][0]
+                        .as_str()
+                        .unwrap()
+                        .contains("failed to load archived contract snapshot")
+                );
+            })
+            .expect("spawn broken snapshot receipt diff worker");
 
         if let Err(panic) = worker.join() {
             std::panic::resume_unwind(panic);
@@ -11991,6 +12331,9 @@ env:
             json["receipt"]["contract_identity"]["counts"]["policies"],
             0
         );
+        let snapshot_hash = json["receipt"]["contract_snapshot_hash"].as_str().unwrap();
+        assert!(snapshot_hash.starts_with("sha256:"));
+        assert!(json["receipt"]["contract_snapshot_ref"].is_null());
     }
 
     #[test]

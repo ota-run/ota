@@ -37,6 +37,7 @@ use jsonschema::{Draft, JSONSchema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 use serde_yaml::{Mapping, Value as YamlValue};
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::macros::format_description;
 
@@ -22726,6 +22727,7 @@ pub fn receipt(
                         &text_path_display,
                         &path_display,
                         &target.contract_path,
+                        &target.contract,
                         &receipt,
                         &findings,
                         baseline,
@@ -22737,6 +22739,16 @@ pub fn receipt(
                 let root = contract_working_dir(&target.contract_path);
                 let contract_identity =
                     repo_receipt_contract_identity(&root, &target.contract_path);
+                let snapshot =
+                    match build_contract_snapshot_artifact(&root, &target.contract, archive) {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => return CommandOutput::failure(error),
+                    };
+                receipt.contract_snapshot_hash = Some(snapshot.hash);
+                receipt.contract_snapshot_ref = snapshot
+                    .archive_path
+                    .as_deref()
+                    .map(receipt_storage_path_display);
                 let (archive_path, promoted_baseline) = if archive {
                     let root = contract_working_dir(&target.contract_path);
                     let archive_path = match next_receipt_archive_path(&root, "repo-receipt") {
@@ -29790,9 +29802,19 @@ pub fn workspace_receipt(
 
     finalize_debug(
         match load_and_run_workspace_receipt(&resolved_path, jobs) {
-            Ok(mut report) => {
+            Ok((workspace_contract, mut report)) => {
+                let root = resolved_path.parent().unwrap_or_else(|| Path::new("."));
+                let snapshot =
+                    match build_contract_snapshot_artifact(root, &workspace_contract, archive) {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => return CommandOutput::failure(error),
+                    };
+                report.receipt.contract_snapshot_hash = Some(snapshot.hash);
+                report.receipt.contract_snapshot_ref = snapshot
+                    .archive_path
+                    .as_deref()
+                    .map(receipt_storage_path_display);
                 let archive_path = if archive {
-                    let root = resolved_path.parent().unwrap_or_else(|| Path::new("."));
                     let archive_path = match next_receipt_archive_path(root, "workspace-receipt") {
                         Ok(path) => path,
                         Err(error) => return CommandOutput::failure(error),
@@ -30903,6 +30925,112 @@ fn receipt_archive_dir(root: &Path) -> PathBuf {
     root.join(".ota").join("receipts")
 }
 
+fn contract_snapshot_archive_dir(root: &Path) -> PathBuf {
+    root.join(".ota").join("contracts")
+}
+
+struct ContractSnapshotArtifact {
+    hash: String,
+    archive_path: Option<PathBuf>,
+}
+
+fn normalized_contract_snapshot_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
+    let normalized = serde_json::to_value(value)
+        .map_err(|error| format!("failed to normalize contract snapshot value: {error}"))?;
+    serde_json::to_vec_pretty(&normalize_semantic_json(normalized))
+        .map_err(|error| format!("failed to serialize normalized contract snapshot: {error}"))
+}
+
+fn contract_snapshot_hash(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    format!("sha256:{hex}")
+}
+
+fn contract_snapshot_archive_file_name(hash: &str) -> String {
+    format!("{}.json", hash.replace(':', "-"))
+}
+
+fn write_contract_snapshot_archive(
+    root: &Path,
+    hash: &str,
+    snapshot_json: &[u8],
+) -> Result<PathBuf, String> {
+    let archive_dir = contract_snapshot_archive_dir(root);
+    fs::create_dir_all(&archive_dir).map_err(|error| {
+        format!(
+            "failed to create contract snapshot archive directory `{}`: {error}",
+            compact_path(&archive_dir, ".")
+        )
+    })?;
+    let archive_path = archive_dir.join(contract_snapshot_archive_file_name(hash));
+    if !archive_path.exists() {
+        fs::write(&archive_path, snapshot_json).map_err(|error| {
+            format!(
+                "failed to write contract snapshot archive `{}`: {error}",
+                compact_path(&archive_path, ".")
+            )
+        })?;
+    }
+    Ok(archive_path)
+}
+
+fn build_contract_snapshot_artifact<T: Serialize>(
+    root: &Path,
+    value: &T,
+    archive: bool,
+) -> Result<ContractSnapshotArtifact, String> {
+    let snapshot_json = normalized_contract_snapshot_json(value)?;
+    let hash = contract_snapshot_hash(&snapshot_json);
+    let archive_path = if archive {
+        Some(write_contract_snapshot_archive(
+            root,
+            &hash,
+            &snapshot_json,
+        )?)
+    } else {
+        None
+    };
+    Ok(ContractSnapshotArtifact { hash, archive_path })
+}
+
+fn normalize_semantic_json(value: JsonValue) -> JsonValue {
+    prune_semantic_json("", value).unwrap_or_else(|| JsonValue::Object(Default::default()))
+}
+
+fn prune_semantic_json(path: &str, value: JsonValue) -> Option<JsonValue> {
+    match value {
+        JsonValue::Null => None,
+        JsonValue::Bool(false) => None,
+        JsonValue::String(value) if value.trim().is_empty() => None,
+        JsonValue::Array(values) => {
+            let values = values
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, value)| {
+                    let child_path = append_diff_path(path, &format!("[{index}]"));
+                    prune_semantic_json(&child_path, value)
+                })
+                .collect::<Vec<_>>();
+            (!values.is_empty()).then_some(JsonValue::Array(values))
+        }
+        JsonValue::Object(map) => {
+            let mut normalized = serde_json::Map::new();
+            for (key, value) in map {
+                let child_path = append_diff_path(path, &key);
+                if let Some(value) = prune_semantic_json(&child_path, value) {
+                    normalized.insert(key, value);
+                }
+            }
+            (!normalized.is_empty()).then_some(JsonValue::Object(normalized))
+        }
+        other => Some(other),
+    }
+}
+
 fn receipt_baseline_path(root: &Path) -> PathBuf {
     receipt_archive_dir(root).join(DEFAULT_RECEIPT_BASELINE_FILE)
 }
@@ -31555,12 +31683,88 @@ fn load_repo_receipt_baseline(
     })
 }
 
+fn archived_repo_receipt_snapshot(
+    record: &RepoReceiptArchiveRecord,
+) -> Result<Option<JsonValue>, String> {
+    let Some(snapshot_ref) = record
+        .payload
+        .receipt
+        .contract_snapshot_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    let snapshot_path = resolve_diff_snapshot_ref(&record.archive_path, snapshot_ref);
+    let contents = fs::read_to_string(&snapshot_path).map_err(|error| {
+        format!(
+            "failed to load archived contract snapshot `{}` referenced by receipt archive `{}`: {error}",
+            snapshot_path.display(),
+            record.archive_path.display()
+        )
+    })?;
+    serde_json::from_str(&contents).map(Some).map_err(|error| {
+        format!(
+            "failed to parse archived contract snapshot `{}` referenced by receipt archive `{}`: {error}",
+            snapshot_path.display(),
+            record.archive_path.display()
+        )
+    })
+}
+
+fn normalized_contract_snapshot_value<T: Serialize>(value: &T) -> Result<JsonValue, String> {
+    serde_json::to_value(value)
+        .map(normalize_semantic_json)
+        .map_err(|error| format!("failed to normalize contract snapshot value: {error}"))
+}
+
+fn likely_related_contract_change(change: &DiffChange, finding: &Finding) -> bool {
+    let summary = finding.summary.trim();
+    if let Some(variable) = summary.strip_prefix("Missing environment variable: ") {
+        return change.path == format!("env.vars.{variable}.required");
+    }
+    if let Some(tool) = summary.strip_prefix("Missing tool: ") {
+        return change.path == format!("tools.{tool}")
+            || change.path.contains(&format!(".requirements.tools.{tool}"));
+    }
+    if summary == "No tasks defined in contract" {
+        return change.path.starts_with("tasks.");
+    }
+    false
+}
+
+fn receipt_diff_likely_related_changes(
+    contract_changes: &[DiffChange],
+    introduced: &[Finding],
+) -> Vec<DiffChange> {
+    let mut seen = BTreeSet::new();
+    let mut related = Vec::new();
+    for finding in introduced
+        .iter()
+        .filter(|finding| finding.severity == FindingSeverity::Error)
+    {
+        for change in contract_changes {
+            if likely_related_contract_change(change, finding) && seen.insert(change.path.clone()) {
+                related.push(change.clone());
+            }
+        }
+    }
+    related
+}
+
 fn build_repo_receipt_diff_report(
     baseline: ResolvedRepoReceiptBaseline,
+    current_contract: &Contract,
     current_contract_identity: String,
     current_receipt: &ExecutionReceipt,
     current_findings: &[Finding],
-) -> RepoReceiptDiffReport {
+) -> Result<RepoReceiptDiffReport, String> {
+    let baseline_snapshot = archived_repo_receipt_snapshot(&baseline.record)?;
+    let current_snapshot_json = normalized_contract_snapshot_json(current_contract)?;
+    let current_snapshot_hash =
+        Some(contract_snapshot_hash(&current_snapshot_json))
+            .or_else(|| current_receipt.contract_snapshot_hash.clone());
     let mut baseline_remaining = BTreeMap::new();
     for finding in &baseline.record.payload.findings {
         *baseline_remaining
@@ -31614,6 +31818,8 @@ fn build_repo_receipt_diff_report(
         promoted_at: baseline.promoted_at,
         contract_identity: baseline.contract_identity,
         contract_identity_details: baseline.record.payload.receipt.contract_identity,
+        contract_snapshot_hash: baseline.record.payload.receipt.contract_snapshot_hash,
+        contract_snapshot_ref: baseline.record.payload.receipt.contract_snapshot_ref,
         ok: baseline.record.payload.ok,
         contract: baseline.record.payload.receipt.contract,
         status: baseline.record.payload.receipt.status,
@@ -31630,6 +31836,8 @@ fn build_repo_receipt_diff_report(
         contract: current_receipt.contract.clone(),
         contract_identity: Some(current_contract_identity),
         contract_identity_details: current_receipt.contract_identity.clone(),
+        contract_snapshot_hash: current_snapshot_hash,
+        contract_snapshot_ref: current_receipt.contract_snapshot_ref.clone(),
         status: current_receipt.status.clone(),
         backend: current_receipt.backend.clone(),
         target: current_receipt.target.clone(),
@@ -31657,6 +31865,15 @@ fn build_repo_receipt_diff_report(
         None,
         &current.contract,
     );
+    let contract_changes = match baseline_snapshot {
+        Some(baseline_snapshot) => {
+            let current_snapshot = normalized_contract_snapshot_value(current_contract)?;
+            collect_diff_changes(&baseline_snapshot, &current_snapshot)
+        }
+        None => Vec::new(),
+    };
+    let likely_related_changes =
+        receipt_diff_likely_related_changes(&contract_changes, &introduced);
     let summary = ReceiptDiffSummary {
         baseline_ok: baseline.ok,
         current_ok: current.ok,
@@ -31665,20 +31882,29 @@ fn build_repo_receipt_diff_report(
             current_identity_label: current_identity_label.clone(),
             identity_changed,
             readiness_change: receipt_diff_readiness_change(baseline.ok, current.ok),
+            contract_snapshot_changed: match (
+                baseline.contract_snapshot_hash.as_deref(),
+                current.contract_snapshot_hash.as_deref(),
+            ) {
+                (Some(baseline_hash), Some(current_hash)) => Some(baseline_hash != current_hash),
+                _ => None,
+            },
         },
         introduced: receipt_diff_counts(&introduced),
         resolved: receipt_diff_counts(&resolved),
         unchanged: receipt_diff_counts(&unchanged),
     };
 
-    RepoReceiptDiffReport {
+    Ok(RepoReceiptDiffReport {
         baseline,
         current,
         summary,
+        contract_changes,
+        likely_related_changes,
         introduced,
         resolved,
         unchanged,
-    }
+    })
 }
 
 fn render_receipt_diff_counts(counts: &ReceiptDiffCounts) -> String {
@@ -31936,6 +32162,7 @@ fn render_repo_receipt_diff(
     text_path: &str,
     json_path: &str,
     contract_path: &Path,
+    current_contract: &Contract,
     current_receipt: &ExecutionReceipt,
     current_findings: &[Finding],
     baseline: &str,
@@ -31965,12 +32192,33 @@ fn render_repo_receipt_diff(
         }
     };
     let current_contract_identity = repo_receipt_contract_identity(root, contract_path);
-    let report = build_repo_receipt_diff_report(
+    let report = match build_repo_receipt_diff_report(
         baseline,
+        current_contract,
         current_contract_identity,
         current_receipt,
         current_findings,
-    );
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: json_path,
+                        errors: vec![error],
+                        error: None,
+                        warnings: Vec::new(),
+                        warning_details: Vec::new(),
+                    }),
+                    stderr: None,
+                    exit_code: 1,
+                },
+            };
+        }
+    };
     let gate = build_receipt_diff_gate(&report.summary, &report.introduced, fail_on_new_blockers);
     let exit_code = gate
         .as_ref()
@@ -32064,6 +32312,22 @@ fn render_repo_receipt_diff(
                     compact_path(Path::new(archive_path), ".")
                 ));
             }
+            if let Some(snapshot_hash) = report.baseline.contract_snapshot_hash.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Baseline snapshot:"),
+                    snapshot_hash
+                ));
+            }
+            if let Some(snapshot_hash) = report.current.contract_snapshot_hash.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Current snapshot:"),
+                    snapshot_hash
+                ));
+            }
             stdout.push_str(&format!(
                 "\n {}  {} {} ({}) -> {} ({})",
                 summary_bullet(),
@@ -32083,6 +32347,20 @@ fn render_repo_receipt_diff(
                 paint_key("Drift:"),
                 render_receipt_diff_drift(&report.summary)
             ));
+            if let Some(contract_snapshot_changed) =
+                report.summary.comparison.contract_snapshot_changed
+            {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Contract snapshot drift:"),
+                    if contract_snapshot_changed {
+                        "changed"
+                    } else {
+                        "unchanged"
+                    }
+                ));
+            }
             stdout.push_str(&format!(
                 "\n {}  {} {}",
                 summary_bullet(),
@@ -32137,6 +32415,16 @@ fn render_repo_receipt_diff(
                 report.current.cwd.as_deref(),
                 &report.current.summary,
             );
+            render_diff_section(
+                &mut stdout,
+                "Contract Changes",
+                report.contract_changes.iter(),
+            );
+            render_diff_section(
+                &mut stdout,
+                "Likely Related Changes",
+                report.likely_related_changes.iter(),
+            );
             append_receipt_diff_grouped_section(
                 &mut stdout,
                 "Introduced Findings",
@@ -32173,6 +32461,8 @@ fn render_repo_receipt_diff(
                 current: report.current,
                 summary: report.summary,
                 gate,
+                contract_changes: report.contract_changes,
+                likely_related_changes: report.likely_related_changes,
                 introduced: report.introduced,
                 resolved: report.resolved,
                 unchanged: report.unchanged,
@@ -34595,6 +34885,12 @@ where
             }
             _ => {}
         }
+        if let Some(category) = change.category.as_deref() {
+            stdout.push_str(&format!("\n  {} {}", paint_key("Category:"), category));
+        }
+        if let Some(risk) = change.risk.as_deref() {
+            stdout.push_str(&format!("\n  {} {}", paint_key("Risk:"), risk));
+        }
         if let Some(provenance) = change.provenance.as_deref() {
             stdout.push_str(&format!("\n  {} {}", paint_key("Provenance:"), provenance));
         }
@@ -34606,6 +34902,30 @@ fn diff_change_provenance(path: &str) -> Option<String> {
         Some(String::from("policy"))
     } else {
         None
+    }
+}
+
+fn diff_change_category(path: &str) -> &'static str {
+    let root = path.split('.').next().unwrap_or(path);
+    match root {
+        "env" => "env",
+        "services" => "service",
+        "tasks" | "checks" => "task",
+        "workflows" => "workflow",
+        "execution" | "native_prerequisites" => "execution",
+        "agent" => "agent",
+        "policies" => "policy",
+        "runtimes" | "toolchains" | "tools" => "toolchain",
+        "project" | "metadata" => "topology",
+        _ => "runtime",
+    }
+}
+
+fn diff_change_risk(path: &str) -> &'static str {
+    match diff_change_category(path) {
+        "env" | "service" | "workflow" | "execution" | "agent" | "policy" => "high",
+        "task" | "toolchain" | "runtime" => "medium",
+        _ => "low",
     }
 }
 
@@ -34639,137 +34959,98 @@ fn diff_readiness_impact(summary: &DiffSummary) -> &'static str {
     }
 }
 
-fn collect_diff_changes(base: &YamlValue, target: &YamlValue) -> Vec<DiffChange> {
+#[derive(Debug, Clone)]
+struct DiffAssumption {
+    category: String,
+    risk: String,
+    value: JsonValue,
+}
+
+fn collect_diff_changes(base: &JsonValue, target: &JsonValue) -> Vec<DiffChange> {
+    let base = collect_diff_assumptions(base);
+    let target = collect_diff_assumptions(target);
+    let mut keys = BTreeSet::new();
+    keys.extend(base.keys().cloned());
+    keys.extend(target.keys().cloned());
+
     let mut changes = Vec::new();
-    collect_diff_changes_at(base, target, "", &mut changes);
+    for key in keys {
+        let base_value = base.get(&key);
+        let target_value = target.get(&key);
+        match (base_value, target_value) {
+            (Some(base_value), Some(target_value)) if base_value.value == target_value.value => {}
+            (Some(base_value), Some(target_value)) => changes.push(DiffChange {
+                path: key.clone(),
+                status: String::from("change"),
+                category: Some(base_value.category.clone()),
+                risk: Some(base_value.risk.clone()),
+                base: Some(render_json_inline(&base_value.value)),
+                target: Some(render_json_inline(&target_value.value)),
+                provenance: diff_change_provenance(&key),
+            }),
+            (None, Some(target_value)) => changes.push(DiffChange {
+                path: key.clone(),
+                status: String::from("add"),
+                category: Some(target_value.category.clone()),
+                risk: Some(target_value.risk.clone()),
+                base: None,
+                target: Some(render_json_inline(&target_value.value)),
+                provenance: diff_change_provenance(&key),
+            }),
+            (Some(base_value), None) => changes.push(DiffChange {
+                path: key.clone(),
+                status: String::from("remove"),
+                category: Some(base_value.category.clone()),
+                risk: Some(base_value.risk.clone()),
+                base: Some(render_json_inline(&base_value.value)),
+                target: None,
+                provenance: diff_change_provenance(&key),
+            }),
+            (None, None) => {}
+        }
+    }
     changes
 }
 
-fn collect_diff_changes_at(
-    base: &YamlValue,
-    target: &YamlValue,
-    path: &str,
-    changes: &mut Vec<DiffChange>,
-) {
-    match (base, target) {
-        (YamlValue::Mapping(base_map), YamlValue::Mapping(target_map)) => {
-            let mut keys = BTreeSet::new();
-            for key in base_map.keys() {
-                keys.insert(render_yaml_key(key));
-            }
-            for key in target_map.keys() {
-                keys.insert(render_yaml_key(key));
-            }
+fn collect_diff_assumptions(value: &JsonValue) -> BTreeMap<String, DiffAssumption> {
+    let mut assumptions = BTreeMap::new();
+    collect_diff_assumptions_at(value, "", &mut assumptions);
+    assumptions
+}
 
-            for key in keys {
-                let base_key = base_map
-                    .keys()
-                    .find(|candidate| render_yaml_key(candidate) == key);
-                let target_key = target_map
-                    .keys()
-                    .find(|candidate| render_yaml_key(candidate) == key);
-                let base_value = base_key.and_then(|candidate| base_map.get(candidate));
-                let target_value = target_key.and_then(|candidate| target_map.get(candidate));
-                let child_path = append_diff_path(path, &key);
-                match (base_value, target_value) {
-                    (Some(base_value), Some(target_value)) => {
-                        collect_diff_changes_at(base_value, target_value, &child_path, changes);
-                    }
-                    (Some(base_value), None) => {
-                        emit_diff_removals(base_value, &child_path, changes)
-                    }
-                    (None, Some(target_value)) => {
-                        emit_diff_additions(target_value, &child_path, changes)
-                    }
-                    (None, None) => {}
-                }
+fn collect_diff_assumptions_at(
+    value: &JsonValue,
+    path: &str,
+    assumptions: &mut BTreeMap<String, DiffAssumption>,
+) {
+    match value {
+        JsonValue::Object(map) if !map.is_empty() => {
+            for (key, child) in map {
+                let child_path = append_diff_path(path, key);
+                collect_diff_assumptions_at(child, &child_path, assumptions);
             }
         }
-        (YamlValue::Sequence(base_seq), YamlValue::Sequence(target_seq)) => {
-            let len = base_seq.len().max(target_seq.len());
-            for index in 0..len {
+        JsonValue::Array(array) if !array.is_empty() => {
+            for (index, child) in array.iter().enumerate() {
                 let child_path = append_diff_path(path, &format!("[{index}]"));
-                match (base_seq.get(index), target_seq.get(index)) {
-                    (Some(base_value), Some(target_value)) => {
-                        collect_diff_changes_at(base_value, target_value, &child_path, changes);
-                    }
-                    (Some(base_value), None) => {
-                        emit_diff_removals(base_value, &child_path, changes)
-                    }
-                    (None, Some(target_value)) => {
-                        emit_diff_additions(target_value, &child_path, changes)
-                    }
-                    (None, None) => {}
-                }
+                collect_diff_assumptions_at(child, &child_path, assumptions);
             }
         }
-        _ if base == target => {}
-        _ => changes.push(DiffChange {
-            path: if path.is_empty() {
+        _ => {
+            let key = if path.is_empty() {
                 String::from("root")
             } else {
                 path.to_string()
-            },
-            status: String::from("change"),
-            base: Some(render_yaml_inline(base)),
-            target: Some(render_yaml_inline(target)),
-            provenance: diff_change_provenance(path),
-        }),
-    }
-}
-
-fn emit_diff_additions(value: &YamlValue, path: &str, changes: &mut Vec<DiffChange>) {
-    match value {
-        YamlValue::Mapping(map) if !map.is_empty() => {
-            for (key, child) in map {
-                let child_path = append_diff_path(path, &render_yaml_key(key));
-                emit_diff_additions(child, &child_path, changes);
-            }
+            };
+            assumptions.insert(
+                key.clone(),
+                DiffAssumption {
+                    category: diff_change_category(&key).to_string(),
+                    risk: diff_change_risk(&key).to_string(),
+                    value: value.clone(),
+                },
+            );
         }
-        YamlValue::Sequence(sequence) if !sequence.is_empty() => {
-            for (index, child) in sequence.iter().enumerate() {
-                let child_path = append_diff_path(path, &format!("[{index}]"));
-                emit_diff_additions(child, &child_path, changes);
-            }
-        }
-        _ => changes.push(DiffChange {
-            path: path.to_string(),
-            status: String::from("add"),
-            base: None,
-            target: Some(render_yaml_inline(value)),
-            provenance: diff_change_provenance(path),
-        }),
-    }
-}
-
-fn emit_diff_removals(value: &YamlValue, path: &str, changes: &mut Vec<DiffChange>) {
-    match value {
-        YamlValue::Mapping(map) if !map.is_empty() => {
-            for (key, child) in map {
-                let child_path = append_diff_path(path, &render_yaml_key(key));
-                emit_diff_removals(child, &child_path, changes);
-            }
-        }
-        YamlValue::Sequence(sequence) if !sequence.is_empty() => {
-            for (index, child) in sequence.iter().enumerate() {
-                let child_path = append_diff_path(path, &format!("[{index}]"));
-                emit_diff_removals(child, &child_path, changes);
-            }
-        }
-        _ => changes.push(DiffChange {
-            path: path.to_string(),
-            status: String::from("remove"),
-            base: Some(render_yaml_inline(value)),
-            target: None,
-            provenance: diff_change_provenance(path),
-        }),
-    }
-}
-
-fn render_yaml_key(key: &YamlValue) -> String {
-    match key {
-        YamlValue::String(value) => value.clone(),
-        _ => render_yaml_inline(key),
     }
 }
 
@@ -34783,27 +35064,112 @@ fn append_diff_path(path: &str, segment: &str) -> String {
     }
 }
 
-fn render_yaml_inline(value: &YamlValue) -> String {
-    let rendered = serde_yaml::to_string(value).unwrap_or_else(|_| format!("{value:?}"));
-    rendered
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed == "---" {
-                None
-            } else {
-                Some(trimmed)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+fn render_json_inline(value: &JsonValue) -> String {
+    let rendered = serde_json::to_string(value).unwrap_or_else(|_| format!("{value:?}"));
+    rendered.trim().to_string()
 }
 
-fn load_diff_contract(path: &Path) -> Result<YamlValue, String> {
-    let contents = fs::read_to_string(path)
-        .map_err(|error| format!("failed to load contract `{}`: {error}", path.display()))?;
-    serde_yaml::from_str(&contents)
-        .map_err(|error| format!("failed to parse contract `{}`: {error}", path.display()))
+fn load_diff_contract(path: &Path) -> Result<JsonValue, String> {
+    if path.extension().and_then(|value| value.to_str()) == Some("json") {
+        return load_diff_json_input(path);
+    }
+
+    match load_contract(path) {
+        Ok(contract) => serde_json::to_value(contract)
+            .map(normalize_semantic_json)
+            .map_err(|error| format!("failed to normalize contract `{}`: {error}", path.display())),
+        Err(contract_error) => load_workspace_contract(path)
+            .map_err(|workspace_error| {
+                format!(
+                    "failed to load semantic diff input `{}`: {}; workspace fallback also failed: {}",
+                    path.display(),
+                    contract_error,
+                    workspace_error
+                )
+            })
+            .and_then(|workspace| {
+                serde_json::to_value(workspace).map(normalize_semantic_json).map_err(|error| {
+                    format!(
+                        "failed to normalize workspace contract `{}`: {error}",
+                        path.display()
+                    )
+                })
+            }),
+    }
+}
+
+fn load_diff_json_input(path: &Path) -> Result<JsonValue, String> {
+    let contents = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "failed to load semantic diff input `{}`: {error}",
+            path.display()
+        )
+    })?;
+    let json: JsonValue = serde_json::from_str(&contents).map_err(|error| {
+        format!(
+            "failed to parse semantic diff input `{}`: {error}",
+            path.display()
+        )
+    })?;
+
+    if let Some(snapshot) = diff_snapshot_from_receipt_json(path, &json)? {
+        return Ok(normalize_semantic_json(snapshot));
+    }
+
+    Ok(normalize_semantic_json(json))
+}
+
+fn diff_snapshot_from_receipt_json(
+    path: &Path,
+    json: &JsonValue,
+) -> Result<Option<JsonValue>, String> {
+    let Some(receipt) = json.get("receipt") else {
+        return Ok(None);
+    };
+    if !receipt.is_object() {
+        return Ok(None);
+    }
+    let Some(snapshot_ref) = receipt
+        .get("contract_snapshot_ref")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Err(format!(
+            "receipt `{}` does not carry `receipt.contract_snapshot_ref`; rerun `ota receipt --json --archive` or pass the archived `.ota/contracts/...` snapshot file directly",
+            path.display()
+        ));
+    };
+    let snapshot_path = resolve_diff_snapshot_ref(path, snapshot_ref);
+    let contents = fs::read_to_string(&snapshot_path).map_err(|error| {
+        format!(
+            "failed to load archived contract snapshot `{}` referenced by `{}`: {error}",
+            snapshot_path.display(),
+            path.display()
+        )
+    })?;
+    let snapshot = serde_json::from_str(&contents).map_err(|error| {
+        format!(
+            "failed to parse archived contract snapshot `{}` referenced by `{}`: {error}",
+            snapshot_path.display(),
+            path.display()
+        )
+    })?;
+    Ok(Some(snapshot))
+}
+
+fn resolve_diff_snapshot_ref(receipt_path: &Path, snapshot_ref: &str) -> PathBuf {
+    let snapshot_path = Path::new(snapshot_ref);
+    if snapshot_path.is_absolute() {
+        return snapshot_path.to_path_buf();
+    }
+    if let Some(root) = repo_root_from_archive_path(receipt_path) {
+        return root.join(snapshot_path);
+    }
+    receipt_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(snapshot_path)
 }
 
 fn resolve_diff_contract_path(path: &Path) -> Result<PathBuf, String> {
@@ -34811,7 +35177,16 @@ fn resolve_diff_contract_path(path: &Path) -> Result<PathBuf, String> {
         return Ok(path.to_path_buf());
     }
     if path.is_dir() {
-        return resolve_explicit_contract_dir(path).map_err(|error| error.to_string());
+        if let Ok(contract) = resolve_explicit_contract_dir(path) {
+            return Ok(contract);
+        }
+        if let Ok(workspace) = resolve_explicit_workspace_dir(path) {
+            return Ok(workspace);
+        }
+        return Err(format!(
+            "diff path `{}` must contain `ota.yaml`, `ota.workspace.yaml`, or point to a supported contract or snapshot file",
+            path.display()
+        ));
     }
     Err(format!(
         "contract path does not exist: `{}`",
@@ -50068,6 +50443,8 @@ env:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -54634,6 +55011,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -54717,6 +55096,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: None,
@@ -54914,6 +55295,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -54979,6 +55362,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -55073,6 +55458,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -55189,6 +55576,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -55266,6 +55655,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -55407,6 +55798,8 @@ tasks:
                 scope: String::from("repo"),
                 contract: String::from("./ota.yaml"),
                 contract_identity: None,
+                contract_snapshot_hash: None,
+                contract_snapshot_ref: None,
                 workspace: None,
                 backend: None,
                 context: None,
@@ -62115,6 +62508,8 @@ agent:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -63557,6 +63952,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -63612,6 +64009,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -63667,6 +64066,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -63739,6 +64140,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("development")),
@@ -63811,6 +64214,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -63924,6 +64329,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -64025,6 +64432,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -64134,6 +64543,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -64191,6 +64602,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -66984,6 +67397,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -67063,6 +67478,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -67127,6 +67544,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -67194,6 +67613,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -67255,6 +67676,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -67316,6 +67739,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -67383,6 +67808,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -68206,6 +68633,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -68347,6 +68776,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -68448,6 +68879,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("sandbox:ctx")),
@@ -69052,6 +69485,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -69144,6 +69579,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: Some(String::from("dev")),
@@ -69222,6 +69659,8 @@ tasks:
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: Some(String::from("dev")),
@@ -77973,6 +78412,8 @@ fn run_execution_receipt_with_shared(
         scope: String::from("repo"),
         contract: contract_path.display().to_string(),
         contract_identity: Some(repo_contract_identity(contract)),
+        contract_snapshot_hash: None,
+        contract_snapshot_ref: None,
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         context,
@@ -84643,6 +85084,8 @@ struct RepoReceiptDiffReport {
     baseline: ReceiptDiffBaseline,
     current: ReceiptDiffSide,
     summary: ReceiptDiffSummary,
+    contract_changes: Vec<DiffChange>,
+    likely_related_changes: Vec<DiffChange>,
     introduced: Vec<Finding>,
     resolved: Vec<Finding>,
     unchanged: Vec<Finding>,
@@ -84767,6 +85210,10 @@ struct ArchivedRepoReceiptData {
     contract: String,
     #[serde(default)]
     contract_identity: Option<ContractIdentity>,
+    #[serde(default)]
+    contract_snapshot_hash: Option<String>,
+    #[serde(default)]
+    contract_snapshot_ref: Option<String>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
@@ -85342,6 +85789,8 @@ fn repo_execution_receipt(
         scope: String::from("repo"),
         contract: path.display().to_string(),
         contract_identity: Some(repo_contract_identity(contract)),
+        contract_snapshot_hash: None,
+        contract_snapshot_ref: None,
         workspace: None,
         backend: context.backend,
         context: context.context,
@@ -86046,6 +86495,8 @@ fn workspace_up_receipt(
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
         contract_identity: Some(contract_identity.clone()),
+        contract_snapshot_hash: None,
+        contract_snapshot_ref: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -86132,6 +86583,8 @@ fn workspace_status_receipt(
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
         contract_identity: Some(contract_identity.clone()),
+        contract_snapshot_hash: None,
+        contract_snapshot_ref: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -86219,6 +86672,8 @@ fn workspace_run_receipt(
         scope: String::from("workspace"),
         contract: workspace_path.display().to_string(),
         contract_identity: Some(contract_identity.clone()),
+        contract_snapshot_hash: None,
+        contract_snapshot_ref: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -91518,17 +91973,21 @@ fn load_and_run_workspace_status(
 fn load_and_run_workspace_receipt(
     path: &Path,
     jobs: usize,
-) -> Result<WorkspaceReceiptReport, WorkspaceProblem> {
+) -> Result<(crate::workspace::WorkspaceContract, WorkspaceReceiptReport), WorkspaceProblem> {
+    let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let (workspace_name, workspace_identity, mut report) =
         load_workspace_status_report(path, jobs)?;
     normalize_workspace_status_followups(&mut report);
     let receipt = workspace_status_receipt(path, &workspace_identity, &workspace_name, &report);
 
-    Ok(WorkspaceReceiptReport {
-        receipt,
-        repos: report.repos,
-        archive_path: None,
-    })
+    Ok((
+        workspace,
+        WorkspaceReceiptReport {
+            receipt,
+            repos: report.repos,
+            archive_path: None,
+        },
+    ))
 }
 
 #[derive(Clone, Debug, Default)]

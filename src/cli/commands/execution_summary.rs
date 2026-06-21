@@ -781,6 +781,8 @@ mod tests {
             scope: String::from("repo"),
             contract: String::from("./ota.yaml"),
             contract_identity: None,
+            contract_snapshot_hash: None,
+            contract_snapshot_ref: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("development")),

@@ -135,7 +135,8 @@ human text output:
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results; workspace repo results may also include additive `next` / `next_steps`
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results; repo results may also include additive `next` / `next_steps`
 - `ota workspace receipt --json`: use the top-level `summary`, `receipt`, and per-repo results
-- `ota diff --json`: use the readiness-impact summary and changes
+- `ota diff --json`: use the readiness-impact summary and semantic `changes[]`; archived receipt
+  JSON and archived `.ota/contracts/...` snapshot JSON are also valid diff inputs
 - `ota explain --json`: use grouped `actions` for the ordered remediation plan and `steps` for stable finding-level detail
 
 Hosted CI can use the same fields as annotations or check-run summaries:
@@ -3551,6 +3552,8 @@ selected or effective workflow owns a rendered env artifact, receipt JSON keeps 
         "tasks": 1
       }
     },
+    "contract_snapshot_hash": "sha256:5dc5c7f6e0bf...",
+    "contract_snapshot_ref": ".ota/contracts/sha256-5dc5c7f6e0bf....json",
     "backend": "native",
     "workflow_env_artifacts": [
       {
@@ -3593,6 +3596,10 @@ Current receipt JSON fields:
 The nested `receipt` object can also include:
 
 - `contract_identity` with the declared project, selected metadata, execution intent, and compact contract counts
+- `contract_snapshot_hash` with the normalized semantic contract snapshot identity used for this
+  receipt; the hash is content-addressed and stable across formatting-only contract edits
+- `contract_snapshot_ref` when Ota archived the normalized snapshot under `.ota/contracts`; plain
+  read-only receipt JSON can still emit the hash without emitting a local archive ref
 - `backend`
 - `workflow_env_artifacts` when the selected or effective workflow owns one rendered env artifact;
   each entry reports `path`, `kind`, `profile`, `includes`, `exists`, and the consuming
@@ -3646,6 +3653,8 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
     "archived_at": "2026-04-12T10:10:10.123Z",
     "promoted_at": "2026-04-12T10:20:30.456Z",
     "contract_identity": "ota.yaml",
+    "contract_snapshot_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "contract_snapshot_ref": ".ota/contracts/sha256-1111111111111111111111111111111111111111111111111111111111111111.json",
     "contract_identity_details": {
       "project": {
         "name": "receipt-diff"
@@ -3668,6 +3677,7 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
     "ok": false,
     "contract": "/abs/path/to/ota.yaml",
     "contract_identity": "ota.yaml",
+    "contract_snapshot_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
     "contract_identity_details": {
       "project": {
         "name": "receipt-diff"
@@ -3692,7 +3702,8 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
       "baseline_identity_label": "ota.yaml",
       "current_identity_label": "ota.yaml",
       "identity_changed": false,
-      "readiness_change": "unchanged"
+      "readiness_change": "unchanged",
+      "contract_snapshot_changed": true
     },
     "introduced": {
       "count": 1,
@@ -3713,6 +3724,22 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
       "info_count": 0
     }
   },
+  "contract_changes": [
+    {
+      "path": "env.vars.OTA_BASELINE_REQUIRED.required",
+      "status": "add",
+      "category": "env",
+      "risk": "medium"
+    }
+  ],
+  "likely_related_changes": [
+    {
+      "path": "env.vars.OTA_BASELINE_REQUIRED.required",
+      "status": "add",
+      "category": "env",
+      "risk": "medium"
+    }
+  ],
   "gate": {
     "rule": "fail_on_new_blockers",
     "passed": false,
@@ -3751,6 +3778,8 @@ Current receipt diff JSON fields:
 - `baseline.archived_at` (when the baseline file name encodes an archived timestamp)
 - `baseline.promoted_at` when compare selection came from a promoted baseline pointer
 - `baseline.contract_identity` when ota can resolve the repo-local contract identity for the selected baseline
+- `baseline.contract_snapshot_hash` when the archived baseline carries normalized semantic contract identity
+- `baseline.contract_snapshot_ref` when the archived baseline points at a normalized archived contract snapshot under `.ota/contracts`
 - `baseline.contract_identity_details` with the compact declared contract identity when the archived receipt recorded it
 - `baseline.ok`
 - `baseline.contract`
@@ -3759,15 +3788,18 @@ Current receipt diff JSON fields:
 - `current.ok`
 - `current.contract`
 - `current.contract_identity` with the current repo-local contract identity
+- `current.contract_snapshot_hash` with the normalized semantic contract hash for the current in-memory contract truth, even when the current receipt is not archived
 - `current.contract_identity_details` with the compact declared contract identity for the current receipt
 - `current.backend` / `current.lifecycle` when recorded
 - `current.summary`
 - `summary.baseline_ok`
 - `summary.current_ok`
-- additive `summary.comparison` with baseline/current identity labels plus compact `identity_changed` and `readiness_change` drift signals
+- additive `summary.comparison` with baseline/current identity labels plus compact `identity_changed`, `readiness_change`, and `contract_snapshot_changed` drift signals
 - `summary.introduced`
 - `summary.resolved`
 - `summary.unchanged`
+- additive `contract_changes[]` with semantic normalized contract diff entries between the archived baseline snapshot and the current contract truth when the baseline carries `receipt.contract_snapshot_ref`
+- additive `likely_related_changes[]` when ota can correlate one or more newly introduced blocker findings to those semantic contract changes
 - `gate.rule`, `gate.passed`, and `gate.new_blocker_count` when `--fail-on-new-blockers` is active
 - additive `gate.blocking_summary`, `gate.blocking_next`, and provenance fields when the gate is blocked by at least one newly introduced error
 - `introduced[]`

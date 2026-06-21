@@ -26,6 +26,19 @@
 
 ## Unreleased
 
+- added semantic contract snapshot identity to repo and workspace receipts, so
+  `ota receipt --json` and `ota workspace receipt --json` now emit a normalized
+  `receipt.contract_snapshot_hash` on every successful receipt and archive the matching
+  normalized contract JSON under `.ota/contracts/sha256-....json` when `--archive` is used
+- widened shipped `ota diff` onto normalized semantic contract truth, so diff no longer compares
+  raw YAML structure; it now compares normalized assumption keys, accepts archived receipt JSON
+  plus archived `.ota/contracts/...` snapshot JSON as inputs, and emits additive `category` /
+  `risk` metadata per changed assumption
+- added receipt-to-receipt semantic contract drift correlation, so `ota receipt --json --baseline`
+  now compares the selected archived baseline snapshot against current normalized contract truth
+  when available and emits additive `summary.comparison.contract_snapshot_changed`,
+  `contract_changes[]`, and `likely_related_changes[]`
+
 ## 1.6.21
 
 - fixed structured Helm dependency hydration so repository-cache state no longer lives under the

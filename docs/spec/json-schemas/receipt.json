@@ -96,6 +96,8 @@
                 }
               }
             },
+            "contract_snapshot_hash": { "type": "string" },
+            "contract_snapshot_ref": { "type": "string" },
             "workspace": { "type": "string" },
             "backend": { "type": "string" },
             "context": { "type": "string" },

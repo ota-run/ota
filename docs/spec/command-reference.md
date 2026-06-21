@@ -944,8 +944,11 @@ ota diff --json ./before/ota.yaml ./after/ota.yaml
 
 Current behavior:
 
-- compares two repo or workspace contracts as structured YAML
-- reports added, missing-in-target, and changed fields in deterministic order
+- compares two repo or workspace contracts as normalized semantic contract truth instead of raw
+  YAML structure
+- also accepts archived receipt JSON or archived `.ota/contracts/...` snapshot JSON as either side
+  of the comparison when you want to compare current truth against archived run truth
+- reports added, missing-in-target, and changed assumption keys in deterministic order
 - remains read-only
 - exits `0` when the comparison succeeds, even if differences exist
 - surfaces load and parse errors clearly
@@ -956,12 +959,15 @@ Text output:
 - `MATCH` or `DIFFERENT`
 - readiness impact summary
 - grouped added, missing-in-target, and changed paths
+- additive category and risk labels per changed assumption
 - policy-section changes may include provenance labels
 - summary counts at the end
 
 JSON output:
 
 - success: `ok`, `base`, `target`, `summary`, `changes`
+- `changes[]` now comes from normalized semantic assumptions and can also include additive
+  `category` and `risk`
 - policy-section changes may include `provenance`
 - failure: `ok`, `base`, `target`, and `error`
 
@@ -1740,6 +1746,8 @@ Current behavior:
   can also include additive `fulfilled` and `commands[]` evidence there
 - never provisions, runs tasks, starts services, or writes repo state
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
+- receipt JSON always includes a normalized `receipt.contract_snapshot_hash`; `--archive` also
+  materializes that normalized snapshot under `.ota/contracts`
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
 - `--archive --promote-baseline` also writes `.ota/receipts/repo-baseline.json`, pointing at the archived receipt as the repo's explicit promoted baseline
 - `--history` lists archived repo receipts from `.ota/receipts` newest first without loading or validating the current contract; explicit paths must be a repo directory or an `ota.yaml` file
@@ -1747,6 +1755,7 @@ Current behavior:
 - `--baseline latest` compares the current receipt against the newest valid archived repo receipt for the same contract under `.ota/receipts`
 - `--baseline <file>` compares the current receipt against an explicit repo receipt JSON file
 - compare mode is read-only and does not archive or mutate repo state; it exits `0` when the comparison itself succeeds, even if the current or baseline receipt is not ready
+- when the selected baseline receipt carries `receipt.contract_snapshot_ref`, compare mode also diffs the archived normalized contract snapshot against the current normalized contract truth and returns additive `contract_changes[]`, `likely_related_changes[]`, and `summary.comparison.contract_snapshot_changed` in JSON output
 - `--fail-on-new-blockers` requires `--baseline` and exits `1` when the diff introduces one or more new `severity: error` findings relative to the baseline
 
 Text output:

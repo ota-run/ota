@@ -40,8 +40,10 @@ Compare two ota contract states semantically.
 
 Current behavior:
 
-- compare repo contracts or workspace contracts as structured objects
-- report added, missing-in-target, and changed fields in deterministic order
+- compare repo contracts or workspace contracts as normalized semantic contract snapshots
+- accept archived receipt JSON or archived `.ota/contracts/...` snapshot JSON as a semantic diff
+  input when you want to compare archived run truth against current contract truth
+- report added, missing-in-target, and changed assumption keys in deterministic order
 - surface readiness impact directly instead of forcing users to infer it from raw YAML
 - preserve deterministic ordering in text and JSON output
 - remain read-only
@@ -62,11 +64,10 @@ Text output:
 JSON output:
 
 - `ok`
-- `path`
 - `base`
 - `target`
 - `summary`
-- `changes`, with optional `provenance` on policy-section changes
+- `changes`, with optional additive `category`, `risk`, and policy `provenance`
 
 ## `ota explain`
 
