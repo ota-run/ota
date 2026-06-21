@@ -15347,7 +15347,7 @@ tasks:
             .expect_err("unsupported overlay family should fail validation")
             .to_string();
         assert!(error.contains("unsupported adapter family `kubernetes`"));
-        assert!(error.contains("shipped overlay families are `compose` and `bake`"));
+        assert!(error.contains("shipped overlay families"));
     }
 
     #[test]

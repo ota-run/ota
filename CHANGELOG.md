@@ -26,6 +26,8 @@
 
 ## Unreleased
 
+## 1.6.21
+
 - fixed structured Helm dependency hydration so repository-cache state no longer lives under the
   chart tree and poison `helm dependency build` with oversized cached index files; the runner now
   keeps Helm repo state out of chart inputs while preserving deterministic per-chart isolation
