@@ -51536,6 +51536,14 @@ tasks:
             },
         );
         write_executable_script(
+            &fake_command_path(&bin_dir, "python"),
+            if cfg!(windows) {
+                "@echo off\r\necho Python 3.10.18\r\n"
+            } else {
+                "#!/bin/sh\necho 'Python 3.10.18'\n"
+            },
+        );
+        write_executable_script(
             &fake_command_path(&bin_dir, "python3.10"),
             if cfg!(windows) {
                 "@echo off\r\necho Python 3.10.18\r\n"

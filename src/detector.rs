@@ -495,7 +495,7 @@ impl DetectReport {
                     .toolchains
                     .entry(toolchain_name.to_string())
                     .or_insert_with(|| DetectToolchainSpec {
-                        provider: ToolchainProvider::Sdkman,
+                        provider: default_toolchain_provider(toolchain_name),
                         version: String::new(),
                         package_managers: BTreeMap::new(),
                         fulfillment: None,
@@ -513,6 +513,7 @@ impl DetectReport {
                             _ => toolchain.provider,
                         };
                     }
+
                     "version" => toolchain.version = inference.value.clone(),
                     package_manager if package_manager.starts_with("package_managers.") => {
                         if let Some(package_manager) =
@@ -633,6 +634,19 @@ impl DetectReport {
         normalize_detected_toolchains(&self.root, &mut contract);
 
         contract
+    }
+}
+
+fn default_toolchain_provider(toolchain_name: &str) -> ToolchainProvider {
+    match toolchain_name {
+        "node" => ToolchainProvider::Corepack,
+        "python" => ToolchainProvider::Uv,
+        "go" => ToolchainProvider::Go,
+        "ruby" => ToolchainProvider::Ruby,
+        "rust" => ToolchainProvider::Rustup,
+        "dotnet" => ToolchainProvider::Dotnet,
+        "java" => ToolchainProvider::Sdkman,
+        _ => ToolchainProvider::Sdkman,
     }
 }
 
