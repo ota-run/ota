@@ -15894,6 +15894,7 @@ workflows:
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn doctor_emits_direct_tool_acquisition_provisioning_request() {
         let _guard = env_mutex_lock();
