@@ -51,6 +51,7 @@ field is not emitted for that finding family.
 | `OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROFILES_OWNERSHIP` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_COMPOSE_PROJECT_NAME_OWNERSHIP` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_DUPLICATE_WORKFLOW_RENDERED_ENV_OWNERSHIP` | `contract` | `repo_contract` | `repo_contract` |
+| `OTA_CONTRACT_ADVISORY_EXCEPTIONAL_DEPENDENCY_HYDRATION_OVERRIDE` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_ISOLATED_YARN_RELEASE_SHADOW` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_LEGACY_NODE_RUNTIME_TOOL_SPLIT` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_LEGACY_STANDALONE_POETRY` | `contract` | `repo_contract` | `repo_contract` |
@@ -59,6 +60,8 @@ field is not emitted for that finding family.
 | `OTA_CONTRACT_ADVISORY_NATIVE_PACKAGE_MANAGER_LIKELY_WRONG_PLATFORM` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_REPLACEABLE_BAKE_FILE_OWNERSHIP` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP` | `contract` | `repo_contract` | `repo_contract` |
+| `OTA_CONTRACT_ADVISORY_REPLACEABLE_DEPENDENCY_HYDRATION` | `contract` | `repo_contract` | `repo_contract` |
+| `OTA_CONTRACT_ADVISORY_REPLACEABLE_FINITE_SHELL_COMMAND` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_CHECK` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_ENV_MUTATION` | `contract` | `repo_contract` | `repo_contract` |
 | `OTA_CONTRACT_ADVISORY_REPLACEABLE_SHELL_FILE_CHECK` | `contract` | `repo_contract` | `repo_contract` |
