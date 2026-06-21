@@ -78,6 +78,10 @@ V9.1 is active.
 
 - [V9.1 plan](docs/planning/v9.1/plan.md)
 
+## Next planned version
+
+- [V10 plan](docs/planning/v10/plan.md)
+
 ## Implemented foundation
 
 - repo contract validation and execution
@@ -92,8 +96,8 @@ V9.1 is active.
 - keep docs and active planning aligned with the canonical spec repo
 - keep extension and editor surfaces contract-bound
 - avoid widening into generic plugin-runtime scope
-- stage V10 execution receipts and semantic impact tooling as a separate version
-- stage V9 env resolution and provenance as a separate version
+- stage V10 semantic contract snapshots, assumption diffs, and failure correlation as a separate
+  version with first implementation targeted at `ota 1.6.22`
 
 ## Archived V2 shape
 
