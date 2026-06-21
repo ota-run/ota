@@ -1385,7 +1385,7 @@ fn starter_agent_from_detected_candidate(
         return None;
     }
 
-    let boundary = starter_agent_boundary_inference_for_detect_report(report);
+    let boundary = starter_agent_boundary_inference(contract, &report.root);
     starter_agent_config_from_parts(contract, &report.root, safe_tasks, boundary)
 }
 
@@ -1581,6 +1581,7 @@ fn starter_agent_writable_paths_with_semantic_roots(
     let mut added_nested_roots = false;
     let mut added_semantic_roots = false;
     let mut added_scanned_roots = false;
+    let mut added_effect_write_roots = false;
 
     for candidate in [
         "tests",
@@ -1668,6 +1669,17 @@ fn starter_agent_writable_paths_with_semantic_roots(
                 added_scanned_roots = true;
             }
         }
+
+        for task in contract.tasks.values() {
+            for write_path in &task.effects.writes {
+                if let Some(candidate) =
+                    starter_agent_writable_path_from_effect_write(root, write_path)
+                {
+                    writable_paths.insert(candidate);
+                    added_effect_write_roots = true;
+                }
+            }
+        }
     }
 
     if added_common_roots {
@@ -1684,6 +1696,9 @@ fn starter_agent_writable_paths_with_semantic_roots(
     }
     if added_scanned_roots {
         provenance.insert(format!("{provenance_prefix}:stack_source_scan"));
+    }
+    if added_effect_write_roots {
+        provenance.insert(format!("{provenance_prefix}:task_effect_writes"));
     }
 
     writable_paths.into_iter().collect()
@@ -2134,6 +2149,35 @@ fn starter_agent_valid_writable_path(root: &Path, candidate: &str) -> bool {
         .next()
         .and_then(|segment| segment.to_str());
     !first_segment.is_some_and(starter_agent_ignored_scan_dir)
+}
+
+fn starter_agent_writable_path_from_effect_write(root: &Path, write_path: &str) -> Option<String> {
+    let normalized = write_path
+        .trim()
+        .trim_start_matches("./")
+        .trim_start_matches('/');
+    if normalized.is_empty() || normalized == "." || normalized == ".." {
+        return None;
+    }
+    let first_segment = normalized.split('/').next()?;
+    if first_segment.is_empty() || first_segment == "." || first_segment == ".." {
+        return None;
+    }
+    if starter_agent_ignored_scan_dir(first_segment)
+        && !matches!(first_segment, ".gradle" | ".venv" | ".mypy_cache")
+    {
+        return None;
+    }
+    if starter_agent_is_protected_control_file(Path::new(first_segment)) {
+        return None;
+    }
+
+    let candidate_path = root.join(first_segment);
+    if candidate_path.is_file() {
+        return None;
+    }
+
+    Some(first_segment.to_string())
 }
 
 fn preferred_agent_task(safe_tasks: &[String]) -> Option<String> {
