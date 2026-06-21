@@ -119,7 +119,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "version": { "type": "string" }
+        "version": { "type": "string" },
+        "acquisition": { "$ref": "#/$defs/toolAcquisition" }
       }
     },
     "toolAcquisition": {
@@ -127,11 +128,12 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "additionalProperties": false,
       "required": ["provider"],
       "properties": {
-        "provider": { "enum": ["corepack", "command"] },
+        "provider": { "enum": ["corepack", "command", "release-asset", "apt", "brew", "winget", "choco", "scoop"] },
         "package": { "type": "string" },
         "version": { "type": "string" },
         "shell": { "enum": ["sh", "bash", "zsh", "pwsh", "cmd"] },
-        "run": { "type": "string" }
+        "run": { "type": "string" },
+        "source_config": { "type": "object", "additionalProperties": true }
       }
     },
     "toolDetail": {
@@ -1434,7 +1436,22 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "env_files": { "$ref": "#/$defs/stringArray" },
         "files": { "$ref": "#/$defs/stringArray" },
         "profiles": { "$ref": "#/$defs/stringArray" },
-        "project_name": { "type": "string" }
+        "project_name": { "type": "string" },
+        "values_files": { "$ref": "#/$defs/stringArray" },
+        "chart": { "type": "string" },
+        "release_name": { "type": "string" },
+        "namespace": { "type": "string" }
+      }
+    },
+    "taskHelmAdapterInputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cwd": { "type": "string" },
+        "values_files": { "$ref": "#/$defs/stringArray" },
+        "chart": { "type": "string" },
+        "release_name": { "type": "string" },
+        "namespace": { "type": "string" }
       }
     },
     "taskAdapterInputs": {
@@ -1446,7 +1463,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "additionalProperties": { "$ref": "#/$defs/taskAdapterOverlay" }
         },
         "compose": { "$ref": "#/$defs/taskComposeAdapterInputs" },
-        "bake": { "$ref": "#/$defs/taskBakeAdapterInputs" }
+        "bake": { "$ref": "#/$defs/taskBakeAdapterInputs" },
+        "helm": { "$ref": "#/$defs/taskHelmAdapterInputs" }
       }
     },
     "taskModeBranch": {
