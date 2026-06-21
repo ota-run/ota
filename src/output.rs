@@ -418,6 +418,8 @@ pub struct ExecutionReceipt {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_snapshot_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub assumption_set_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
@@ -526,6 +528,9 @@ impl Serialize for ExecutionReceipt {
         }
         if let Some(contract_snapshot_ref) = self.contract_snapshot_ref.as_ref() {
             map.serialize_entry("contract_snapshot_ref", contract_snapshot_ref)?;
+        }
+        if let Some(assumption_set_hash) = self.assumption_set_hash.as_ref() {
+            map.serialize_entry("assumption_set_hash", assumption_set_hash)?;
         }
         if let Some(workspace) = self.workspace.as_ref() {
             map.serialize_entry("workspace", workspace)?;
@@ -1840,6 +1845,7 @@ pub struct ReceiptDiffComparison {
     pub readiness_change: ReceiptDiffReadinessChange,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_snapshot_changed: Option<bool>,
+    pub correlation: ReceiptDiffCorrelation,
 }
 
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -1848,6 +1854,14 @@ pub enum ReceiptDiffReadinessChange {
     Unchanged,
     Improved,
     Regressed,
+}
+
+#[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptDiffCorrelation {
+    LikelyRelated,
+    PossiblyRelated,
+    NoClearCorrelation,
 }
 
 #[derive(Debug, Serialize)]
@@ -1888,6 +1902,8 @@ pub struct ReceiptDiffSide {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_snapshot_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub assumption_set_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
@@ -1923,6 +1939,8 @@ pub struct ReceiptDiffBaseline {
     pub contract_snapshot_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contract_snapshot_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub assumption_set_hash: Option<String>,
     pub ok: bool,
     pub contract: String,
     #[serde(skip_serializing_if = "Option::is_none")]

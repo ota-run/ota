@@ -2374,7 +2374,10 @@ fn load_receipt_snapshot_candidates(contract_path: Option<&Path>) -> Vec<String>
         .flat_map(|entries| entries.filter_map(Result::ok))
         .map(|entry| entry.path())
         .filter(|path| path.is_file())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
         .map(|path| {
             cwd.as_ref()
                 .and_then(|cwd| path.strip_prefix(cwd).ok().map(PathBuf::from))
@@ -9486,6 +9489,8 @@ tasks:
         assert!(Path::new(archive_path).is_file());
         let snapshot_hash = json["receipt"]["contract_snapshot_hash"].as_str().unwrap();
         assert!(snapshot_hash.starts_with("sha256:"));
+        let assumption_set_hash = json["receipt"]["assumption_set_hash"].as_str().unwrap();
+        assert!(assumption_set_hash.starts_with("sha256:"));
         let snapshot_ref = json["receipt"]["contract_snapshot_ref"].as_str().unwrap();
         assert!(snapshot_ref.contains(".ota/contracts/sha256-"));
         let snapshot: Value =
@@ -9524,7 +9529,12 @@ tasks:
         assert_eq!(json["mode"], "snapshot");
         assert_eq!(json["source"], "latest");
         assert_eq!(json["selection_kind"], "receipt_archive");
-        assert!(json["snapshot_hash"].as_str().unwrap().starts_with("sha256:"));
+        assert!(
+            json["snapshot_hash"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
         assert!(
             json["snapshot_path"]
                 .as_str()
@@ -10301,6 +10311,10 @@ env:
                     json["contract_changes"][0]["path"]
                 );
                 assert_eq!(
+                    json["summary"]["comparison"]["correlation"],
+                    "likely_related"
+                );
+                assert_eq!(
                     json["introduced"][0]["summary"],
                     "Missing environment variable: OTA_BASELINE_REQUIRED"
                 );
@@ -10482,9 +10496,10 @@ checks:
 
                 assert_eq!(output.exit_code, 0);
                 let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(json["introduced"][0]["summary"], "Check failed: api-health");
                 assert_eq!(
-                    json["introduced"][0]["summary"],
-                    "Check failed: api-health"
+                    json["summary"]["comparison"]["correlation"],
+                    "likely_related"
                 );
                 assert!(
                     json["likely_related_changes"]
@@ -10495,6 +10510,226 @@ checks:
                 );
             })
             .expect("spawn check correlation receipt diff worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn receipt_json_diff_marks_possibly_related_when_changes_do_not_match_error() {
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-possible-correlation"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
+version: 1
+project:
+  name: receipt-diff
+checks:
+  - name: api-health
+    kind: precondition
+    severity: error
+    run: false
+agent:
+  protected_paths:
+    - .github/workflows
+"#,
+                );
+
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+
+                fixture.write(
+                    ".ota/contracts/sha256-old.json",
+                    r#"{
+  "version": 1,
+  "project": {
+    "name": "receipt-diff"
+  },
+  "checks": [
+    {
+      "name": "api-health",
+      "kind": "precondition",
+      "severity": "error",
+      "run": false
+    }
+  ],
+  "agent": {
+    "protected_paths": [
+      ".github/workflows"
+    ]
+  }
+}"#,
+                );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": true,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 0,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": true,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": "sha256:old",
+                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 0,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "READY"
+                                }
+                            ]
+                        },
+                        "findings": []
+                    }))
+                    .unwrap(),
+                );
+
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
+
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(
+                    json["summary"]["comparison"]["correlation"],
+                    "possibly_related"
+                );
+                assert!(json.get("likely_related_changes").is_none());
+                assert!(
+                    json["contract_changes"]
+                        .as_array()
+                        .unwrap()
+                        .len()
+                        > 0
+                );
+            })
+            .expect("spawn possible correlation receipt diff worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn receipt_json_diff_marks_no_clear_correlation_without_contract_drift() {
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-no-clear-correlation"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
+version: 1
+project:
+  name: receipt-diff
+env:
+  vars:
+    OTA_BASELINE_REQUIRED:
+      required: true
+"#,
+                );
+
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+
+                fixture.write(
+                    ".ota/contracts/sha256-old.json",
+                    r#"{
+  "version": 1,
+  "project": {
+    "name": "receipt-diff"
+  },
+  "env": {
+    "vars": {
+      "OTA_BASELINE_REQUIRED": {
+        "required": true
+      }
+    }
+  }
+}"#,
+                );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": true,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 0,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": true,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": "sha256:old",
+                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 0,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "READY"
+                                }
+                            ]
+                        },
+                        "findings": []
+                    }))
+                    .unwrap(),
+                );
+
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
+
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(
+                    json["summary"]["comparison"]["correlation"],
+                    "no_clear_correlation"
+                );
+                assert!(json.get("contract_changes").is_none());
+                assert!(json.get("likely_related_changes").is_none());
+            })
+            .expect("spawn no-clear correlation receipt diff worker");
 
         if let Err(panic) = worker.join() {
             std::panic::resume_unwind(panic);
@@ -12664,6 +12899,8 @@ env:
         );
         let snapshot_hash = json["receipt"]["contract_snapshot_hash"].as_str().unwrap();
         assert!(snapshot_hash.starts_with("sha256:"));
+        let assumption_set_hash = json["receipt"]["assumption_set_hash"].as_str().unwrap();
+        assert!(assumption_set_hash.starts_with("sha256:"));
         assert!(json["receipt"]["contract_snapshot_ref"].is_null());
     }
 

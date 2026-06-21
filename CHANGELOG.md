@@ -48,6 +48,14 @@
   read archived normalized contract truth directly from `latest`, `promoted`, archived receipt
   JSON, or archived `.ota/contracts/...` snapshot files without routing that inspection through
   `ota diff` or receipt-correlation output
+- added additive `receipt.assumption_set_hash` identity for repo and workspace receipts, so
+  archived and live receipt JSON now fingerprint the canonical extracted semantic assumption map
+  separately from whole-snapshot identity and receipt diff can surface the same identity on both
+  baseline and current sides
+- refined receipt diff correlation with an explicit advisory verdict under
+  `summary.comparison.correlation`, so automation can distinguish `likely_related`,
+  `possibly_related`, and `no_clear_correlation` without inferring correlation posture from
+  `likely_related_changes[]` alone
 
 ## 1.6.21
 

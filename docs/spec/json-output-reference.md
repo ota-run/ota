@@ -3556,6 +3556,7 @@ selected or effective workflow owns a rendered env artifact, receipt JSON keeps 
     },
     "contract_snapshot_hash": "sha256:5dc5c7f6e0bf...",
     "contract_snapshot_ref": ".ota/contracts/sha256-5dc5c7f6e0bf....json",
+    "assumption_set_hash": "sha256:8b7e5f1c3a0d...",
     "backend": "native",
     "workflow_env_artifacts": [
       {
@@ -3602,6 +3603,9 @@ The nested `receipt` object can also include:
   receipt; the hash is content-addressed and stable across formatting-only contract edits
 - `contract_snapshot_ref` when Ota archived the normalized snapshot under `.ota/contracts`; plain
   read-only receipt JSON can still emit the hash without emitting a local archive ref
+- `assumption_set_hash` with the canonical extracted assumption-set identity used for this
+  receipt; the hash is derived from the normalized semantic path/value map rather than the raw
+  archived snapshot file
 - `backend`
 - `workflow_env_artifacts` when the selected or effective workflow owns one rendered env artifact;
   each entry reports `path`, `kind`, `profile`, `includes`, `exists`, and the consuming
@@ -3718,6 +3722,7 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
     "contract_identity": "ota.yaml",
     "contract_snapshot_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "contract_snapshot_ref": ".ota/contracts/sha256-1111111111111111111111111111111111111111111111111111111111111111.json",
+    "assumption_set_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
     "contract_identity_details": {
       "project": {
         "name": "receipt-diff"
@@ -3741,6 +3746,7 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
     "contract": "/abs/path/to/ota.yaml",
     "contract_identity": "ota.yaml",
     "contract_snapshot_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "assumption_set_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
     "contract_identity_details": {
       "project": {
         "name": "receipt-diff"
@@ -3766,6 +3772,7 @@ or baseline receipt is not ready. Add `--fail-on-new-blockers` when you want com
       "current_identity_label": "ota.yaml",
       "identity_changed": false,
       "readiness_change": "unchanged",
+      "correlation": "likely_related",
       "contract_snapshot_changed": true
     },
     "introduced": {
@@ -3843,6 +3850,7 @@ Current receipt diff JSON fields:
 - `baseline.contract_identity` when ota can resolve the repo-local contract identity for the selected baseline
 - `baseline.contract_snapshot_hash` when the archived baseline carries normalized semantic contract identity
 - `baseline.contract_snapshot_ref` when the archived baseline points at a normalized archived contract snapshot under `.ota/contracts`
+- `baseline.assumption_set_hash` when the archived baseline carries canonical extracted assumption-set identity
 - `baseline.contract_identity_details` with the compact declared contract identity when the archived receipt recorded it
 - `baseline.ok`
 - `baseline.contract`
@@ -3852,12 +3860,15 @@ Current receipt diff JSON fields:
 - `current.contract`
 - `current.contract_identity` with the current repo-local contract identity
 - `current.contract_snapshot_hash` with the normalized semantic contract hash for the current in-memory contract truth, even when the current receipt is not archived
+- `current.assumption_set_hash` with the canonical extracted assumption-set identity for the current in-memory contract truth
 - `current.contract_identity_details` with the compact declared contract identity for the current receipt
 - `current.backend` / `current.lifecycle` when recorded
 - `current.summary`
 - `summary.baseline_ok`
 - `summary.current_ok`
 - additive `summary.comparison` with baseline/current identity labels plus compact `identity_changed`, `readiness_change`, and `contract_snapshot_changed` drift signals
+- `summary.comparison.correlation` with an explicit advisory verdict: `likely_related`,
+  `possibly_related`, or `no_clear_correlation`
 - `summary.introduced`
 - `summary.resolved`
 - `summary.unchanged`

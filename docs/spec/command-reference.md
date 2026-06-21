@@ -1758,6 +1758,9 @@ Current behavior:
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
 - receipt JSON always includes a normalized `receipt.contract_snapshot_hash`; `--archive` also
   materializes that normalized snapshot under `.ota/contracts`
+- receipt JSON also includes an additive `receipt.assumption_set_hash` derived from the canonical
+  extracted assumption map, so automation can fingerprint semantic contract meaning separately
+  from whole-snapshot identity
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
 - `--archive --promote-baseline` also writes `.ota/receipts/repo-baseline.json`, pointing at the archived receipt as the repo's explicit promoted baseline
 - `--history` lists archived repo receipts from `.ota/receipts` newest first without loading or validating the current contract; explicit paths must be a repo directory or an `ota.yaml` file
@@ -1774,6 +1777,9 @@ Current behavior:
 - `--snapshot` is read-only and does not rerun doctor, archive a new receipt, or mutate repo state
 - compare mode is read-only and does not archive or mutate repo state; it exits `0` when the comparison itself succeeds, even if the current or baseline receipt is not ready
 - when the selected baseline receipt carries `receipt.contract_snapshot_ref`, compare mode also diffs the archived normalized contract snapshot against the current normalized contract truth and returns additive `contract_changes[]`, `likely_related_changes[]`, and `summary.comparison.contract_snapshot_changed` in JSON output
+- compare mode also returns additive `summary.comparison.correlation` so automation can distinguish
+  `likely_related`, `possibly_related`, and `no_clear_correlation` without inferring correlation
+  posture from array presence alone
 - `--fail-on-new-blockers` requires `--baseline` and exits `1` when the diff introduces one or more new `severity: error` findings relative to the baseline
 
 Text output:
@@ -1784,6 +1790,9 @@ Text output:
 - `--history` switches the text header to `RECEIPT HISTORY <path>` and lists archived receipt files with their archived time, archived status, contract path, and any preserved execution identity fields such as context, backend, target, provider, lifecycle, and cwd; malformed archived files are skipped and surfaced under `Skipped Archives`
 - `--baseline` switches the text header to `RECEIPT DIFF <path>` and reports the baseline source plus provenance such as the selection path, promoted time, contract identity, introduced findings, resolved findings, and unchanged findings when there are no newly introduced or resolved changes
 - `--baseline` also preserves execution identity on both sides when present, including archived/current `status`, `backend`, `context`, `target`, `provider`, `lifecycle`, and `cwd`
+- `--baseline` includes the advisory correlation posture inside the `Drift:` overview line so
+  operators can see whether new blocker findings look likely related, possibly related, or have no
+  clear contract-change correlation
 - `--fail-on-new-blockers` adds a `Gate:` overview line showing whether the current diff passed or was blocked by newly introduced blockers
 - `--snapshot` switches the text header to `RECEIPT SNAPSHOT <path>` and prints the archived
   snapshot source, selection kind, archive/snapshot paths, hash, any preserved contract identity,
@@ -1803,6 +1812,9 @@ JSON output:
 - `--snapshot` switches `mode` to `snapshot` and returns additive `source`, `selection_kind`,
   `selection_path`, `archive_path`, `archived_at`, `promoted_at`, `snapshot_hash`,
   `snapshot_path`, `contract`, and the normalized archived `snapshot`
+- `--baseline` keeps `mode: "diff"` and returns additive `summary.comparison.correlation`,
+  `baseline.assumption_set_hash`, and `current.assumption_set_hash` alongside the existing
+  archive-backed snapshot-drift evidence
 - each history archive may preserve `status`, `backend`, `context`, `target`, `provider`, `lifecycle`, and `cwd` when that execution identity existed in the archived receipt
 - `--baseline` switches `mode` to `diff` and returns `baseline`, `current`, `summary`, `introduced`, `resolved`, and `unchanged`, with additive provenance fields on `baseline`
 - diff `summary` also carries a compact `comparison` block so wrappers can show baseline/current identity labels plus readiness drift without reconstructing it from the full baseline/current sections

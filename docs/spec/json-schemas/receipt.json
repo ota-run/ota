@@ -98,6 +98,7 @@
             },
             "contract_snapshot_hash": { "type": "string" },
             "contract_snapshot_ref": { "type": "string" },
+            "assumption_set_hash": { "type": "string" },
             "workspace": { "type": "string" },
             "backend": { "type": "string" },
             "context": { "type": "string" },
@@ -337,6 +338,7 @@
             },
             "ok": { "type": "boolean" },
             "contract": { "type": "string" },
+            "assumption_set_hash": { "type": "string" },
             "status": { "type": "string" },
             "backend": { "type": "string" },
             "target": { "type": "string" },
@@ -371,6 +373,7 @@
             "contract_identity_details": {
               "$ref": "#/oneOf/0/properties/receipt/properties/contract_identity"
             },
+            "assumption_set_hash": { "type": "string" },
             "backend": { "type": "string" },
             "status": { "type": "string" },
             "target": { "type": "string" },
@@ -415,7 +418,8 @@
                 "baseline_identity_label",
                 "current_identity_label",
                 "identity_changed",
-                "readiness_change"
+                "readiness_change",
+                "correlation"
               ],
               "properties": {
                 "baseline_identity_label": {
@@ -433,6 +437,16 @@
                     "improved",
                     "regressed"
                   ]
+                },
+                "correlation": {
+                  "enum": [
+                    "likely_related",
+                    "possibly_related",
+                    "no_clear_correlation"
+                  ]
+                },
+                "contract_snapshot_changed": {
+                  "type": "boolean"
                 }
               }
             },

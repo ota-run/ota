@@ -95,9 +95,9 @@ use crate::output::{
     InitSuccess, ListedWorkflowSummary, MemberServicesSuccess, MemberWorkflowsSuccess,
     OutputFormat, PolicyInitFailure, PolicyInitSuccess, PolicyReviewSuccess, PolicyReviewSummary,
     ProofRuntimeArtifacts, ProofRuntimeLikelyCauseEvidence, ProofRuntimeStatus,
-    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate,
-    ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
-    ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
+    ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCorrelation, ReceiptDiffCounts,
+    ReceiptDiffGate, ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess,
+    ReceiptDiffSummary, ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
     ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSnapshotContract,
     ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, RunPreviewPlan,
     RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess,
@@ -13229,7 +13229,8 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
             load_diff_contract(&target_path),
         ) {
             (Ok(base_contract), Ok(target_contract)) => {
-                let changes = collect_diff_changes(&base_contract.semantic, &target_contract.semantic);
+                let changes =
+                    collect_diff_changes(&base_contract.semantic, &target_contract.semantic);
                 let summary = summarize_diff_changes(&changes);
                 let base_snapshot_display = base_contract
                     .snapshot_path
@@ -22821,11 +22822,21 @@ pub fn receipt(
                         Ok(snapshot) => snapshot,
                         Err(error) => return CommandOutput::failure(error),
                     };
+                let normalized_snapshot = match normalized_contract_snapshot_value(&target.contract)
+                {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => return CommandOutput::failure(error),
+                };
                 receipt.contract_snapshot_hash = Some(snapshot.hash);
                 receipt.contract_snapshot_ref = snapshot
                     .archive_path
                     .as_deref()
                     .map(receipt_storage_path_display);
+                receipt.assumption_set_hash =
+                    match assumption_set_hash_from_snapshot(&normalized_snapshot) {
+                        Ok(hash) => Some(hash),
+                        Err(error) => return CommandOutput::failure(error),
+                    };
                 let (archive_path, promoted_baseline) = if archive {
                     let root = contract_working_dir(&target.contract_path);
                     let archive_path = match next_receipt_archive_path(&root, "repo-receipt") {
@@ -29886,11 +29897,21 @@ pub fn workspace_receipt(
                         Ok(snapshot) => snapshot,
                         Err(error) => return CommandOutput::failure(error),
                     };
+                let normalized_snapshot =
+                    match normalized_contract_snapshot_value(&workspace_contract) {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => return CommandOutput::failure(error),
+                    };
                 report.receipt.contract_snapshot_hash = Some(snapshot.hash);
                 report.receipt.contract_snapshot_ref = snapshot
                     .archive_path
                     .as_deref()
                     .map(receipt_storage_path_display);
+                report.receipt.assumption_set_hash =
+                    match assumption_set_hash_from_snapshot(&normalized_snapshot) {
+                        Ok(hash) => Some(hash),
+                        Err(error) => return CommandOutput::failure(error),
+                    };
                 let archive_path = if archive {
                     let archive_path = match next_receipt_archive_path(root, "workspace-receipt") {
                         Ok(path) => path,
@@ -31794,7 +31815,8 @@ fn archived_repo_receipt_snapshot_with_path(
 fn archived_repo_receipt_snapshot(
     record: &RepoReceiptArchiveRecord,
 ) -> Result<Option<JsonValue>, String> {
-    archived_repo_receipt_snapshot_with_path(record).map(|loaded| loaded.map(|(snapshot, _)| snapshot))
+    archived_repo_receipt_snapshot_with_path(record)
+        .map(|loaded| loaded.map(|(snapshot, _)| snapshot))
 }
 
 fn resolve_repo_receipt_snapshot(
@@ -31841,12 +31863,21 @@ fn resolve_repo_receipt_snapshot(
         ));
     }
 
-    let contents = fs::read_to_string(selection_path)
-        .map_err(|error| format!("failed to read snapshot selection `{}`: {error}", selection_path.display()))?;
-    let json: JsonValue = serde_json::from_str(&contents)
-        .map_err(|error| format!("failed to parse snapshot selection `{}`: {error}", selection_path.display()))?;
+    let contents = fs::read_to_string(selection_path).map_err(|error| {
+        format!(
+            "failed to read snapshot selection `{}`: {error}",
+            selection_path.display()
+        )
+    })?;
+    let json: JsonValue = serde_json::from_str(&contents).map_err(|error| {
+        format!(
+            "failed to parse snapshot selection `{}`: {error}",
+            selection_path.display()
+        )
+    })?;
 
-    if let Some((snapshot, snapshot_path)) = diff_snapshot_from_receipt_json(selection_path, &json)? {
+    if let Some((snapshot, snapshot_path)) = diff_snapshot_from_receipt_json(selection_path, &json)?
+    {
         let snapshot_json = serde_json::to_vec_pretty(&snapshot)
             .map_err(|error| format!("failed to serialize archived contract snapshot: {error}"))?;
         let receipt_contract = json
@@ -31902,6 +31933,16 @@ fn normalized_contract_snapshot_value<T: Serialize>(value: &T) -> Result<JsonVal
         .map_err(|error| format!("failed to normalize contract snapshot value: {error}"))
 }
 
+fn assumption_set_hash_from_snapshot(snapshot: &JsonValue) -> Result<String, String> {
+    let assumptions = collect_diff_assumptions(snapshot)
+        .into_iter()
+        .map(|(key, assumption)| (key, assumption.value))
+        .collect::<BTreeMap<_, _>>();
+    let assumption_json = serde_json::to_vec_pretty(&assumptions)
+        .map_err(|error| format!("failed to serialize normalized assumption set: {error}"))?;
+    Ok(contract_snapshot_hash(&assumption_json))
+}
+
 fn quoted_scalar(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| format!("\"{value}\""))
 }
@@ -31930,7 +31971,9 @@ fn likely_related_contract_change(change: &DiffChange, finding: &Finding) -> boo
                 .map(|value| value.split_whitespace().next().unwrap_or(value))
             {
                 return change.path.starts_with(&format!("toolchains.{runtime}"))
-                    || change.path.contains(&format!(".requirements.toolchains.{runtime}"))
+                    || change
+                        .path
+                        .contains(&format!(".requirements.toolchains.{runtime}"))
                     || change.target.as_deref() == Some(&quoted_scalar(runtime));
             }
         }
@@ -31979,7 +32022,10 @@ fn check_change_prefix(contract_changes: &[DiffChange], check_name: &str) -> Opt
             && change.path.ends_with(".name")
             && change.target.as_deref() == Some(quoted_name.as_str())
         {
-            change.path.rsplit_once('.').map(|(prefix, _)| prefix.to_string())
+            change
+                .path
+                .rsplit_once('.')
+                .map(|(prefix, _)| prefix.to_string())
         } else {
             None
         }
@@ -32019,6 +32065,23 @@ fn receipt_diff_likely_related_changes(
     related
 }
 
+fn receipt_diff_correlation(
+    contract_changes: &[DiffChange],
+    likely_related_changes: &[DiffChange],
+    introduced: &[Finding],
+) -> ReceiptDiffCorrelation {
+    let has_error = introduced
+        .iter()
+        .any(|finding| finding.severity == FindingSeverity::Error);
+    if has_error && !likely_related_changes.is_empty() {
+        ReceiptDiffCorrelation::LikelyRelated
+    } else if has_error && !contract_changes.is_empty() {
+        ReceiptDiffCorrelation::PossiblyRelated
+    } else {
+        ReceiptDiffCorrelation::NoClearCorrelation
+    }
+}
+
 fn build_repo_receipt_diff_report(
     baseline: ResolvedRepoReceiptBaseline,
     current_contract: &Contract,
@@ -32028,9 +32091,8 @@ fn build_repo_receipt_diff_report(
 ) -> Result<RepoReceiptDiffReport, String> {
     let baseline_snapshot = archived_repo_receipt_snapshot(&baseline.record)?;
     let current_snapshot_json = normalized_contract_snapshot_json(current_contract)?;
-    let current_snapshot_hash =
-        Some(contract_snapshot_hash(&current_snapshot_json))
-            .or_else(|| current_receipt.contract_snapshot_hash.clone());
+    let current_snapshot_hash = Some(contract_snapshot_hash(&current_snapshot_json))
+        .or_else(|| current_receipt.contract_snapshot_hash.clone());
     let mut baseline_remaining = BTreeMap::new();
     for finding in &baseline.record.payload.findings {
         *baseline_remaining
@@ -32086,6 +32148,7 @@ fn build_repo_receipt_diff_report(
         contract_identity_details: baseline.record.payload.receipt.contract_identity,
         contract_snapshot_hash: baseline.record.payload.receipt.contract_snapshot_hash,
         contract_snapshot_ref: baseline.record.payload.receipt.contract_snapshot_ref,
+        assumption_set_hash: baseline.record.payload.receipt.assumption_set_hash,
         ok: baseline.record.payload.ok,
         contract: baseline.record.payload.receipt.contract,
         status: baseline.record.payload.receipt.status,
@@ -32104,6 +32167,7 @@ fn build_repo_receipt_diff_report(
         contract_identity_details: current_receipt.contract_identity.clone(),
         contract_snapshot_hash: current_snapshot_hash,
         contract_snapshot_ref: current_receipt.contract_snapshot_ref.clone(),
+        assumption_set_hash: current_receipt.assumption_set_hash.clone(),
         status: current_receipt.status.clone(),
         backend: current_receipt.backend.clone(),
         target: current_receipt.target.clone(),
@@ -32155,6 +32219,11 @@ fn build_repo_receipt_diff_report(
                 (Some(baseline_hash), Some(current_hash)) => Some(baseline_hash != current_hash),
                 _ => None,
             },
+            correlation: receipt_diff_correlation(
+                &contract_changes,
+                &likely_related_changes,
+                &introduced,
+            ),
         },
         introduced: receipt_diff_counts(&introduced),
         resolved: receipt_diff_counts(&resolved),
@@ -32237,7 +32306,12 @@ fn render_receipt_diff_drift(summary: &ReceiptDiffSummary) -> String {
         ReceiptDiffReadinessChange::Improved => "readiness improved",
         ReceiptDiffReadinessChange::Regressed => "readiness regressed",
     };
-    format!("{identity}; {readiness}")
+    let correlation = match summary.comparison.correlation {
+        ReceiptDiffCorrelation::LikelyRelated => "correlation likely related",
+        ReceiptDiffCorrelation::PossiblyRelated => "correlation possibly related",
+        ReceiptDiffCorrelation::NoClearCorrelation => "correlation no clear correlation",
+    };
+    format!("{identity}; {readiness}; {correlation}")
 }
 
 fn render_receipt_diff_identity_label(label: &str) -> String {
@@ -50745,6 +50819,7 @@ env:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -55313,6 +55388,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -55398,6 +55474,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: None,
@@ -55597,6 +55674,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -55664,6 +55742,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -55760,6 +55839,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -55878,6 +55958,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -55957,6 +56038,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -56100,6 +56182,7 @@ tasks:
                 contract_identity: None,
                 contract_snapshot_hash: None,
                 contract_snapshot_ref: None,
+                assumption_set_hash: None,
                 workspace: None,
                 backend: None,
                 context: None,
@@ -62810,6 +62893,7 @@ agent:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -64254,6 +64338,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -64311,6 +64396,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -64368,6 +64454,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -64442,6 +64529,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("development")),
@@ -64516,6 +64604,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -64631,6 +64720,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -64734,6 +64824,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -64845,6 +64936,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -64904,6 +64996,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -67699,6 +67792,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -67780,6 +67874,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -67846,6 +67941,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -67915,6 +68011,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -67978,6 +68075,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: None,
@@ -68041,6 +68139,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -68110,6 +68209,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("dev")),
@@ -68935,6 +69035,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -69078,6 +69179,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -69181,6 +69283,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("sandbox:ctx")),
@@ -69787,6 +69890,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("container")),
             context: Some(String::from("app")),
@@ -69881,6 +69985,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: Some(String::from("dev")),
@@ -69961,6 +70066,7 @@ tasks:
             contract_identity: None,
             contract_snapshot_hash: None,
             contract_snapshot_ref: None,
+            assumption_set_hash: None,
             workspace: None,
             backend: Some(String::from("native")),
             context: Some(String::from("dev")),
@@ -78714,6 +78820,7 @@ fn run_execution_receipt_with_shared(
         contract_identity: Some(repo_contract_identity(contract)),
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
+        assumption_set_hash: None,
         workspace: None,
         backend: Some(format_backend(backend).to_string()),
         context,
@@ -85529,6 +85636,8 @@ struct ArchivedRepoReceiptData {
     #[serde(default)]
     contract_snapshot_ref: Option<String>,
     #[serde(default)]
+    assumption_set_hash: Option<String>,
+    #[serde(default)]
     status: Option<String>,
     #[serde(default)]
     backend: Option<String>,
@@ -86105,6 +86214,7 @@ fn repo_execution_receipt(
         contract_identity: Some(repo_contract_identity(contract)),
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
+        assumption_set_hash: None,
         workspace: None,
         backend: context.backend,
         context: context.context,
@@ -86955,6 +87065,7 @@ fn workspace_up_receipt(
         contract_identity: Some(contract_identity.clone()),
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
+        assumption_set_hash: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -87043,6 +87154,7 @@ fn workspace_status_receipt(
         contract_identity: Some(contract_identity.clone()),
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
+        assumption_set_hash: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
@@ -87132,6 +87244,7 @@ fn workspace_run_receipt(
         contract_identity: Some(contract_identity.clone()),
         contract_snapshot_hash: None,
         contract_snapshot_ref: None,
+        assumption_set_hash: None,
         workspace: Some(workspace_name.to_string()),
         backend: None,
         context: None,
