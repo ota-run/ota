@@ -31719,19 +31719,88 @@ fn normalized_contract_snapshot_value<T: Serialize>(value: &T) -> Result<JsonVal
         .map_err(|error| format!("failed to normalize contract snapshot value: {error}"))
 }
 
+fn quoted_scalar(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| format!("\"{value}\""))
+}
+
 fn likely_related_contract_change(change: &DiffChange, finding: &Finding) -> bool {
     let summary = finding.summary.trim();
-    if let Some(variable) = summary.strip_prefix("Missing environment variable: ") {
-        return change.path == format!("env.vars.{variable}.required");
-    }
-    if let Some(tool) = summary.strip_prefix("Missing tool: ") {
-        return change.path == format!("tools.{tool}")
-            || change.path.contains(&format!(".requirements.tools.{tool}"));
-    }
-    if summary == "No tasks defined in contract" {
-        return change.path.starts_with("tasks.");
+    match finding.code() {
+        "OTA_ENV_MISSING" => {
+            if let Some(variable) = summary.strip_prefix("Missing environment variable: ") {
+                let prefix = format!("env.vars.{variable}");
+                return change.path.starts_with(&prefix);
+            }
+        }
+        "OTA_TOOL_MISSING" => {
+            if let Some(tool) = summary.strip_prefix("Missing tool: ") {
+                return change.path == format!("tools.{tool}")
+                    || change.path.starts_with(&format!("tools.{tool}."))
+                    || change.path.contains(&format!(".requirements.tools.{tool}"))
+                    || change.target.as_deref() == Some(&quoted_scalar(tool));
+            }
+        }
+        "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => {
+            if let Some(runtime) = summary
+                .strip_prefix("Missing runtime: ")
+                .or_else(|| summary.strip_prefix("Version mismatch for runtime: "))
+                .map(|value| value.split_whitespace().next().unwrap_or(value))
+            {
+                return change.path.starts_with(&format!("toolchains.{runtime}"))
+                    || change.path.contains(&format!(".requirements.toolchains.{runtime}"))
+                    || change.target.as_deref() == Some(&quoted_scalar(runtime));
+            }
+        }
+        "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => {
+            if let Some(check) = summary
+                .strip_prefix("Check failed: ")
+                .or_else(|| summary.strip_prefix("Check timed out: "))
+            {
+                return change.path.starts_with(&format!("checks.{check}"))
+                    || (change.path.starts_with("checks[")
+                        && change.path.ends_with(".name")
+                        && change.target.as_deref() == Some(&quoted_scalar(check)));
+            }
+        }
+        "OTA_SERVICE_READINESS_FAILED"
+        | "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
+        | "OTA_SERVICE_UNVERIFIABLE"
+        | "OTA_SERVICE_CHECK_FAILED"
+        | "OTA_SERVICE_CHECK_TIMED_OUT" => {
+            let service = summary
+                .strip_prefix("Service readiness failed: ")
+                .or_else(|| summary.strip_prefix("Service readiness context is not executable: "))
+                .or_else(|| summary.strip_prefix("Required service cannot be verified: "))
+                .or_else(|| summary.strip_prefix("Service producer is not ready: "))
+                .or_else(|| summary.strip_prefix("Service healthcheck failed: "))
+                .or_else(|| summary.strip_prefix("Service healthcheck timed out: "));
+            if let Some(service) = service {
+                return change.path.starts_with(&format!("services.{service}"))
+                    || change.path.contains("requires_services")
+                        && (change.base.as_deref() == Some(&quoted_scalar(service))
+                            || change.target.as_deref() == Some(&quoted_scalar(service)));
+            }
+        }
+        "OTA_TASKS_MISSING" => {
+            return change.path.starts_with("tasks.");
+        }
+        _ => {}
     }
     false
+}
+
+fn check_change_prefix(contract_changes: &[DiffChange], check_name: &str) -> Option<String> {
+    let quoted_name = quoted_scalar(check_name);
+    contract_changes.iter().find_map(|change| {
+        if change.path.starts_with("checks[")
+            && change.path.ends_with(".name")
+            && change.target.as_deref() == Some(quoted_name.as_str())
+        {
+            change.path.rsplit_once('.').map(|(prefix, _)| prefix.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 fn receipt_diff_likely_related_changes(
@@ -31744,8 +31813,22 @@ fn receipt_diff_likely_related_changes(
         .iter()
         .filter(|finding| finding.severity == FindingSeverity::Error)
     {
+        let check_prefix = if matches!(finding.code(), "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT") {
+            finding
+                .summary
+                .strip_prefix("Check failed: ")
+                .or_else(|| finding.summary.strip_prefix("Check timed out: "))
+                .and_then(|name| check_change_prefix(contract_changes, name))
+        } else {
+            None
+        };
         for change in contract_changes {
-            if likely_related_contract_change(change, finding) && seen.insert(change.path.clone()) {
+            let matches_sequence_prefix = check_prefix
+                .as_deref()
+                .is_some_and(|prefix| change.path.starts_with(prefix));
+            if (matches_sequence_prefix || likely_related_contract_change(change, finding))
+                && seen.insert(change.path.clone())
+            {
                 related.push(change.clone());
             }
         }

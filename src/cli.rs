@@ -10171,6 +10171,116 @@ project:
     }
 
     #[test]
+    fn receipt_json_diff_correlates_check_contract_changes() {
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-check-correlation"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
+version: 1
+project:
+  name: receipt-diff
+tasks:
+  verify:
+    run: "true"
+checks:
+  - name: api-health
+    kind: precondition
+    severity: error
+    run: false
+"#,
+                );
+
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+
+                fixture.write(
+                    ".ota/contracts/sha256-old.json",
+                    r#"{
+  "version": 1,
+  "project": {
+    "name": "receipt-diff"
+  },
+  "tasks": {
+    "verify": {
+      "run": "true"
+    }
+  },
+  "version": 1
+}"#,
+                );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": true,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 0,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": true,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": "sha256:old",
+                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 0,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": []
+                    }))
+                    .unwrap(),
+                );
+
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
+
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(
+                    json["introduced"][0]["summary"],
+                    "Check failed: api-health"
+                );
+                assert!(
+                    json["likely_related_changes"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|change| change["path"] == "checks[0].run")
+                );
+            })
+            .expect("spawn check correlation receipt diff worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
     fn receipt_json_diff_fail_on_new_blockers_sets_gate_and_exits_nonzero() {
         let worker = std::thread::Builder::new()
             .name(String::from("receipt-json-gate-fail"))

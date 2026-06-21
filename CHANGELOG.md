@@ -37,7 +37,9 @@
 - added receipt-to-receipt semantic contract drift correlation, so `ota receipt --json --baseline`
   now compares the selected archived baseline snapshot against current normalized contract truth
   when available and emits additive `summary.comparison.contract_snapshot_changed`,
-  `contract_changes[]`, and `likely_related_changes[]`
+  `contract_changes[]`, and `likely_related_changes[]`; the initial correlation lane now covers
+  env, tool, runtime, check, task, and required-service blockers instead of only the narrowest
+  missing-env cases
 
 ## 1.6.21
 
