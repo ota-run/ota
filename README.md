@@ -354,10 +354,14 @@ When you want a repo-owned baseline for later compare gates:
 ```bash
 ota receipt --json --archive --promote-baseline
 ota receipt --json --baseline promoted
+ota receipt --snapshot latest
 ```
 
 Use `promoted` when a team wants an explicit accepted repo state, and use `latest` when the newest
 archived receipt is enough for a local drift check.
+
+Use `ota receipt --snapshot ...` when you want to read the archived semantic contract truth
+directly instead of only consuming it through `ota diff` or receipt correlation.
 
 Use policy review when the contract and approved policy need to be reconciled:
 

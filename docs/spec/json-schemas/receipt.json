@@ -513,6 +513,52 @@
     {
       "type": "object",
       "additionalProperties": false,
+      "required": [
+        "ok",
+        "path",
+        "mode",
+        "summary",
+        "source",
+        "selection_kind",
+        "snapshot_hash",
+        "snapshot_path",
+        "contract",
+        "snapshot"
+      ],
+      "properties": {
+        "ok": { "const": true },
+        "path": { "type": "string" },
+        "mode": { "const": "snapshot" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input_count"],
+          "properties": {
+            "input_count": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "source": { "enum": ["latest", "promoted", "file"] },
+        "selection_kind": { "enum": ["receipt_archive", "snapshot_archive"] },
+        "selection_path": { "type": "string" },
+        "archive_path": { "type": "string" },
+        "archived_at": { "type": "string" },
+        "promoted_at": { "type": "string" },
+        "snapshot_hash": { "type": "string" },
+        "snapshot_path": { "type": "string" },
+        "contract": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "contract": { "type": "string" },
+            "contract_identity": { "type": "string" }
+          }
+        },
+        "snapshot": {}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
       "required": ["ok", "path", "mode", "summary", "archives"],
       "properties": {
         "ok": { "const": true },

@@ -98,7 +98,8 @@ use crate::output::{
     ReceiptDiffBaseline, ReceiptDiffComparison, ReceiptDiffCounts, ReceiptDiffGate,
     ReceiptDiffReadinessChange, ReceiptDiffSide, ReceiptDiffSuccess, ReceiptDiffSummary,
     ReceiptHistoryEntry, ReceiptHistoryInvalidArchive, ReceiptHistorySuccess,
-    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSuccess, RunPreviewPlan,
+    ReceiptHistorySummary, ReceiptPromotedBaseline, ReceiptSnapshotContract,
+    ReceiptSnapshotSuccess, ReceiptSnapshotSummary, ReceiptSuccess, RunPreviewPlan,
     RunPreviewSuccess, ServiceReadinessSummary, ServiceSummary, ServicesFailure, ServicesSuccess,
     TaskSummary, TasksFailure, TasksSuccess, ToolchainOpportunityAdvisory,
     ToolchainSelectionSummary, UpPreviewExecution, UpPreviewPlan, UpPreviewStatus, UpStatus,
@@ -22633,6 +22634,7 @@ pub fn receipt(
     member: Option<&str>,
     overrides: ExecutionOverrides,
     format: OutputFormat,
+    snapshot: Option<&str>,
     baseline: Option<&str>,
     fail_on_new_blockers: bool,
     history: bool,
@@ -22788,6 +22790,15 @@ pub fn receipt(
                     .next
                     .as_deref()
                     .map(|next| rewrite_repo_scoped_command_targets(next, &target.contract_path));
+                if let Some(snapshot) = snapshot {
+                    return render_repo_receipt_snapshot(
+                        &text_path_display,
+                        &path_display,
+                        &target.contract_path,
+                        snapshot,
+                        format,
+                    );
+                }
                 if let Some(baseline) = baseline {
                     return render_repo_receipt_diff(
                         &text_path_display,
@@ -31749,9 +31760,9 @@ fn load_repo_receipt_baseline(
     })
 }
 
-fn archived_repo_receipt_snapshot(
+fn archived_repo_receipt_snapshot_with_path(
     record: &RepoReceiptArchiveRecord,
-) -> Result<Option<JsonValue>, String> {
+) -> Result<Option<(JsonValue, PathBuf)>, String> {
     let Some(snapshot_ref) = record
         .payload
         .receipt
@@ -31770,12 +31781,118 @@ fn archived_repo_receipt_snapshot(
             record.archive_path.display()
         )
     })?;
-    serde_json::from_str(&contents).map(Some).map_err(|error| {
+    let snapshot = serde_json::from_str(&contents).map_err(|error| {
         format!(
             "failed to parse archived contract snapshot `{}` referenced by receipt archive `{}`: {error}",
             snapshot_path.display(),
             record.archive_path.display()
         )
+    })?;
+    Ok(Some((snapshot, snapshot_path)))
+}
+
+fn archived_repo_receipt_snapshot(
+    record: &RepoReceiptArchiveRecord,
+) -> Result<Option<JsonValue>, String> {
+    archived_repo_receipt_snapshot_with_path(record).map(|loaded| loaded.map(|(snapshot, _)| snapshot))
+}
+
+fn resolve_repo_receipt_snapshot(
+    root: &Path,
+    contract_path: &Path,
+    selection: &str,
+) -> Result<RepoReceiptSnapshotReport, String> {
+    if selection == "latest" || selection == "promoted" {
+        let baseline = load_repo_receipt_baseline(root, contract_path, selection)?;
+        let archive_path = if baseline.source == "file" {
+            native_path_display_text(&baseline.record.archive_path)
+        } else {
+            receipt_storage_path_display(&baseline.record.archive_path)
+        };
+        let (snapshot, snapshot_path) = archived_repo_receipt_snapshot_with_path(&baseline.record)?
+            .ok_or_else(|| {
+                format!(
+                    "receipt archive `{}` does not carry `receipt.contract_snapshot_ref`; rerun `ota receipt --json --archive` or pass the archived `.ota/contracts/...` snapshot file directly",
+                    baseline.record.archive_path.display()
+                )
+            })?;
+        let snapshot_json = serde_json::to_vec_pretty(&snapshot)
+            .map_err(|error| format!("failed to serialize archived contract snapshot: {error}"))?;
+        return Ok(RepoReceiptSnapshotReport {
+            source: baseline.source,
+            selection_kind: String::from("receipt_archive"),
+            selection_path: baseline.selection_path,
+            archive_path: Some(archive_path),
+            archived_at: baseline.record.archived_at,
+            promoted_at: baseline.promoted_at,
+            snapshot_hash: contract_snapshot_hash(&snapshot_json),
+            snapshot_path,
+            contract: Some(baseline.record.payload.receipt.contract),
+            contract_identity: baseline.contract_identity,
+            snapshot,
+        });
+    }
+
+    let selection_path = Path::new(selection);
+    if !selection_path.is_file() {
+        return Err(format!(
+            "snapshot selection path does not point to a file: `{}`",
+            selection_path.display()
+        ));
+    }
+
+    let contents = fs::read_to_string(selection_path)
+        .map_err(|error| format!("failed to read snapshot selection `{}`: {error}", selection_path.display()))?;
+    let json: JsonValue = serde_json::from_str(&contents)
+        .map_err(|error| format!("failed to parse snapshot selection `{}`: {error}", selection_path.display()))?;
+
+    if let Some((snapshot, snapshot_path)) = diff_snapshot_from_receipt_json(selection_path, &json)? {
+        let snapshot_json = serde_json::to_vec_pretty(&snapshot)
+            .map_err(|error| format!("failed to serialize archived contract snapshot: {error}"))?;
+        let receipt_contract = json
+            .get("receipt")
+            .and_then(|receipt| receipt.get("contract"))
+            .and_then(JsonValue::as_str)
+            .map(str::to_string);
+        let receipt_identity = json
+            .get("receipt")
+            .and_then(|receipt| receipt.get("contract_identity"))
+            .and_then(|identity| serde_json::from_value::<ContractIdentity>(identity.clone()).ok())
+            .map(|identity| render_compact_contract_identity(&identity));
+        let archived_at = json
+            .get("archive_path")
+            .and_then(JsonValue::as_str)
+            .and_then(|_| repo_receipt_archive_timestamp(selection_path));
+        return Ok(RepoReceiptSnapshotReport {
+            source: String::from("file"),
+            selection_kind: String::from("receipt_archive"),
+            selection_path: Some(native_path_display_text(selection_path)),
+            archive_path: Some(native_path_display_text(selection_path)),
+            archived_at,
+            promoted_at: None,
+            snapshot_hash: contract_snapshot_hash(&snapshot_json),
+            snapshot_path,
+            contract: receipt_contract,
+            contract_identity: receipt_identity,
+            snapshot,
+        });
+    }
+
+    let snapshot = normalize_semantic_json(json);
+    let snapshot_json = serde_json::to_vec_pretty(&snapshot)
+        .map_err(|error| format!("failed to serialize archived contract snapshot: {error}"))?;
+    Ok(RepoReceiptSnapshotReport {
+        source: String::from("file"),
+        selection_kind: String::from("snapshot_archive"),
+        selection_path: Some(native_path_display_text(selection_path)),
+        archive_path: Some(native_path_display_text(selection_path)),
+        archived_at: None,
+        promoted_at: None,
+        snapshot_hash: contract_snapshot_hash(&snapshot_json),
+        snapshot_path: selection_path.to_path_buf(),
+        contract: None,
+        contract_identity: None,
+        snapshot,
     })
 }
 
@@ -85274,6 +85391,20 @@ struct RepoReceiptDiffReport {
     unchanged: Vec<Finding>,
 }
 
+struct RepoReceiptSnapshotReport {
+    source: String,
+    selection_kind: String,
+    selection_path: Option<String>,
+    archive_path: Option<String>,
+    archived_at: Option<String>,
+    promoted_at: Option<String>,
+    snapshot_hash: String,
+    snapshot_path: PathBuf,
+    contract: Option<String>,
+    contract_identity: Option<String>,
+    snapshot: JsonValue,
+}
+
 struct WorkspaceReceiptReport {
     receipt: ExecutionReceipt,
     repos: Vec<WorkspaceRepoStatusReport>,
@@ -86421,6 +86552,150 @@ fn render_repo_receipt(
             stderr: None,
             exit_code: if report.receipt.ok { 0 } else { 1 },
         },
+    }
+}
+
+fn render_repo_receipt_snapshot(
+    text_path: &str,
+    json_path: &str,
+    contract_path: &Path,
+    selection: &str,
+    format: OutputFormat,
+) -> CommandOutput {
+    let root = contract_working_dir(contract_path);
+    let report = match resolve_repo_receipt_snapshot(root, contract_path, selection) {
+        Ok(report) => report,
+        Err(error) => {
+            return match format {
+                OutputFormat::Text => CommandOutput::failure(error),
+                OutputFormat::Json => CommandOutput {
+                    stdout: to_json(&ValidateFailure {
+                        summary: None,
+                        ok: false,
+                        path: json_path,
+                        errors: vec![error],
+                        error: None,
+                        warnings: Vec::new(),
+                        warning_details: Vec::new(),
+                    }),
+                    stderr: None,
+                    exit_code: 1,
+                },
+            };
+        }
+    };
+
+    match format {
+        OutputFormat::Text => {
+            let mut stdout = format_command_header("RECEIPT SNAPSHOT", text_path);
+            stdout.push_str("\n\n");
+            stdout.push_str(&paint_section_title("Overview"));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Source:"),
+                report.source
+            ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Selection kind:"),
+                report.selection_kind
+            ));
+            if let Some(selection_path) = report.selection_path.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Selection:"),
+                    compact_path(Path::new(selection_path), ".")
+                ));
+            }
+            if let Some(archive_path) = report.archive_path.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Archive:"),
+                    compact_path(Path::new(archive_path), ".")
+                ));
+            }
+            if let Some(archived_at) = report.archived_at.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Archived:"),
+                    archived_at
+                ));
+            }
+            if let Some(promoted_at) = report.promoted_at.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Promoted:"),
+                    promoted_at
+                ));
+            }
+            if let Some(contract) = report.contract.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Contract:"),
+                    compact_path(Path::new(contract), ".")
+                ));
+            }
+            if let Some(contract_identity) = report.contract_identity.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Identity:"),
+                    contract_identity
+                ));
+            }
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Snapshot path:"),
+                compact_path(&report.snapshot_path, ".")
+            ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Hash:"),
+                report.snapshot_hash
+            ));
+
+            let snapshot = serde_json::to_string_pretty(&report.snapshot)
+                .unwrap_or_else(|_| String::from("{}"));
+            stdout.push_str(&format!(
+                "\n\n{}\n\n{}",
+                paint_section_title("Snapshot"),
+                snapshot
+            ));
+            stdout.push('\n');
+
+            CommandOutput::success(stdout)
+        }
+        OutputFormat::Json => {
+            let snapshot_path = receipt_storage_path_display(&report.snapshot_path);
+            CommandOutput::success(to_json(&ReceiptSnapshotSuccess {
+                ok: true,
+                path: json_path,
+                mode: "snapshot",
+                summary: ReceiptSnapshotSummary { input_count: 1 },
+                source: &report.source,
+                selection_kind: &report.selection_kind,
+                selection_path: report.selection_path.as_deref(),
+                archive_path: report.archive_path.as_deref(),
+                archived_at: report.archived_at.as_deref(),
+                promoted_at: report.promoted_at.as_deref(),
+                snapshot_hash: &report.snapshot_hash,
+                snapshot_path: &snapshot_path,
+                contract: ReceiptSnapshotContract {
+                    contract: report.contract.as_deref(),
+                    contract_identity: report.contract_identity.as_deref(),
+                },
+                snapshot: report.snapshot,
+            }))
+        }
     }
 }
 

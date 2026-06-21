@@ -1790,6 +1790,41 @@ pub struct ReceiptHistorySuccess<'a> {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ReceiptSnapshotSummary {
+    pub input_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReceiptSnapshotContract<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_identity: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReceiptSnapshotSuccess<'a> {
+    pub ok: bool,
+    pub path: &'a str,
+    pub mode: &'a str,
+    pub summary: ReceiptSnapshotSummary,
+    pub source: &'a str,
+    pub selection_kind: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive_path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub promoted_at: Option<&'a str>,
+    pub snapshot_hash: &'a str,
+    pub snapshot_path: &'a str,
+    pub contract: ReceiptSnapshotContract<'a>,
+    pub snapshot: JsonValue,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ReceiptDiffCounts {
     pub count: usize,
     pub error_count: usize,

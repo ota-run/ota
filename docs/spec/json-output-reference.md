@@ -3630,6 +3630,67 @@ When `--archive --promote-baseline` is set, the receipt success shape also inclu
 - `promoted_baseline.archive_path`
 - `promoted_baseline.promoted_at`
 
+## `ota receipt --json --snapshot`
+
+`ota receipt --json --snapshot` reads one archived normalized semantic contract snapshot without
+forcing operators to infer that truth indirectly through `ota diff` or receipt-correlation output.
+
+Selection supports:
+
+- `latest`: newest valid archived repo receipt for the same contract under `.ota/receipts`
+- `promoted`: the explicit promoted repo baseline pointer under `.ota/receipts/repo-baseline.json`
+- an explicit archived repo receipt JSON file path
+- an explicit archived normalized snapshot JSON file path under `.ota/contracts`
+
+```json
+{
+  "ok": true,
+  "path": "/abs/path/to/ota.yaml",
+  "mode": "snapshot",
+  "summary": {
+    "input_count": 1
+  },
+  "source": "latest",
+  "selection_kind": "receipt_archive",
+  "archive_path": ".ota/receipts/repo-receipt-20260621-101010-123Z.json",
+  "archived_at": "2026-06-21T10:10:10.123Z",
+  "snapshot_hash": "sha256:5dc5c7f6e0bf...",
+  "snapshot_path": ".ota/contracts/sha256-5dc5c7f6e0bf....json",
+  "contract": {
+    "contract": "/abs/path/to/ota.yaml",
+    "contract_identity": "ota.yaml"
+  },
+  "snapshot": {
+    "version": 1,
+    "project": {
+      "name": "receipt-demo"
+    },
+    "tasks": {
+      "setup": {
+        "run": "echo ready"
+      }
+    }
+  }
+}
+```
+
+Snapshot JSON fields:
+
+- `ok`
+- `path`
+- `mode` (`snapshot`)
+- `summary.input_count`
+- `source` (`latest`, `promoted`, or `file`)
+- `selection_kind` (`receipt_archive` or `snapshot_archive`)
+- `selection_path` when the caller selected an explicit file or promoted pointer
+- `archive_path` when the resolved selection came from a receipt archive or direct snapshot file
+- `archived_at` and `promoted_at` when the resolved selection came through archived receipt state
+- `snapshot_hash`
+- `snapshot_path`
+- `contract.contract` when the resolved receipt carried the source contract path
+- `contract.contract_identity` when the resolved receipt carried compact contract identity
+- `snapshot` with the normalized archived semantic contract JSON
+
 ## `ota receipt --json --baseline`
 
 `ota receipt --json --baseline` compares the current repo receipt against either:

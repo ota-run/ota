@@ -44,6 +44,10 @@
   semantic input kind and any archive-backed snapshot path, while `ota diff --json` publishes
   additive `base_input` / `target_input` metadata instead of forcing operators to infer archived
   receipt snapshots from path patterns alone
+- added first-class archived snapshot inspection under `ota receipt --snapshot`, so operators can
+  read archived normalized contract truth directly from `latest`, `promoted`, archived receipt
+  JSON, or archived `.ota/contracts/...` snapshot files without routing that inspection through
+  `ota diff` or receipt-correlation output
 
 ## 1.6.21
 
@@ -123,9 +127,10 @@
 - fixed `ota skills install` so Codex and Claude installs now stage the full canonical Ota skill
   payload instead of a partial bundle; the installer now includes the referenced `agents/` and
   `references/` support files and validates that the staged skill tree is complete before replace
-- widened first-class Node dependency hydration with explicit npm `force` ownership across both
-  `npm install --force` and `npm ci --force`, so repos can now model those exceptional override
-  lanes structurally under `prepare.kind: dependency_hydration` instead of burying them in shell
+- widened first-class Node dependency hydration with explicit npm `force` ownership via
+  `prepare.source.force: true` on `source.kind: node_package_manager` with `manager: npm` and
+  `mode: install` or `mode: ci`, so repos can now model those exceptional override lanes
+  structurally under `prepare.kind: dependency_hydration` instead of burying them in shell
 - validate/doctor now warn when contracts declare the exceptional npm `--force` hydration path,
   and they also flag raw `npm install --force` / `npm ci --force` task bodies as replaceable
   structured dependency hydration

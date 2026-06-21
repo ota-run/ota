@@ -1716,6 +1716,8 @@ Use this when you want a stable handoff between local readiness and CI history:
   explicit baseline
 - `ota receipt --json --baseline promoted` compares the current repo state against that reviewed
   baseline instead of whatever happened to run last
+- `ota receipt --snapshot latest` reads the archived normalized contract truth directly from the
+  latest matching archived receipt instead of routing that inspection through compare mode
 
 ```bash
 ota receipt [PATH]
@@ -1729,6 +1731,10 @@ ota receipt --baseline promoted [PATH]
 ota receipt --baseline latest [PATH]
 ota receipt --baseline ./baseline-receipt.json [PATH]
 ota receipt --baseline latest --fail-on-new-blockers [PATH]
+ota receipt --snapshot latest [PATH]
+ota receipt --snapshot promoted [PATH]
+ota receipt --snapshot ./.ota/contracts/sha256-....json [PATH]
+ota receipt --snapshot ./.ota/receipts/repo-receipt-....json [PATH]
 ota receipt --history [PATH]
 ota receipt --member api [PATH]
 ```
@@ -1758,6 +1764,14 @@ Current behavior:
 - `--baseline promoted` compares the current receipt against the explicit promoted baseline pointer under `.ota/receipts/repo-baseline.json`
 - `--baseline latest` compares the current receipt against the newest valid archived repo receipt for the same contract under `.ota/receipts`
 - `--baseline <file>` compares the current receipt against an explicit repo receipt JSON file
+- `--snapshot latest` resolves the newest valid archived repo receipt for the same contract and
+  reads the archived normalized contract snapshot referenced by that receipt
+- `--snapshot promoted` resolves the explicit promoted repo baseline pointer under
+  `.ota/receipts/repo-baseline.json` and reads the archived normalized contract snapshot
+- `--snapshot <receipt.json>` accepts an archived repo receipt JSON file and follows
+  `receipt.contract_snapshot_ref`
+- `--snapshot <snapshot.json>` accepts an archived normalized snapshot JSON file directly
+- `--snapshot` is read-only and does not rerun doctor, archive a new receipt, or mutate repo state
 - compare mode is read-only and does not archive or mutate repo state; it exits `0` when the comparison itself succeeds, even if the current or baseline receipt is not ready
 - when the selected baseline receipt carries `receipt.contract_snapshot_ref`, compare mode also diffs the archived normalized contract snapshot against the current normalized contract truth and returns additive `contract_changes[]`, `likely_related_changes[]`, and `summary.comparison.contract_snapshot_changed` in JSON output
 - `--fail-on-new-blockers` requires `--baseline` and exits `1` when the diff introduces one or more new `severity: error` findings relative to the baseline
@@ -1771,6 +1785,9 @@ Text output:
 - `--baseline` switches the text header to `RECEIPT DIFF <path>` and reports the baseline source plus provenance such as the selection path, promoted time, contract identity, introduced findings, resolved findings, and unchanged findings when there are no newly introduced or resolved changes
 - `--baseline` also preserves execution identity on both sides when present, including archived/current `status`, `backend`, `context`, `target`, `provider`, `lifecycle`, and `cwd`
 - `--fail-on-new-blockers` adds a `Gate:` overview line showing whether the current diff passed or was blocked by newly introduced blockers
+- `--snapshot` switches the text header to `RECEIPT SNAPSHOT <path>` and prints the archived
+  snapshot source, selection kind, archive/snapshot paths, hash, any preserved contract identity,
+  and the pretty-printed normalized semantic contract JSON itself
 
 JSON output:
 
@@ -1783,6 +1800,9 @@ JSON output:
 - `receipt`, including additive `receipt.contract_identity` with declared project, selected metadata, execution intent, compact contract counts, and optional `receipt.workflow_env_artifacts` when the selected/default workflow owns rendered env artifacts
 - `findings`
 - `--history` switches `mode` to `history` and returns `summary.archive_count`, `summary.invalid_archive_count`, an `archives` array for valid archived receipts, and `invalid_archives` when malformed archive files were skipped
+- `--snapshot` switches `mode` to `snapshot` and returns additive `source`, `selection_kind`,
+  `selection_path`, `archive_path`, `archived_at`, `promoted_at`, `snapshot_hash`,
+  `snapshot_path`, `contract`, and the normalized archived `snapshot`
 - each history archive may preserve `status`, `backend`, `context`, `target`, `provider`, `lifecycle`, and `cwd` when that execution identity existed in the archived receipt
 - `--baseline` switches `mode` to `diff` and returns `baseline`, `current`, `summary`, `introduced`, `resolved`, and `unchanged`, with additive provenance fields on `baseline`
 - diff `summary` also carries a compact `comparison` block so wrappers can show baseline/current identity labels plus readiness drift without reconstructing it from the full baseline/current sections

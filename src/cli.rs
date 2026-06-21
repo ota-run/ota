@@ -403,11 +403,19 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Inspect `latest`, `promoted`, an archived receipt JSON file, or an archived semantic snapshot JSON file.
+        #[arg(
+            long,
+            value_name = "SNAPSHOT",
+            conflicts_with_all = ["archive", "history", "baseline", "member", "backend", "native", "container", "remote", "lifecycle", "persistent", "ephemeral"],
+            add = ArgValueCompleter::new(complete_receipt_snapshot_candidates)
+        )]
+        snapshot: Option<String>,
         /// Compare the current receipt against `promoted`, `latest`, or an archived receipt JSON file.
         #[arg(
             long,
             value_name = "BASELINE",
-            conflicts_with_all = ["archive", "history"],
+            conflicts_with_all = ["archive", "history", "snapshot"],
             add = ArgValueCompleter::new(complete_receipt_baseline_candidates)
         )]
         baseline: Option<String>,
@@ -416,7 +424,7 @@ enum Commands {
             long,
             action = ArgAction::SetTrue,
             requires = "baseline",
-            conflicts_with = "history"
+            conflicts_with_all = ["history", "snapshot"]
         )]
         fail_on_new_blockers: bool,
         /// List archived receipt artifacts from `.ota/receipts`.
@@ -433,7 +441,8 @@ enum Commands {
                 "lifecycle",
                 "persistent",
                 "ephemeral",
-                "baseline"
+                "baseline",
+                "snapshot"
             ]
         )]
         history: bool,
@@ -445,7 +454,7 @@ enum Commands {
             long,
             action = ArgAction::SetTrue,
             requires = "archive",
-            conflicts_with_all = ["baseline", "history"]
+            conflicts_with_all = ["baseline", "history", "snapshot"]
         )]
         promote_baseline: bool,
         /// Capture the receipt in a specific execution context.
@@ -2014,6 +2023,7 @@ fn repo_command_value_span(flag: &str) -> Option<usize> {
         "--host-port",
         "--memory",
         "--lifecycle",
+        "--snapshot",
         "--baseline",
         "--run",
         "--publish",
@@ -2346,6 +2356,42 @@ fn load_receipt_baseline_candidates(contract_path: Option<&Path>) -> Vec<String>
     candidates
 }
 
+fn load_receipt_snapshot_candidates(contract_path: Option<&Path>) -> Vec<String> {
+    let mut candidates = load_receipt_baseline_candidates(contract_path);
+
+    let Some(contract_path) = contract_path else {
+        return candidates;
+    };
+    let Some(repo_root) = contract_path.parent() else {
+        return candidates;
+    };
+    let snapshots_dir = repo_root.join(".ota").join("contracts");
+    let cwd = std::env::current_dir().ok();
+
+    let mut snapshots = std::fs::read_dir(snapshots_dir)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "json"))
+        .map(|path| {
+            cwd.as_ref()
+                .and_then(|cwd| path.strip_prefix(cwd).ok().map(PathBuf::from))
+                .unwrap_or(path)
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        })
+        .collect::<Vec<_>>();
+    snapshots.sort();
+    snapshots.dedup();
+    candidates.extend(snapshots);
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
 fn complete_receipt_baseline_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
     let Some(current) = current.to_str() else {
         return Vec::new();
@@ -2355,6 +2401,21 @@ fn complete_receipt_baseline_candidates(current: &std::ffi::OsStr) -> Vec<Comple
     let contract_path = resolve_completion_contract_path(explicit_path.as_deref(), &words);
 
     load_receipt_baseline_candidates(contract_path.as_deref())
+        .into_iter()
+        .filter(|candidate| current.is_empty() || candidate.starts_with(current))
+        .map(CompletionCandidate::new)
+        .collect()
+}
+
+fn complete_receipt_snapshot_candidates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let Some(current) = current.to_str() else {
+        return Vec::new();
+    };
+    let words = current_completion_words();
+    let explicit_path = parse_repo_command_completion_path(&words);
+    let contract_path = resolve_completion_contract_path(explicit_path.as_deref(), &words);
+
+    load_receipt_snapshot_candidates(contract_path.as_deref())
         .into_iter()
         .filter(|candidate| current.is_empty() || candidate.starts_with(current))
         .map(CompletionCandidate::new)
@@ -4983,6 +5044,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Receipt {
             json,
+            snapshot,
             baseline,
             fail_on_new_blockers,
             history,
@@ -5009,6 +5071,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 skip_deps: false,
             },
             format_from_json(json),
+            snapshot.as_deref(),
             baseline.as_deref(),
             fail_on_new_blockers,
             history,
@@ -8335,9 +8398,9 @@ project:
         ]);
 
         assert_eq!(output.exit_code, 1);
-        let json: Value = serde_json::from_str(output.stderr.as_deref().unwrap()).unwrap();
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert!(
-            json["error"]
+            json["errors"][0]
                 .as_str()
                 .unwrap()
                 .contains("does not carry `receipt.contract_snapshot_ref`")
@@ -9429,6 +9492,147 @@ tasks:
             serde_json::from_str(&fs::read_to_string(snapshot_ref).unwrap()).unwrap();
         assert_eq!(snapshot["project"]["name"], "receipt-demo");
         assert_eq!(snapshot["version"], 1);
+    }
+
+    #[test]
+    fn receipt_snapshot_json_reads_latest_archived_snapshot() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let archived = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
+        assert_eq!(archived.exit_code, 0);
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--snapshot",
+            "latest",
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["mode"], "snapshot");
+        assert_eq!(json["source"], "latest");
+        assert_eq!(json["selection_kind"], "receipt_archive");
+        assert!(json["snapshot_hash"].as_str().unwrap().starts_with("sha256:"));
+        assert!(
+            json["snapshot_path"]
+                .as_str()
+                .unwrap()
+                .contains(".ota/contracts/sha256-")
+        );
+        assert_eq!(json["snapshot"]["project"]["name"], "receipt-demo");
+    }
+
+    #[test]
+    fn receipt_snapshot_json_accepts_snapshot_file() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+tasks:
+  setup:
+    run: echo ready
+"#,
+        );
+
+        let archived = run_with(["ota", "receipt", "--json", "--archive", fixture.path()]);
+        assert_eq!(archived.exit_code, 0);
+        let archived_json: Value = serde_json::from_str(&archived.stdout).unwrap();
+        let snapshot_ref = archived_json["receipt"]["contract_snapshot_ref"]
+            .as_str()
+            .unwrap();
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--snapshot",
+            snapshot_ref,
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["selection_kind"], "snapshot_archive");
+        assert_eq!(json["source"], "file");
+        assert_eq!(json["snapshot"]["project"]["name"], "receipt-demo");
+    }
+
+    #[test]
+    fn receipt_snapshot_fails_for_unarchived_receipt_without_snapshot_ref() {
+        let receipt_dir = TempDir::new().unwrap();
+        let receipt_path = receipt_dir.path().join("repo-receipt.json");
+        fs::write(
+            &receipt_path,
+            r#"{
+  "ok": true,
+  "mode": "receipt",
+  "summary": {
+    "error_count": 0,
+    "warn_count": 0,
+    "info_count": 0,
+    "step_count": 1
+  },
+  "receipt": {
+    "scope": "repo",
+    "contract": "/tmp/receipt-demo/ota.yaml",
+    "contract_snapshot_hash": "sha256:deadbeef",
+    "steps": [
+      {
+        "order": 1,
+        "label": "readiness",
+        "status": "READY"
+      }
+    ],
+    "summary": {
+      "error_count": 0,
+      "warn_count": 0,
+      "info_count": 0,
+      "step_count": 1
+    }
+  },
+  "findings": []
+}"#,
+        )
+        .unwrap();
+
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-target
+"#,
+        );
+
+        let output = run_with([
+            "ota",
+            "receipt",
+            "--json",
+            "--snapshot",
+            receipt_path.to_str().unwrap(),
+            fixture.path(),
+        ]);
+
+        assert_eq!(output.exit_code, 1);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert!(
+            json["errors"][0]
+                .as_str()
+                .unwrap()
+                .contains("does not carry `receipt.contract_snapshot_ref`")
+        );
     }
 
     #[test]
@@ -18034,6 +18238,7 @@ tasks:
                 "receipt",
                 super::Commands::Receipt {
                     json: true,
+                    snapshot: None,
                     baseline: None,
                     fail_on_new_blockers: false,
                     history: false,
@@ -35011,6 +35216,47 @@ project:
             vec![String::from(
                 ".ota/receipts/repo-receipt-20260415-120000-000Z.json"
             )]
+        );
+    }
+
+    #[test]
+    fn receipt_snapshot_shell_completion_suggests_archived_snapshots() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: receipt-demo
+"#,
+        );
+        fs::create_dir_all(fixture.dir.path().join(".ota").join("contracts")).unwrap();
+        fs::write(
+            fixture
+                .dir
+                .path()
+                .join(".ota")
+                .join("contracts")
+                .join("sha256-deadbeef.json"),
+            "{}",
+        )
+        .unwrap();
+        let _cwd = CurrentDirGuard::enter(fixture.dir.path());
+        let _completion = CompletionRequestGuard::set(CompletionRequest {
+            words: vec![
+                "ota".into(),
+                "receipt".into(),
+                "--snapshot".into(),
+                ".ota/contracts/s".into(),
+            ],
+        });
+
+        let values =
+            shell_completion_values(&["ota", "receipt", "--snapshot", ".ota/contracts/s"], 3)
+                .expect("shell completion should succeed");
+
+        assert_eq!(
+            values,
+            vec![String::from(".ota/contracts/sha256-deadbeef.json")]
         );
     }
 
