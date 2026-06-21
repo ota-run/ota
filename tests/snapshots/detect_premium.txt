@@ -69,15 +69,12 @@ agent:
   verify_after_changes:
   - setup
   protected_paths:
-  - .nvmrc
   - ota.yaml
-  - package.json
   inferred_boundary:
     reviewed: false
     provenance:
       protected_paths:
-      - detect:contract_file_default
-      - detect:detected_control_files
+      - init:contract_file_default
   bootstrap:
     ota:
       note: Only install ota if it is missing and installation is approved.

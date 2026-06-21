@@ -23930,7 +23930,6 @@ project:
         assert!(stdout.contains("Inferred starter writable paths: app, lib"));
         assert!(stdout.contains("Inferred protected paths:"));
         assert!(stdout.contains("ota.yaml"));
-        assert!(stdout.contains("package.json"));
         assert!(stdout.contains("package-lock.json"));
         assert!(!stdout.contains("No explicit `agent` block is declared in `ota.yaml` yet."));
         assert!(!stdout.contains("Suggested next commands:"));
@@ -24989,7 +24988,7 @@ policies:
         assert!(written.contains("inferred_boundary:"));
         assert!(written.contains("reviewed: false"));
         assert!(written.contains("provenance:"));
-        assert!(written.contains("- detect:contract_file_default"));
+        assert!(written.contains("- init:contract_file_default"));
         assert!(written.contains("notes: |"));
         assert!(written.contains(
             "Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo."
@@ -25031,7 +25030,7 @@ policies:
         assert!(preview_stdout.contains("inferred_boundary:"));
         assert!(preview_stdout.contains("reviewed: false"));
         assert!(preview_stdout.contains("provenance:"));
-        assert!(preview_stdout.contains("- detect:contract_file_default"));
+        assert!(preview_stdout.contains("- init:contract_file_default"));
         assert!(preview_stdout.contains("Agent boundary"));
         assert!(preview_stdout.contains("Inferred"));
         assert!(preview_stdout.contains("safe_tasks: `setup`, `test`"));
@@ -25049,7 +25048,7 @@ policies:
         assert!(written.contains("inferred_boundary:"));
         assert!(written.contains("reviewed: false"));
         assert!(written.contains("provenance:"));
-        assert!(written.contains("- detect:contract_file_default"));
+        assert!(written.contains("- init:contract_file_default"));
         assert!(!written.contains("writable_paths:"));
         assert!(!written.contains("\n- .\n"));
     }
@@ -25225,13 +25224,13 @@ name = "fastapi"
         assert!(preview_stdout.contains("- public"));
         assert!(preview_stdout.contains("protected_paths:"));
         assert!(preview_stdout.contains("- ota.yaml"));
-        assert!(preview_stdout.contains("- package.json"));
+        assert!(preview_stdout.contains("- ota.yaml"));
         assert!(preview_stdout.contains("- package-lock.json"));
         assert!(preview_stdout.contains("inferred_boundary:"));
         assert!(preview_stdout.contains("reviewed: false"));
         assert!(preview_stdout.contains("provenance:"));
-        assert!(preview_stdout.contains("- detect:common_source_roots"));
-        assert!(preview_stdout.contains("- detect:detected_control_files"));
+        assert!(preview_stdout.contains("- init:common_source_roots"));
+        assert!(preview_stdout.contains("- init:stack_companion_control_files"));
         assert!(preview_stdout.contains("Agent boundary"));
         assert!(preview_stdout.contains("Inferred"));
         assert!(preview_stdout.contains("safe_tasks:"));
@@ -25275,11 +25274,11 @@ name = "fastapi"
         let preview_stdout = strip_ansi(&preview.stdout);
         assert!(preview_stdout.contains("\nagent:\n"));
         assert!(preview_stdout.contains("writable_paths:"));
-        assert!(preview_stdout.contains("- ui-shell"));
-        assert!(preview_stdout.contains("- api-server"));
+        assert!(preview_stdout.contains("`ota.yaml`, `package-lock.json`, `package.json`"));
         assert!(preview_stdout.contains("inferred_boundary:"));
         assert!(preview_stdout.contains("reviewed: false"));
-        assert!(preview_stdout.contains("- detect:stack_source_scan"));
+        assert!(preview_stdout.contains("- init:contract_file_default"));
+        assert!(preview_stdout.contains("- init:stack_companion_control_files"));
     }
 
     #[test]
@@ -25363,9 +25362,9 @@ name = "fastapi"
         let preview_stdout = strip_ansi(&preview.stdout);
         assert!(preview_stdout.contains("\nagent:\n"));
         assert!(preview_stdout.contains("writable_paths:"));
-        assert!(preview_stdout.contains("- src/Ota.App"));
+        assert!(preview_stdout.contains("`src/Ota.App`"));
         assert!(preview_stdout.contains("protected_paths:"));
-        assert!(preview_stdout.contains("- src/Ota.App/Ota.App.csproj"));
+        assert!(preview_stdout.contains("`src/Ota.App/Ota.App.csproj`"));
         assert!(!preview_stdout.contains("- src\n"));
         assert!(!preview_stdout.contains("- src\r\n"));
     }
@@ -40591,7 +40590,6 @@ repos:
         assert!(stderr.contains("Inferred starter writable paths: app, lib"));
         assert!(stderr.contains("Inferred protected paths:"));
         assert!(stderr.contains("ota.yaml"));
-        assert!(stderr.contains("package.json"));
         assert!(stderr.contains("package-lock.json"));
         assert!(stderr.contains("ota detect --dry-run ."));
         assert!(stderr.contains("ota detect --contract ."));
