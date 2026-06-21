@@ -40,6 +40,10 @@
   `contract_changes[]`, and `likely_related_changes[]`; the initial correlation lane now covers
   env, tool, runtime, check, task, and required-service blockers instead of only the narrowest
   missing-env cases
+- clarified semantic diff input identity, so `ota diff` text output now shows each side's resolved
+  semantic input kind and any archive-backed snapshot path, while `ota diff --json` publishes
+  additive `base_input` / `target_input` metadata instead of forcing operators to infer archived
+  receipt snapshots from path patterns alone
 
 ## 1.6.21
 

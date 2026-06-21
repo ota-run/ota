@@ -2550,10 +2550,20 @@ pub struct DiffChange {
 }
 
 #[derive(Debug, Serialize)]
+pub struct DiffInputSide<'a> {
+    pub path: &'a str,
+    pub kind: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_path: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct DiffSuccess<'a> {
     pub ok: bool,
     pub base: &'a str,
     pub target: &'a str,
+    pub base_input: DiffInputSide<'a>,
+    pub target_input: DiffInputSide<'a>,
     pub summary: DiffSummary,
     pub changes: &'a [DiffChange],
 }
@@ -2563,6 +2573,10 @@ pub struct DiffFailure<'a> {
     pub ok: bool,
     pub base: &'a str,
     pub target: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_input: Option<DiffInputSide<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_input: Option<DiffInputSide<'a>>,
     pub error: &'a str,
 }
 

@@ -949,6 +949,8 @@ Current behavior:
 - also accepts archived receipt JSON or archived `.ota/contracts/...` snapshot JSON as either side
   of the comparison when you want to compare current truth against archived run truth
 - reports added, missing-in-target, and changed assumption keys in deterministic order
+- text output now includes explicit input identity for each side, so archived receipt snapshots are
+  visible as first-class diff inputs instead of only being implied by the path
 - remains read-only
 - exits `0` when the comparison succeeds, even if differences exist
 - surfaces load and parse errors clearly
@@ -957,6 +959,8 @@ Text output:
 
 - header: `DIFF <base> -> <target>`
 - `MATCH` or `DIFFERENT`
+- explicit `Inputs` overview with per-side path, semantic input kind, and resolved snapshot path
+  when a receipt-side diff resolves through `.ota/contracts/...`
 - readiness impact summary
 - grouped added, missing-in-target, and changed paths
 - additive category and risk labels per changed assumption

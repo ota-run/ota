@@ -13183,6 +13183,8 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                         ok: false,
                         base: &base_input,
                         target: &target_input,
+                        base_input: None,
+                        target_input: None,
                         error: &error,
                     })),
                 },
@@ -13201,6 +13203,8 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                         ok: false,
                         base: &base_input,
                         target: &target_input,
+                        base_input: None,
+                        target_input: None,
                         error: &error,
                     })),
                 },
@@ -13224,8 +13228,16 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
             load_diff_contract(&target_path),
         ) {
             (Ok(base_contract), Ok(target_contract)) => {
-                let changes = collect_diff_changes(&base_contract, &target_contract);
+                let changes = collect_diff_changes(&base_contract.semantic, &target_contract.semantic);
                 let summary = summarize_diff_changes(&changes);
+                let base_snapshot_display = base_contract
+                    .snapshot_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned());
+                let target_snapshot_display = target_contract
+                    .snapshot_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned());
                 match format {
                     OutputFormat::Text => {
                         let mut stdout = format!(
@@ -13240,6 +13252,48 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                             ),
                             render_diff_status_word(changes.is_empty())
                         );
+                        stdout.push_str("\n\n");
+                        stdout.push_str(&paint_section_title("Inputs"));
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            summary_bullet(),
+                            paint_key("Base:"),
+                            compact_path(&base_path, ".")
+                        ));
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            summary_bullet(),
+                            paint_key("Base kind:"),
+                            diff_input_kind_label(base_contract.kind)
+                        ));
+                        if let Some(snapshot_path) = base_contract.snapshot_path.as_ref() {
+                            stdout.push_str(&format!(
+                                "\n{} {} {}",
+                                summary_bullet(),
+                                paint_key("Base snapshot:"),
+                                compact_path(snapshot_path, ".")
+                            ));
+                        }
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            summary_bullet(),
+                            paint_key("Target:"),
+                            compact_path(&target_path, ".")
+                        ));
+                        stdout.push_str(&format!(
+                            "\n{} {} {}",
+                            summary_bullet(),
+                            paint_key("Target kind:"),
+                            diff_input_kind_label(target_contract.kind)
+                        ));
+                        if let Some(snapshot_path) = target_contract.snapshot_path.as_ref() {
+                            stdout.push_str(&format!(
+                                "\n{} {} {}",
+                                summary_bullet(),
+                                paint_key("Target snapshot:"),
+                                compact_path(snapshot_path, ".")
+                            ));
+                        }
                         if changes.is_empty() {
                             stdout.push_str("\n\nno semantic differences");
                         } else {
@@ -13271,6 +13325,16 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                             ok: changes.is_empty(),
                             base: &base_display,
                             target: &target_display,
+                            base_input: crate::output::DiffInputSide {
+                                path: &base_display,
+                                kind: base_contract.kind,
+                                snapshot_path: base_snapshot_display.as_deref(),
+                            },
+                            target_input: crate::output::DiffInputSide {
+                                path: &target_display,
+                                kind: target_contract.kind,
+                                snapshot_path: target_snapshot_display.as_deref(),
+                            },
                             summary,
                             changes: &changes,
                         }),
@@ -13285,6 +13349,8 @@ pub fn diff(base: &Path, target: &Path, format: OutputFormat, debug: bool) -> Co
                     ok: false,
                     base: &base_display,
                     target: &target_display,
+                    base_input: None,
+                    target_input: None,
                     error: &error,
                 })),
             },
@@ -35152,7 +35218,14 @@ fn render_json_inline(value: &JsonValue) -> String {
     rendered.trim().to_string()
 }
 
-fn load_diff_contract(path: &Path) -> Result<JsonValue, String> {
+#[derive(Debug, Clone)]
+struct LoadedDiffInput {
+    semantic: JsonValue,
+    kind: &'static str,
+    snapshot_path: Option<PathBuf>,
+}
+
+fn load_diff_contract(path: &Path) -> Result<LoadedDiffInput, String> {
     if path.extension().and_then(|value| value.to_str()) == Some("json") {
         return load_diff_json_input(path);
     }
@@ -35160,6 +35233,11 @@ fn load_diff_contract(path: &Path) -> Result<JsonValue, String> {
     match load_contract(path) {
         Ok(contract) => serde_json::to_value(contract)
             .map(normalize_semantic_json)
+            .map(|semantic| LoadedDiffInput {
+                semantic,
+                kind: "contract",
+                snapshot_path: None,
+            })
             .map_err(|error| format!("failed to normalize contract `{}`: {error}", path.display())),
         Err(contract_error) => load_workspace_contract(path)
             .map_err(|workspace_error| {
@@ -35176,12 +35254,16 @@ fn load_diff_contract(path: &Path) -> Result<JsonValue, String> {
                         "failed to normalize workspace contract `{}`: {error}",
                         path.display()
                     )
+                }).map(|semantic| LoadedDiffInput {
+                    semantic,
+                    kind: "workspace_contract",
+                    snapshot_path: None,
                 })
             }),
     }
 }
 
-fn load_diff_json_input(path: &Path) -> Result<JsonValue, String> {
+fn load_diff_json_input(path: &Path) -> Result<LoadedDiffInput, String> {
     let contents = fs::read_to_string(path).map_err(|error| {
         format!(
             "failed to load semantic diff input `{}`: {error}",
@@ -35195,17 +35277,25 @@ fn load_diff_json_input(path: &Path) -> Result<JsonValue, String> {
         )
     })?;
 
-    if let Some(snapshot) = diff_snapshot_from_receipt_json(path, &json)? {
-        return Ok(normalize_semantic_json(snapshot));
+    if let Some((snapshot, snapshot_path)) = diff_snapshot_from_receipt_json(path, &json)? {
+        return Ok(LoadedDiffInput {
+            semantic: normalize_semantic_json(snapshot),
+            kind: "archived_receipt_snapshot",
+            snapshot_path: Some(snapshot_path),
+        });
     }
 
-    Ok(normalize_semantic_json(json))
+    Ok(LoadedDiffInput {
+        semantic: normalize_semantic_json(json),
+        kind: "archived_snapshot",
+        snapshot_path: None,
+    })
 }
 
 fn diff_snapshot_from_receipt_json(
     path: &Path,
     json: &JsonValue,
-) -> Result<Option<JsonValue>, String> {
+) -> Result<Option<(JsonValue, PathBuf)>, String> {
     let Some(receipt) = json.get("receipt") else {
         return Ok(None);
     };
@@ -35238,7 +35328,7 @@ fn diff_snapshot_from_receipt_json(
             path.display()
         )
     })?;
-    Ok(Some(snapshot))
+    Ok(Some((snapshot, snapshot_path)))
 }
 
 fn resolve_diff_snapshot_ref(receipt_path: &Path, snapshot_ref: &str) -> PathBuf {
@@ -35275,6 +35365,16 @@ fn resolve_diff_contract_path(path: &Path) -> Result<PathBuf, String> {
         "contract path does not exist: `{}`",
         path.display()
     ))
+}
+
+fn diff_input_kind_label(kind: &str) -> &'static str {
+    match kind {
+        "contract" => "repo contract",
+        "workspace_contract" => "workspace contract",
+        "archived_receipt_snapshot" => "archived receipt snapshot",
+        "archived_snapshot" => "archived snapshot",
+        _ => "semantic input",
+    }
 }
 
 fn selected_detect_comparison(

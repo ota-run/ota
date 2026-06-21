@@ -136,7 +136,9 @@ human text output:
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results; repo results may also include additive `next` / `next_steps`
 - `ota workspace receipt --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota diff --json`: use the readiness-impact summary and semantic `changes[]`; archived receipt
-  JSON and archived `.ota/contracts/...` snapshot JSON are also valid diff inputs
+  JSON and archived `.ota/contracts/...` snapshot JSON are also valid diff inputs; additive
+  `base_input` / `target_input` identify which semantic input kind each side resolved to and
+  publish `snapshot_path` when a receipt-side diff resolves through `.ota/contracts/...`
 - `ota explain --json`: use grouped `actions` for the ordered remediation plan and `steps` for stable finding-level detail
 
 Hosted CI can use the same fields as annotations or check-run summaries:

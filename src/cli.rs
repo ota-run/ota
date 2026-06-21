@@ -8143,6 +8143,9 @@ tasks:
         assert!(stdout.contains("project.name"));
         assert!(stdout.contains("tasks.lint.run"));
         assert!(stdout.contains("tasks.test.run"));
+        assert!(stdout.contains("Inputs"));
+        assert!(stdout.contains("Base kind:"));
+        assert!(stdout.contains("repo contract"));
     }
 
     #[test]
@@ -8190,6 +8193,8 @@ tasks:
         assert!(paths.contains(&"project.name"));
         assert!(paths.contains(&"tasks.lint.run"));
         assert!(paths.contains(&"tasks.test.run"));
+        assert_eq!(json["base_input"]["kind"], "contract");
+        assert_eq!(json["target_input"]["kind"], "contract");
         let project_change = json["changes"]
             .as_array()
             .unwrap()
@@ -8248,6 +8253,14 @@ tasks:
             .collect::<Vec<_>>();
         assert!(paths.contains(&"project.name"));
         assert!(paths.contains(&"tasks.test.run"));
+        assert_eq!(json["base_input"]["kind"], "archived_receipt_snapshot");
+        assert_eq!(json["target_input"]["kind"], "contract");
+        assert!(
+            json["base_input"]["snapshot_path"]
+                .as_str()
+                .unwrap()
+                .contains(".ota/contracts/sha256-")
+        );
     }
 
     #[test]
@@ -8336,6 +8349,8 @@ project:
         let base = ContractFixture::new(
             r#"
 version: 1
+project:
+  name: ota
 policies:
   review:
     require_signed_tags: false
@@ -8344,6 +8359,8 @@ policies:
         let target = ContractFixture::new(
             r#"
 version: 1
+project:
+  name: ota
 policies:
   review:
     require_signed_tags: true
@@ -32428,7 +32445,8 @@ project:
 
         assert_eq!(output.exit_code, 1);
         let stderr = strip_ansi(output.stderr.as_deref().unwrap_or_default());
-        assert!(stderr.contains("explicit repo path does not contain `ota.yaml`"));
+        assert!(stderr.contains("supported contract or"));
+        assert!(stderr.contains("snapshot file"));
     }
 
     #[test]
