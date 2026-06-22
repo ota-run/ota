@@ -89,6 +89,9 @@
 - widened declared service-correlation ordering across workflow reference lanes, so named service
   findings now treat `workflows.<name>.services.required[]` as stronger evidence than a nearby
   generic workflow change instead of flattening both into the same broad workflow lane
+- widened declared env-correlation ordering across path-scoped requirement lanes, so named env
+  findings now treat `tasks.<name>.requirements.env[]` as stronger evidence than a nearby generic
+  task-body change instead of flattening both into the same broad task lane
 
 ## 1.6.21
 

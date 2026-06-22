@@ -32006,6 +32006,12 @@ fn receipt_diff_declared_match_rank(
         }
     }
     if let Some(entity) = finding.correlation_entity() {
+        if change.path.contains(".requirements.env[")
+            && (change.base.as_deref() == Some(&quoted_scalar(&entity))
+                || change.target.as_deref() == Some(&quoted_scalar(&entity)))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+        }
         if change.path.contains("requires_services")
             && (change.base.as_deref() == Some(&quoted_scalar(&entity))
                 || change.target.as_deref() == Some(&quoted_scalar(&entity)))
@@ -32593,6 +32599,33 @@ mod receipt_diff_correlation_tests {
     }
 
     #[test]
+    fn receipt_diff_declared_entity_matches_task_env_requirement_reference() {
+        let change = DiffChange {
+            path: String::from("tasks.dev.requirements.env[0]"),
+            status: String::from("add"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("DATABASE_URL")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_ENV_MISSING",
+            "environment",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Missing environment variable: DATABASE_URL",
+            "why",
+            "next",
+        );
+
+        let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
+
+        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
+        assert_eq!(matched.lane_priority, 2);
+    }
+
+    #[test]
     fn receipt_diff_declared_entity_matches_service_requirement_reference() {
         let mut change = diff_change("tasks.dev.requires_services[0]", "add");
         change.target = Some(quoted_scalar("postgres"));
@@ -32791,6 +32824,33 @@ mod receipt_diff_correlation_tests {
         assert_eq!(related[0].path, required.path);
         assert_eq!(related[1].path, default.path);
         assert_eq!(related[2].path, other.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_named_env_requirement_reference_over_adjacent_task_body() {
+        let requirement = DiffChange {
+            path: String::from("tasks.dev.requirements.env[0]"),
+            status: String::from("add"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("DATABASE_URL")),
+            provenance: None,
+        };
+        let task = diff_change("tasks.dev.command.exe", "change");
+        let finding = identified_finding(
+            "OTA_ENV_MISSING",
+            "Missing environment variable: DATABASE_URL",
+        );
+
+        let related = receipt_diff_likely_related_changes(
+            &[task.clone(), requirement.clone()],
+            &[finding],
+            None,
+        );
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, requirement.path);
     }
 
     #[test]
