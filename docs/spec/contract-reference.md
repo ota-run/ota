@@ -2499,6 +2499,12 @@ Task target binding semantics:
   - `restart_ready` = when ota resolves a local target binding and no explicit override input wins, restart a currently reachable producer and wait for readiness before continuing
   - `ensure_running` = when ota resolves a local target binding and no explicit override input wins, reuse the producer if the declared target listener is already reachable or start it and wait until that listener becomes reachable
   - `ensure_ready` = when ota resolves a local target binding and no explicit override input wins, reuse the producer if already reachable or start it and wait until ready
+  - practical rule of thumb:
+    - use `manual` when target resolution is enough and the producer must already exist
+    - use `ensure_started` when ota should start the producer and hand off immediately
+    - use `restart_ready` when ota should bounce a reachable producer and verify it again
+    - use `ensure_running` when listener reachability is enough
+    - use `ensure_ready` when the producer declares a deeper readiness contract that should be satisfied before the consumer runs
 - `url` targets support `activation.mode: manual` only
 - service runtimes may declare `runtime.readiness` when “ready” must mean more than “the socket is accepting connections”
 - resolution precedence is:

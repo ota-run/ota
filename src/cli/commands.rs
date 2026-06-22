@@ -32024,7 +32024,9 @@ fn receipt_diff_declared_match_rank(
         {
             return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
         }
-        if change.path.contains(&format!(".requirements.tools.{entity}"))
+        if change
+            .path
+            .contains(&format!(".requirements.tools.{entity}"))
             || change
                 .path
                 .contains(&format!(".requirements.toolchains.{entity}"))
@@ -32047,8 +32049,7 @@ fn receipt_diff_declared_match_rank(
         {
             return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
         }
-        if (change.path.contains(".readiness.checks[")
-            || change.path.contains(".signal.checks["))
+        if (change.path.contains(".readiness.checks[") || change.path.contains(".signal.checks["))
             && (change.base.as_deref() == Some(&quoted_scalar(&entity))
                 || change.target.as_deref() == Some(&quoted_scalar(&entity)))
         {
@@ -32095,7 +32096,9 @@ fn receipt_diff_declared_match_rank(
 
     let path = change.path.as_str();
     match change_category {
-        "env" if path.starts_with("env.") => Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily),
+        "env" if path.starts_with("env.") => {
+            Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
+        }
         "service" if path.starts_with("services.") => {
             Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
         }
@@ -32108,10 +32111,14 @@ fn receipt_diff_declared_match_rank(
         "workflow" if path.starts_with("workflows.") => {
             Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
         }
-        "execution" if path.starts_with("execution.") || path.starts_with("native_prerequisites.") => {
+        "execution"
+            if path.starts_with("execution.") || path.starts_with("native_prerequisites.") =>
+        {
             Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
         }
-        "agent" if path.starts_with("agent.") => Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily),
+        "agent" if path.starts_with("agent.") => {
+            Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
+        }
         "policy" if path.starts_with("policies.") => {
             Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
         }
@@ -32314,8 +32321,9 @@ fn receipt_diff_likely_related_changes(
                 .strip_prefix("Check failed: ")
                 .or_else(|| finding.summary.strip_prefix("Check timed out: "))
                 .and_then(|name| {
-                    check_change_prefix(contract_changes, name)
-                        .or_else(|| current_contract.and_then(|contract| contract_check_prefix(contract, name)))
+                    check_change_prefix(contract_changes, name).or_else(|| {
+                        current_contract.and_then(|contract| contract_check_prefix(contract, name))
+                    })
                 })
         } else {
             None
@@ -32355,7 +32363,8 @@ fn receipt_diff_likely_related_changes(
                 ),
             };
             match best_by_path.get(change.path.as_str()) {
-                Some(existing) if candidate_sort_key(existing) <= candidate_sort_key(&candidate) => {}
+                Some(existing)
+                    if candidate_sort_key(existing) <= candidate_sort_key(&candidate) => {}
                 _ => {
                     best_by_path.insert(change.path.clone(), candidate);
                 }
@@ -32364,7 +32373,10 @@ fn receipt_diff_likely_related_changes(
     }
     let mut related = best_by_path.into_values().collect::<Vec<_>>();
     related.sort_by(|left, right| candidate_sort_key(left).cmp(&candidate_sort_key(right)));
-    related.into_iter().map(|candidate| candidate.change).collect()
+    related
+        .into_iter()
+        .map(|candidate| candidate.change)
+        .collect()
 }
 
 fn receipt_diff_change_owner_distance(finding: &Finding, change: &DiffChange) -> i8 {
@@ -32374,10 +32386,7 @@ fn receipt_diff_change_owner_distance(finding: &Finding, change: &DiffChange) ->
     if change.path == owner_prefix {
         return 0;
     }
-    let Some(suffix) = change
-        .path
-        .strip_prefix(&format!("{owner_prefix}."))
-    else {
+    let Some(suffix) = change.path.strip_prefix(&format!("{owner_prefix}.")) else {
         return i8::MAX;
     };
     let segments = suffix.split('.').count();
@@ -32389,120 +32398,118 @@ fn receipt_diff_change_specificity_key<'a>(
     change: &'a DiffChange,
 ) -> (i8, i8, i8, i8, usize, &'a str, &'a str) {
     let path = change.path.as_str();
-    let code_bias =
-        match finding.code() {
-            "OTA_ENV_MISSING" => {
-                if path.ends_with(".required") {
+    let code_bias = match finding.code() {
+        "OTA_ENV_MISSING" => {
+            if path.ends_with(".required") {
+                0
+            } else if path.ends_with(".default") {
+                1
+            } else {
+                2
+            }
+        }
+        "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => {
+            if path.ends_with(".version") {
+                0
+            } else {
+                1
+            }
+        }
+        "OTA_TOOL_MISSING" => {
+            if path.contains(".acquisition") {
+                0
+            } else if path.ends_with(".version") {
+                1
+            } else {
+                2
+            }
+        }
+        "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => {
+            if path.ends_with(".run")
+                || path.contains(".command")
+                || path.contains(".script")
+                || path.contains(".prepare")
+            {
+                0
+            } else {
+                1
+            }
+        }
+        "OTA_SERVICE_READINESS_FAILED"
+        | "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
+        | "OTA_SERVICE_UNVERIFIABLE"
+        | "OTA_SERVICE_CHECK_FAILED"
+        | "OTA_SERVICE_CHECK_TIMED_OUT" => {
+            if path.contains(".readiness") {
+                0
+            } else if path.contains(".manager") {
+                1
+            } else {
+                2
+            }
+        }
+        "OTA_WORKFLOW_PROBE_FAILED"
+        | "OTA_WORKFLOW_PROBE_TIMED_OUT"
+        | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
+        | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT" => {
+            if path.starts_with("readiness.probes.") {
+                if path.ends_with(".url") || path.ends_with(".path") || path.contains(".target.") {
                     0
-                } else if path.ends_with(".default") {
+                } else if path.ends_with(".method") || path.ends_with(".kind") {
                     1
-                } else {
+                } else if path.ends_with(".expect_status") || path.contains(".success.status[") {
                     2
-                }
-            }
-            "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => {
-                if path.ends_with(".version") { 0 } else { 1 }
-            }
-            "OTA_TOOL_MISSING" => {
-                if path.contains(".acquisition") {
-                    0
-                } else if path.ends_with(".version") {
-                    1
-                } else {
-                    2
-                }
-            }
-            "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => {
-                if path.ends_with(".run")
-                    || path.contains(".command")
-                    || path.contains(".script")
-                    || path.contains(".prepare")
-                {
-                    0
-                } else {
-                    1
-                }
-            }
-            "OTA_SERVICE_READINESS_FAILED"
-            | "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
-            | "OTA_SERVICE_UNVERIFIABLE"
-            | "OTA_SERVICE_CHECK_FAILED"
-            | "OTA_SERVICE_CHECK_TIMED_OUT" => {
-                if path.contains(".readiness") {
-                    0
-                } else if path.contains(".manager") {
-                    1
-                } else {
-                    2
-                }
-            }
-            "OTA_WORKFLOW_PROBE_FAILED"
-            | "OTA_WORKFLOW_PROBE_TIMED_OUT"
-            | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
-            | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT" => {
-                if path.starts_with("readiness.probes.") {
-                    if path.ends_with(".url")
-                        || path.ends_with(".path")
-                        || path.contains(".target.")
-                    {
-                        0
-                    } else if path.ends_with(".method") || path.ends_with(".kind") {
-                        1
-                    } else if path.ends_with(".expect_status")
-                        || path.contains(".success.status[")
-                    {
-                        2
-                    } else if path.contains(".body.contains") || path.contains(".headers.") {
-                        3
-                    } else if path.ends_with(".timeout") {
-                        4
-                    } else {
-                        5
-                    }
-                } else if path.contains(".readiness.probes[")
-                    || path.contains(".readiness.signal.probes[")
-                {
-                    6
-                } else {
-                    7
-                }
-            }
-            "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
-            | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
-            | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
-            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
-            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
-            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => {
-                let field_bias = if path.ends_with(".port")
-                    || path.ends_with(".host")
-                    || path.ends_with(".address")
-                    || path.ends_with(".url")
-                {
-                    0
-                } else if path.ends_with(".path") {
-                    1
-                } else if path.ends_with(".protocol")
-                    || path.ends_with(".scheme")
-                    || path.ends_with(".kind")
-                {
-                    2
-                } else if path.ends_with(".primary") {
+                } else if path.contains(".body.contains") || path.contains(".headers.") {
                     3
-                } else {
+                } else if path.ends_with(".timeout") {
                     4
-                };
-                if path.contains(".runtime.surfaces.") {
-                    field_bias
-                } else if path.contains(".readiness.surfaces[")
-                    || path.contains(".readiness.signal.surfaces[")
-                {
-                    5 + field_bias
                 } else {
-                    10 + field_bias
+                    5
                 }
+            } else if path.contains(".readiness.probes[")
+                || path.contains(".readiness.signal.probes[")
+            {
+                6
+            } else {
+                7
             }
-            _ => 0,
-        };
+        }
+        "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+        | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+        | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => {
+            let field_bias = if path.ends_with(".port")
+                || path.ends_with(".host")
+                || path.ends_with(".address")
+                || path.ends_with(".url")
+            {
+                0
+            } else if path.ends_with(".path") {
+                1
+            } else if path.ends_with(".protocol")
+                || path.ends_with(".scheme")
+                || path.ends_with(".kind")
+            {
+                2
+            } else if path.ends_with(".primary") {
+                3
+            } else {
+                4
+            };
+            if path.contains(".runtime.surfaces.") {
+                field_bias
+            } else if path.contains(".readiness.surfaces[")
+                || path.contains(".readiness.signal.surfaces[")
+            {
+                5 + field_bias
+            } else {
+                10 + field_bias
+            }
+        }
+        _ => 0,
+    };
     let owner_distance = receipt_diff_change_owner_distance(finding, change);
     let status_bias = match change.status.as_str() {
         "add" => 0,
@@ -32654,7 +32661,8 @@ mod receipt_diff_correlation_tests {
             "Required service cannot be verified: postgres",
         );
 
-        let related = receipt_diff_likely_related_changes(&[indirect, direct.clone()], &[finding], None);
+        let related =
+            receipt_diff_likely_related_changes(&[indirect, direct.clone()], &[finding], None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, direct.path);
@@ -32667,7 +32675,8 @@ mod receipt_diff_correlation_tests {
         let direct = diff_change("toolchains.python.version", "change");
         let finding = identified_finding("OTA_RUNTIME_MISSING", "Missing runtime: python");
 
-        let related = receipt_diff_likely_related_changes(&[indirect, direct.clone()], &[finding], None);
+        let related =
+            receipt_diff_likely_related_changes(&[indirect, direct.clone()], &[finding], None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, direct.path);
@@ -32683,7 +32692,10 @@ mod receipt_diff_correlation_tests {
 
         let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
 
-        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
+        assert_eq!(
+            matched.rank,
+            ReceiptDiffCorrelationMatchKind::RequirementReference
+        );
         assert_eq!(matched.lane_priority, 2);
     }
 
@@ -32764,7 +32776,10 @@ mod receipt_diff_correlation_tests {
 
         let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
 
-        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
+        assert_eq!(
+            matched.rank,
+            ReceiptDiffCorrelationMatchKind::RequirementReference
+        );
         assert_eq!(matched.lane_priority, 2);
     }
 
@@ -32784,7 +32799,10 @@ mod receipt_diff_correlation_tests {
 
         let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
 
-        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
+        assert_eq!(
+            matched.rank,
+            ReceiptDiffCorrelationMatchKind::RequirementReference
+        );
         assert_eq!(matched.lane_priority, 2);
     }
 
@@ -32811,7 +32829,10 @@ mod receipt_diff_correlation_tests {
 
         let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
 
-        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
+        assert_eq!(
+            matched.rank,
+            ReceiptDiffCorrelationMatchKind::RequirementReference
+        );
         assert_eq!(matched.lane_priority, 2);
     }
 
@@ -32865,7 +32886,10 @@ mod receipt_diff_correlation_tests {
 
         let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
 
-        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
+        assert_eq!(
+            matched.rank,
+            ReceiptDiffCorrelationMatchKind::RequirementReference
+        );
         assert_eq!(matched.lane_priority, 2);
     }
 
@@ -33205,8 +33229,11 @@ tasks:
         };
         let finding = identified_finding("OTA_WORKFLOW_PROBE_FAILED", "Probe failed: app-ready");
 
-        let related =
-            receipt_diff_likely_related_changes(&[reference.clone(), probe.clone()], &[finding], None);
+        let related = receipt_diff_likely_related_changes(
+            &[reference.clone(), probe.clone()],
+            &[finding],
+            None,
+        );
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, probe.path);
@@ -33234,8 +33261,11 @@ tasks:
             "Surface readiness failed: backend",
         );
 
-        let related =
-            receipt_diff_likely_related_changes(&[runtime.clone(), top_level.clone()], &[finding], None);
+        let related = receipt_diff_likely_related_changes(
+            &[runtime.clone(), top_level.clone()],
+            &[finding],
+            None,
+        );
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, top_level.path);
@@ -33258,8 +33288,11 @@ tasks:
             "Surface readiness failed: backend",
         );
 
-        let related =
-            receipt_diff_likely_related_changes(&[reference.clone(), surface.clone()], &[finding], None);
+        let related = receipt_diff_likely_related_changes(
+            &[reference.clone(), surface.clone()],
+            &[finding],
+            None,
+        );
 
         assert_eq!(related[0].path, surface.path);
         assert_eq!(related[1].path, reference.path);
