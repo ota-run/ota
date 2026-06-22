@@ -32126,7 +32126,11 @@ fn receipt_diff_correlation_match(
     let lane_priority = if sequence_rank == Some(best_rank) {
         0
     } else if declared_rank == Some(best_rank) {
-        if exact_surface_match { 1 } else { 2 }
+        if exact_surface_match {
+            receipt_diff_declared_lane_priority(finding, change)
+        } else {
+            2
+        }
     } else {
         3
     };
@@ -32135,6 +32139,21 @@ fn receipt_diff_correlation_match(
         rank: best_rank,
         lane_priority,
     })
+}
+
+fn receipt_diff_declared_lane_priority(finding: &Finding, change: &DiffChange) -> i8 {
+    match finding.code() {
+        "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => {
+            if change.path.starts_with("checks[") {
+                1
+            } else if change.path.starts_with("tasks.") {
+                2
+            } else {
+                1
+            }
+        }
+        _ => 1,
+    }
 }
 
 fn check_change_prefix(contract_changes: &[DiffChange], check_name: &str) -> Option<String> {
@@ -32154,9 +32173,18 @@ fn check_change_prefix(contract_changes: &[DiffChange], check_name: &str) -> Opt
     })
 }
 
+fn contract_check_prefix(contract: &Contract, check_name: &str) -> Option<String> {
+    contract
+        .checks
+        .iter()
+        .position(|check| check.name == check_name)
+        .map(|index| format!("checks[{index}]"))
+}
+
 fn receipt_diff_likely_related_changes(
     contract_changes: &[DiffChange],
     introduced: &[Finding],
+    current_contract: Option<&Contract>,
 ) -> Vec<DiffChange> {
     #[derive(Clone)]
     struct RelatedCandidate {
@@ -32202,7 +32230,10 @@ fn receipt_diff_likely_related_changes(
                 .summary
                 .strip_prefix("Check failed: ")
                 .or_else(|| finding.summary.strip_prefix("Check timed out: "))
-                .and_then(|name| check_change_prefix(contract_changes, name))
+                .and_then(|name| {
+                    check_change_prefix(contract_changes, name)
+                        .or_else(|| current_contract.and_then(|contract| contract_check_prefix(contract, name)))
+                })
         } else {
             None
         };
@@ -32468,7 +32499,7 @@ mod receipt_diff_correlation_tests {
             "Required service cannot be verified: postgres",
         );
 
-        let related = receipt_diff_likely_related_changes(&[indirect, direct.clone()], &[finding]);
+        let related = receipt_diff_likely_related_changes(&[indirect, direct.clone()], &[finding], None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, direct.path);
@@ -32481,7 +32512,7 @@ mod receipt_diff_correlation_tests {
         let direct = diff_change("toolchains.python.version", "change");
         let finding = identified_finding("OTA_RUNTIME_MISSING", "Missing runtime: python");
 
-        let related = receipt_diff_likely_related_changes(&[indirect, direct.clone()], &[finding]);
+        let related = receipt_diff_likely_related_changes(&[indirect, direct.clone()], &[finding], None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, direct.path);
@@ -32508,7 +32539,7 @@ mod receipt_diff_correlation_tests {
             "next",
         );
 
-        let related = receipt_diff_likely_related_changes(&[change.clone()], &[finding]);
+        let related = receipt_diff_likely_related_changes(&[change.clone()], &[finding], None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, change.path);
@@ -32609,7 +32640,7 @@ mod receipt_diff_correlation_tests {
             "next",
         );
 
-        let related = receipt_diff_likely_related_changes(&[change.clone()], &[finding]);
+        let related = receipt_diff_likely_related_changes(&[change.clone()], &[finding], None);
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, change.path);
@@ -32657,6 +32688,7 @@ mod receipt_diff_correlation_tests {
         let related = receipt_diff_likely_related_changes(
             &[policy_change.clone(), check_change.clone()],
             &[policy_finding, check_finding],
+            None,
         );
 
         assert_eq!(related.len(), 2);
@@ -32679,6 +32711,7 @@ mod receipt_diff_correlation_tests {
         let related = receipt_diff_likely_related_changes(
             &[other.clone(), default.clone(), required.clone()],
             &[finding],
+            None,
         );
 
         assert_eq!(related[0].path, required.path);
@@ -32695,8 +32728,11 @@ mod receipt_diff_correlation_tests {
             "Required service cannot be verified: postgres",
         );
 
-        let related =
-            receipt_diff_likely_related_changes(&[indirect.clone(), direct.clone()], &[finding]);
+        let related = receipt_diff_likely_related_changes(
+            &[indirect.clone(), direct.clone()],
+            &[finding],
+            None,
+        );
 
         assert_eq!(related[0].path, direct.path);
         assert_eq!(related[1].path, indirect.path);
@@ -32711,10 +32747,44 @@ mod receipt_diff_correlation_tests {
             "Required service cannot be verified: postgres",
         );
 
-        let related = receipt_diff_likely_related_changes(&[nested.clone(), kind.clone()], &[finding]);
+        let related =
+            receipt_diff_likely_related_changes(&[nested.clone(), kind.clone()], &[finding], None);
 
         assert_eq!(related[0].path, kind.path);
         assert_eq!(related[1].path, nested.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_check_body_over_adjacent_task_body_for_check_failures() {
+        let check = diff_change("checks[0].run", "change");
+        let task = diff_change("tasks.lint.command.exe", "change");
+        let finding = identified_finding("OTA_CHECK_FAILED", "Check failed: lint");
+        let current_contract: Contract = serde_yaml::from_str(
+            r#"
+version: 1
+project:
+  name: sample
+checks:
+  - name: lint
+    kind: precondition
+    severity: error
+    run: bin/lint
+tasks:
+  lint:
+    command:
+      exe: bin/lint
+"#,
+        )
+        .expect("contract fixture should parse");
+
+        let related = receipt_diff_likely_related_changes(
+            &[task.clone(), check.clone()],
+            &[finding],
+            Some(&current_contract),
+        );
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, check.path);
     }
 
     #[test]
@@ -32938,7 +33008,7 @@ fn build_repo_receipt_diff_report(
         None => Vec::new(),
     };
     let likely_related_changes =
-        receipt_diff_likely_related_changes(&contract_changes, &introduced);
+        receipt_diff_likely_related_changes(&contract_changes, &introduced, Some(current_contract));
     let summary = ReceiptDiffSummary {
         baseline_ok: baseline.ok,
         current_ok: current.ok,

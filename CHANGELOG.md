@@ -79,6 +79,10 @@
 - documented the public semantic snapshot operator path in core README and command/spec docs, so
   humans and agents now have one canonical page for archived semantic truth, `ota diff`,
   `ota receipt --snapshot`, and receipt-to-receipt drift correlation
+- refined receipt diff check-correlation ordering with current-contract check-name recovery, so
+  named check failures can resolve `checks[<index>]` from the current contract even when the diff
+  did not change `checks[...].name`, and the changed check body now outranks adjacent task-body
+  drift instead of losing because array-index ownership was not recoverable from diff paths alone
 
 ## 1.6.21
 
