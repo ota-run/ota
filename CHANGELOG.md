@@ -64,6 +64,10 @@
 - tightened `likely_related_changes[]` ordering across adjacent plausible lanes, so receipt diff
   now ranks the published contract-change evidence globally by semantic match strength instead of
   emitting changes in finding-visit order when multiple adjacent assumptions all look plausible
+- moved more receipt diff entity recovery into declared doctor finding metadata, so env, tool,
+  runtime, check, and service correlation matches now prefer published owner/entity truth over
+  CLI-side summary parsing when ranking exact owner, requirement-reference, and name-reference
+  contract changes
 
 ## 1.6.21
 

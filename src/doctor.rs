@@ -1690,6 +1690,8 @@ struct FindingResolvedMetadata<'a> {
     category: &'static str,
     owner: &'static str,
     correlation_surfaces: &'static [&'static str],
+    correlation_owner_prefix: Option<String>,
+    correlation_entity: Option<String>,
     evidence: Option<FindingEvidence>,
     provenance: Option<FindingProvenanceContext<'a>>,
     policy: Option<PolicyFindingContext<'a>>,
@@ -1753,6 +1755,13 @@ fn probe_finding_evidence(finding: &Finding, observed: &str, expected: &str) -> 
     }
 }
 
+fn finding_suffix_after_prefix<'a>(summary: &'a str, prefixes: &[&str]) -> Option<&'a str> {
+    prefixes
+        .iter()
+        .find_map(|prefix| summary.strip_prefix(prefix))
+        .map(str::trim)
+}
+
 fn resolve_contract_core_finding_metadata(finding: &Finding) -> FindingResolvedMetadata<'_> {
     let evidence = match finding.code() {
         "OTA_TASKS_MISSING" => Some(static_finding_evidence(
@@ -1782,6 +1791,11 @@ fn resolve_contract_core_finding_metadata(finding: &Finding) -> FindingResolvedM
             "OTA_TASKS_MISSING" => &["task"],
             _ => &[],
         },
+        correlation_owner_prefix: match finding.code() {
+            "OTA_TASKS_MISSING" => Some(String::from("tasks")),
+            _ => None,
+        },
+        correlation_entity: None,
         evidence,
         provenance: repo_contract_provenance(),
         policy: None,
@@ -1812,6 +1826,8 @@ fn resolve_contractless_finding_metadata(finding: &Finding) -> FindingResolvedMe
             "repo_signals"
         },
         correlation_surfaces: &[],
+        correlation_owner_prefix: None,
+        correlation_entity: None,
         evidence,
         provenance: repo_signals_provenance(),
         policy: None,
@@ -1908,6 +1924,16 @@ fn resolve_execution_finding_metadata(finding: &Finding) -> FindingResolvedMetad
             | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => &["workflow"],
             _ => &["execution"],
         },
+        correlation_owner_prefix: finding_suffix_after_prefix(
+            finding.summary.trim(),
+            &["Check failed: ", "Check timed out: "],
+        )
+        .map(|check| format!("checks.{check}")),
+        correlation_entity: finding_suffix_after_prefix(
+            finding.summary.trim(),
+            &["Check failed: ", "Check timed out: "],
+        )
+        .map(str::to_string),
         evidence,
         provenance: repo_contract_provenance(),
         policy: None,
@@ -1919,6 +1945,8 @@ fn resolve_backend_cli_finding_metadata(_: &Finding) -> FindingResolvedMetadata<
         category: "execution",
         owner: "host",
         correlation_surfaces: &["execution"],
+        correlation_owner_prefix: None,
+        correlation_entity: None,
         evidence: Some(static_finding_evidence(
             "required backend CLI was not found on PATH",
             "a supported backend CLI is available on PATH",
@@ -1938,6 +1966,8 @@ fn resolve_container_backend_finding_metadata(finding: &Finding) -> FindingResol
             "host"
         },
         correlation_surfaces: &["execution"],
+        correlation_owner_prefix: None,
+        correlation_entity: None,
         evidence: None,
         provenance: repo_contract_provenance(),
         policy: None,
@@ -1993,6 +2023,8 @@ fn resolve_remote_finding_metadata(finding: &Finding) -> FindingResolvedMetadata
             "remote_backend"
         },
         correlation_surfaces: &["execution"],
+        correlation_owner_prefix: None,
+        correlation_entity: None,
         evidence,
         provenance: repo_contract_provenance(),
         policy: None,
@@ -2028,6 +2060,30 @@ fn resolve_service_finding_metadata(finding: &Finding) -> FindingResolvedMetadat
         category: "service",
         owner: "service",
         correlation_surfaces: &["service"],
+        correlation_owner_prefix: finding_suffix_after_prefix(
+            finding.summary.trim(),
+            &[
+                "Service readiness failed: ",
+                "Service readiness context is not executable: ",
+                "Required service cannot be verified: ",
+                "Service producer is not ready: ",
+                "Service healthcheck failed: ",
+                "Service healthcheck timed out: ",
+            ],
+        )
+        .map(|service| format!("services.{service}")),
+        correlation_entity: finding_suffix_after_prefix(
+            finding.summary.trim(),
+            &[
+                "Service readiness failed: ",
+                "Service readiness context is not executable: ",
+                "Required service cannot be verified: ",
+                "Service producer is not ready: ",
+                "Service healthcheck failed: ",
+                "Service healthcheck timed out: ",
+            ],
+        )
+        .map(str::to_string),
         evidence,
         provenance: repo_contract_provenance(),
         policy: None,
@@ -2131,6 +2187,43 @@ fn resolve_environment_finding_metadata(finding: &Finding) -> FindingResolvedMet
             }
             _ => &["toolchain"],
         },
+        correlation_owner_prefix: match code {
+            "OTA_ENV_MISSING" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &["Missing environment variable: "],
+            )
+            .map(|variable| format!("env.vars.{variable}")),
+            "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &["Missing runtime: ", "Version mismatch for runtime: "],
+            )
+            .map(|value| value.split_whitespace().next().unwrap_or(value))
+            .map(|runtime| format!("toolchains.{runtime}")),
+            "OTA_TOOL_MISSING" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &["Missing tool: "],
+            )
+            .map(|tool| format!("tools.{tool}")),
+            _ => None,
+        },
+        correlation_entity: match code {
+            "OTA_ENV_MISSING" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &["Missing environment variable: "],
+            )
+            .map(str::to_string),
+            "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &["Missing runtime: ", "Version mismatch for runtime: "],
+            )
+            .map(|value| value.split_whitespace().next().unwrap_or(value).to_string()),
+            "OTA_TOOL_MISSING" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &["Missing tool: "],
+            )
+            .map(str::to_string),
+            _ => None,
+        },
         evidence,
         provenance: if code == "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" {
             repo_signals_provenance()
@@ -2162,6 +2255,8 @@ fn resolve_contractless_environment_finding_metadata(
         category: "environment",
         owner: "host",
         correlation_surfaces: &["toolchain"],
+        correlation_owner_prefix: None,
+        correlation_entity: None,
         evidence,
         provenance: repo_signals_provenance(),
         policy: None,
@@ -2281,6 +2376,8 @@ fn resolve_provisioning_finding_metadata(finding: &Finding) -> FindingResolvedMe
         category: "provisioning",
         owner,
         correlation_surfaces: &["policy"],
+        correlation_owner_prefix: None,
+        correlation_entity: None,
         evidence: Some(static_finding_evidence(observed, expected, source)),
         provenance: org_policy_provenance(),
         policy: None,
@@ -2404,6 +2501,8 @@ fn resolve_policy_finding_metadata(finding: &Finding) -> FindingResolvedMetadata
         category: "policy",
         owner: "org_policy",
         correlation_surfaces: &["policy"],
+        correlation_owner_prefix: None,
+        correlation_entity: None,
         evidence,
         provenance: org_policy_provenance(),
         policy,
@@ -2439,6 +2538,8 @@ fn resolve_policy_effect_finding_metadata(finding: &Finding) -> FindingResolvedM
         category: "policy",
         owner: "org_policy",
         correlation_surfaces: &["policy"],
+        correlation_owner_prefix: None,
+        correlation_entity: None,
         evidence: Some(static_finding_evidence(
             "org policy evaluated a requested task effect",
             "org policy keeps the requested task effect decision explicit",
@@ -2454,6 +2555,8 @@ fn resolve_adapter_bootstrap_failure_metadata(_: &Finding) -> FindingResolvedMet
         category: "provisioning",
         owner: "repo_contract",
         correlation_surfaces: &["execution"],
+        correlation_owner_prefix: None,
+        correlation_entity: None,
         evidence: Some(static_finding_evidence(
             "the declared adapter bootstrap path did not complete in the selected execution environment",
             "the declared adapter bootstrap path completes in the selected execution environment",
@@ -3459,6 +3562,16 @@ impl Finding {
         } else {
             &[]
         }
+    }
+
+    pub(crate) fn correlation_owner_prefix(&self) -> Option<String> {
+        self.resolved_metadata()
+            .and_then(|metadata| metadata.correlation_owner_prefix.clone())
+    }
+
+    pub(crate) fn correlation_entity(&self) -> Option<String> {
+        self.resolved_metadata()
+            .and_then(|metadata| metadata.correlation_entity.clone())
     }
 
     fn evidence(&self) -> FindingEvidence {

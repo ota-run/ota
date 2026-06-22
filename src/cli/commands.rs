@@ -32000,6 +32000,38 @@ fn receipt_diff_declared_match_rank(
     change: &DiffChange,
     finding: &Finding,
 ) -> Option<ReceiptDiffCorrelationMatchKind> {
+    if let Some(owner_prefix) = finding.correlation_owner_prefix() {
+        if let Some(kind) = receipt_diff_owner_match_kind(&change.path, &owner_prefix) {
+            return Some(kind);
+        }
+    }
+    if let Some(entity) = finding.correlation_entity() {
+        if change.path.contains("requires_services")
+            && (change.base.as_deref() == Some(&quoted_scalar(&entity))
+                || change.target.as_deref() == Some(&quoted_scalar(&entity)))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+        }
+        if change.path.contains(&format!(".requirements.tools.{entity}"))
+            || change
+                .path
+                .contains(&format!(".requirements.toolchains.{entity}"))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+        }
+        if change.path.starts_with("checks[")
+            && change.path.ends_with(".name")
+            && change.target.as_deref() == Some(&quoted_scalar(&entity))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::NameReference);
+        }
+        if receipt_diff_change_category(change) == "toolchain"
+            && change.target.as_deref() == Some(&quoted_scalar(&entity))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::NameReference);
+        }
+    }
+
     let change_category = receipt_diff_change_category(change);
     let correlation_surfaces = finding
         .correlation_surfaces()
@@ -32058,21 +32090,10 @@ fn receipt_diff_fallback_match_rank(
     change: &DiffChange,
     finding: &Finding,
 ) -> Option<ReceiptDiffCorrelationMatchKind> {
-    let summary = finding.summary.trim();
+    let entity = finding.correlation_entity();
     match finding.code() {
-        "OTA_ENV_MISSING" => {
-            if let Some(variable) = summary.strip_prefix("Missing environment variable: ") {
-                let prefix = format!("env.vars.{variable}");
-                return receipt_diff_owner_match_kind(&change.path, &prefix);
-            }
-        }
         "OTA_TOOL_MISSING" => {
-            if let Some(tool) = summary.strip_prefix("Missing tool: ") {
-                if let Some(kind) =
-                    receipt_diff_owner_match_kind(&change.path, &format!("tools.{tool}"))
-                {
-                    return Some(kind);
-                }
+            if let Some(tool) = entity.as_deref() {
                 if change.path.contains(&format!(".requirements.tools.{tool}")) {
                     return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
                 }
@@ -32082,16 +32103,7 @@ fn receipt_diff_fallback_match_rank(
             }
         }
         "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => {
-            if let Some(runtime) = summary
-                .strip_prefix("Missing runtime: ")
-                .or_else(|| summary.strip_prefix("Version mismatch for runtime: "))
-                .map(|value| value.split_whitespace().next().unwrap_or(value))
-            {
-                if let Some(kind) =
-                    receipt_diff_owner_match_kind(&change.path, &format!("toolchains.{runtime}"))
-                {
-                    return Some(kind);
-                }
+            if let Some(runtime) = entity.as_deref() {
                 if change
                     .path
                     .contains(&format!(".requirements.toolchains.{runtime}"))
@@ -32104,15 +32116,7 @@ fn receipt_diff_fallback_match_rank(
             }
         }
         "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => {
-            if let Some(check) = summary
-                .strip_prefix("Check failed: ")
-                .or_else(|| summary.strip_prefix("Check timed out: "))
-            {
-                if let Some(kind) =
-                    receipt_diff_owner_match_kind(&change.path, &format!("checks.{check}"))
-                {
-                    return Some(kind);
-                }
+            if let Some(check) = entity.as_deref() {
                 if change.path.starts_with("checks[")
                     && change.path.ends_with(".name")
                     && change.target.as_deref() == Some(&quoted_scalar(check))
@@ -32126,19 +32130,7 @@ fn receipt_diff_fallback_match_rank(
         | "OTA_SERVICE_UNVERIFIABLE"
         | "OTA_SERVICE_CHECK_FAILED"
         | "OTA_SERVICE_CHECK_TIMED_OUT" => {
-            let service = summary
-                .strip_prefix("Service readiness failed: ")
-                .or_else(|| summary.strip_prefix("Service readiness context is not executable: "))
-                .or_else(|| summary.strip_prefix("Required service cannot be verified: "))
-                .or_else(|| summary.strip_prefix("Service producer is not ready: "))
-                .or_else(|| summary.strip_prefix("Service healthcheck failed: "))
-                .or_else(|| summary.strip_prefix("Service healthcheck timed out: "));
-            if let Some(service) = service {
-                if let Some(kind) =
-                    receipt_diff_owner_match_kind(&change.path, &format!("services.{service}"))
-                {
-                    return Some(kind);
-                }
+            if let Some(service) = entity.as_deref() {
                 if change.path.contains("requires_services")
                     && (change.base.as_deref() == Some(&quoted_scalar(service))
                         || change.target.as_deref() == Some(&quoted_scalar(service)))
@@ -32546,6 +32538,53 @@ mod receipt_diff_correlation_tests {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, change.path);
+    }
+
+    #[test]
+    fn receipt_diff_declared_owner_prefix_matches_env_without_summary_owner_fallback() {
+        let change = DiffChange {
+            path: String::from("env.vars.DATABASE_URL.required"),
+            status: String::from("add"),
+            category: Some(String::from("env")),
+            risk: Some(String::from("high")),
+            base: None,
+            target: Some(String::from("true")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_ENV_MISSING",
+            "environment",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Missing environment variable: DATABASE_URL",
+            "why",
+            "next",
+        );
+
+        let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
+
+        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::OwnerSubtree);
+        assert_eq!(matched.lane_priority, 1);
+    }
+
+    #[test]
+    fn receipt_diff_declared_entity_matches_service_requirement_reference() {
+        let mut change = diff_change("tasks.dev.requires_services[0]", "add");
+        change.target = Some(quoted_scalar("postgres"));
+        let finding = Finding::identified(
+            "OTA_SERVICE_UNVERIFIABLE",
+            "service",
+            "service",
+            FindingSeverity::Error,
+            "Required service cannot be verified: postgres",
+            "why",
+            "next",
+        );
+
+        let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
+
+        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
+        assert_eq!(matched.lane_priority, 2);
     }
 
     #[test]
