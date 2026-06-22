@@ -10517,9 +10517,9 @@ checks:
     }
 
     #[test]
-    fn receipt_json_diff_marks_possibly_related_when_changes_do_not_match_error() {
+    fn receipt_json_diff_marks_no_clear_correlation_for_unrelated_contract_drift() {
         let worker = std::thread::Builder::new()
-            .name(String::from("receipt-json-diff-possible-correlation"))
+            .name(String::from("receipt-json-diff-unrelated-correlation"))
             .stack_size(8 * 1024 * 1024)
             .spawn(|| {
                 let _guard = env_mutex_lock();
@@ -10616,18 +10616,119 @@ agent:
                 let json: Value = serde_json::from_str(&output.stdout).unwrap();
                 assert_eq!(
                     json["summary"]["comparison"]["correlation"],
+                    "no_clear_correlation"
+                );
+                assert!(json.get("likely_related_changes").is_none());
+                assert!(json["contract_changes"].as_array().unwrap().len() > 0);
+            })
+            .expect("spawn unrelated correlation receipt diff worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn receipt_json_diff_marks_possibly_related_for_same_family_contract_drift() {
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-json-diff-same-family-correlation"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
+version: 1
+project:
+  name: receipt-diff
+env:
+  vars:
+    OTA_BASELINE_REQUIRED:
+      required: true
+    OTA_SECONDARY_REQUIRED:
+      default: next
+"#,
+                );
+
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+
+                fixture.write(
+                    ".ota/contracts/sha256-old.json",
+                    r#"{
+  "version": 1,
+  "project": {
+    "name": "receipt-diff"
+  },
+  "env": {
+    "vars": {
+      "OTA_BASELINE_REQUIRED": {
+        "required": true
+      },
+      "OTA_SECONDARY_REQUIRED": {
+        "default": "prev"
+      }
+    }
+  }
+}"#,
+                );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": true,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 0,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": true,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": "sha256:old",
+                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 0,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "READY"
+                                }
+                            ]
+                        },
+                        "findings": []
+                    }))
+                    .unwrap(),
+                );
+
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
+
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(
+                    json["summary"]["comparison"]["correlation"],
                     "possibly_related"
                 );
                 assert!(json.get("likely_related_changes").is_none());
-                assert!(
-                    json["contract_changes"]
-                        .as_array()
-                        .unwrap()
-                        .len()
-                        > 0
-                );
+                assert!(json["contract_changes"].as_array().unwrap().len() > 0);
             })
-            .expect("spawn possible correlation receipt diff worker");
+            .expect("spawn same-family correlation receipt diff worker");
 
         if let Err(panic) = worker.join() {
             std::panic::resume_unwind(panic);

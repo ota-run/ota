@@ -55,7 +55,8 @@
 - refined receipt diff correlation with an explicit advisory verdict under
   `summary.comparison.correlation`, so automation can distinguish `likely_related`,
   `possibly_related`, and `no_clear_correlation` without inferring correlation posture from
-  `likely_related_changes[]` alone
+  `likely_related_changes[]` alone; `possibly_related` is now reserved for coarse same-family
+  overlap, while unrelated contract drift stays `no_clear_correlation`
 
 ## 1.6.21
 

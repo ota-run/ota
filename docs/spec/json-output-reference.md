@@ -3867,8 +3867,10 @@ Current receipt diff JSON fields:
 - `summary.baseline_ok`
 - `summary.current_ok`
 - additive `summary.comparison` with baseline/current identity labels plus compact `identity_changed`, `readiness_change`, and `contract_snapshot_changed` drift signals
-- `summary.comparison.correlation` with an explicit advisory verdict: `likely_related`,
-  `possibly_related`, or `no_clear_correlation`
+- `summary.comparison.correlation` with an explicit advisory verdict:
+  - `likely_related` when ota can correlate newly introduced blocker findings to specific semantic contract changes
+  - `possibly_related` when ota cannot recover a strong direct match but the newly introduced blocker and contract drift still overlap in the same broad contract family
+  - `no_clear_correlation` when ota cannot recover even that coarse overlap honestly
 - `summary.introduced`
 - `summary.resolved`
 - `summary.unchanged`

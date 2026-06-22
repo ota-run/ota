@@ -165,7 +165,7 @@ failure against recent semantic contract change.
 This surface must stay honest and confidence-based:
 
 - `likely_related`
-- `possibly_related`
+- `possibly_related` only when no strong direct match exists but the blocker and contract drift still overlap in the same broad contract family
 - `no_clear_correlation`
 
 Example:

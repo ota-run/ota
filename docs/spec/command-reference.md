@@ -1779,7 +1779,8 @@ Current behavior:
 - when the selected baseline receipt carries `receipt.contract_snapshot_ref`, compare mode also diffs the archived normalized contract snapshot against the current normalized contract truth and returns additive `contract_changes[]`, `likely_related_changes[]`, and `summary.comparison.contract_snapshot_changed` in JSON output
 - compare mode also returns additive `summary.comparison.correlation` so automation can distinguish
   `likely_related`, `possibly_related`, and `no_clear_correlation` without inferring correlation
-  posture from array presence alone
+  posture from array presence alone; `possibly_related` is reserved for coarse same-family overlap,
+  while unrelated drift stays `no_clear_correlation`
 - `--fail-on-new-blockers` requires `--baseline` and exits `1` when the diff introduces one or more new `severity: error` findings relative to the baseline
 
 Text output:

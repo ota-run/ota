@@ -31947,21 +31947,61 @@ fn quoted_scalar(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| format!("\"{value}\""))
 }
 
-fn likely_related_contract_change(change: &DiffChange, finding: &Finding) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ReceiptDiffCorrelationMatchKind {
+    GenericOwnerFamily = 1,
+    RequirementReference = 2,
+    NameReference = 3,
+    OwnerSubtree = 4,
+    SequenceSubtree = 5,
+    ExactOwner = 6,
+}
+
+fn receipt_diff_owner_match_kind(
+    path: &str,
+    owner: &str,
+) -> Option<ReceiptDiffCorrelationMatchKind> {
+    if path == owner {
+        Some(ReceiptDiffCorrelationMatchKind::ExactOwner)
+    } else if path.starts_with(&format!("{owner}.")) {
+        Some(ReceiptDiffCorrelationMatchKind::OwnerSubtree)
+    } else {
+        None
+    }
+}
+
+fn receipt_diff_correlation_match_rank(
+    change: &DiffChange,
+    finding: &Finding,
+    sequence_prefix: Option<&str>,
+) -> Option<ReceiptDiffCorrelationMatchKind> {
+    if let Some(prefix) = sequence_prefix
+        && change.path.starts_with(prefix)
+    {
+        return Some(ReceiptDiffCorrelationMatchKind::SequenceSubtree);
+    }
+
     let summary = finding.summary.trim();
     match finding.code() {
         "OTA_ENV_MISSING" => {
             if let Some(variable) = summary.strip_prefix("Missing environment variable: ") {
                 let prefix = format!("env.vars.{variable}");
-                return change.path.starts_with(&prefix);
+                return receipt_diff_owner_match_kind(&change.path, &prefix);
             }
         }
         "OTA_TOOL_MISSING" => {
             if let Some(tool) = summary.strip_prefix("Missing tool: ") {
-                return change.path == format!("tools.{tool}")
-                    || change.path.starts_with(&format!("tools.{tool}."))
-                    || change.path.contains(&format!(".requirements.tools.{tool}"))
-                    || change.target.as_deref() == Some(&quoted_scalar(tool));
+                if let Some(kind) =
+                    receipt_diff_owner_match_kind(&change.path, &format!("tools.{tool}"))
+                {
+                    return Some(kind);
+                }
+                if change.path.contains(&format!(".requirements.tools.{tool}")) {
+                    return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+                }
+                if change.target.as_deref() == Some(&quoted_scalar(tool)) {
+                    return Some(ReceiptDiffCorrelationMatchKind::NameReference);
+                }
             }
         }
         "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => {
@@ -31970,11 +32010,20 @@ fn likely_related_contract_change(change: &DiffChange, finding: &Finding) -> boo
                 .or_else(|| summary.strip_prefix("Version mismatch for runtime: "))
                 .map(|value| value.split_whitespace().next().unwrap_or(value))
             {
-                return change.path.starts_with(&format!("toolchains.{runtime}"))
-                    || change
-                        .path
-                        .contains(&format!(".requirements.toolchains.{runtime}"))
-                    || change.target.as_deref() == Some(&quoted_scalar(runtime));
+                if let Some(kind) =
+                    receipt_diff_owner_match_kind(&change.path, &format!("toolchains.{runtime}"))
+                {
+                    return Some(kind);
+                }
+                if change
+                    .path
+                    .contains(&format!(".requirements.toolchains.{runtime}"))
+                {
+                    return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+                }
+                if change.target.as_deref() == Some(&quoted_scalar(runtime)) {
+                    return Some(ReceiptDiffCorrelationMatchKind::NameReference);
+                }
             }
         }
         "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => {
@@ -31982,10 +32031,17 @@ fn likely_related_contract_change(change: &DiffChange, finding: &Finding) -> boo
                 .strip_prefix("Check failed: ")
                 .or_else(|| summary.strip_prefix("Check timed out: "))
             {
-                return change.path.starts_with(&format!("checks.{check}"))
-                    || (change.path.starts_with("checks[")
-                        && change.path.ends_with(".name")
-                        && change.target.as_deref() == Some(&quoted_scalar(check)));
+                if let Some(kind) =
+                    receipt_diff_owner_match_kind(&change.path, &format!("checks.{check}"))
+                {
+                    return Some(kind);
+                }
+                if change.path.starts_with("checks[")
+                    && change.path.ends_with(".name")
+                    && change.target.as_deref() == Some(&quoted_scalar(check))
+                {
+                    return Some(ReceiptDiffCorrelationMatchKind::NameReference);
+                }
             }
         }
         "OTA_SERVICE_READINESS_FAILED"
@@ -32001,18 +32057,27 @@ fn likely_related_contract_change(change: &DiffChange, finding: &Finding) -> boo
                 .or_else(|| summary.strip_prefix("Service healthcheck failed: "))
                 .or_else(|| summary.strip_prefix("Service healthcheck timed out: "));
             if let Some(service) = service {
-                return change.path.starts_with(&format!("services.{service}"))
-                    || change.path.contains("requires_services")
-                        && (change.base.as_deref() == Some(&quoted_scalar(service))
-                            || change.target.as_deref() == Some(&quoted_scalar(service)));
+                if let Some(kind) =
+                    receipt_diff_owner_match_kind(&change.path, &format!("services.{service}"))
+                {
+                    return Some(kind);
+                }
+                if change.path.contains("requires_services")
+                    && (change.base.as_deref() == Some(&quoted_scalar(service))
+                        || change.target.as_deref() == Some(&quoted_scalar(service)))
+                {
+                    return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+                }
             }
         }
         "OTA_TASKS_MISSING" => {
-            return change.path.starts_with("tasks.");
+            if change.path.starts_with("tasks.") {
+                return Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily);
+            }
         }
         _ => {}
     }
-    false
+    None
 }
 
 fn check_change_prefix(contract_changes: &[DiffChange], check_name: &str) -> Option<String> {
@@ -32051,11 +32116,18 @@ fn receipt_diff_likely_related_changes(
         } else {
             None
         };
+        let best_rank = contract_changes
+            .iter()
+            .filter_map(|change| {
+                receipt_diff_correlation_match_rank(change, finding, check_prefix.as_deref())
+            })
+            .max();
+        let Some(best_rank) = best_rank else {
+            continue;
+        };
         for change in contract_changes {
-            let matches_sequence_prefix = check_prefix
-                .as_deref()
-                .is_some_and(|prefix| change.path.starts_with(prefix));
-            if (matches_sequence_prefix || likely_related_contract_change(change, finding))
+            if receipt_diff_correlation_match_rank(change, finding, check_prefix.as_deref())
+                == Some(best_rank)
                 && seen.insert(change.path.clone())
             {
                 related.push(change.clone());
@@ -32063,6 +32135,162 @@ fn receipt_diff_likely_related_changes(
         }
     }
     related
+}
+
+fn receipt_diff_identity_category(category: &str) -> Option<&'static str> {
+    match category {
+        "env" => Some("env"),
+        "service" => Some("service"),
+        "execution" => Some("execution"),
+        "policy" => Some("policy"),
+        "agent" => Some("agent"),
+        "workflow" => Some("workflow"),
+        _ => None,
+    }
+}
+
+fn receipt_diff_finding_category_fallbacks(finding: &Finding) -> &'static [&'static str] {
+    match finding.code() {
+        "OTA_ENV_MISSING" | "OTA_ENV_INVALID" => &["env"],
+        "OTA_TOOL_MISSING"
+        | "OTA_TOOL_VERSION_MISMATCH"
+        | "OTA_TOOLCHAIN_PROVIDER_MISSING"
+        | "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED"
+        | "OTA_TOOLCHAIN_COMPONENT_MISSING"
+        | "OTA_TOOLCHAIN_TARGET_MISSING"
+        | "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"
+        | "OTA_RUNTIME_MISSING"
+        | "OTA_RUNTIME_VERSION_MISMATCH"
+        | "OTA_RUNTIME_PROBE_FAILED"
+        | "OTA_TOOL_PROBE_FAILED"
+        | "OTA_NATIVE_PREREQUISITE_MISSING"
+        | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => &["toolchain", "execution"],
+        "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" | "OTA_TASKS_MISSING" => &["task"],
+        "OTA_SERVICE_READINESS_FAILED"
+        | "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
+        | "OTA_SERVICE_UNVERIFIABLE"
+        | "OTA_SERVICE_CHECK_FAILED"
+        | "OTA_SERVICE_CHECK_TIMED_OUT" => &["service", "task"],
+        "OTA_REMOTE_TARGET_SUSPICIOUS"
+        | "OTA_REMOTE_TARGET_OS_UNDETERMINED"
+        | "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
+        | "OTA_REMOTE_DOCTOR_PARTIAL"
+        | "OTA_BACKEND_CLI_MISSING"
+        | "OTA_CONTAINER_BACKEND_CLI_MISSING" => &["execution"],
+        _ => &[],
+    }
+}
+
+fn receipt_diff_has_possible_category_overlap(
+    contract_changes: &[DiffChange],
+    introduced: &[Finding],
+) -> bool {
+    let mut categories = BTreeSet::new();
+    for finding in introduced
+        .iter()
+        .filter(|finding| finding.severity == FindingSeverity::Error)
+    {
+        if let Some(identity_category) = finding
+            .identity
+            .as_ref()
+            .and_then(|identity| receipt_diff_identity_category(identity.category.as_str()))
+        {
+            categories.insert(identity_category);
+        }
+        categories.extend(receipt_diff_finding_category_fallbacks(finding));
+    }
+    !categories.is_empty()
+        && contract_changes.iter().any(|change| {
+            change
+                .category
+                .as_deref()
+                .is_some_and(|category| categories.iter().any(|known| *known == category))
+        })
+}
+
+#[cfg(test)]
+mod receipt_diff_correlation_tests {
+    use super::*;
+
+    fn identified_finding(code: &str, summary: &str) -> Finding {
+        Finding::identified(
+            code,
+            "readiness",
+            "repo",
+            FindingSeverity::Error,
+            summary,
+            "why",
+            "next",
+        )
+    }
+
+    fn diff_change(path: &str, status: &str) -> DiffChange {
+        DiffChange {
+            path: path.to_string(),
+            status: status.to_string(),
+            category: None,
+            risk: None,
+            base: None,
+            target: None,
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn receipt_diff_prefers_direct_service_owner_drift_over_requires_services_reference() {
+        let mut indirect = diff_change("tasks.dev.requires_services[0]", "add");
+        indirect.target = Some(quoted_scalar("postgres"));
+        let direct = diff_change("services.postgres.readiness.kind", "change");
+        let finding = identified_finding(
+            "OTA_SERVICE_UNVERIFIABLE",
+            "Required service cannot be verified: postgres",
+        );
+
+        let related = receipt_diff_likely_related_changes(&[indirect, direct.clone()], &[finding]);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, direct.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_direct_toolchain_owner_drift_over_task_requirement_reference() {
+        let mut indirect = diff_change("tasks.verify.requirements.toolchains.python", "add");
+        indirect.target = Some(quoted_scalar("python"));
+        let direct = diff_change("toolchains.python.version", "change");
+        let finding = identified_finding("OTA_RUNTIME_MISSING", "Missing runtime: python");
+
+        let related = receipt_diff_likely_related_changes(&[indirect, direct.clone()], &[finding]);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, direct.path);
+    }
+
+    #[test]
+    fn receipt_diff_possible_overlap_uses_declared_finding_identity_category() {
+        let change = DiffChange {
+            path: String::from("agent.protected_paths[0]"),
+            status: String::from("change"),
+            category: Some(String::from("agent")),
+            risk: Some(String::from("high")),
+            base: Some(quoted_scalar(".github/workflows")),
+            target: Some(quoted_scalar(".github")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_AGENT_BOUNDARY_REVIEW_REQUIRED",
+            "agent",
+            "repo",
+            FindingSeverity::Error,
+            "Agent boundary review required",
+            "why",
+            "next",
+        );
+
+        assert!(receipt_diff_has_possible_category_overlap(
+            &[change],
+            &[finding]
+        ));
+    }
 }
 
 fn receipt_diff_correlation(
@@ -32075,7 +32303,8 @@ fn receipt_diff_correlation(
         .any(|finding| finding.severity == FindingSeverity::Error);
     if has_error && !likely_related_changes.is_empty() {
         ReceiptDiffCorrelation::LikelyRelated
-    } else if has_error && !contract_changes.is_empty() {
+    } else if has_error && receipt_diff_has_possible_category_overlap(contract_changes, introduced)
+    {
         ReceiptDiffCorrelation::PossiblyRelated
     } else {
         ReceiptDiffCorrelation::NoClearCorrelation
