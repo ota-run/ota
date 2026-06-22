@@ -802,9 +802,11 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
         } else {
             Confidence::Medium
         };
+        let normalized_node =
+            normalize_detected_node_engine_requirement(node).unwrap_or_else(|| node.to_string());
         builder.set_runtime(
             "node".to_string(),
-            node.to_string(),
+            normalized_node,
             "package.json#engines.node".to_string(),
             confidence,
         );
@@ -828,6 +830,53 @@ fn detect_package_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), D
     }
 
     Ok(())
+}
+
+fn normalize_detected_node_engine_requirement(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || !trimmed.contains("||") {
+        return None;
+    }
+
+    let mut normalized = Vec::new();
+    for branch in trimmed.split("||").map(str::trim) {
+        if branch.is_empty() {
+            return None;
+        }
+        normalized.push(normalize_detected_node_engine_branch(branch)?);
+    }
+
+    Some(normalized.join(" || "))
+}
+
+fn normalize_detected_node_engine_branch(value: &str) -> Option<String> {
+    if !value
+        .chars()
+        .all(|character| character.is_ascii_digit() || character == '.')
+    {
+        return Some(value.to_string());
+    }
+
+    let segments = value
+        .split('.')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    match segments.as_slice() {
+        [major] => {
+            let major = major.parse::<u64>().ok()?;
+            Some(format!(">={major}.0.0, <{}.0.0", major.saturating_add(1)))
+        }
+        [major, minor] => {
+            let major = major.parse::<u64>().ok()?;
+            let minor = minor.parse::<u64>().ok()?;
+            Some(format!(
+                ">={major}.{minor}.0, <{}.{minor_next}.0",
+                major,
+                minor_next = minor.saturating_add(1)
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn detect_composer_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
@@ -5585,6 +5634,36 @@ mod tests {
         );
         assert!(!contract.runtimes.contains_key("node"));
         assert!(!contract.tools.contains_key("pnpm"));
+    }
+
+    #[test]
+    fn package_json_engines_node_union_is_normalized_for_toolchain_detection() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "ota-app",
+  "engines": { "node": "22 || 24" },
+  "packageManager": "yarn@4.8.1"
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert!(report.inferences.iter().any(|inference| {
+            inference.field == "toolchains.node.version"
+                && inference.value == ">=22.0.0, <23.0.0 || >=24.0.0, <25.0.0"
+                && inference.source == "package.json#engines.node"
+                && inference.confidence == Confidence::High
+        }));
+        let contract = report.high_confidence_contract();
+        assert_eq!(
+            contract
+                .toolchains
+                .get("node")
+                .map(|toolchain| toolchain.version.as_str()),
+            Some(">=22.0.0, <23.0.0 || >=24.0.0, <25.0.0")
+        );
     }
 
     #[test]

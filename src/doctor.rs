@@ -1948,20 +1948,18 @@ fn resolve_execution_finding_metadata(finding: &Finding) -> FindingResolvedMetad
             | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
             | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
             | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
-            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => {
-                finding_suffix_after_prefix(
-                    finding.summary.trim(),
-                    &[
-                        "Surface readiness failed: ",
-                        "Surface readiness timed out: ",
-                        "Surface readiness could not be evaluated: ",
-                        "Signal surface readiness failed: ",
-                        "Signal surface readiness timed out: ",
-                        "Signal surface readiness could not be evaluated: ",
-                    ],
-                )
-                .map(|surface| format!("surfaces.{surface}"))
-            }
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &[
+                    "Surface readiness failed: ",
+                    "Surface readiness timed out: ",
+                    "Surface readiness could not be evaluated: ",
+                    "Signal surface readiness failed: ",
+                    "Signal surface readiness timed out: ",
+                    "Signal surface readiness could not be evaluated: ",
+                ],
+            )
+            .map(|surface| format!("surfaces.{surface}")),
             _ => None,
         },
         correlation_entity: match finding.code() {
@@ -1988,20 +1986,18 @@ fn resolve_execution_finding_metadata(finding: &Finding) -> FindingResolvedMetad
             | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
             | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
             | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
-            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => {
-                finding_suffix_after_prefix(
-                    finding.summary.trim(),
-                    &[
-                        "Surface readiness failed: ",
-                        "Surface readiness timed out: ",
-                        "Surface readiness could not be evaluated: ",
-                        "Signal surface readiness failed: ",
-                        "Signal surface readiness timed out: ",
-                        "Signal surface readiness could not be evaluated: ",
-                    ],
-                )
-                .map(str::to_string)
-            }
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &[
+                    "Surface readiness failed: ",
+                    "Surface readiness timed out: ",
+                    "Surface readiness could not be evaluated: ",
+                    "Signal surface readiness failed: ",
+                    "Signal surface readiness timed out: ",
+                    "Signal surface readiness could not be evaluated: ",
+                ],
+            )
+            .map(str::to_string),
             _ => None,
         },
         evidence,
@@ -2269,11 +2265,10 @@ fn resolve_environment_finding_metadata(finding: &Finding) -> FindingResolvedMet
             )
             .map(|value| value.split_whitespace().next().unwrap_or(value))
             .map(|runtime| format!("toolchains.{runtime}")),
-            "OTA_TOOL_MISSING" => finding_suffix_after_prefix(
-                finding.summary.trim(),
-                &["Missing tool: "],
-            )
-            .map(|tool| format!("tools.{tool}")),
+            "OTA_TOOL_MISSING" => {
+                finding_suffix_after_prefix(finding.summary.trim(), &["Missing tool: "])
+                    .map(|tool| format!("tools.{tool}"))
+            }
             _ => None,
         },
         correlation_entity: match code {
@@ -2287,11 +2282,10 @@ fn resolve_environment_finding_metadata(finding: &Finding) -> FindingResolvedMet
                 &["Missing runtime: ", "Version mismatch for runtime: "],
             )
             .map(|value| value.split_whitespace().next().unwrap_or(value).to_string()),
-            "OTA_TOOL_MISSING" => finding_suffix_after_prefix(
-                finding.summary.trim(),
-                &["Missing tool: "],
-            )
-            .map(str::to_string),
+            "OTA_TOOL_MISSING" => {
+                finding_suffix_after_prefix(finding.summary.trim(), &["Missing tool: "])
+                    .map(str::to_string)
+            }
             _ => None,
         },
         evidence,
@@ -12225,11 +12219,43 @@ fn push_python_version_candidate(candidates: &mut Vec<String>, major: u64, minor
 fn parse_semver_requirement(value: &str) -> Option<VersionReq> {
     let trimmed = value.trim();
     VersionReq::parse(trimmed).ok().or_else(|| {
-        let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(", ");
-        (normalized != trimmed)
-            .then(|| VersionReq::parse(&normalized).ok())
-            .flatten()
+        normalize_short_version_requirement(trimmed)
+            .and_then(|normalized| VersionReq::parse(&normalized).ok())
     })
+}
+
+fn normalize_short_version_requirement(value: &str) -> Option<String> {
+    if value.is_empty() || value == "*" || value.contains("||") {
+        return None;
+    }
+    if value
+        .chars()
+        .all(|character| character.is_ascii_digit() || character == '.')
+    {
+        let segments = value
+            .split('.')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        return match segments.as_slice() {
+            [major] => {
+                let major = major.parse::<u64>().ok()?;
+                Some(format!(">={major}.0.0,<{}.0.0", major.saturating_add(1)))
+            }
+            [major, minor] => {
+                let major = major.parse::<u64>().ok()?;
+                let minor = minor.parse::<u64>().ok()?;
+                Some(format!(
+                    ">={major}.{minor}.0,<{}.{minor_next}.0",
+                    major,
+                    minor_next = minor.saturating_add(1)
+                ))
+            }
+            _ => None,
+        };
+    }
+
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(", ");
+    (normalized != value).then_some(normalized)
 }
 
 fn dedupe_preserve_order(values: Vec<String>) -> Vec<String> {
@@ -12688,6 +12714,14 @@ pub(crate) fn version_matches(requirement: &str, actual: &str) -> bool {
     let requirement = requirement.trim();
     if requirement == "*" {
         return true;
+    }
+
+    if requirement.contains("||") {
+        return requirement
+            .split("||")
+            .map(str::trim)
+            .filter(|branch| !branch.is_empty())
+            .any(|branch| version_matches(branch, actual));
     }
 
     if requirement.contains(',') || requirement.starts_with(['^', '~', '=']) {
@@ -21917,6 +21951,12 @@ tasks:
         assert!(!version_matches("^3.11", "4.0.0"));
         assert!(version_matches("^0.6.0", "0.6.4"));
         assert!(!version_matches("^0.6.0", "0.7.0"));
+        assert!(version_matches("22 || 24", "24.16.0"));
+        assert!(!version_matches("22 || 24", "23.4.0"));
+        assert!(version_matches(
+            ">=22.0.0, <23.0.0 || >=24.0.0, <25.0.0",
+            "24.16.0"
+        ));
         assert!(version_matches("<=21", "21"));
         assert!(version_matches("<21", "20.9"));
         assert!(version_matches(">21", "21.1"));

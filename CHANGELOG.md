@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- Normalize detected Node engine unions like `22 || 24` into explicit semver branches and honor
+  those unions during runtime/toolchain matching, so detector-owned Node version truth no longer
+  misclassifies valid installed Node majors.
+
 - added semantic contract snapshot identity to repo and workspace receipts, so
   `ota receipt --json` and `ota workspace receipt --json` now emit a normalized
   `receipt.contract_snapshot_hash` on every successful receipt and archive the matching
