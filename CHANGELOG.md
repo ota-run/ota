@@ -61,6 +61,9 @@
   `possibly_related`, and `no_clear_correlation` without inferring correlation posture from
   `likely_related_changes[]` alone; `possibly_related` is now reserved for coarse same-family
   overlap, while unrelated contract drift stays `no_clear_correlation`
+- tightened `likely_related_changes[]` ordering across adjacent plausible lanes, so receipt diff
+  now ranks the published contract-change evidence globally by semantic match strength instead of
+  emitting changes in finding-visit order when multiple adjacent assumptions all look plausible
 
 ## 1.6.21
 

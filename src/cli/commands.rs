@@ -31983,6 +31983,12 @@ fn receipt_diff_owner_match_kind(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReceiptDiffCorrelationMatch {
+    rank: ReceiptDiffCorrelationMatchKind,
+    lane_priority: i8,
+}
+
 fn receipt_diff_change_category(change: &DiffChange) -> &str {
     change
         .category
@@ -32151,11 +32157,11 @@ fn receipt_diff_fallback_match_rank(
     None
 }
 
-fn receipt_diff_correlation_match_rank(
+fn receipt_diff_correlation_match(
     change: &DiffChange,
     finding: &Finding,
     sequence_prefix: Option<&str>,
-) -> Option<ReceiptDiffCorrelationMatchKind> {
+) -> Option<ReceiptDiffCorrelationMatch> {
     let sequence_rank = if let Some(prefix) = sequence_prefix
         && change.path.starts_with(prefix)
     {
@@ -32163,12 +32169,28 @@ fn receipt_diff_correlation_match_rank(
     } else {
         None
     };
-
-    sequence_rank
+    let declared_rank = receipt_diff_declared_match_rank(change, finding);
+    let fallback_rank = receipt_diff_fallback_match_rank(change, finding);
+    let best_rank = sequence_rank
         .into_iter()
-        .chain(receipt_diff_declared_match_rank(change, finding))
-        .chain(receipt_diff_fallback_match_rank(change, finding))
-        .max()
+        .chain(declared_rank)
+        .chain(fallback_rank)
+        .max()?;
+
+    let change_category = receipt_diff_change_category(change);
+    let exact_surface_match = finding.correlation_surfaces().contains(&change_category);
+    let lane_priority = if sequence_rank == Some(best_rank) {
+        0
+    } else if declared_rank == Some(best_rank) {
+        if exact_surface_match { 1 } else { 2 }
+    } else {
+        3
+    };
+
+    Some(ReceiptDiffCorrelationMatch {
+        rank: best_rank,
+        lane_priority,
+    })
 }
 
 fn check_change_prefix(contract_changes: &[DiffChange], check_name: &str) -> Option<String> {
@@ -32192,8 +32214,39 @@ fn receipt_diff_likely_related_changes(
     contract_changes: &[DiffChange],
     introduced: &[Finding],
 ) -> Vec<DiffChange> {
-    let mut seen = BTreeSet::new();
-    let mut related = Vec::new();
+    #[derive(Clone)]
+    struct RelatedCandidate {
+        change: DiffChange,
+        rank: ReceiptDiffCorrelationMatchKind,
+        lane_priority: i8,
+        specificity: (i8, i8, i8, std::cmp::Reverse<usize>, String, String),
+    }
+
+    fn candidate_sort_key(
+        candidate: &RelatedCandidate,
+    ) -> (
+        std::cmp::Reverse<ReceiptDiffCorrelationMatchKind>,
+        i8,
+        i8,
+        i8,
+        i8,
+        std::cmp::Reverse<usize>,
+        &str,
+        &str,
+    ) {
+        (
+            std::cmp::Reverse(candidate.rank),
+            candidate.lane_priority,
+            candidate.specificity.0,
+            candidate.specificity.1,
+            candidate.specificity.2,
+            candidate.specificity.3,
+            candidate.specificity.4.as_str(),
+            candidate.specificity.5.as_str(),
+        )
+    }
+
+    let mut best_by_path = BTreeMap::<String, RelatedCandidate>::new();
     for finding in introduced
         .iter()
         .filter(|finding| finding.severity == FindingSeverity::Error)
@@ -32210,31 +32263,47 @@ fn receipt_diff_likely_related_changes(
         let best_rank = contract_changes
             .iter()
             .filter_map(|change| {
-                receipt_diff_correlation_match_rank(change, finding, check_prefix.as_deref())
+                receipt_diff_correlation_match(change, finding, check_prefix.as_deref())
+                    .map(|matched| matched.rank)
             })
             .max();
         let Some(best_rank) = best_rank else {
             continue;
         };
-        let mut matched = contract_changes
-            .iter()
-            .filter(|change| {
-                receipt_diff_correlation_match_rank(change, finding, check_prefix.as_deref())
-                    == Some(best_rank)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        matched.sort_by(|left, right| {
-            receipt_diff_change_specificity_key(finding, left)
-                .cmp(&receipt_diff_change_specificity_key(finding, right))
-        });
-        for change in matched {
-            if seen.insert(change.path.clone()) {
-                related.push(change);
+        for change in contract_changes {
+            let Some(matched) =
+                receipt_diff_correlation_match(change, finding, check_prefix.as_deref())
+            else {
+                continue;
+            };
+            if matched.rank != best_rank {
+                continue;
+            }
+            let specificity = receipt_diff_change_specificity_key(finding, change);
+            let candidate = RelatedCandidate {
+                change: change.clone(),
+                rank: matched.rank,
+                lane_priority: matched.lane_priority,
+                specificity: (
+                    specificity.0,
+                    specificity.1,
+                    specificity.2,
+                    specificity.3,
+                    specificity.4.to_string(),
+                    specificity.5.to_string(),
+                ),
+            };
+            match best_by_path.get(change.path.as_str()) {
+                Some(existing) if candidate_sort_key(existing) <= candidate_sort_key(&candidate) => {}
+                _ => {
+                    best_by_path.insert(change.path.clone(), candidate);
+                }
             }
         }
     }
-    related
+    let mut related = best_by_path.into_values().collect::<Vec<_>>();
+    related.sort_by(|left, right| candidate_sort_key(left).cmp(&candidate_sort_key(right)));
+    related.into_iter().map(|candidate| candidate.change).collect()
 }
 
 fn receipt_diff_change_specificity_key<'a>(
@@ -32504,6 +32573,55 @@ mod receipt_diff_correlation_tests {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, change.path);
+    }
+
+    #[test]
+    fn receipt_diff_orders_exact_surface_matches_before_broad_adjacent_lanes() {
+        let policy_change = DiffChange {
+            path: String::from("policies.approvals.required"),
+            status: String::from("change"),
+            category: Some(String::from("policy")),
+            risk: Some(String::from("high")),
+            base: Some(String::from("false")),
+            target: Some(String::from("true")),
+            provenance: Some(String::from("policy")),
+        };
+        let check_change = DiffChange {
+            path: String::from("checks[0].run"),
+            status: String::from("change"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: Some(String::from("true")),
+            target: Some(String::from("false")),
+            provenance: None,
+        };
+        let policy_finding = Finding::identified(
+            "OTA_POLICY_ENFORCEMENT_REQUIRED",
+            "contract",
+            "org_policy",
+            FindingSeverity::Error,
+            "Policy enforcement required",
+            "why",
+            "next",
+        );
+        let check_finding = Finding::identified(
+            "OTA_CHECK_FAILED",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Check failed",
+            "why",
+            "next",
+        );
+
+        let related = receipt_diff_likely_related_changes(
+            &[policy_change.clone(), check_change.clone()],
+            &[policy_finding, check_finding],
+        );
+
+        assert_eq!(related.len(), 2);
+        assert_eq!(related[0].path, check_change.path);
+        assert_eq!(related[1].path, policy_change.path);
     }
 
     #[test]
