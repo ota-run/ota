@@ -76,6 +76,9 @@
   check, and service correlation now stays on declared doctor owner/entity metadata instead of
   duplicating those lanes in CLI-only fallback matching; only the broad undeclared task-family
   fallback remains
+- widened declared receipt-diff workflow correlation for named probes and surfaces, so workflow
+  readiness failures now match top-level probe definitions, workflow probe/surface references, and
+  runtime surface definitions before falling back to broad workflow-family drift
 - documented the public semantic snapshot operator path in core README and command/spec docs, so
   humans and agents now have one canonical page for archived semantic truth, `ota diff`,
   `ota receipt --snapshot`, and receipt-to-receipt drift correlation

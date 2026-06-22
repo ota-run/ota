@@ -32051,6 +32051,23 @@ fn receipt_diff_declared_match_rank(
         {
             return Some(ReceiptDiffCorrelationMatchKind::NameReference);
         }
+        if (change.path.contains(".readiness.probes[")
+            || change.path.contains(".readiness.signal.probes["))
+            && (change.base.as_deref() == Some(&quoted_scalar(&entity))
+                || change.target.as_deref() == Some(&quoted_scalar(&entity)))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::NameReference);
+        }
+        if (change.path.contains(".readiness.surfaces[")
+            || change.path.contains(".readiness.signal.surfaces["))
+            && (change.base.as_deref() == Some(&quoted_scalar(&entity))
+                || change.target.as_deref() == Some(&quoted_scalar(&entity)))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::NameReference);
+        }
+        if change.path.contains(&format!(".runtime.surfaces.{entity}")) {
+            return Some(ReceiptDiffCorrelationMatchKind::NameReference);
+        }
         if receipt_diff_change_category(change) == "toolchain"
             && change.target.as_deref() == Some(&quoted_scalar(&entity))
         {
@@ -32173,6 +32190,36 @@ fn receipt_diff_declared_lane_priority(finding: &Finding, change: &DiffChange) -
             if change.path.starts_with("checks[") {
                 1
             } else if change.path.starts_with("tasks.") {
+                2
+            } else {
+                1
+            }
+        }
+        "OTA_WORKFLOW_PROBE_FAILED"
+        | "OTA_WORKFLOW_PROBE_TIMED_OUT"
+        | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
+        | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT" => {
+            if change.path.starts_with("readiness.probes.") {
+                1
+            } else if change.path.contains(".readiness.probes[")
+                || change.path.contains(".readiness.signal.probes[")
+            {
+                2
+            } else {
+                1
+            }
+        }
+        "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+        | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+        | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => {
+            if change.path.contains(".runtime.surfaces.") {
+                1
+            } else if change.path.contains(".readiness.surfaces[")
+                || change.path.contains(".readiness.signal.surfaces[")
+            {
                 2
             } else {
                 1
@@ -32374,6 +32421,36 @@ fn receipt_diff_change_specificity_key<'a>(
                 if path.contains(".readiness") {
                     0
                 } else if path.contains(".manager") {
+                    1
+                } else {
+                    2
+                }
+            }
+            "OTA_WORKFLOW_PROBE_FAILED"
+            | "OTA_WORKFLOW_PROBE_TIMED_OUT"
+            | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
+            | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT" => {
+                if path.starts_with("readiness.probes.") {
+                    0
+                } else if path.contains(".readiness.probes[")
+                    || path.contains(".readiness.signal.probes[")
+                {
+                    1
+                } else {
+                    2
+                }
+            }
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+            | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+            | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => {
+                if path.contains(".runtime.surfaces.") {
+                    0
+                } else if path.contains(".readiness.surfaces[")
+                    || path.contains(".readiness.signal.surfaces[")
+                {
                     1
                 } else {
                     2
@@ -32727,6 +32804,60 @@ mod receipt_diff_correlation_tests {
     }
 
     #[test]
+    fn receipt_diff_declared_entity_matches_workflow_probe_reference() {
+        let change = DiffChange {
+            path: String::from("workflows.dev.readiness.probes[0]"),
+            status: String::from("add"),
+            category: Some(String::from("workflow")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("app-ready")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_WORKFLOW_PROBE_FAILED",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Probe failed: app-ready",
+            "why",
+            "next",
+        );
+
+        let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
+
+        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::NameReference);
+        assert_eq!(matched.lane_priority, 2);
+    }
+
+    #[test]
+    fn receipt_diff_declared_entity_matches_workflow_surface_runtime_definition() {
+        let change = DiffChange {
+            path: String::from("tasks.dev.runtime.surfaces.backend.port"),
+            status: String::from("change"),
+            category: Some(String::from("workflow")),
+            risk: Some(String::from("medium")),
+            base: Some(String::from("3000")),
+            target: Some(String::from("4000")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Surface readiness failed: backend",
+            "why",
+            "next",
+        );
+
+        let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
+
+        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::NameReference);
+        assert_eq!(matched.lane_priority, 1);
+    }
+
+    #[test]
     fn receipt_diff_declared_semantics_match_check_family_without_summary_parse() {
         let change = DiffChange {
             path: String::from("checks[0].run"),
@@ -32943,6 +33074,51 @@ tasks:
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, requirement.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_named_probe_definition_over_workflow_probe_reference() {
+        let probe = diff_change("readiness.probes.app-ready.http.path", "change");
+        let reference = DiffChange {
+            path: String::from("workflows.dev.readiness.probes[0]"),
+            status: String::from("add"),
+            category: Some(String::from("workflow")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("app-ready")),
+            provenance: None,
+        };
+        let finding = identified_finding("OTA_WORKFLOW_PROBE_FAILED", "Probe failed: app-ready");
+
+        let related =
+            receipt_diff_likely_related_changes(&[reference.clone(), probe.clone()], &[finding], None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, probe.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_surface_definition_over_workflow_surface_reference() {
+        let surface = diff_change("tasks.dev.runtime.surfaces.backend.port", "change");
+        let reference = DiffChange {
+            path: String::from("workflows.dev.readiness.surfaces[0]"),
+            status: String::from("add"),
+            category: Some(String::from("workflow")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("backend")),
+            provenance: None,
+        };
+        let finding = identified_finding(
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED",
+            "Surface readiness failed: backend",
+        );
+
+        let related =
+            receipt_diff_likely_related_changes(&[reference.clone(), surface.clone()], &[finding], None);
+
+        assert_eq!(related[0].path, surface.path);
+        assert_eq!(related[1].path, reference.path);
     }
 
     #[test]

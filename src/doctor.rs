@@ -1924,16 +1924,67 @@ fn resolve_execution_finding_metadata(finding: &Finding) -> FindingResolvedMetad
             | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => &["workflow"],
             _ => &["execution"],
         },
-        correlation_owner_prefix: finding_suffix_after_prefix(
-            finding.summary.trim(),
-            &["Check failed: ", "Check timed out: "],
-        )
-        .map(|check| format!("checks.{check}")),
-        correlation_entity: finding_suffix_after_prefix(
-            finding.summary.trim(),
-            &["Check failed: ", "Check timed out: "],
-        )
-        .map(str::to_string),
+        correlation_owner_prefix: match finding.code() {
+            "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &["Check failed: ", "Check timed out: "],
+            )
+            .map(|check| format!("checks.{check}")),
+            "OTA_WORKFLOW_PROBE_FAILED"
+            | "OTA_WORKFLOW_PROBE_TIMED_OUT"
+            | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
+            | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &[
+                    "Probe failed: ",
+                    "Probe timed out: ",
+                    "Signal probe failed: ",
+                    "Signal probe timed out: ",
+                ],
+            )
+            .map(|probe| format!("readiness.probes.{probe}")),
+            _ => None,
+        },
+        correlation_entity: match finding.code() {
+            "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &["Check failed: ", "Check timed out: "],
+            )
+            .map(str::to_string),
+            "OTA_WORKFLOW_PROBE_FAILED"
+            | "OTA_WORKFLOW_PROBE_TIMED_OUT"
+            | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
+            | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT" => finding_suffix_after_prefix(
+                finding.summary.trim(),
+                &[
+                    "Probe failed: ",
+                    "Probe timed out: ",
+                    "Signal probe failed: ",
+                    "Signal probe timed out: ",
+                ],
+            )
+            .map(str::to_string),
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+            | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+            | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => {
+                finding_suffix_after_prefix(
+                    finding.summary.trim(),
+                    &[
+                        "Surface readiness failed: ",
+                        "Surface readiness timed out: ",
+                        "Surface readiness could not be evaluated: ",
+                        "Signal surface readiness failed: ",
+                        "Signal surface readiness timed out: ",
+                        "Signal surface readiness could not be evaluated: ",
+                    ],
+                )
+                .map(str::to_string)
+            }
+            _ => None,
+        },
         evidence,
         provenance: repo_contract_provenance(),
         policy: None,
