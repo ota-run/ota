@@ -1797,6 +1797,7 @@ pub struct ReceiptHistorySuccess<'a> {
 #[derive(Debug, Serialize)]
 pub struct ReceiptSnapshotSummary {
     pub input_count: usize,
+    pub assumption_count: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1824,6 +1825,7 @@ pub struct ReceiptSnapshotSuccess<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub promoted_at: Option<&'a str>,
     pub snapshot_hash: &'a str,
+    pub assumption_set_hash: &'a str,
     pub snapshot_path: &'a str,
     pub contract: ReceiptSnapshotContract<'a>,
     pub snapshot: JsonValue,

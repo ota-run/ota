@@ -1796,8 +1796,9 @@ Text output:
   clear contract-change correlation
 - `--fail-on-new-blockers` adds a `Gate:` overview line showing whether the current diff passed or was blocked by newly introduced blockers
 - `--snapshot` switches the text header to `RECEIPT SNAPSHOT <path>` and prints the archived
-  snapshot source, selection kind, archive/snapshot paths, hash, any preserved contract identity,
-  and the pretty-printed normalized semantic contract JSON itself
+  snapshot source, selection kind, archive/snapshot paths, whole-snapshot hash, assumption-set
+  hash, assumption count, any preserved contract identity, and the pretty-printed normalized
+  semantic contract JSON itself
 
 JSON output:
 

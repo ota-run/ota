@@ -31840,6 +31840,7 @@ fn resolve_repo_receipt_snapshot(
             })?;
         let snapshot_json = serde_json::to_vec_pretty(&snapshot)
             .map_err(|error| format!("failed to serialize archived contract snapshot: {error}"))?;
+        let assumption_set_hash = assumption_set_hash_from_snapshot(&snapshot)?;
         return Ok(RepoReceiptSnapshotReport {
             source: baseline.source,
             selection_kind: String::from("receipt_archive"),
@@ -31848,6 +31849,8 @@ fn resolve_repo_receipt_snapshot(
             archived_at: baseline.record.archived_at,
             promoted_at: baseline.promoted_at,
             snapshot_hash: contract_snapshot_hash(&snapshot_json),
+            assumption_set_hash,
+            assumption_count: assumption_count_from_snapshot(&snapshot),
             snapshot_path,
             contract: Some(baseline.record.payload.receipt.contract),
             contract_identity: baseline.contract_identity,
@@ -31880,6 +31883,7 @@ fn resolve_repo_receipt_snapshot(
     {
         let snapshot_json = serde_json::to_vec_pretty(&snapshot)
             .map_err(|error| format!("failed to serialize archived contract snapshot: {error}"))?;
+        let assumption_set_hash = assumption_set_hash_from_snapshot(&snapshot)?;
         let receipt_contract = json
             .get("receipt")
             .and_then(|receipt| receipt.get("contract"))
@@ -31902,6 +31906,8 @@ fn resolve_repo_receipt_snapshot(
             archived_at,
             promoted_at: None,
             snapshot_hash: contract_snapshot_hash(&snapshot_json),
+            assumption_set_hash,
+            assumption_count: assumption_count_from_snapshot(&snapshot),
             snapshot_path,
             contract: receipt_contract,
             contract_identity: receipt_identity,
@@ -31912,6 +31918,7 @@ fn resolve_repo_receipt_snapshot(
     let snapshot = normalize_semantic_json(json);
     let snapshot_json = serde_json::to_vec_pretty(&snapshot)
         .map_err(|error| format!("failed to serialize archived contract snapshot: {error}"))?;
+    let assumption_set_hash = assumption_set_hash_from_snapshot(&snapshot)?;
     Ok(RepoReceiptSnapshotReport {
         source: String::from("file"),
         selection_kind: String::from("snapshot_archive"),
@@ -31920,6 +31927,8 @@ fn resolve_repo_receipt_snapshot(
         archived_at: None,
         promoted_at: None,
         snapshot_hash: contract_snapshot_hash(&snapshot_json),
+        assumption_set_hash,
+        assumption_count: assumption_count_from_snapshot(&snapshot),
         snapshot_path: selection_path.to_path_buf(),
         contract: None,
         contract_identity: None,
@@ -31941,6 +31950,10 @@ fn assumption_set_hash_from_snapshot(snapshot: &JsonValue) -> Result<String, Str
     let assumption_json = serde_json::to_vec_pretty(&assumptions)
         .map_err(|error| format!("failed to serialize normalized assumption set: {error}"))?;
     Ok(contract_snapshot_hash(&assumption_json))
+}
+
+fn assumption_count_from_snapshot(snapshot: &JsonValue) -> usize {
+    collect_diff_assumptions(snapshot).len()
 }
 
 fn quoted_scalar(value: &str) -> String {
@@ -31970,17 +31983,75 @@ fn receipt_diff_owner_match_kind(
     }
 }
 
-fn receipt_diff_correlation_match_rank(
+fn receipt_diff_change_category(change: &DiffChange) -> &str {
+    change
+        .category
+        .as_deref()
+        .unwrap_or_else(|| diff_change_category(&change.path))
+}
+
+fn receipt_diff_declared_match_rank(
     change: &DiffChange,
     finding: &Finding,
-    sequence_prefix: Option<&str>,
 ) -> Option<ReceiptDiffCorrelationMatchKind> {
-    if let Some(prefix) = sequence_prefix
-        && change.path.starts_with(prefix)
-    {
-        return Some(ReceiptDiffCorrelationMatchKind::SequenceSubtree);
+    let change_category = receipt_diff_change_category(change);
+    let correlation_surfaces = finding
+        .correlation_surfaces()
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let match_categories = if correlation_surfaces.is_empty() {
+        receipt_diff_declared_category_surfaces(finding)
+    } else {
+        correlation_surfaces
+    };
+    if !match_categories.contains(change_category) {
+        return None;
     }
 
+    let path = change.path.as_str();
+    match change_category {
+        "env" if path.starts_with("env.") => Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily),
+        "service" if path.starts_with("services.") => {
+            Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
+        }
+        "service" if path.contains("requires_services") => {
+            Some(ReceiptDiffCorrelationMatchKind::RequirementReference)
+        }
+        "task" if path.starts_with("tasks.") || path.starts_with("checks[") => {
+            Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
+        }
+        "workflow" if path.starts_with("workflows.") => {
+            Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
+        }
+        "execution" if path.starts_with("execution.") || path.starts_with("native_prerequisites.") => {
+            Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
+        }
+        "agent" if path.starts_with("agent.") => Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily),
+        "policy" if path.starts_with("policies.") => {
+            Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
+        }
+        "toolchain"
+            if path.starts_with("tools.")
+                || path.starts_with("toolchains.")
+                || path.starts_with("runtimes.") =>
+        {
+            Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily)
+        }
+        "toolchain"
+            if path.contains(".requirements.tools.")
+                || path.contains(".requirements.toolchains.") =>
+        {
+            Some(ReceiptDiffCorrelationMatchKind::RequirementReference)
+        }
+        _ => None,
+    }
+}
+
+fn receipt_diff_fallback_match_rank(
+    change: &DiffChange,
+    finding: &Finding,
+) -> Option<ReceiptDiffCorrelationMatchKind> {
     let summary = finding.summary.trim();
     match finding.code() {
         "OTA_ENV_MISSING" => {
@@ -32078,6 +32149,26 @@ fn receipt_diff_correlation_match_rank(
         _ => {}
     }
     None
+}
+
+fn receipt_diff_correlation_match_rank(
+    change: &DiffChange,
+    finding: &Finding,
+    sequence_prefix: Option<&str>,
+) -> Option<ReceiptDiffCorrelationMatchKind> {
+    let sequence_rank = if let Some(prefix) = sequence_prefix
+        && change.path.starts_with(prefix)
+    {
+        Some(ReceiptDiffCorrelationMatchKind::SequenceSubtree)
+    } else {
+        None
+    };
+
+    sequence_rank
+        .into_iter()
+        .chain(receipt_diff_declared_match_rank(change, finding))
+        .chain(receipt_diff_fallback_match_rank(change, finding))
+        .max()
 }
 
 fn check_change_prefix(contract_changes: &[DiffChange], check_name: &str) -> Option<String> {
@@ -32359,6 +32450,60 @@ mod receipt_diff_correlation_tests {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, direct.path);
+    }
+
+    #[test]
+    fn receipt_diff_declared_semantics_match_policy_drift_without_code_fallback() {
+        let change = DiffChange {
+            path: String::from("policies.approvals.required"),
+            status: String::from("change"),
+            category: Some(String::from("policy")),
+            risk: Some(String::from("high")),
+            base: Some(String::from("false")),
+            target: Some(String::from("true")),
+            provenance: Some(String::from("policy")),
+        };
+        let finding = Finding::identified(
+            "OTA_POLICY_ENFORCEMENT_REQUIRED",
+            "contract",
+            "org_policy",
+            FindingSeverity::Error,
+            "Policy enforcement required",
+            "why",
+            "next",
+        );
+
+        let related = receipt_diff_likely_related_changes(&[change.clone()], &[finding]);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, change.path);
+    }
+
+    #[test]
+    fn receipt_diff_declared_semantics_match_check_family_without_summary_parse() {
+        let change = DiffChange {
+            path: String::from("checks[0].run"),
+            status: String::from("change"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: Some(String::from("true")),
+            target: Some(String::from("false")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_CHECK_FAILED",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Check failed",
+            "why",
+            "next",
+        );
+
+        let related = receipt_diff_likely_related_changes(&[change.clone()], &[finding]);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, change.path);
     }
 
     #[test]
@@ -85923,6 +86068,8 @@ struct RepoReceiptSnapshotReport {
     archived_at: Option<String>,
     promoted_at: Option<String>,
     snapshot_hash: String,
+    assumption_set_hash: String,
+    assumption_count: usize,
     snapshot_path: PathBuf,
     contract: Option<String>,
     contract_identity: Option<String>,
@@ -87189,6 +87336,18 @@ fn render_repo_receipt_snapshot(
                 paint_key("Hash:"),
                 report.snapshot_hash
             ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Assumption set hash:"),
+                report.assumption_set_hash
+            ));
+            stdout.push_str(&format!(
+                "\n {}  {} {}",
+                summary_bullet(),
+                paint_key("Assumptions:"),
+                report.assumption_count
+            ));
 
             let snapshot = serde_json::to_string_pretty(&report.snapshot)
                 .unwrap_or_else(|_| String::from("{}"));
@@ -87207,7 +87366,6 @@ fn render_repo_receipt_snapshot(
                 ok: true,
                 path: json_path,
                 mode: "snapshot",
-                summary: ReceiptSnapshotSummary { input_count: 1 },
                 source: &report.source,
                 selection_kind: &report.selection_kind,
                 selection_path: report.selection_path.as_deref(),
@@ -87215,10 +87373,15 @@ fn render_repo_receipt_snapshot(
                 archived_at: report.archived_at.as_deref(),
                 promoted_at: report.promoted_at.as_deref(),
                 snapshot_hash: &report.snapshot_hash,
+                assumption_set_hash: &report.assumption_set_hash,
                 snapshot_path: &snapshot_path,
                 contract: ReceiptSnapshotContract {
                     contract: report.contract.as_deref(),
                     contract_identity: report.contract_identity.as_deref(),
+                },
+                summary: ReceiptSnapshotSummary {
+                    input_count: 1,
+                    assumption_count: report.assumption_count,
                 },
                 snapshot: report.snapshot,
             }))

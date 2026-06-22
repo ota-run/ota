@@ -9529,8 +9529,15 @@ tasks:
         assert_eq!(json["mode"], "snapshot");
         assert_eq!(json["source"], "latest");
         assert_eq!(json["selection_kind"], "receipt_archive");
+        assert!(json["summary"]["assumption_count"].as_u64().unwrap() > 0);
         assert!(
             json["snapshot_hash"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
+        assert!(
+            json["assumption_set_hash"]
                 .as_str()
                 .unwrap()
                 .starts_with("sha256:")
@@ -9577,6 +9584,12 @@ tasks:
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["selection_kind"], "snapshot_archive");
         assert_eq!(json["source"], "file");
+        assert!(
+            json["assumption_set_hash"]
+                .as_str()
+                .unwrap()
+                .starts_with("sha256:")
+        );
         assert_eq!(json["snapshot"]["project"]["name"], "receipt-demo");
     }
 
@@ -10723,9 +10736,9 @@ env:
                 let json: Value = serde_json::from_str(&output.stdout).unwrap();
                 assert_eq!(
                     json["summary"]["comparison"]["correlation"],
-                    "possibly_related"
+                    "likely_related"
                 );
-                assert!(json.get("likely_related_changes").is_none());
+                assert!(json["likely_related_changes"].as_array().unwrap().len() > 0);
                 assert!(json["contract_changes"].as_array().unwrap().len() > 0);
             })
             .expect("spawn same-family correlation receipt diff worker");

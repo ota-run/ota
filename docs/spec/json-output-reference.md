@@ -3652,13 +3652,15 @@ Selection supports:
   "path": "/abs/path/to/ota.yaml",
   "mode": "snapshot",
   "summary": {
-    "input_count": 1
+    "input_count": 1,
+    "assumption_count": 3
   },
   "source": "latest",
   "selection_kind": "receipt_archive",
   "archive_path": ".ota/receipts/repo-receipt-20260621-101010-123Z.json",
   "archived_at": "2026-06-21T10:10:10.123Z",
   "snapshot_hash": "sha256:5dc5c7f6e0bf...",
+  "assumption_set_hash": "sha256:9ab21d35d3ef...",
   "snapshot_path": ".ota/contracts/sha256-5dc5c7f6e0bf....json",
   "contract": {
     "contract": "/abs/path/to/ota.yaml",
@@ -3684,12 +3686,14 @@ Snapshot JSON fields:
 - `path`
 - `mode` (`snapshot`)
 - `summary.input_count`
+- `summary.assumption_count`
 - `source` (`latest`, `promoted`, or `file`)
 - `selection_kind` (`receipt_archive` or `snapshot_archive`)
 - `selection_path` when the caller selected an explicit file or promoted pointer
 - `archive_path` when the resolved selection came from a receipt archive or direct snapshot file
 - `archived_at` and `promoted_at` when the resolved selection came through archived receipt state
 - `snapshot_hash`
+- `assumption_set_hash`
 - `snapshot_path`
 - `contract.contract` when the resolved receipt carried the source contract path
 - `contract.contract_identity` when the resolved receipt carried compact contract identity
