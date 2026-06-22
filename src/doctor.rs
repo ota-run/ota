@@ -12350,6 +12350,10 @@ pub(crate) fn resolve_command_path(name: &str) -> Option<PathBuf> {
             .find(|candidate| is_probeable_file(candidate));
     }
 
+    if let Some(candidate) = repo_owned_source_managed_command_path(name) {
+        return Some(candidate);
+    }
+
     #[cfg(windows)]
     if let Ok(current_dir) = std::env::current_dir()
         && let Some(candidate) = command_path_candidates(&current_dir.join(name))
@@ -12369,6 +12373,13 @@ pub(crate) fn resolve_command_path(name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn repo_owned_source_managed_command_path(name: &str) -> Option<PathBuf> {
+    let current_dir = std::env::current_dir().ok()?;
+    command_path_candidates(&current_dir.join(".ota/state/source-managed/bin").join(name))
+        .into_iter()
+        .find(|candidate| is_probeable_file(candidate))
 }
 
 fn looks_like_command_path(name: &str) -> bool {
@@ -12948,7 +12959,7 @@ mod tests {
     use crate::schema::{ServiceSpec, ToolchainFulfillmentSource};
     #[cfg(windows)]
     use crate::test_support::cwd_mutex_lock;
-    use crate::test_support::env_mutex_lock;
+    use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
     use tempfile::TempDir;
 
     use super::{
@@ -16596,6 +16607,93 @@ tasks:
                 .iter()
                 .all(|finding| finding.code() != "OTA_TOOL_MISSING"),
             "unexpected missing-tool findings: {:?}",
+            report.findings
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn native_mode_recognizes_repo_owned_source_managed_release_asset_tools() {
+        let _env_guard = env_mutex_lock();
+        let _cwd_guard = cwd_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let original_dir = env::current_dir().unwrap();
+        let original_path = env::var_os("PATH");
+        let managed_bin = fixture.path().join(".ota/state/source-managed/bin");
+        fs::create_dir_all(&managed_bin).unwrap();
+        write_fake_command(
+            &managed_bin,
+            "vale",
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'vale version 3.15.1'\n  exit 0\nfi\nexit 1\n",
+        );
+        unsafe {
+            env::set_current_dir(fixture.path()).unwrap();
+            env::set_var("PATH", fixture.path().join("missing-bin"));
+        }
+
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: backstage
+tools:
+  vale:
+    version: "3.15.1"
+    required: false
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/vale_linux_amd64
+tasks:
+  verify:
+    command:
+      exe: vale
+      args:
+        - --version
+    requirements:
+      tools:
+        vale: "*"
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            &contract_path,
+            DoctorMode::Native,
+            Some("verify"),
+        );
+
+        unsafe {
+            env::set_current_dir(original_dir).unwrap();
+            match original_path {
+                Some(path) => env::set_var("PATH", path),
+                None => env::remove_var("PATH"),
+            }
+        }
+
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.code() != "OTA_TOOL_MISSING"),
+            "unexpected missing-tool findings: {:?}",
+            report.findings
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.code() != "OTA_TOOL_VERSION_MISMATCH"),
+            "unexpected version findings: {:?}",
             report.findings
         );
     }
