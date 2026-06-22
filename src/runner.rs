@@ -9825,6 +9825,12 @@ fn select_direct_tool_acquisition_actions_for_backend_gaps(
         let Some(source) = acquisition.provider.provisioning_source() else {
             continue;
         };
+        let requested_version =
+            if matches!(acquisition.provider, ToolAcquisitionProvider::ReleaseAsset) {
+                requirement.version_for_os(target_os).to_string()
+            } else {
+                gap.required_version.clone()
+            };
         actions.push(ProvisioningAction {
             kind: if matches!(acquisition.provider, ToolAcquisitionProvider::ReleaseAsset) {
                 crate::policy_pack::ProvisioningActionKind::SelectSource
@@ -9833,7 +9839,7 @@ fn select_direct_tool_acquisition_actions_for_backend_gaps(
             },
             target_kind: ProvisioningTargetKind::Tool,
             name: gap.name.clone(),
-            requested_version: gap.required_version.clone(),
+            requested_version,
             normalized_requirement: None,
             resolved_version: None,
             package: acquisition.package.clone().or_else(|| {
@@ -26046,13 +26052,13 @@ mod tests {
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
 
     use super::{
-        BackendFulfillmentStrategy, CapturedRunOutcome, ContainerPortPublication,
-        EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides, HttpReadinessRequest,
-        LEGACY_EXECUTION_CONTEXT_NAME, PreparedTaskExecution, ProvisioningExecutionTarget,
-        ResolvedExecutionBackend, ResolvedSharedLocalBackend, ResolvedTaskRuntime,
-        ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint, ResolvedTaskRuntimeHost,
-        ResolvedTaskRuntimeListener, ResolvedTaskRuntimeResolution, RunError,
-        RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind,
+        BackendFulfillmentStrategy, BackendRequirementGap, CapturedRunOutcome,
+        ContainerPortPublication, EnvResolutionSource, ExecutedTaskStep, ExecutionOverrides,
+        HttpReadinessRequest, LEGACY_EXECUTION_CONTEXT_NAME, PreparedTaskExecution,
+        ProvisioningExecutionTarget, ResolvedExecutionBackend, ResolvedSharedLocalBackend,
+        ResolvedTaskRuntime, ResolvedTaskRuntimeBind, ResolvedTaskRuntimeEndpoint,
+        ResolvedTaskRuntimeHost, ResolvedTaskRuntimeListener, ResolvedTaskRuntimeResolution,
+        RunError, RuntimeListenerHostPublicationFailure, RuntimeListenerResolutionKind,
         RuntimeReadinessTarget, StreamLogFile, StreamLogTee, TaskExecutionMode,
         TaskExecutionRelation, TaskRunState, TaskTargetActivationEvidence,
         TaskTargetActivationStatus, TaskTargetResolutionSource, acquire_repo_execution_lock,
@@ -51037,6 +51043,52 @@ tasks:
             super::source_managed_tool_path_export(&actions, None),
             ".ota/state/source-managed/bin:$PATH"
         );
+    }
+
+    #[test]
+    fn direct_release_asset_tool_actions_use_declared_contract_version() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  vale:
+    version: "3.15.1"
+    required: false
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/vale_linux_amd64
+tasks:
+  verify:
+    command:
+      exe: vale
+      args:
+        - --version
+    requirements:
+      tools:
+        vale: "*"
+"#,
+        )
+        .unwrap();
+
+        let actions = super::select_direct_tool_acquisition_actions_for_backend_gaps(
+            &contract,
+            "linux",
+            &[BackendRequirementGap {
+                kind: ProvisioningTargetKind::Tool,
+                name: String::from("vale"),
+                required_version: String::from("*"),
+                details: String::from("tool `vale` missing"),
+            }],
+        );
+
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(actions[0].source, "release-asset");
+        assert_eq!(actions[0].requested_version, "3.15.1");
     }
 
     #[test]
