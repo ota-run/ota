@@ -9825,12 +9825,12 @@ fn select_direct_tool_acquisition_actions_for_backend_gaps(
         let Some(source) = acquisition.provider.provisioning_source() else {
             continue;
         };
-        let requested_version =
-            if matches!(acquisition.provider, ToolAcquisitionProvider::ReleaseAsset) {
-                requirement.version_for_os(target_os).to_string()
-            } else {
-                gap.required_version.clone()
-            };
+        let requested_version = requirement.version_for_os(target_os).trim();
+        let requested_version = if requested_version.is_empty() || requested_version == "*" {
+            gap.required_version.clone()
+        } else {
+            requested_version.to_string()
+        };
         actions.push(ProvisioningAction {
             kind: if matches!(acquisition.provider, ToolAcquisitionProvider::ReleaseAsset) {
                 crate::policy_pack::ProvisioningActionKind::SelectSource

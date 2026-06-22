@@ -1196,6 +1196,7 @@ fn tool_acquisition_provider_requirement(acquisition: &ToolAcquisitionSpec) -> &
 }
 
 fn direct_tool_acquisition_provisioning_actions(
+    contract: &Contract,
     requirement_surface: &RequirementSurface,
     target_os: &str,
 ) -> Vec<ProvisioningAction> {
@@ -1206,8 +1207,15 @@ fn direct_tool_acquisition_provisioning_actions(
             requirement.active_for_os(target_os) && requirement.required_for_os(target_os)
         })
         .filter_map(|(name, requirement)| {
-            let acquisition = requirement.acquisition_for_os(target_os)?;
+            let contract_requirement = contract.tools.get(name.as_str());
+            let acquisition = contract_requirement
+                .and_then(|tool| tool.acquisition_for_os(target_os))
+                .or_else(|| requirement.acquisition_for_os(target_os))?;
             let source = acquisition.provider.provisioning_source()?;
+            let requested_version = contract_requirement
+                .map(|tool| tool.version_for_os(target_os).trim().to_string())
+                .filter(|version| !version.is_empty() && version != "*")
+                .unwrap_or_else(|| requirement.version_for_os(target_os).to_string());
             Some(ProvisioningAction {
                 kind: if matches!(acquisition.provider, ToolAcquisitionProvider::ReleaseAsset) {
                     crate::policy_pack::ProvisioningActionKind::SelectSource
@@ -1216,7 +1224,7 @@ fn direct_tool_acquisition_provisioning_actions(
                 },
                 target_kind: ProvisioningTargetKind::Tool,
                 name: name.clone(),
-                requested_version: requirement.version_for_os(target_os).to_string(),
+                requested_version,
                 normalized_requirement: None,
                 resolved_version: None,
                 package: acquisition.package.clone().or_else(|| {
@@ -1233,12 +1241,13 @@ fn direct_tool_acquisition_provisioning_actions(
 }
 
 fn merge_direct_tool_acquisition_provisioning(
+    contract: &Contract,
     provisioning: Option<ProvisioningDiagnostics>,
     requirement_surface: &RequirementSurface,
     target_os: &str,
 ) -> Option<ProvisioningDiagnostics> {
     let direct_actions =
-        direct_tool_acquisition_provisioning_actions(requirement_surface, target_os);
+        direct_tool_acquisition_provisioning_actions(contract, requirement_surface, target_os);
     if direct_actions.is_empty() {
         return provisioning;
     }
@@ -1267,11 +1276,13 @@ fn merge_direct_tool_acquisition_provisioning(
 }
 
 fn merged_provisioning_actions_for_requirement_surface(
+    contract: &Contract,
     base_actions: Vec<ProvisioningAction>,
     requirement_surface: &RequirementSurface,
     target_os: &str,
 ) -> Vec<ProvisioningAction> {
     merge_direct_tool_acquisition_provisioning(
+        contract,
         Some(ProvisioningDiagnostics {
             plan: ProvisioningPlan::default(),
             request: ProvisioningBackendRequest {
@@ -1502,6 +1513,7 @@ fn remote_doctor_probe_contexts(
                 Some(&required_tools),
             );
         let provisioning_actions = merged_provisioning_actions_for_requirement_surface(
+            contract,
             loaded_policy
                 .map(|loaded| {
                     loaded
@@ -1615,6 +1627,7 @@ fn remote_doctor_probe_contexts(
             Some(&required_tools),
         );
     let provisioning_actions = merged_provisioning_actions_for_requirement_surface(
+        contract,
         loaded_policy
             .map(|loaded| {
                 loaded
@@ -4358,6 +4371,7 @@ fn diagnose_contract_with_scope(
                     );
                 let selection_provisioning_actions =
                     merged_provisioning_actions_for_requirement_surface(
+                        contract,
                         loaded_policy
                             .as_ref()
                             .map(|loaded| {
@@ -4546,6 +4560,7 @@ fn diagnose_contract_with_scope(
                     );
                 let additional_provisioning_actions =
                     merged_provisioning_actions_for_requirement_surface(
+                        contract,
                         loaded_policy
                             .as_ref()
                             .map(|loaded| {
@@ -4689,6 +4704,7 @@ fn diagnose_contract_with_scope(
                     Some(&required_tools),
                 );
             provisioning = merge_direct_tool_acquisition_provisioning(
+                contract,
                 provisioning,
                 &provisioning_requirement_surface,
                 policy_target_os_for_mode(mode),
@@ -16308,6 +16324,7 @@ tasks:
                 && action.target_kind == ProvisioningTargetKind::Tool
                 && action.name == "yq"
                 && action.source == "release-asset"
+                && action.requested_version == "4.52.5"
                 && action.package.is_none()
                 && action
                     .source_config
@@ -16386,6 +16403,54 @@ tasks:
                 .any(|finding| finding.code() == "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"),
             "{report:?}"
         );
+    }
+
+    #[test]
+    fn doctor_direct_release_asset_actions_use_declared_contract_version_when_task_requires_any() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tools:
+  vale:
+    version: "3.15.1"
+    required: false
+    acquisition:
+      provider: release_asset
+      source_config:
+        asset_by_platform:
+          linux_x86_64: https://example.com/releases/v{version}/vale_linux_amd64
+tasks:
+  verify:
+    command:
+      exe: vale
+      args:
+        - --version
+    requirements:
+      tools:
+        vale: "*"
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("verify").expect("verify task");
+        let requirement_surface =
+            task.scoped_requirement_surface_for_execution(crate::schema::Backend::Native, None);
+        let actions = super::merged_provisioning_actions_for_requirement_surface(
+            &contract,
+            Vec::new(),
+            &requirement_surface,
+            "linux",
+        );
+        assert!(actions.iter().any(|action| {
+            action.kind == ProvisioningActionKind::SelectSource
+                && action.target_kind == ProvisioningTargetKind::Tool
+                && action.name == "vale"
+                && action.source == "release-asset"
+                && action.requested_version == "3.15.1"
+        }));
     }
 
     #[test]
