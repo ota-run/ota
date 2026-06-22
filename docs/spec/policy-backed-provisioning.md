@@ -204,6 +204,9 @@ Current behavior:
   - `windows_x86_64`
   - `windows_aarch64`
 - `source_config.version_args` is optional and defaults to `["--version"]`
+- selected task/workflow requirements may still ask for that tool with `*`; ota keeps the exact
+  owned `tools.<name>.version` for provisioning, doctor, and execution instead of flattening the
+  selected release-asset lane back to the wildcard
 - ota materializes the downloaded executable into a source-managed workspace path so later task
   execution can use it without repo-local bootstrap glue
 

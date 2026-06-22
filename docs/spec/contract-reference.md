@@ -1049,6 +1049,12 @@ Rules:
   source-managed tool path when the selected task/workflow path requires that tool; when a
   platform asset declares `archive`, ota downloads the archive, extracts the declared executable,
   and installs that executable into the same managed path
+- selected task/workflow paths may still require a release-asset tool with a wildcard such as
+  `tools: { yq: "*" }`; ota keeps the exact owned version from `tools.<name>.version` for doctor,
+  dry-run, and execution instead of downgrading selected acquisition truth to the wildcard
+- native follow-up diagnosis also checks ota's managed `.ota/state/source-managed/bin` tool path
+  for `release_asset` tools after fulfillment, so repo-owned standalone binaries do not
+  immediately misdiagnose as missing just because they were not installed into a host-global PATH
 - package-manager-backed acquisition belongs in `tools`, not `native_prerequisites`; use
   `native_prerequisites` for host-native bundles such as compiler stacks, Xcode CLT, or Visual
   Studio Build Tools

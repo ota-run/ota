@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- fixed selected-path standalone tool acquisition version trust across `ota doctor`, `ota up`,
+  and `ota run`: task-local wildcard requirements such as `tools: { yq: "*" }` now preserve the
+  exact owned version declared under `tools.<name>` when the selected path resolves through
+  `tools.<name>.acquisition`, instead of collapsing that selected acquisition lane back to `*`
+- fixed native post-fulfillment diagnosis for source-managed standalone tools: when Ota acquires a
+  tool through `tools.<name>.acquisition.provider: release_asset`, follow-up `ota doctor` and
+  `ota up` diagnosis now probe the repo-managed `.ota/state/source-managed/bin` path too instead of
+  falsely saying the tool is unavailable on `PATH` after fulfillment already succeeded
 - Normalize detected Node engine unions like `22 || 24` into explicit semver branches and honor
   those unions during runtime/toolchain matching, so detector-owned Node version truth no longer
   misclassifies valid installed Node majors.
