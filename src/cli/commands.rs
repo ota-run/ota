@@ -32025,6 +32025,20 @@ fn receipt_diff_declared_match_rank(
         {
             return Some(ReceiptDiffCorrelationMatchKind::NameReference);
         }
+        if (change.path.contains(".requirements.checks[")
+            || change.path.contains(".requires.checks["))
+            && (change.base.as_deref() == Some(&quoted_scalar(&entity))
+                || change.target.as_deref() == Some(&quoted_scalar(&entity)))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+        }
+        if (change.path.contains(".readiness.checks[")
+            || change.path.contains(".signal.checks["))
+            && (change.base.as_deref() == Some(&quoted_scalar(&entity))
+                || change.target.as_deref() == Some(&quoted_scalar(&entity)))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::NameReference);
+        }
         if receipt_diff_change_category(change) == "toolchain"
             && change.target.as_deref() == Some(&quoted_scalar(&entity))
         {
@@ -32620,6 +32634,33 @@ mod receipt_diff_correlation_tests {
     }
 
     #[test]
+    fn receipt_diff_declared_entity_matches_task_check_requirement_reference() {
+        let change = DiffChange {
+            path: String::from("tasks.verify.requirements.checks[0]"),
+            status: String::from("add"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("lint")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_CHECK_FAILED",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Check failed: lint",
+            "why",
+            "next",
+        );
+
+        let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
+
+        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
+        assert_eq!(matched.lane_priority, 2);
+    }
+
+    #[test]
     fn receipt_diff_declared_semantics_match_check_family_without_summary_parse() {
         let change = DiffChange {
             path: String::from("checks[0].run"),
@@ -32785,6 +32826,30 @@ tasks:
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, check.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_named_check_requirement_reference_over_adjacent_task_body() {
+        let requirement = DiffChange {
+            path: String::from("tasks.verify.requirements.checks[0]"),
+            status: String::from("add"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("lint")),
+            provenance: None,
+        };
+        let task = diff_change("tasks.verify.command.exe", "change");
+        let finding = identified_finding("OTA_CHECK_FAILED", "Check failed: lint");
+
+        let related = receipt_diff_likely_related_changes(
+            &[task.clone(), requirement.clone()],
+            &[finding],
+            None,
+        );
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, requirement.path);
     }
 
     #[test]

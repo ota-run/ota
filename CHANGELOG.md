@@ -83,6 +83,9 @@
   named check failures can resolve `checks[<index>]` from the current contract even when the diff
   did not change `checks[...].name`, and the changed check body now outranks adjacent task-body
   drift instead of losing because array-index ownership was not recoverable from diff paths alone
+- widened declared check-correlation ordering across adjacent reference lanes, so named check
+  failures now treat explicit check-reference changes such as `tasks.<name>.requirements.checks[]`
+  and workflow check-reference lanes as stronger evidence than a nearby generic task-body change
 
 ## 1.6.21
 
