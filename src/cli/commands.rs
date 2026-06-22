@@ -32125,16 +32125,102 @@ fn receipt_diff_likely_related_changes(
         let Some(best_rank) = best_rank else {
             continue;
         };
-        for change in contract_changes {
-            if receipt_diff_correlation_match_rank(change, finding, check_prefix.as_deref())
-                == Some(best_rank)
-                && seen.insert(change.path.clone())
-            {
-                related.push(change.clone());
+        let mut matched = contract_changes
+            .iter()
+            .filter(|change| {
+                receipt_diff_correlation_match_rank(change, finding, check_prefix.as_deref())
+                    == Some(best_rank)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        matched.sort_by(|left, right| {
+            receipt_diff_change_specificity_key(finding, left)
+                .cmp(&receipt_diff_change_specificity_key(finding, right))
+        });
+        for change in matched {
+            if seen.insert(change.path.clone()) {
+                related.push(change);
             }
         }
     }
     related
+}
+
+fn receipt_diff_change_specificity_key<'a>(
+    finding: &Finding,
+    change: &'a DiffChange,
+) -> (i8, i8, i8, std::cmp::Reverse<usize>, &'a str, &'a str) {
+    let path = change.path.as_str();
+    let code_bias =
+        match finding.code() {
+            "OTA_ENV_MISSING" => {
+                if path.ends_with(".required") {
+                    0
+                } else if path.ends_with(".default") {
+                    1
+                } else {
+                    2
+                }
+            }
+            "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => {
+                if path.ends_with(".version") { 0 } else { 1 }
+            }
+            "OTA_TOOL_MISSING" => {
+                if path.contains(".acquisition") {
+                    0
+                } else if path.ends_with(".version") {
+                    1
+                } else {
+                    2
+                }
+            }
+            "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => {
+                if path.ends_with(".run")
+                    || path.contains(".command")
+                    || path.contains(".script")
+                    || path.contains(".prepare")
+                {
+                    0
+                } else {
+                    1
+                }
+            }
+            "OTA_SERVICE_READINESS_FAILED"
+            | "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
+            | "OTA_SERVICE_UNVERIFIABLE"
+            | "OTA_SERVICE_CHECK_FAILED"
+            | "OTA_SERVICE_CHECK_TIMED_OUT" => {
+                if path.contains(".readiness") {
+                    0
+                } else if path.contains(".manager") {
+                    1
+                } else {
+                    2
+                }
+            }
+            _ => 0,
+        };
+    let status_bias = match change.status.as_str() {
+        "add" => 0,
+        "change" => 1,
+        "remove" => 2,
+        _ => 3,
+    };
+    let risk_bias = match change.risk.as_deref() {
+        Some("high") => 0,
+        Some("medium") => 1,
+        Some("low") => 2,
+        Some(_) => 3,
+        None => 4,
+    };
+    (
+        code_bias,
+        status_bias,
+        risk_bias,
+        std::cmp::Reverse(path.matches('.').count()),
+        path,
+        change.status.as_str(),
+    )
 }
 
 fn receipt_diff_declared_category_surfaces(finding: &Finding) -> BTreeSet<&'static str> {
@@ -32273,6 +32359,44 @@ mod receipt_diff_correlation_tests {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, direct.path);
+    }
+
+    #[test]
+    fn receipt_diff_orders_env_missing_siblings_by_sharpness() {
+        let mut required = diff_change("env.vars.DATABASE_URL.required", "add");
+        required.risk = Some(String::from("high"));
+        let mut default = diff_change("env.vars.DATABASE_URL.default", "change");
+        default.risk = Some(String::from("medium"));
+        let other = diff_change("env.vars.DATABASE_URL.description", "add");
+        let finding = identified_finding(
+            "OTA_ENV_MISSING",
+            "Missing environment variable: DATABASE_URL",
+        );
+
+        let related = receipt_diff_likely_related_changes(
+            &[other.clone(), default.clone(), required.clone()],
+            &[finding],
+        );
+
+        assert_eq!(related[0].path, required.path);
+        assert_eq!(related[1].path, default.path);
+        assert_eq!(related[2].path, other.path);
+    }
+
+    #[test]
+    fn receipt_diff_orders_service_siblings_by_readiness_first() {
+        let direct = diff_change("services.postgres.readiness.kind", "change");
+        let indirect = diff_change("services.postgres.description", "change");
+        let finding = identified_finding(
+            "OTA_SERVICE_UNVERIFIABLE",
+            "Required service cannot be verified: postgres",
+        );
+
+        let related =
+            receipt_diff_likely_related_changes(&[indirect.clone(), direct.clone()], &[finding]);
+
+        assert_eq!(related[0].path, direct.path);
+        assert_eq!(related[1].path, indirect.path);
     }
 
     #[test]
