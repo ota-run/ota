@@ -1799,7 +1799,7 @@ fn parse_semver_requirement(value: &str) -> Option<VersionReq> {
 }
 
 fn normalize_short_version_requirement(value: &str) -> Option<String> {
-    if value.is_empty() || value == "*" {
+    if value.is_empty() || value == "*" || value.contains("||") {
         return None;
     }
     if value
@@ -1809,14 +1809,27 @@ fn normalize_short_version_requirement(value: &str) -> Option<String> {
         let segments = value
             .split('.')
             .filter(|segment| !segment.is_empty())
-            .count();
-        return match segments {
-            1 => Some(format!(">={value}.0.0,<{value}.999.999")),
-            2 => Some(format!(">={value}.0,<{value}.999")),
+            .collect::<Vec<_>>();
+        return match segments.as_slice() {
+            [major] => {
+                let major = major.parse::<u64>().ok()?;
+                Some(format!(">={major}.0.0,<{}.0.0", major.saturating_add(1)))
+            }
+            [major, minor] => {
+                let major = major.parse::<u64>().ok()?;
+                let minor = minor.parse::<u64>().ok()?;
+                Some(format!(
+                    ">={major}.{minor}.0,<{}.{minor_next}.0",
+                    major,
+                    minor_next = minor.saturating_add(1)
+                ))
+            }
             _ => None,
         };
     }
-    None
+
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(", ");
+    (normalized != value).then_some(normalized)
 }
 
 fn rustup_run_fulfillment_validation_error(
@@ -2787,6 +2800,35 @@ toolchains:
 
         assert_eq!(
             provider.owned_runtime_remediation_command(">=9.0,<10.0"),
+            Some(String::from(expected))
+        );
+    }
+
+    #[test]
+    fn dotnet_runtime_remediation_uses_channel_for_short_major_version() {
+        let contract = contract(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  dotnet:
+    provider: dotnet
+    version: "9"
+"#,
+        );
+        let toolchain = contract.toolchains.get("dotnet").unwrap();
+        let provider =
+            declared_toolchain_contract("dotnet", toolchain).expect("dotnet provider contract");
+
+        let expected = if cfg!(windows) {
+            "powershell -ExecutionPolicy Bypass -Command \"iwr https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1; ./dotnet-install.ps1 -Channel 9.0\""
+        } else {
+            "curl -fsSL https://dot.net/v1/dotnet-install.sh -o dotnet-install.sh && bash dotnet-install.sh --channel 9.0"
+        };
+
+        assert_eq!(
+            provider.owned_runtime_remediation_command("9"),
             Some(String::from(expected))
         );
     }

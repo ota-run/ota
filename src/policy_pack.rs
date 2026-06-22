@@ -1603,11 +1603,43 @@ fn parse_numeric_semver_parts(value: &str) -> Option<Vec<u64>> {
 fn parse_semver_requirement(value: &str) -> Option<VersionReq> {
     let trimmed = value.trim();
     VersionReq::parse(trimmed).ok().or_else(|| {
-        let normalized = trimmed.split_whitespace().collect::<Vec<_>>().join(", ");
-        (normalized != trimmed)
-            .then(|| VersionReq::parse(&normalized).ok())
-            .flatten()
+        normalize_short_version_requirement(trimmed)
+            .and_then(|normalized| VersionReq::parse(&normalized).ok())
     })
+}
+
+fn normalize_short_version_requirement(value: &str) -> Option<String> {
+    if value.is_empty() || value == "*" || value.contains("||") {
+        return None;
+    }
+    if value
+        .chars()
+        .all(|character| character.is_ascii_digit() || character == '.')
+    {
+        let segments = value
+            .split('.')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        return match segments.as_slice() {
+            [major] => {
+                let major = major.parse::<u64>().ok()?;
+                Some(format!(">={major}.0.0,<{}.0.0", major.saturating_add(1)))
+            }
+            [major, minor] => {
+                let major = major.parse::<u64>().ok()?;
+                let minor = minor.parse::<u64>().ok()?;
+                Some(format!(
+                    ">={major}.{minor}.0,<{}.{minor_next}.0",
+                    major,
+                    minor_next = minor.saturating_add(1)
+                ))
+            }
+            _ => None,
+        };
+    }
+
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(", ");
+    (normalized != value).then_some(normalized)
 }
 
 fn parse_concrete_semver_candidate(value: &str) -> Option<Version> {
