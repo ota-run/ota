@@ -32211,7 +32211,7 @@ fn receipt_diff_likely_related_changes(
         change: DiffChange,
         rank: ReceiptDiffCorrelationMatchKind,
         lane_priority: i8,
-        specificity: (i8, i8, i8, std::cmp::Reverse<usize>, String, String),
+        specificity: (i8, i8, i8, i8, usize, String, String),
     }
 
     fn candidate_sort_key(
@@ -32222,7 +32222,8 @@ fn receipt_diff_likely_related_changes(
         i8,
         i8,
         i8,
-        std::cmp::Reverse<usize>,
+        i8,
+        usize,
         &str,
         &str,
     ) {
@@ -32233,8 +32234,9 @@ fn receipt_diff_likely_related_changes(
             candidate.specificity.1,
             candidate.specificity.2,
             candidate.specificity.3,
-            candidate.specificity.4.as_str(),
+            candidate.specificity.4,
             candidate.specificity.5.as_str(),
+            candidate.specificity.6.as_str(),
         )
     }
 
@@ -32281,8 +32283,9 @@ fn receipt_diff_likely_related_changes(
                     specificity.1,
                     specificity.2,
                     specificity.3,
-                    specificity.4.to_string(),
+                    specificity.4,
                     specificity.5.to_string(),
+                    specificity.6.to_string(),
                 ),
             };
             match best_by_path.get(change.path.as_str()) {
@@ -32298,10 +32301,27 @@ fn receipt_diff_likely_related_changes(
     related.into_iter().map(|candidate| candidate.change).collect()
 }
 
+fn receipt_diff_change_owner_distance(finding: &Finding, change: &DiffChange) -> i8 {
+    let Some(owner_prefix) = finding.correlation_owner_prefix() else {
+        return i8::MAX;
+    };
+    if change.path == owner_prefix {
+        return 0;
+    }
+    let Some(suffix) = change
+        .path
+        .strip_prefix(&format!("{owner_prefix}."))
+    else {
+        return i8::MAX;
+    };
+    let segments = suffix.split('.').count();
+    i8::try_from(segments).unwrap_or(i8::MAX)
+}
+
 fn receipt_diff_change_specificity_key<'a>(
     finding: &Finding,
     change: &'a DiffChange,
-) -> (i8, i8, i8, std::cmp::Reverse<usize>, &'a str, &'a str) {
+) -> (i8, i8, i8, i8, usize, &'a str, &'a str) {
     let path = change.path.as_str();
     let code_bias =
         match finding.code() {
@@ -32352,6 +32372,7 @@ fn receipt_diff_change_specificity_key<'a>(
             }
             _ => 0,
         };
+    let owner_distance = receipt_diff_change_owner_distance(finding, change);
     let status_bias = match change.status.as_str() {
         "add" => 0,
         "change" => 1,
@@ -32367,9 +32388,10 @@ fn receipt_diff_change_specificity_key<'a>(
     };
     (
         code_bias,
+        owner_distance,
         status_bias,
         risk_bias,
-        std::cmp::Reverse(path.matches('.').count()),
+        path.matches('.').count(),
         path,
         change.status.as_str(),
     )
@@ -32699,6 +32721,21 @@ mod receipt_diff_correlation_tests {
 
         assert_eq!(related[0].path, direct.path);
         assert_eq!(related[1].path, indirect.path);
+    }
+
+    #[test]
+    fn receipt_diff_orders_service_readiness_kind_before_nested_readiness_detail() {
+        let kind = diff_change("services.postgres.readiness.kind", "change");
+        let nested = diff_change("services.postgres.readiness.tcp.port", "change");
+        let finding = identified_finding(
+            "OTA_SERVICE_UNVERIFIABLE",
+            "Required service cannot be verified: postgres",
+        );
+
+        let related = receipt_diff_likely_related_changes(&[nested.clone(), kind.clone()], &[finding]);
+
+        assert_eq!(related[0].path, kind.path);
+        assert_eq!(related[1].path, nested.path);
     }
 
     #[test]

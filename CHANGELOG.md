@@ -68,6 +68,10 @@
   runtime, check, and service correlation matches now prefer published owner/entity truth over
   CLI-side summary parsing when ranking exact owner, requirement-reference, and name-reference
   contract changes
+- tightened `likely_related_changes[]` ordering inside the same semantic owner lane, so receipt
+  diff now prefers the nearer declared owner subtree before generic path-depth tie-breaks and
+  publishes root `kind`-level evidence ahead of deeper nested detail when both changes are
+  plausible for the same finding
 
 ## 1.6.21
 
