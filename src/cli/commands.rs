@@ -32012,6 +32012,12 @@ fn receipt_diff_declared_match_rank(
         {
             return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
         }
+        if change.path.contains(".services.required[")
+            && (change.base.as_deref() == Some(&quoted_scalar(&entity))
+                || change.target.as_deref() == Some(&quoted_scalar(&entity)))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+        }
         if change.path.contains(&format!(".requirements.tools.{entity}"))
             || change
                 .path
@@ -32607,6 +32613,33 @@ mod receipt_diff_correlation_tests {
     }
 
     #[test]
+    fn receipt_diff_declared_entity_matches_workflow_service_requirement_reference() {
+        let change = DiffChange {
+            path: String::from("workflows.dev.services.required[0]"),
+            status: String::from("add"),
+            category: Some(String::from("workflow")),
+            risk: Some(String::from("high")),
+            base: None,
+            target: Some(quoted_scalar("postgres")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_SERVICE_UNVERIFIABLE",
+            "service",
+            "service",
+            FindingSeverity::Error,
+            "Required service cannot be verified: postgres",
+            "why",
+            "next",
+        );
+
+        let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
+
+        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
+        assert_eq!(matched.lane_priority, 2);
+    }
+
+    #[test]
     fn receipt_diff_declared_entity_matches_check_name_without_fallback_taxonomy() {
         let change = DiffChange {
             path: String::from("checks[0].name"),
@@ -32844,6 +32877,41 @@ tasks:
 
         let related = receipt_diff_likely_related_changes(
             &[task.clone(), requirement.clone()],
+            &[finding],
+            None,
+        );
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, requirement.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_workflow_service_requirement_reference_over_adjacent_workflow_drift() {
+        let requirement = DiffChange {
+            path: String::from("workflows.dev.services.required[0]"),
+            status: String::from("add"),
+            category: Some(String::from("workflow")),
+            risk: Some(String::from("high")),
+            base: None,
+            target: Some(quoted_scalar("postgres")),
+            provenance: None,
+        };
+        let generic = DiffChange {
+            path: String::from("workflows.dev.run.task"),
+            status: String::from("change"),
+            category: Some(String::from("workflow")),
+            risk: Some(String::from("medium")),
+            base: Some(quoted_scalar("serve")),
+            target: Some(quoted_scalar("dev")),
+            provenance: None,
+        };
+        let finding = identified_finding(
+            "OTA_SERVICE_UNVERIFIABLE",
+            "Required service cannot be verified: postgres",
+        );
+
+        let related = receipt_diff_likely_related_changes(
+            &[generic.clone(), requirement.clone()],
             &[finding],
             None,
         );

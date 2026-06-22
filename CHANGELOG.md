@@ -86,6 +86,9 @@
 - widened declared check-correlation ordering across adjacent reference lanes, so named check
   failures now treat explicit check-reference changes such as `tasks.<name>.requirements.checks[]`
   and workflow check-reference lanes as stronger evidence than a nearby generic task-body change
+- widened declared service-correlation ordering across workflow reference lanes, so named service
+  findings now treat `workflows.<name>.services.required[]` as stronger evidence than a nearby
+  generic workflow change instead of flattening both into the same broad workflow lane
 
 ## 1.6.21
 
