@@ -32090,55 +32090,7 @@ fn receipt_diff_fallback_match_rank(
     change: &DiffChange,
     finding: &Finding,
 ) -> Option<ReceiptDiffCorrelationMatchKind> {
-    let entity = finding.correlation_entity();
     match finding.code() {
-        "OTA_TOOL_MISSING" => {
-            if let Some(tool) = entity.as_deref() {
-                if change.path.contains(&format!(".requirements.tools.{tool}")) {
-                    return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
-                }
-                if change.target.as_deref() == Some(&quoted_scalar(tool)) {
-                    return Some(ReceiptDiffCorrelationMatchKind::NameReference);
-                }
-            }
-        }
-        "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => {
-            if let Some(runtime) = entity.as_deref() {
-                if change
-                    .path
-                    .contains(&format!(".requirements.toolchains.{runtime}"))
-                {
-                    return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
-                }
-                if change.target.as_deref() == Some(&quoted_scalar(runtime)) {
-                    return Some(ReceiptDiffCorrelationMatchKind::NameReference);
-                }
-            }
-        }
-        "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" => {
-            if let Some(check) = entity.as_deref() {
-                if change.path.starts_with("checks[")
-                    && change.path.ends_with(".name")
-                    && change.target.as_deref() == Some(&quoted_scalar(check))
-                {
-                    return Some(ReceiptDiffCorrelationMatchKind::NameReference);
-                }
-            }
-        }
-        "OTA_SERVICE_READINESS_FAILED"
-        | "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
-        | "OTA_SERVICE_UNVERIFIABLE"
-        | "OTA_SERVICE_CHECK_FAILED"
-        | "OTA_SERVICE_CHECK_TIMED_OUT" => {
-            if let Some(service) = entity.as_deref() {
-                if change.path.contains("requires_services")
-                    && (change.base.as_deref() == Some(&quoted_scalar(service))
-                        || change.target.as_deref() == Some(&quoted_scalar(service)))
-                {
-                    return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
-                }
-            }
-        }
         "OTA_TASKS_MISSING" => {
             if change.path.starts_with("tasks.") {
                 return Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily);
@@ -32607,6 +32559,33 @@ mod receipt_diff_correlation_tests {
 
         assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
         assert_eq!(matched.lane_priority, 2);
+    }
+
+    #[test]
+    fn receipt_diff_declared_entity_matches_check_name_without_fallback_taxonomy() {
+        let change = DiffChange {
+            path: String::from("checks[0].name"),
+            status: String::from("add"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("lint")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_CHECK_FAILED",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Check failed: lint",
+            "why",
+            "next",
+        );
+
+        let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
+
+        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::NameReference);
+        assert_eq!(matched.lane_priority, 1);
     }
 
     #[test]

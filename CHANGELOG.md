@@ -72,6 +72,10 @@
   diff now prefers the nearer declared owner subtree before generic path-depth tie-breaks and
   publishes root `kind`-level evidence ahead of deeper nested detail when both changes are
   plausible for the same finding
+- reduced residual receipt-diff fallback taxonomy for named-entity findings, so tool, runtime,
+  check, and service correlation now stays on declared doctor owner/entity metadata instead of
+  duplicating those lanes in CLI-only fallback matching; only the broad undeclared task-family
+  fallback remains
 
 ## 1.6.21
 
