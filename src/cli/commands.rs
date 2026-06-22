@@ -32137,74 +32137,84 @@ fn receipt_diff_likely_related_changes(
     related
 }
 
-fn receipt_diff_identity_category(category: &str) -> Option<&'static str> {
-    match category {
-        "env" => Some("env"),
-        "service" => Some("service"),
-        "execution" => Some("execution"),
-        "policy" => Some("policy"),
-        "agent" => Some("agent"),
-        "workflow" => Some("workflow"),
-        _ => None,
+fn receipt_diff_declared_category_surfaces(finding: &Finding) -> BTreeSet<&'static str> {
+    let mut categories = BTreeSet::new();
+    match finding.category() {
+        "environment" | "env" => {
+            categories.insert("env");
+        }
+        "service" => {
+            categories.insert("service");
+        }
+        "execution" | "remote" => {
+            categories.insert("execution");
+        }
+        "policy" => {
+            categories.insert("policy");
+        }
+        "agent" => {
+            categories.insert("agent");
+        }
+        "workflow" => {
+            categories.insert("workflow");
+        }
+        _ => {}
     }
+
+    match finding.owner() {
+        "service" => {
+            categories.insert("service");
+        }
+        "host" | "container_target" | "remote_backend" | "remote_target" => {
+            categories.insert("execution");
+        }
+        "org_policy" => {
+            categories.insert("policy");
+        }
+        _ => {}
+    }
+
+    if finding.provenance_key().as_deref() == Some("org_policy") {
+        categories.insert("policy");
+    }
+
+    categories.extend(finding.correlation_surfaces());
+
+    categories
 }
 
-fn receipt_diff_finding_category_fallbacks(finding: &Finding) -> &'static [&'static str] {
-    match finding.code() {
-        "OTA_ENV_MISSING" | "OTA_ENV_INVALID" => &["env"],
-        "OTA_TOOL_MISSING"
-        | "OTA_TOOL_VERSION_MISMATCH"
-        | "OTA_TOOLCHAIN_PROVIDER_MISSING"
-        | "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED"
-        | "OTA_TOOLCHAIN_COMPONENT_MISSING"
-        | "OTA_TOOLCHAIN_TARGET_MISSING"
-        | "OTA_TOOL_ACTIVATION_PROVIDER_MISSING"
-        | "OTA_RUNTIME_MISSING"
-        | "OTA_RUNTIME_VERSION_MISMATCH"
-        | "OTA_RUNTIME_PROBE_FAILED"
-        | "OTA_TOOL_PROBE_FAILED"
-        | "OTA_NATIVE_PREREQUISITE_MISSING"
-        | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => &["toolchain", "execution"],
-        "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT" | "OTA_TASKS_MISSING" => &["task"],
-        "OTA_SERVICE_READINESS_FAILED"
-        | "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
-        | "OTA_SERVICE_UNVERIFIABLE"
-        | "OTA_SERVICE_CHECK_FAILED"
-        | "OTA_SERVICE_CHECK_TIMED_OUT" => &["service", "task"],
-        "OTA_REMOTE_TARGET_SUSPICIOUS"
-        | "OTA_REMOTE_TARGET_OS_UNDETERMINED"
-        | "OTA_REMOTE_BACKEND_PROVIDER_UNSUPPORTED"
-        | "OTA_REMOTE_DOCTOR_PARTIAL"
-        | "OTA_BACKEND_CLI_MISSING"
-        | "OTA_CONTAINER_BACKEND_CLI_MISSING" => &["execution"],
-        _ => &[],
-    }
+fn receipt_diff_declared_possible_overlap_for_finding(
+    contract_changes: &[DiffChange],
+    finding: &Finding,
+) -> bool {
+    let correlation_surfaces = finding
+        .correlation_surfaces()
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let match_categories = if correlation_surfaces.is_empty() {
+        receipt_diff_declared_category_surfaces(finding)
+    } else {
+        correlation_surfaces
+    };
+    !match_categories.is_empty()
+        && contract_changes.iter().any(|change| {
+            change
+                .category
+                .as_deref()
+                .is_some_and(|category| match_categories.iter().any(|known| *known == category))
+        })
 }
 
 fn receipt_diff_has_possible_category_overlap(
     contract_changes: &[DiffChange],
     introduced: &[Finding],
 ) -> bool {
-    let mut categories = BTreeSet::new();
-    for finding in introduced
+    introduced
         .iter()
         .filter(|finding| finding.severity == FindingSeverity::Error)
-    {
-        if let Some(identity_category) = finding
-            .identity
-            .as_ref()
-            .and_then(|identity| receipt_diff_identity_category(identity.category.as_str()))
-        {
-            categories.insert(identity_category);
-        }
-        categories.extend(receipt_diff_finding_category_fallbacks(finding));
-    }
-    !categories.is_empty()
-        && contract_changes.iter().any(|change| {
-            change
-                .category
-                .as_deref()
-                .is_some_and(|category| categories.iter().any(|known| *known == category))
+        .any(|finding| {
+            receipt_diff_declared_possible_overlap_for_finding(contract_changes, finding)
         })
 }
 
@@ -32287,6 +32297,60 @@ mod receipt_diff_correlation_tests {
         );
 
         assert!(receipt_diff_has_possible_category_overlap(
+            &[change],
+            &[finding]
+        ));
+    }
+
+    #[test]
+    fn receipt_diff_possible_overlap_uses_declared_finding_owner_surface() {
+        let change = DiffChange {
+            path: String::from("policies.approvals.required"),
+            status: String::from("change"),
+            category: Some(String::from("policy")),
+            risk: Some(String::from("high")),
+            base: Some(String::from("false")),
+            target: Some(String::from("true")),
+            provenance: Some(String::from("policy")),
+        };
+        let finding = Finding::identified(
+            "OTA_POLICY_ENFORCEMENT_REQUIRED",
+            "contract",
+            "org_policy",
+            FindingSeverity::Error,
+            "Policy enforcement required",
+            "why",
+            "next",
+        );
+
+        assert!(receipt_diff_has_possible_category_overlap(
+            &[change],
+            &[finding]
+        ));
+    }
+
+    #[test]
+    fn receipt_diff_possible_overlap_prefers_fine_grained_surface_over_broad_category() {
+        let change = DiffChange {
+            path: String::from("execution.contexts.dev.context"),
+            status: String::from("change"),
+            category: Some(String::from("execution")),
+            risk: Some(String::from("high")),
+            base: Some(quoted_scalar("old")),
+            target: Some(quoted_scalar("new")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_CHECK_FAILED",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Check failed: api-health",
+            "why",
+            "next",
+        );
+
+        assert!(!receipt_diff_has_possible_category_overlap(
             &[change],
             &[finding]
         ));

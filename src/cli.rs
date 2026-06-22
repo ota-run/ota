@@ -10736,6 +10736,123 @@ env:
     }
 
     #[test]
+    fn receipt_json_diff_marks_no_clear_correlation_for_unrelated_broad_execution_drift() {
+        let worker = std::thread::Builder::new()
+            .name(String::from(
+                "receipt-json-diff-broad-execution-correlation",
+            ))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
+version: 1
+project:
+  name: receipt-diff
+checks:
+  - name: api-health
+    kind: precondition
+    severity: error
+    run: false
+execution:
+  contexts:
+    dev:
+      backend: native
+"#,
+                );
+
+                let current = run_with(["ota", "receipt", "--json", fixture.path()]);
+                assert_eq!(current.exit_code, 1);
+
+                fixture.write(
+                    ".ota/contracts/sha256-old.json",
+                    r#"{
+  "version": 1,
+  "project": {
+    "name": "receipt-diff"
+  },
+  "checks": [
+    {
+      "name": "api-health",
+      "kind": "precondition",
+      "severity": "error",
+      "run": false
+    }
+  ],
+  "execution": {
+    "contexts": {
+      "dev": {
+        "backend": "container"
+      }
+    }
+  }
+}"#,
+                );
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": true,
+                        "path": fixture.file_path().display().to_string(),
+                        "mode": "receipt",
+                        "summary": {
+                            "error_count": 0,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": true,
+                            "path": fixture.file_path().display().to_string(),
+                            "scope": "repo",
+                            "contract": fixture.file_path().display().to_string(),
+                            "contract_snapshot_hash": "sha256:old",
+                            "contract_snapshot_ref": ".ota/contracts/sha256-old.json",
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 0,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "READY"
+                                }
+                            ]
+                        },
+                        "findings": []
+                    }))
+                    .unwrap(),
+                );
+
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--baseline",
+                    "latest",
+                    fixture.path(),
+                ]);
+
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(
+                    json["summary"]["comparison"]["correlation"],
+                    "no_clear_correlation"
+                );
+                assert!(json.get("likely_related_changes").is_none());
+                assert!(json["contract_changes"].as_array().unwrap().len() > 0);
+            })
+            .expect("spawn broad execution correlation receipt diff worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
     fn receipt_json_diff_marks_no_clear_correlation_without_contract_drift() {
         let worker = std::thread::Builder::new()
             .name(String::from("receipt-json-diff-no-clear-correlation"))

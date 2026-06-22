@@ -1689,6 +1689,7 @@ struct FindingProvenanceContext<'a> {
 struct FindingResolvedMetadata<'a> {
     category: &'static str,
     owner: &'static str,
+    correlation_surfaces: &'static [&'static str],
     evidence: Option<FindingEvidence>,
     provenance: Option<FindingProvenanceContext<'a>>,
     policy: Option<PolicyFindingContext<'a>>,
@@ -1777,6 +1778,10 @@ fn resolve_contract_core_finding_metadata(finding: &Finding) -> FindingResolvedM
     FindingResolvedMetadata {
         category: "contract",
         owner: "repo_contract",
+        correlation_surfaces: match finding.code() {
+            "OTA_TASKS_MISSING" => &["task"],
+            _ => &[],
+        },
         evidence,
         provenance: repo_contract_provenance(),
         policy: None,
@@ -1806,6 +1811,7 @@ fn resolve_contractless_finding_metadata(finding: &Finding) -> FindingResolvedMe
         } else {
             "repo_signals"
         },
+        correlation_surfaces: &[],
         evidence,
         provenance: repo_signals_provenance(),
         policy: None,
@@ -1885,6 +1891,23 @@ fn resolve_execution_finding_metadata(finding: &Finding) -> FindingResolvedMetad
     FindingResolvedMetadata {
         category: "execution",
         owner,
+        correlation_surfaces: match finding.code() {
+            "OTA_CHECK_FAILED"
+            | "OTA_CHECK_TIMED_OUT"
+            | "OTA_FILE_CHECK_FAILED"
+            | "OTA_FILE_CHECK_TIMED_OUT" => &["task"],
+            "OTA_WORKFLOW_PROBE_FAILED"
+            | "OTA_WORKFLOW_PROBE_TIMED_OUT"
+            | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
+            | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT"
+            | "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+            | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+            | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => &["workflow"],
+            _ => &["execution"],
+        },
         evidence,
         provenance: repo_contract_provenance(),
         policy: None,
@@ -1895,6 +1918,7 @@ fn resolve_backend_cli_finding_metadata(_: &Finding) -> FindingResolvedMetadata<
     FindingResolvedMetadata {
         category: "execution",
         owner: "host",
+        correlation_surfaces: &["execution"],
         evidence: Some(static_finding_evidence(
             "required backend CLI was not found on PATH",
             "a supported backend CLI is available on PATH",
@@ -1913,6 +1937,7 @@ fn resolve_container_backend_finding_metadata(finding: &Finding) -> FindingResol
         } else {
             "host"
         },
+        correlation_surfaces: &["execution"],
         evidence: None,
         provenance: repo_contract_provenance(),
         policy: None,
@@ -1967,6 +1992,7 @@ fn resolve_remote_finding_metadata(finding: &Finding) -> FindingResolvedMetadata
         } else {
             "remote_backend"
         },
+        correlation_surfaces: &["execution"],
         evidence,
         provenance: repo_contract_provenance(),
         policy: None,
@@ -2001,6 +2027,7 @@ fn resolve_service_finding_metadata(finding: &Finding) -> FindingResolvedMetadat
     FindingResolvedMetadata {
         category: "service",
         owner: "service",
+        correlation_surfaces: &["service"],
         evidence,
         provenance: repo_contract_provenance(),
         policy: None,
@@ -2092,6 +2119,18 @@ fn resolve_environment_finding_metadata(finding: &Finding) -> FindingResolvedMet
             | "OTA_ENV_SOURCE_KEY_COLLISION" => "repo_contract",
             _ => finding_probe_target_owner(finding),
         },
+        correlation_surfaces: match code {
+            "OTA_ENV_MISSING"
+            | "OTA_ENV_INVALID"
+            | "OTA_ENV_SOURCE_MISSING_REQUIRED"
+            | "OTA_ENV_SOURCE_PARSE_FAILED"
+            | "OTA_ENV_SOURCE_INVALID_STRUCTURE"
+            | "OTA_ENV_SOURCE_KEY_COLLISION" => &["env"],
+            "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
+                &["execution"]
+            }
+            _ => &["toolchain"],
+        },
         evidence,
         provenance: if code == "OTA_TOOLCHAIN_OPPORTUNITY_UNSUPPORTED" {
             repo_signals_provenance()
@@ -2122,6 +2161,7 @@ fn resolve_contractless_environment_finding_metadata(
     FindingResolvedMetadata {
         category: "environment",
         owner: "host",
+        correlation_surfaces: &["toolchain"],
         evidence,
         provenance: repo_signals_provenance(),
         policy: None,
@@ -2240,6 +2280,7 @@ fn resolve_provisioning_finding_metadata(finding: &Finding) -> FindingResolvedMe
     FindingResolvedMetadata {
         category: "provisioning",
         owner,
+        correlation_surfaces: &["policy"],
         evidence: Some(static_finding_evidence(observed, expected, source)),
         provenance: org_policy_provenance(),
         policy: None,
@@ -2362,6 +2403,7 @@ fn resolve_policy_finding_metadata(finding: &Finding) -> FindingResolvedMetadata
     FindingResolvedMetadata {
         category: "policy",
         owner: "org_policy",
+        correlation_surfaces: &["policy"],
         evidence,
         provenance: org_policy_provenance(),
         policy,
@@ -2396,6 +2438,7 @@ fn resolve_policy_effect_finding_metadata(finding: &Finding) -> FindingResolvedM
     FindingResolvedMetadata {
         category: "policy",
         owner: "org_policy",
+        correlation_surfaces: &["policy"],
         evidence: Some(static_finding_evidence(
             "org policy evaluated a requested task effect",
             "org policy keeps the requested task effect decision explicit",
@@ -2410,6 +2453,7 @@ fn resolve_adapter_bootstrap_failure_metadata(_: &Finding) -> FindingResolvedMet
     FindingResolvedMetadata {
         category: "provisioning",
         owner: "repo_contract",
+        correlation_surfaces: &["execution"],
         evidence: Some(static_finding_evidence(
             "the declared adapter bootstrap path did not complete in the selected execution environment",
             "the declared adapter bootstrap path completes in the selected execution environment",
@@ -3389,7 +3433,7 @@ impl Finding {
         }
     }
 
-    fn category(&self) -> &str {
+    pub(crate) fn category(&self) -> &str {
         if let Some(metadata) = self.resolved_metadata() {
             metadata.category
         } else if let Some(identity) = self.identity.as_ref() {
@@ -3399,13 +3443,21 @@ impl Finding {
         }
     }
 
-    fn owner(&self) -> &str {
+    pub(crate) fn owner(&self) -> &str {
         if let Some(metadata) = self.resolved_metadata() {
             metadata.owner
         } else if let Some(identity) = self.identity.as_ref() {
             identity.owner.as_str()
         } else {
             "repo_contract"
+        }
+    }
+
+    pub(crate) fn correlation_surfaces(&self) -> &'static [&'static str] {
+        if let Some(metadata) = self.resolved_metadata() {
+            metadata.correlation_surfaces
+        } else {
+            &[]
         }
     }
 
