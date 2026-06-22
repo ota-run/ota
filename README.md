@@ -363,6 +363,9 @@ archived receipt is enough for a local drift check.
 Use `ota receipt --snapshot ...` when you want to read the archived semantic contract truth
 directly instead of only consuming it through `ota diff` or receipt correlation.
 
+Public operator guide:
+[Semantic Snapshots and Correlation](https://ota.run/docs/reference/semantic-snapshots-and-correlation)
+
 Use policy review when the contract and approved policy need to be reconciled:
 
 ```bash

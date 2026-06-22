@@ -26,6 +26,10 @@
 
 Status: `ota diff` and `ota explain` are shipped.
 
+Public operator reference:
+[`Semantic Snapshots and Correlation`](https://ota.run/docs/reference/semantic-snapshots-and-correlation)
+for archived semantic truth, `ota receipt --snapshot`, and receipt-to-receipt drift correlation.
+
 This document defines two proposed read-only surfaces for ota:
 
 - `ota diff` for semantic contract comparison

@@ -954,6 +954,9 @@ Current behavior:
 - remains read-only
 - exits `0` when the comparison succeeds, even if differences exist
 - surfaces load and parse errors clearly
+- public operator guide:
+  [`Semantic Snapshots and Correlation`](https://ota.run/docs/reference/semantic-snapshots-and-correlation)
+  for archived semantic truth, snapshot inspection, and receipt-to-receipt drift correlation
 
 Text output:
 
@@ -1781,6 +1784,9 @@ Current behavior:
   `likely_related`, `possibly_related`, and `no_clear_correlation` without inferring correlation
   posture from array presence alone; `possibly_related` is reserved for coarse same-family overlap,
   while unrelated drift stays `no_clear_correlation`
+- public operator guide:
+  [`Semantic Snapshots and Correlation`](https://ota.run/docs/reference/semantic-snapshots-and-correlation)
+  for the higher-level snapshot, diff, and correlation workflow
 - `--fail-on-new-blockers` requires `--baseline` and exits `1` when the diff introduces one or more new `severity: error` findings relative to the baseline
 
 Text output:

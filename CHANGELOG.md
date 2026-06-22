@@ -76,6 +76,9 @@
   check, and service correlation now stays on declared doctor owner/entity metadata instead of
   duplicating those lanes in CLI-only fallback matching; only the broad undeclared task-family
   fallback remains
+- documented the public semantic snapshot operator path in core README and command/spec docs, so
+  humans and agents now have one canonical page for archived semantic truth, `ota diff`,
+  `ota receipt --snapshot`, and receipt-to-receipt drift correlation
 
 ## 1.6.21
 
