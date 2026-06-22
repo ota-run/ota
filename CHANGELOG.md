@@ -84,6 +84,10 @@
   correlation posture now still recognizes reusable top-level `surfaces.*` and
   `readiness.probes.*` drift as the same semantic family when exact workflow matching is not
   available
+- widened runtime receipt-drift correlation to include execution-context runtime requirements, so
+  runtime version-mismatch blockers can now correlate directly to
+  `execution.contexts.<name>.requirements.runtimes.<runtime>` instead of falling back to
+  `no_clear_correlation`
 - added a dedicated local core spec for semantic snapshots and receipt correlation, so the V10
   operator path is documented inside `docs/spec/` instead of only through dispersed command pages
   and the public site reference

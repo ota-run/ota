@@ -32028,6 +32028,9 @@ fn receipt_diff_declared_match_rank(
             || change
                 .path
                 .contains(&format!(".requirements.toolchains.{entity}"))
+            || change
+                .path
+                .contains(&format!(".requirements.runtimes.{entity}"))
         {
             return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
         }
@@ -32121,7 +32124,8 @@ fn receipt_diff_declared_match_rank(
         }
         "toolchain"
             if path.contains(".requirements.tools.")
-                || path.contains(".requirements.toolchains.") =>
+                || path.contains(".requirements.toolchains.")
+                || path.contains(".requirements.runtimes.") =>
         {
             Some(ReceiptDiffCorrelationMatchKind::RequirementReference)
         }
@@ -32632,6 +32636,20 @@ mod receipt_diff_correlation_tests {
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, direct.path);
+    }
+
+    #[test]
+    fn receipt_diff_matches_execution_runtime_requirement_reference() {
+        let change = diff_change("execution.contexts.host.requirements.runtimes.node", "add");
+        let finding = identified_finding(
+            "OTA_RUNTIME_VERSION_MISMATCH",
+            "Version mismatch for runtime: node",
+        );
+
+        let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
+
+        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::RequirementReference);
+        assert_eq!(matched.lane_priority, 2);
     }
 
     #[test]
