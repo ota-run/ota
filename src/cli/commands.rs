@@ -32169,7 +32169,13 @@ fn receipt_diff_correlation_match(
     let lane_priority = if sequence_rank == Some(best_rank) {
         0
     } else if declared_rank == Some(best_rank) {
-        if exact_surface_match {
+        if exact_surface_match
+            || matches!(
+                best_rank,
+                ReceiptDiffCorrelationMatchKind::ExactOwner
+                    | ReceiptDiffCorrelationMatchKind::OwnerSubtree
+            )
+        {
             receipt_diff_declared_lane_priority(finding, change)
         } else {
             2
@@ -32524,6 +32530,10 @@ fn receipt_diff_declared_category_surfaces(finding: &Finding) -> BTreeSet<&'stat
         categories.insert("policy");
     }
 
+    if let Some(owner_prefix) = finding.correlation_owner_prefix() {
+        categories.insert(diff_change_category(&owner_prefix));
+    }
+
     categories.extend(finding.correlation_surfaces());
 
     categories
@@ -32538,11 +32548,14 @@ fn receipt_diff_declared_possible_overlap_for_finding(
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
-    let match_categories = if correlation_surfaces.is_empty() {
+    let mut match_categories = if correlation_surfaces.is_empty() {
         receipt_diff_declared_category_surfaces(finding)
     } else {
         correlation_surfaces
     };
+    if let Some(owner_prefix) = finding.correlation_owner_prefix() {
+        match_categories.insert(diff_change_category(&owner_prefix));
+    }
     !match_categories.is_empty()
         && contract_changes.iter().any(|change| {
             change
@@ -32831,6 +32844,33 @@ mod receipt_diff_correlation_tests {
     }
 
     #[test]
+    fn receipt_diff_declared_owner_matches_top_level_surface_definition() {
+        let change = DiffChange {
+            path: String::from("surfaces.backend.port"),
+            status: String::from("change"),
+            category: Some(String::from("runtime")),
+            risk: Some(String::from("medium")),
+            base: Some(String::from("3000")),
+            target: Some(String::from("4000")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Surface readiness failed: backend",
+            "why",
+            "next",
+        );
+
+        let matched = receipt_diff_correlation_match(&change, &finding, None).unwrap();
+
+        assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::OwnerSubtree);
+        assert_eq!(matched.lane_priority, 1);
+    }
+
+    #[test]
     fn receipt_diff_declared_entity_matches_workflow_surface_runtime_definition() {
         let change = DiffChange {
             path: String::from("tasks.dev.runtime.surfaces.backend.port"),
@@ -33077,6 +33117,28 @@ tasks:
     }
 
     #[test]
+    fn receipt_diff_possible_overlap_uses_declared_owner_root_category() {
+        let surface = DiffChange {
+            path: String::from("surfaces.backend.port"),
+            status: String::from("change"),
+            category: Some(String::from("runtime")),
+            risk: Some(String::from("medium")),
+            base: Some(String::from("3000")),
+            target: Some(String::from("4000")),
+            provenance: None,
+        };
+        let finding = identified_finding(
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED",
+            "Surface readiness failed: backend",
+        );
+
+        assert!(receipt_diff_declared_possible_overlap_for_finding(
+            &[surface],
+            &finding
+        ));
+    }
+
+    #[test]
     fn receipt_diff_prefers_named_probe_definition_over_workflow_probe_reference() {
         let probe = diff_change("readiness.probes.app-ready.http.path", "change");
         let reference = DiffChange {
@@ -33095,6 +33157,22 @@ tasks:
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, probe.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_top_level_surface_owner_over_runtime_surface_override() {
+        let top_level = diff_change("surfaces.backend.port", "change");
+        let runtime = diff_change("tasks.dev.runtime.surfaces.backend.port", "change");
+        let finding = identified_finding(
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED",
+            "Surface readiness failed: backend",
+        );
+
+        let related =
+            receipt_diff_likely_related_changes(&[runtime.clone(), top_level.clone()], &[finding], None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, top_level.path);
     }
 
     #[test]

@@ -3880,6 +3880,9 @@ Current receipt diff JSON fields:
 - `summary.unchanged`
 - additive `contract_changes[]` with semantic normalized contract diff entries between the archived baseline snapshot and the current contract truth when the baseline carries `receipt.contract_snapshot_ref`
 - additive `likely_related_changes[]` when ota can correlate one or more newly introduced blocker findings to those semantic contract changes
+  - ordering prefers the sharpest declared semantic owner or named reference ota can recover
+    honestly, for example reusable `surfaces.<name>` or `readiness.probes.<name>`, before broader
+    adjacent workflow-family drift
 - `gate.rule`, `gate.passed`, and `gate.new_blocker_count` when `--fail-on-new-blockers` is active
 - additive `gate.blocking_summary`, `gate.blocking_next`, and provenance fields when the gate is blocked by at least one newly introduced error
 - `introduced[]`

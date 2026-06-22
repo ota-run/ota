@@ -957,6 +957,8 @@ Current behavior:
 - public operator guide:
   [`Semantic Snapshots and Correlation`](https://ota.run/docs/reference/semantic-snapshots-and-correlation)
   for archived semantic truth, snapshot inspection, and receipt-to-receipt drift correlation
+- local core spec:
+  [semantic-snapshots-and-correlation.md](semantic-snapshots-and-correlation.md)
 
 Text output:
 

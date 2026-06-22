@@ -366,6 +366,9 @@ directly instead of only consuming it through `ota diff` or receipt correlation.
 Public operator guide:
 [Semantic Snapshots and Correlation](https://ota.run/docs/reference/semantic-snapshots-and-correlation)
 
+Local core spec:
+[semantic-snapshots-and-correlation.md](docs/spec/semantic-snapshots-and-correlation.md)
+
 Use policy review when the contract and approved policy need to be reconciled:
 
 ```bash

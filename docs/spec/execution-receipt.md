@@ -125,6 +125,9 @@ contract identity when that metadata exists.
 - machine-readable first
 - human-readable summary in the normal execution output, with failure output keeping `Why` and `Next` ahead of the trailing summary block
 - explicit source of truth for decisions
+- semantic drift correlation prefers the sharpest declared contract owner or named reference ota can
+  recover honestly, such as reusable `surfaces.<name>` or `readiness.probes.<name>`, before broad
+  same-family drift
 - no hidden auto-fix behavior
 - provenance for policy-backed provisioning when that layer exists
 

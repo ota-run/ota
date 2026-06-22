@@ -1943,6 +1943,25 @@ fn resolve_execution_finding_metadata(finding: &Finding) -> FindingResolvedMetad
                 ],
             )
             .map(|probe| format!("readiness.probes.{probe}")),
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+            | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+            | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
+            | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => {
+                finding_suffix_after_prefix(
+                    finding.summary.trim(),
+                    &[
+                        "Surface readiness failed: ",
+                        "Surface readiness timed out: ",
+                        "Surface readiness could not be evaluated: ",
+                        "Signal surface readiness failed: ",
+                        "Signal surface readiness timed out: ",
+                        "Signal surface readiness could not be evaluated: ",
+                    ],
+                )
+                .map(|surface| format!("surfaces.{surface}"))
+            }
             _ => None,
         },
         correlation_entity: match finding.code() {

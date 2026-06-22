@@ -77,8 +77,16 @@
   duplicating those lanes in CLI-only fallback matching; only the broad undeclared task-family
   fallback remains
 - widened declared receipt-diff workflow correlation for named probes and surfaces, so workflow
-  readiness failures now match top-level probe definitions, workflow probe/surface references, and
-  runtime surface definitions before falling back to broad workflow-family drift
+  readiness failures now match top-level probe definitions, reusable top-level surface owners,
+  workflow probe/surface references, and runtime surface definitions before falling back to broad
+  workflow-family drift
+- widened coarse receipt-diff overlap recovery to respect declared owner roots too, so broad
+  correlation posture now still recognizes reusable top-level `surfaces.*` and
+  `readiness.probes.*` drift as the same semantic family when exact workflow matching is not
+  available
+- added a dedicated local core spec for semantic snapshots and receipt correlation, so the V10
+  operator path is documented inside `docs/spec/` instead of only through dispersed command pages
+  and the public site reference
 - documented the public semantic snapshot operator path in core README and command/spec docs, so
   humans and agents now have one canonical page for archived semantic truth, `ota diff`,
   `ota receipt --snapshot`, and receipt-to-receipt drift correlation
