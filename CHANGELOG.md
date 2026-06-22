@@ -80,6 +80,9 @@
   readiness failures now match top-level probe definitions, reusable top-level surface owners,
   workflow probe/surface references, and runtime surface definitions before falling back to broad
   workflow-family drift
+- refined same-lane receipt-diff evidence ordering for workflow probes and surfaces, so adjacent
+  endpoint drift such as probe path or surface port now publishes ahead of weaker success-rule,
+  path, or metadata changes when multiple nearby assumptions are all plausible
 - widened coarse receipt-diff overlap recovery to respect declared owner roots too, so broad
   correlation posture now still recognizes reusable top-level `surfaces.*` and
   `readiness.probes.*` drift as the same semantic family when exact workflow matching is not

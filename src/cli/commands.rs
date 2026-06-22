@@ -32441,13 +32441,30 @@ fn receipt_diff_change_specificity_key<'a>(
             | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
             | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT" => {
                 if path.starts_with("readiness.probes.") {
-                    0
+                    if path.ends_with(".url")
+                        || path.ends_with(".path")
+                        || path.contains(".target.")
+                    {
+                        0
+                    } else if path.ends_with(".method") || path.ends_with(".kind") {
+                        1
+                    } else if path.ends_with(".expect_status")
+                        || path.contains(".success.status[")
+                    {
+                        2
+                    } else if path.contains(".body.contains") || path.contains(".headers.") {
+                        3
+                    } else if path.ends_with(".timeout") {
+                        4
+                    } else {
+                        5
+                    }
                 } else if path.contains(".readiness.probes[")
                     || path.contains(".readiness.signal.probes[")
                 {
-                    1
+                    6
                 } else {
-                    2
+                    7
                 }
             }
             "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
@@ -32456,14 +32473,32 @@ fn receipt_diff_change_specificity_key<'a>(
             | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
             | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
             | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => {
-                if path.contains(".runtime.surfaces.") {
+                let field_bias = if path.ends_with(".port")
+                    || path.ends_with(".host")
+                    || path.ends_with(".address")
+                    || path.ends_with(".url")
+                {
                     0
+                } else if path.ends_with(".path") {
+                    1
+                } else if path.ends_with(".protocol")
+                    || path.ends_with(".scheme")
+                    || path.ends_with(".kind")
+                {
+                    2
+                } else if path.ends_with(".primary") {
+                    3
+                } else {
+                    4
+                };
+                if path.contains(".runtime.surfaces.") {
+                    field_bias
                 } else if path.contains(".readiness.surfaces[")
                     || path.contains(".readiness.signal.surfaces[")
                 {
-                    1
+                    5 + field_bias
                 } else {
-                    2
+                    10 + field_bias
                 }
             }
             _ => 0,
@@ -33178,6 +33213,19 @@ tasks:
     }
 
     #[test]
+    fn receipt_diff_orders_probe_target_path_before_probe_success_rule() {
+        let path = diff_change("readiness.probes.app-ready.path", "change");
+        let success = diff_change("readiness.probes.app-ready.expect_status", "change");
+        let finding = identified_finding("OTA_WORKFLOW_PROBE_FAILED", "Probe failed: app-ready");
+
+        let related =
+            receipt_diff_likely_related_changes(&[success.clone(), path.clone()], &[finding], None);
+
+        assert_eq!(related[0].path, path.path);
+        assert_eq!(related[1].path, success.path);
+    }
+
+    #[test]
     fn receipt_diff_prefers_top_level_surface_owner_over_runtime_surface_override() {
         let top_level = diff_change("surfaces.backend.port", "change");
         let runtime = diff_change("tasks.dev.runtime.surfaces.backend.port", "change");
@@ -33215,6 +33263,22 @@ tasks:
 
         assert_eq!(related[0].path, surface.path);
         assert_eq!(related[1].path, reference.path);
+    }
+
+    #[test]
+    fn receipt_diff_orders_surface_port_before_surface_path() {
+        let path = diff_change("surfaces.backend.path", "change");
+        let port = diff_change("surfaces.backend.port", "change");
+        let finding = identified_finding(
+            "OTA_WORKFLOW_SURFACE_READINESS_FAILED",
+            "Surface readiness failed: backend",
+        );
+
+        let related =
+            receipt_diff_likely_related_changes(&[path.clone(), port.clone()], &[finding], None);
+
+        assert_eq!(related[0].path, port.path);
+        assert_eq!(related[1].path, path.path);
     }
 
     #[test]
