@@ -32121,6 +32121,12 @@ fn receipt_diff_declared_match_rank(
         }
     }
 
+    if finding.code() == "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE"
+        && change.path.contains(".effects.external_state[")
+    {
+        return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+    }
+
     let change_category = receipt_diff_change_category(change);
     let correlation_surfaces = finding
         .correlation_surfaces()
@@ -32355,7 +32361,7 @@ fn receipt_diff_likely_related_changes(
     let mut best_by_path = BTreeMap::<String, RelatedCandidate>::new();
     for finding in introduced
         .iter()
-        .filter(|finding| finding.severity == FindingSeverity::Error)
+        .filter(|finding| finding.severity != FindingSeverity::Info)
     {
         let check_prefix = if matches!(finding.code(), "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT") {
             finding
@@ -32659,7 +32665,7 @@ fn receipt_diff_has_possible_category_overlap(
 ) -> bool {
     introduced
         .iter()
-        .filter(|finding| finding.severity == FindingSeverity::Error)
+        .filter(|finding| finding.severity != FindingSeverity::Info)
         .any(|finding| {
             receipt_diff_declared_possible_overlap_for_finding(contract_changes, finding)
         })
@@ -33459,6 +33465,97 @@ tasks:
     }
 
     #[test]
+    fn receipt_diff_matches_selected_task_external_state_change() {
+        let external_state = DiffChange {
+            path: String::from("tasks.db:migrate.effects.external_state[1]"),
+            status: String::from("add"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("fakecache")),
+            provenance: None,
+        };
+        let finding = identified_finding(
+            "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE",
+            "Selected task path mutates external state: clickhouse, fakecache, postgres",
+        );
+
+        let related =
+            receipt_diff_likely_related_changes(std::slice::from_ref(&external_state), &[finding], None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, external_state.path);
+    }
+
+    #[test]
+    fn receipt_diff_matches_warning_level_external_state_change() {
+        let external_state = DiffChange {
+            path: String::from("tasks.db:migrate.effects.external_state[1]"),
+            status: String::from("add"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("fakecache")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE",
+            "contract",
+            "repo_contract",
+            FindingSeverity::Warn,
+            "Selected task path mutates external state: clickhouse, fakecache, postgres",
+            "why",
+            "next",
+        );
+
+        let related =
+            receipt_diff_likely_related_changes(std::slice::from_ref(&external_state), &[finding], None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, external_state.path);
+    }
+
+    #[test]
+    fn receipt_diff_keeps_env_and_external_state_mixed_drift_both_related() {
+        let env_change = DiffChange {
+            path: String::from("env.vars.LANGFUSE_V10_REQUIRED.required"),
+            status: String::from("add"),
+            category: Some(String::from("env")),
+            risk: Some(String::from("high")),
+            base: None,
+            target: Some(String::from("true")),
+            provenance: None,
+        };
+        let external_state = DiffChange {
+            path: String::from("tasks.db:migrate.effects.external_state[1]"),
+            status: String::from("add"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("fakecache")),
+            provenance: None,
+        };
+        let env_finding = identified_finding(
+            "OTA_ENV_MISSING",
+            "Missing environment variable: LANGFUSE_V10_REQUIRED",
+        );
+        let external_finding = identified_finding(
+            "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE",
+            "Selected task path mutates external state: clickhouse, fakecache, postgres",
+        );
+
+        let related = receipt_diff_likely_related_changes(
+            &[env_change.clone(), external_state.clone()],
+            &[env_finding, external_finding],
+            None,
+        );
+
+        assert_eq!(related.len(), 2);
+        assert_eq!(related[0].path, env_change.path);
+        assert_eq!(related[1].path, external_state.path);
+    }
+
+    #[test]
     fn receipt_diff_possible_overlap_uses_declared_finding_identity_category() {
         let change = DiffChange {
             path: String::from("agent.protected_paths[0]"),
@@ -33513,6 +33610,34 @@ tasks:
     }
 
     #[test]
+    fn receipt_diff_warning_only_related_changes_classify_as_likely_related() {
+        let change = DiffChange {
+            path: String::from("tasks.db:migrate.effects.external_state[1]"),
+            status: String::from("add"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("fakecache")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE",
+            "contract",
+            "repo_contract",
+            FindingSeverity::Warn,
+            "Selected task path mutates external state: clickhouse, fakecache, postgres",
+            "why",
+            "next",
+        );
+
+        let related =
+            receipt_diff_likely_related_changes(std::slice::from_ref(&change), std::slice::from_ref(&finding), None);
+        let correlation = receipt_diff_correlation(&[change], &related, &[finding]);
+
+        assert_eq!(correlation, ReceiptDiffCorrelation::LikelyRelated);
+    }
+
+    #[test]
     fn receipt_diff_possible_overlap_prefers_fine_grained_surface_over_broad_category() {
         let change = DiffChange {
             path: String::from("execution.contexts.dev.context"),
@@ -33545,12 +33670,13 @@ fn receipt_diff_correlation(
     likely_related_changes: &[DiffChange],
     introduced: &[Finding],
 ) -> ReceiptDiffCorrelation {
-    let has_error = introduced
+    let has_blocking_or_warning = introduced
         .iter()
-        .any(|finding| finding.severity == FindingSeverity::Error);
-    if has_error && !likely_related_changes.is_empty() {
+        .any(|finding| finding.severity != FindingSeverity::Info);
+    if has_blocking_or_warning && !likely_related_changes.is_empty() {
         ReceiptDiffCorrelation::LikelyRelated
-    } else if has_error && receipt_diff_has_possible_category_overlap(contract_changes, introduced)
+    } else if has_blocking_or_warning
+        && receipt_diff_has_possible_category_overlap(contract_changes, introduced)
     {
         ReceiptDiffCorrelation::PossiblyRelated
     } else {

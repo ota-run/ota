@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- tightened V10 selected task-path external-state correlation so task
+  `effects.external_state` drift is published as likely related instead of falling back to
+  `no_clear_correlation`
 - tightened V10 native prerequisite correlation so selected task-path
   `requirements.native` and `requirements.any_of[..].native` ownership outranks broad
   `native_prerequisites.*` declaration drift in semantic snapshot comparisons

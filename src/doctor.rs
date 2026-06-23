@@ -1800,7 +1800,7 @@ fn resolve_contract_core_finding_metadata(finding: &Finding) -> FindingResolvedM
         category: "contract",
         owner: "repo_contract",
         correlation_surfaces: match finding.code() {
-            "OTA_TASKS_MISSING" => &["task"],
+            "OTA_TASKS_MISSING" | "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE" => &["task"],
             _ => &[],
         },
         correlation_owner_prefix: match finding.code() {
