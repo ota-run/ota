@@ -14833,6 +14833,12 @@ fn parse_effect_override_selector(value: &str) -> Option<String> {
     if selector.eq_ignore_ascii_case("network:dependency_hydration") {
         return Some(String::from("network:dependency_hydration"));
     }
+    if selector.eq_ignore_ascii_case("network:integration_test") {
+        return Some(String::from("network:integration_test"));
+    }
+    if selector.eq_ignore_ascii_case("network:tool_bootstrap") {
+        return Some(String::from("network:tool_bootstrap"));
+    }
     if let Some(state) = selector.strip_prefix("external_state:") {
         let token = state.trim();
         if token.is_empty() {
@@ -14885,7 +14891,7 @@ fn parse_effect_governance_overrides(
         };
         let Some(selector) = parse_effect_override_selector(selector_raw) else {
             return Err(format!(
-                "invalid `--effect-override {raw}` effect selector; use one of `network`, `network:broad`, `network:dependency_hydration`, `network:tool_bootstrap`, or `external_state:<token>`"
+                "invalid `--effect-override {raw}` effect selector; use one of `network`, `network:broad`, `network:dependency_hydration`, `network:integration_test`, `network:tool_bootstrap`, or `external_state:<token>`"
             ));
         };
         let Some(decision) = parse_effect_override_decision(decision_raw) else {
@@ -77378,6 +77384,8 @@ fn effect_override_parser_accepts_supported_selectors() {
     let overrides = parse_effect_governance_overrides(&[
         String::from("network=deny"),
         String::from("network:dependency_hydration=allow"),
+        String::from("network:integration_test=warn"),
+        String::from("network:tool_bootstrap=allow"),
         String::from("external_state:docker_compose=warn"),
     ])
     .expect("selectors should parse");
@@ -77388,6 +77396,14 @@ fn effect_override_parser_accepts_supported_selectors() {
     );
     assert_eq!(
         overrides.decisions.get("network:dependency_hydration"),
+        Some(&PolicyEffectDecision::Allow)
+    );
+    assert_eq!(
+        overrides.decisions.get("network:integration_test"),
+        Some(&PolicyEffectDecision::Warn)
+    );
+    assert_eq!(
+        overrides.decisions.get("network:tool_bootstrap"),
         Some(&PolicyEffectDecision::Allow)
     );
     assert_eq!(
