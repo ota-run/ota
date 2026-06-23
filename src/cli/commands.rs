@@ -59,7 +59,6 @@ use crate::doctor::{
     DoctorMode, DoctorReport, Finding, FindingSeverity, OTA_PROOF_GITIGNORE_ENTRY,
     OTA_RECEIPTS_GITIGNORE_ENTRY, OTA_STATE_GITIGNORE_COMMENT, OTA_STATE_GITIGNORE_ENTRY,
     command_available, command_version, diagnose_checks_only_for_workflow, diagnose_contract,
-    diagnose_contract_with_mode_and_lifecycle,
     diagnose_contract_with_mode_and_lifecycle_for_workflow,
     diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides, diagnose_policy_review,
     diagnose_preconditions, diagnose_preconditions_with_mode_for_task_with_overrides,
@@ -22633,6 +22632,7 @@ pub fn receipt(
     path: Option<&Path>,
     file_override: Option<&Path>,
     member: Option<&str>,
+    workflow_name: Option<&str>,
     overrides: ExecutionOverrides,
     format: OutputFormat,
     snapshot: Option<&str>,
@@ -22761,16 +22761,41 @@ pub fn receipt(
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
             Ok(target) => {
-                let mode = mode_override
-                    .unwrap_or_else(|| doctor_mode_for_contract(&target.contract, overrides, None));
-                let mut report = diagnose_contract_with_mode_and_lifecycle(
+                let adjusted_contract = contract_adjusted_for_selected_workflow_env_profile(
                     &target.contract,
-                    &target.contract_path,
-                    mode,
-                    doctor_lifecycle,
+                    workflow_name,
                 );
+                let contract = adjusted_contract.as_ref().unwrap_or(&target.contract);
+                if let Some(workflow_name) = workflow_name
+                    && let Err(error) = resolve_selected_workflow_summary(
+                        contract,
+                        &target.contract_path,
+                        Some(workflow_name),
+                    )
+                {
+                    return finalize_debug(
+                        CommandOutput::failure_with_code(error, 2),
+                        debug,
+                        debug_lines,
+                    );
+                }
+                let selected_workflow_name =
+                    selected_receipt_workflow_name(contract, workflow_name);
+                let mode = mode_override.unwrap_or_else(|| {
+                    doctor_mode_for_contract(contract, overrides, selected_workflow_name)
+                });
+                let diagnosis_overrides = doctor_mode_execution_overrides(mode, doctor_lifecycle);
+                let mut report =
+                    diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                        contract,
+                        &target.contract_path,
+                        mode,
+                        doctor_lifecycle,
+                        selected_workflow_name,
+                        diagnosis_overrides,
+                    );
                 append_contract_drift_findings(
-                    &target.contract,
+                    contract,
                     &target.contract_path,
                     &mut report.findings,
                 );
@@ -22782,9 +22807,10 @@ pub fn receipt(
                 );
                 let mut receipt = repo_readiness_receipt(
                     &target.contract_path,
-                    &target.contract,
+                    contract,
                     mode,
                     doctor_lifecycle,
+                    selected_workflow_name,
                     &report,
                 );
                 receipt.next = receipt
@@ -22796,6 +22822,7 @@ pub fn receipt(
                         &text_path_display,
                         &path_display,
                         &target.contract_path,
+                        selected_workflow_name,
                         snapshot,
                         format,
                     );
@@ -22805,7 +22832,8 @@ pub fn receipt(
                         &text_path_display,
                         &path_display,
                         &target.contract_path,
-                        &target.contract,
+                        selected_workflow_name,
+                        contract,
                         &receipt,
                         &findings,
                         baseline,
@@ -22815,15 +22843,16 @@ pub fn receipt(
                 }
 
                 let root = contract_working_dir(&target.contract_path);
-                let contract_identity =
-                    repo_receipt_contract_identity(&root, &target.contract_path);
-                let snapshot =
-                    match build_contract_snapshot_artifact(&root, &target.contract, archive) {
-                        Ok(snapshot) => snapshot,
-                        Err(error) => return CommandOutput::failure(error),
-                    };
-                let normalized_snapshot = match normalized_contract_snapshot_value(&target.contract)
-                {
+                let contract_identity = repo_receipt_contract_identity(
+                    &root,
+                    &target.contract_path,
+                    selected_workflow_name,
+                );
+                let snapshot = match build_contract_snapshot_artifact(&root, contract, archive) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => return CommandOutput::failure(error),
+                };
+                let normalized_snapshot = match normalized_contract_snapshot_value(contract) {
                     Ok(snapshot) => snapshot,
                     Err(error) => return CommandOutput::failure(error),
                 };
@@ -22848,6 +22877,7 @@ pub fn receipt(
                         ok: receipt.ok,
                         path: &path_display,
                         mode: "receipt",
+                        workflow: selected_workflow_name,
                         summary: receipt.summary,
                         receipt: receipt.clone(),
                         archive_path: Some(archive_path_display.as_str()),
@@ -22891,6 +22921,7 @@ pub fn receipt(
                     &path_display,
                     &target.contract_path,
                     &RepoReceiptReport {
+                        workflow: selected_workflow_name.map(str::to_string),
                         receipt,
                         findings,
                         archive_path,
@@ -31479,6 +31510,7 @@ fn load_repo_receipt_history(root: &Path) -> Result<RepoReceiptHistoryReport, St
                     .unwrap_or_else(|| String::from("unknown")),
                 ok: archive.payload.ok,
                 contract: archive.payload.receipt.contract,
+                workflow: archive.payload.workflow,
                 status: archive.payload.receipt.status,
                 backend: archive.payload.receipt.backend,
                 target: archive.payload.receipt.target,
@@ -31528,7 +31560,7 @@ fn receipt_diff_counts(findings: &[Finding]) -> ReceiptDiffCounts {
     }
 }
 
-fn repo_receipt_contract_identity(root: &Path, contract: &Path) -> String {
+fn repo_receipt_contract_identity_path(root: &Path, contract: &Path) -> String {
     let relative = contract.strip_prefix(root).unwrap_or(contract);
     let mut parts = Vec::new();
     for component in relative.components() {
@@ -31551,6 +31583,27 @@ fn repo_receipt_contract_identity(root: &Path, contract: &Path) -> String {
         )
     } else {
         parts.join("/")
+    }
+}
+
+fn selected_receipt_workflow_name<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&'a str>,
+) -> Option<&'a str> {
+    contract
+        .selected_workflow(workflow_name)
+        .map(|(name, _)| name)
+}
+
+fn repo_receipt_contract_identity(
+    root: &Path,
+    contract: &Path,
+    workflow_name: Option<&str>,
+) -> String {
+    let contract_identity = repo_receipt_contract_identity_path(root, contract);
+    match workflow_name {
+        Some(workflow_name) => format!("{contract_identity}#workflow:{workflow_name}"),
+        None => contract_identity,
     }
 }
 
@@ -31666,6 +31719,7 @@ fn repo_receipt_contract_identity_from_archive_record(
     record: &RepoReceiptArchiveRecord,
 ) -> Option<String> {
     let contract = Path::new(record.payload.receipt.contract.as_str());
+    let workflow_name = record.payload.workflow.as_deref();
     record
         .payload
         .archive_path
@@ -31676,15 +31730,16 @@ fn repo_receipt_contract_identity_from_archive_record(
             repo_root_from_archive_path(&record.archive_path)
                 .and_then(|root| contract.strip_prefix(root).ok())
         })
-        .map(|relative| repo_receipt_contract_identity(Path::new(""), relative))
+        .map(|relative| repo_receipt_contract_identity(Path::new(""), relative, workflow_name))
 }
 
 fn load_latest_repo_receipt_baseline(
     root: &Path,
     contract_path: &Path,
+    workflow_name: Option<&str>,
 ) -> Result<ResolvedRepoReceiptBaseline, String> {
     let scan = scan_repo_receipt_archives(root)?;
-    let current_identity = repo_receipt_contract_identity(root, contract_path);
+    let current_identity = repo_receipt_contract_identity(root, contract_path, workflow_name);
     scan.archives
         .into_iter()
         .find(|archive| {
@@ -31710,6 +31765,7 @@ fn load_latest_repo_receipt_baseline(
 fn load_promoted_repo_receipt_baseline(
     root: &Path,
     contract_path: &Path,
+    workflow_name: Option<&str>,
 ) -> Result<ResolvedRepoReceiptBaseline, String> {
     let pointer_path = receipt_baseline_path(root);
     let promoted = read_promoted_repo_receipt_baseline(root)?.ok_or_else(|| {
@@ -31718,7 +31774,7 @@ fn load_promoted_repo_receipt_baseline(
             compact_path(&pointer_path, ".")
         )
     })?;
-    let current_identity = repo_receipt_contract_identity(root, contract_path);
+    let current_identity = repo_receipt_contract_identity(root, contract_path, workflow_name);
     if promoted.contract_identity != current_identity {
         return Err(format!(
             "promoted receipt baseline `{}` belongs to contract `{}` not `{}`",
@@ -31761,13 +31817,14 @@ fn load_explicit_repo_receipt_baseline(path: &Path) -> Result<RepoReceiptArchive
 fn load_repo_receipt_baseline(
     root: &Path,
     contract_path: &Path,
+    workflow_name: Option<&str>,
     baseline: &str,
 ) -> Result<ResolvedRepoReceiptBaseline, String> {
     if baseline == "latest" {
-        return load_latest_repo_receipt_baseline(root, contract_path);
+        return load_latest_repo_receipt_baseline(root, contract_path, workflow_name);
     }
     if baseline == "promoted" {
-        return load_promoted_repo_receipt_baseline(root, contract_path);
+        return load_promoted_repo_receipt_baseline(root, contract_path, workflow_name);
     }
 
     load_explicit_repo_receipt_baseline(Path::new(baseline)).map(|record| {
@@ -31822,10 +31879,11 @@ fn archived_repo_receipt_snapshot(
 fn resolve_repo_receipt_snapshot(
     root: &Path,
     contract_path: &Path,
+    workflow_name: Option<&str>,
     selection: &str,
 ) -> Result<RepoReceiptSnapshotReport, String> {
     if selection == "latest" || selection == "promoted" {
-        let baseline = load_repo_receipt_baseline(root, contract_path, selection)?;
+        let baseline = load_repo_receipt_baseline(root, contract_path, workflow_name, selection)?;
         let archive_path = if baseline.source == "file" {
             native_path_display_text(&baseline.record.archive_path)
         } else {
@@ -31848,6 +31906,7 @@ fn resolve_repo_receipt_snapshot(
             archive_path: Some(archive_path),
             archived_at: baseline.record.archived_at,
             promoted_at: baseline.promoted_at,
+            workflow: baseline.record.payload.workflow,
             snapshot_hash: contract_snapshot_hash(&snapshot_json),
             assumption_set_hash,
             assumption_count: assumption_count_from_snapshot(&snapshot),
@@ -31898,6 +31957,10 @@ fn resolve_repo_receipt_snapshot(
             .get("archive_path")
             .and_then(JsonValue::as_str)
             .and_then(|_| repo_receipt_archive_timestamp(selection_path));
+        let workflow = json
+            .get("workflow")
+            .and_then(JsonValue::as_str)
+            .map(str::to_string);
         return Ok(RepoReceiptSnapshotReport {
             source: String::from("file"),
             selection_kind: String::from("receipt_archive"),
@@ -31905,6 +31968,7 @@ fn resolve_repo_receipt_snapshot(
             archive_path: Some(native_path_display_text(selection_path)),
             archived_at,
             promoted_at: None,
+            workflow,
             snapshot_hash: contract_snapshot_hash(&snapshot_json),
             assumption_set_hash,
             assumption_count: assumption_count_from_snapshot(&snapshot),
@@ -31926,6 +31990,7 @@ fn resolve_repo_receipt_snapshot(
         archive_path: Some(native_path_display_text(selection_path)),
         archived_at: None,
         promoted_at: None,
+        workflow: None,
         snapshot_hash: contract_snapshot_hash(&snapshot_json),
         assumption_set_hash,
         assumption_count: assumption_count_from_snapshot(&snapshot),
@@ -32005,9 +32070,9 @@ fn receipt_diff_declared_match_rank(
             "OTA_TOOL_MISSING"
             | "OTA_TOOL_PROBE_FAILED"
             | "OTA_TOOL_VERSION_MISMATCH"
-            | "OTA_TOOL_VERSION_UNPARSEABLE" => {
-                change.path.contains(&format!(".requirements.tools.{entity}"))
-            }
+            | "OTA_TOOL_VERSION_UNPARSEABLE" => change
+                .path
+                .contains(&format!(".requirements.tools.{entity}")),
             "OTA_RUNTIME_MISSING"
             | "OTA_RUNTIME_PROBE_FAILED"
             | "OTA_RUNTIME_VERSION_MISMATCH"
@@ -33446,7 +33511,9 @@ tasks:
             category: Some(String::from("execution")),
             risk: Some(String::from("medium")),
             base: None,
-            target: Some(quoted_scalar("Synthetic V10 native prerequisite pressure case")),
+            target: Some(quoted_scalar(
+                "Synthetic V10 native prerequisite pressure case",
+            )),
             provenance: None,
         };
         let finding = identified_finding(
@@ -33480,8 +33547,11 @@ tasks:
             "Selected task path mutates external state: clickhouse, fakecache, postgres",
         );
 
-        let related =
-            receipt_diff_likely_related_changes(std::slice::from_ref(&external_state), &[finding], None);
+        let related = receipt_diff_likely_related_changes(
+            std::slice::from_ref(&external_state),
+            &[finding],
+            None,
+        );
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, external_state.path);
@@ -33508,8 +33578,11 @@ tasks:
             "next",
         );
 
-        let related =
-            receipt_diff_likely_related_changes(std::slice::from_ref(&external_state), &[finding], None);
+        let related = receipt_diff_likely_related_changes(
+            std::slice::from_ref(&external_state),
+            &[finding],
+            None,
+        );
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, external_state.path);
@@ -33630,8 +33703,11 @@ tasks:
             "next",
         );
 
-        let related =
-            receipt_diff_likely_related_changes(std::slice::from_ref(&change), std::slice::from_ref(&finding), None);
+        let related = receipt_diff_likely_related_changes(
+            std::slice::from_ref(&change),
+            std::slice::from_ref(&finding),
+            None,
+        );
         let correlation = receipt_diff_correlation(&[change], &related, &[finding]);
 
         assert_eq!(correlation, ReceiptDiffCorrelation::LikelyRelated);
@@ -34104,6 +34180,7 @@ fn render_repo_receipt_diff(
     text_path: &str,
     json_path: &str,
     contract_path: &Path,
+    workflow_name: Option<&str>,
     current_contract: &Contract,
     current_receipt: &ExecutionReceipt,
     current_findings: &[Finding],
@@ -34112,7 +34189,7 @@ fn render_repo_receipt_diff(
     format: OutputFormat,
 ) -> CommandOutput {
     let root = contract_working_dir(contract_path);
-    let baseline = match load_repo_receipt_baseline(root, contract_path, baseline) {
+    let baseline = match load_repo_receipt_baseline(root, contract_path, workflow_name, baseline) {
         Ok(result) => result,
         Err(error) => {
             return match format {
@@ -34133,7 +34210,8 @@ fn render_repo_receipt_diff(
             };
         }
     };
-    let current_contract_identity = repo_receipt_contract_identity(root, contract_path);
+    let current_contract_identity =
+        repo_receipt_contract_identity(root, contract_path, workflow_name);
     let report = match build_repo_receipt_diff_report(
         baseline,
         current_contract,
@@ -49707,6 +49785,96 @@ workflows:
         assert_eq!(
             body["workflow_env_artifacts"][0]["consumers"][0],
             "task:build"
+        );
+    }
+
+    #[test]
+    fn receipt_uses_workflow_scoped_archive_identity_for_latest_baseline() {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: echo build
+workflows:
+  default: app
+  app:
+    run:
+      task: build
+  docs:
+    run:
+      task: build
+"#,
+        )
+        .unwrap();
+
+        let app_archive = super::receipt(
+            Some(contract_path.as_path()),
+            None,
+            None,
+            Some("app"),
+            ExecutionOverrides::default(),
+            OutputFormat::Json,
+            None,
+            None,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+        let app_archive_body: serde_json::Value =
+            serde_json::from_str(&app_archive.stdout).unwrap();
+        assert_eq!(app_archive_body["workflow"], "app");
+
+        let docs_archive = super::receipt(
+            Some(contract_path.as_path()),
+            None,
+            None,
+            Some("docs"),
+            ExecutionOverrides::default(),
+            OutputFormat::Json,
+            None,
+            None,
+            false,
+            false,
+            true,
+            false,
+            false,
+        );
+        let docs_archive_body: serde_json::Value =
+            serde_json::from_str(&docs_archive.stdout).unwrap();
+        assert_eq!(docs_archive_body["workflow"], "docs");
+
+        let diff = super::receipt(
+            Some(contract_path.as_path()),
+            None,
+            None,
+            Some("app"),
+            ExecutionOverrides::default(),
+            OutputFormat::Json,
+            None,
+            Some("latest"),
+            false,
+            false,
+            false,
+            false,
+            false,
+        );
+        let diff_body: serde_json::Value = serde_json::from_str(&diff.stdout).unwrap();
+
+        assert_eq!(
+            diff_body["baseline"]["contract_identity"],
+            "ota.yaml#workflow:app"
+        );
+        assert_eq!(
+            diff_body["current"]["contract_identity"],
+            "ota.yaml#workflow:app"
         );
     }
 
@@ -72053,6 +72221,7 @@ workflows:
             &contract,
             DoctorMode::Native,
             None,
+            None,
             &report,
         );
 
@@ -72103,6 +72272,7 @@ execution:
             Path::new("./ota.yaml"),
             &contract,
             DoctorMode::Container,
+            None,
             None,
             &report,
         );
@@ -72159,6 +72329,7 @@ execution:
             &contract,
             DoctorMode::Container,
             Some(Lifecycle::Persistent),
+            None,
             &report,
         );
 
@@ -85434,7 +85605,6 @@ fn render_execution_receipt_text(receipt: &ExecutionReceipt) -> String {
         paint_key("Steps:"),
         receipt.summary.step_count
     ));
-
     if !receipt.env_sources.is_empty() {
         stdout.push_str(&format!("\n\n{}", paint_section_title("Env Sources")));
         for source in &receipt.env_sources {
@@ -87078,6 +87248,7 @@ struct WorkspaceStatusReport {
 }
 
 struct RepoReceiptReport {
+    workflow: Option<String>,
     receipt: ExecutionReceipt,
     findings: Vec<Finding>,
     archive_path: Option<PathBuf>,
@@ -87107,6 +87278,7 @@ struct RepoReceiptSnapshotReport {
     archive_path: Option<String>,
     archived_at: Option<String>,
     promoted_at: Option<String>,
+    workflow: Option<String>,
     snapshot_hash: String,
     assumption_set_hash: String,
     assumption_count: usize,
@@ -87262,6 +87434,8 @@ struct ArchivedRepoReceiptEnvelope {
     ok: bool,
     #[serde(default)]
     mode: Option<String>,
+    #[serde(default)]
+    workflow: Option<String>,
     #[serde(default)]
     archive_path: Option<String>,
     #[serde(default)]
@@ -87718,6 +87892,7 @@ fn repo_readiness_receipt(
     contract: &Contract,
     mode: DoctorMode,
     lifecycle: Option<Lifecycle>,
+    workflow_name: Option<&str>,
     report: &DoctorReport,
 ) -> ExecutionReceipt {
     let context = doctor_report_execution_context(contract, contract_path, mode, lifecycle, report);
@@ -87727,7 +87902,7 @@ fn repo_readiness_receipt(
         context,
         if report.ok { "READY" } else { "NOT READY" },
         "readiness",
-        None,
+        workflow_name,
         None,
         None,
         &report.findings,
@@ -87742,7 +87917,7 @@ fn repo_readiness_receipt(
     receipt.native_prerequisites = selected_up_receipt_native_prerequisites(
         contract,
         doctor_mode_execution_overrides(mode, lifecycle),
-        None,
+        workflow_name,
         None,
     );
     receipt.blocked = report
@@ -88210,6 +88385,14 @@ fn render_repo_receipt(
                 format_command_header("RECEIPT", text_path),
                 render_execution_receipt_text(&report.receipt)
             );
+            if let Some(workflow) = report.workflow.as_deref() {
+                stdout.push_str(&format!(
+                    "\n{} {} {}",
+                    summary_bullet(),
+                    paint_key("Workflow:"),
+                    workflow
+                ));
+            }
             if report.archive_path.is_some() || report.promoted_baseline.is_some() {
                 stdout.push_str(&format!("\n\n{}", paint_section_title("Archive")));
                 if let Some(archive_path) = report.archive_path.as_ref() {
@@ -88255,6 +88438,7 @@ fn render_repo_receipt(
                     ok: report.receipt.ok,
                     path: json_path,
                     mode: "receipt",
+                    workflow: report.workflow.as_deref(),
                     summary: report.receipt.summary,
                     receipt: report.receipt.clone(),
                     archive_path: archive_path.as_deref(),
@@ -88273,11 +88457,13 @@ fn render_repo_receipt_snapshot(
     text_path: &str,
     json_path: &str,
     contract_path: &Path,
+    workflow_name: Option<&str>,
     selection: &str,
     format: OutputFormat,
 ) -> CommandOutput {
     let root = contract_working_dir(contract_path);
-    let report = match resolve_repo_receipt_snapshot(root, contract_path, selection) {
+    let report = match resolve_repo_receipt_snapshot(root, contract_path, workflow_name, selection)
+    {
         Ok(report) => report,
         Err(error) => {
             return match format {
@@ -88316,6 +88502,14 @@ fn render_repo_receipt_snapshot(
                 paint_key("Selection kind:"),
                 report.selection_kind
             ));
+            if let Some(workflow) = report.workflow.as_deref() {
+                stdout.push_str(&format!(
+                    "\n {}  {} {}",
+                    summary_bullet(),
+                    paint_key("Workflow:"),
+                    workflow
+                ));
+            }
             if let Some(selection_path) = report.selection_path.as_deref() {
                 stdout.push_str(&format!(
                     "\n {}  {} {}",
@@ -88408,6 +88602,7 @@ fn render_repo_receipt_snapshot(
                 mode: "snapshot",
                 source: &report.source,
                 selection_kind: &report.selection_kind,
+                workflow: report.workflow.as_deref(),
                 selection_path: report.selection_path.as_deref(),
                 archive_path: report.archive_path.as_deref(),
                 archived_at: report.archived_at.as_deref(),

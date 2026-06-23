@@ -1721,6 +1721,9 @@ Use this when you want a stable handoff between local readiness and CI history:
   explicit baseline
 - `ota receipt --json --baseline promoted` compares the current repo state against that reviewed
   baseline instead of whatever happened to run last
+- `ota receipt --workflow frontend --json --archive` captures one declared workflow's readiness
+  lane as its own archived receipt/baseline stream instead of mixing it with another workflow's
+  history
 - `ota receipt --snapshot latest` reads the archived normalized contract truth directly from the
   latest matching archived receipt instead of routing that inspection through compare mode
 
@@ -1730,6 +1733,7 @@ ota receipt --json [PATH]
 ota receipt --mode container [PATH]
 ota receipt --container --persistent [PATH]
 ota receipt --remote --ephemeral [PATH]
+ota receipt --workflow frontend [PATH]
 ota receipt --archive [PATH]
 ota receipt --archive --promote-baseline [PATH]
 ota receipt --baseline promoted [PATH]
@@ -1750,6 +1754,8 @@ Current behavior:
 - `--member <name>` captures the merged monorepo member contract instead of the root contract
 - validates the contract first
 - runs repo readiness diagnosis in the selected execution context
+- `--workflow <name>` captures one declared workflow's readiness selection instead of the repo's
+  default readiness path, including workflow-owned env-profile rendering and readiness selection
 - `ota receipt` now accepts the same execution-selector family as `ota doctor`: `--mode`, backend shorthands (`--native`, `--container`, `--remote`), `--lifecycle`, and lifecycle shorthands (`--persistent`, `--ephemeral`)
 - includes repo contract drift findings from the same `ota detect` comparison path used by `ota doctor`
 - captures the current repo state as an execution receipt with one `readiness` step
@@ -1763,6 +1769,8 @@ Current behavior:
 - `--json` returns a repo receipt artifact with `mode: "receipt"`
 - receipt JSON always includes a normalized `receipt.contract_snapshot_hash`; `--archive` also
   materializes that normalized snapshot under `.ota/contracts`
+- `latest`, `promoted`, and archived baseline/snapshot selection stay workflow-scoped when
+  `--workflow` is selected, so one workflow's receipt history cannot silently replace another's
 - receipt JSON also includes an additive `receipt.assumption_set_hash` derived from the canonical
   extracted assumption map, so automation can fingerprint semantic contract meaning separately
   from whole-snapshot identity

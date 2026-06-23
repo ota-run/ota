@@ -1732,6 +1732,8 @@ pub struct ReceiptSuccess<'a> {
     pub ok: bool,
     pub path: &'a str,
     pub mode: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<&'a str>,
     pub summary: ExecutionReceiptSummary,
     pub receipt: ExecutionReceipt,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1760,6 +1762,8 @@ pub struct ReceiptHistoryEntry {
     pub archived_at: String,
     pub ok: bool,
     pub contract: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1816,6 +1820,8 @@ pub struct ReceiptSnapshotSuccess<'a> {
     pub summary: ReceiptSnapshotSummary,
     pub source: &'a str,
     pub selection_kind: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selection_path: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]

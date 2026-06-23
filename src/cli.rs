@@ -403,6 +403,12 @@ enum Commands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Inspect one declared workflow instead of the default workflow selection.
+        #[arg(
+            long,
+            add = ArgValueCompleter::new(complete_repo_workflow_candidates)
+        )]
+        workflow: Option<String>,
         /// Inspect `latest`, `promoted`, an archived receipt JSON file, or an archived semantic snapshot JSON file.
         #[arg(
             long,
@@ -5047,6 +5053,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
         ),
         Commands::Receipt {
             json,
+            workflow,
             snapshot,
             baseline,
             fail_on_new_blockers,
@@ -5066,6 +5073,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             path.as_deref(),
             file.as_deref(),
             member.as_deref(),
+            workflow.as_deref(),
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
@@ -18706,6 +18714,7 @@ tasks:
                 "receipt",
                 super::Commands::Receipt {
                     json: true,
+                    workflow: None,
                     snapshot: None,
                     baseline: None,
                     fail_on_new_blockers: false,

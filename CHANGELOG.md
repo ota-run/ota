@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- widened `ota receipt` with first-class workflow selection, so `ota receipt --workflow <name>`
+  now reuses the selected workflow's env-profile/readiness lane and keeps `latest`, `promoted`,
+  and archived receipt/snapshot selection scoped to that workflow instead of mixing receipt
+  history across unrelated workflow baselines
 - tightened V10 selected task-path external-state correlation so task
   `effects.external_state` drift is published as likely related instead of falling back to
   `no_clear_correlation`

@@ -360,6 +360,15 @@ ota receipt --snapshot latest
 Use `promoted` when a team wants an explicit accepted repo state, and use `latest` when the newest
 archived receipt is enough for a local drift check.
 
+When a repo declares more than one workflow, scope receipt history explicitly:
+
+```bash
+ota receipt --workflow frontend --json --archive
+ota receipt --workflow frontend --json --baseline latest
+```
+
+That keeps one workflow's archived receipt/baseline lane from silently replacing another's.
+
 Use `ota receipt --snapshot ...` when you want to read the archived semantic contract truth
 directly instead of only consuming it through `ota diff` or receipt correlation.
 
