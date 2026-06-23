@@ -11210,6 +11210,120 @@ project:
     }
 
     #[test]
+    fn receipt_snapshot_latest_falls_back_to_contract_lineage_when_workflow_identity_widens() {
+        let worker = std::thread::Builder::new()
+            .name(String::from("receipt-snapshot-lineage-fallback"))
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                let _guard = env_mutex_lock();
+                let fixture = ContractFixture::new(
+                    r#"
+version: 1
+project:
+  name: receipt-diff
+tasks:
+  build:
+    run: echo build
+workflows:
+  default: app
+  app:
+    run:
+      task: build
+"#,
+                );
+                let fixture_root = Path::new(fixture.path());
+                let snapshot_path = fixture_root.join(".ota/contracts/sha256-old.json");
+                let archive_path =
+                    fixture_root.join(".ota/receipts/repo-receipt-20260412-101010-123Z.json");
+
+                fixture.write(
+                    ".ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "ok": false,
+                        "path": "/old/location/ota.yaml",
+                        "mode": "receipt",
+                        "archive_path": "/old/location/.ota/receipts/repo-receipt-20260412-101010-123Z.json",
+                        "summary": {
+                            "error_count": 1,
+                            "warn_count": 0,
+                            "info_count": 0,
+                            "step_count": 1
+                        },
+                        "receipt": {
+                            "ok": false,
+                            "path": "/old/location/ota.yaml",
+                            "scope": "repo",
+                            "contract": "/old/location/ota.yaml",
+                            "contract_snapshot_ref": snapshot_path,
+                            "contract_snapshot_hash": "sha256:old",
+                            "assumption_set_hash": "sha256:assumptions",
+                            "backend": "native",
+                            "summary": {
+                                "error_count": 1,
+                                "warn_count": 0,
+                                "info_count": 0,
+                                "step_count": 1
+                            },
+                            "steps": [
+                                {
+                                    "order": 1,
+                                    "label": "readiness",
+                                    "status": "NOT READY"
+                                }
+                            ]
+                        },
+                        "findings": [
+                            {
+                                "severity": "error",
+                                "summary": "No tasks defined in contract",
+                                "why": "without at least one task, `ota run <task>` cannot execute a repo entrypoint and the readiness contract is not operational for humans or agents",
+                                "next": "run `ota detect --dry-run` to review inferred tasks before writing, or run `ota assist add-task --name dev --kind command` when you want one explicit runnable task"
+                            }
+                        ]
+                    }))
+                    .unwrap(),
+                );
+                fixture.write(
+                    ".ota/contracts/sha256-old.json",
+                    &serde_json::to_string_pretty(&serde_json::json!({
+                        "version": 1,
+                        "project": {
+                            "name": "receipt-diff"
+                        },
+                        "tasks": {
+                            "build": {
+                                "run": "echo build"
+                            }
+                        }
+                    }))
+                    .unwrap(),
+                );
+
+                let output = run_with([
+                    "ota",
+                    "receipt",
+                    "--json",
+                    "--snapshot",
+                    "latest",
+                    fixture.path(),
+                ]);
+
+                assert_eq!(output.exit_code, 0);
+                let json: Value = serde_json::from_str(&output.stdout).unwrap();
+                assert_eq!(json["mode"], "snapshot");
+                assert_eq!(json["source"], "latest");
+                assert_eq!(json["selection_kind"], "receipt_archive");
+                assert_eq!(json["archive_path"], archive_path.to_string_lossy().as_ref());
+                assert!(json["snapshot_hash"].as_str().unwrap().starts_with("sha256:"));
+            })
+            .expect("spawn receipt snapshot lineage fallback worker");
+
+        if let Err(panic) = worker.join() {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
     fn receipt_json_diff_against_promoted_baseline_reports_provenance() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(

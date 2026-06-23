@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed `ota receipt --snapshot latest` and `--baseline latest` fallback for archived repo
+  receipts that predate workflow-scoped identity widening, so Ota now resolves the newest
+  matching contract lineage first by exact identity and then by same-contract lineage instead of
+  failing archived snapshot and baseline lookup on valid older receipt archives
 - added first-class `action.kind: reset_compose_service_volume`, so destructive Compose-managed
   data reset lanes can be modeled as structured Ota actions instead of shell `docker compose` /
   `docker volume rm` glue

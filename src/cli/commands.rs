@@ -31889,6 +31889,23 @@ fn repo_receipt_contract_identity_from_archive_record(
         .map(|relative| repo_receipt_contract_identity(Path::new(""), relative, workflow_name))
 }
 
+fn repo_receipt_contract_lineage_from_archive_record(
+    record: &RepoReceiptArchiveRecord,
+) -> Option<String> {
+    let contract = Path::new(record.payload.receipt.contract.as_str());
+    record
+        .payload
+        .archive_path
+        .as_deref()
+        .and_then(|archive_path| repo_root_from_archive_path(Path::new(archive_path)))
+        .and_then(|root| contract.strip_prefix(root).ok())
+        .or_else(|| {
+            repo_root_from_archive_path(&record.archive_path)
+                .and_then(|root| contract.strip_prefix(root).ok())
+        })
+        .map(|relative| repo_receipt_contract_identity(Path::new(""), relative, None))
+}
+
 fn load_latest_repo_receipt_baseline(
     root: &Path,
     contract_path: &Path,
@@ -31896,12 +31913,22 @@ fn load_latest_repo_receipt_baseline(
 ) -> Result<ResolvedRepoReceiptBaseline, String> {
     let scan = scan_repo_receipt_archives(root)?;
     let current_identity = repo_receipt_contract_identity(root, contract_path, workflow_name);
-    scan.archives
-        .into_iter()
-        .find(|archive| {
+    let current_lineage = repo_receipt_contract_identity(root, contract_path, None);
+    let mut archives = scan.archives;
+    let selected_index = archives
+        .iter()
+        .position(|archive| {
             repo_receipt_contract_identity_from_archive_record(archive).as_deref()
                 == Some(current_identity.as_str())
         })
+        .or_else(|| {
+            archives.iter().position(|archive| {
+                repo_receipt_contract_lineage_from_archive_record(archive).as_deref()
+                    == Some(current_lineage.as_str())
+            })
+        });
+    selected_index
+        .map(|index| archives.remove(index))
         .map(|record| ResolvedRepoReceiptBaseline {
             source: String::from("latest"),
             selection_path: None,
