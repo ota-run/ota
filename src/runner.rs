@@ -9612,6 +9612,11 @@ fn execute_reset_compose_service_volume_action(
     )? {
         stdout.push_str(message.as_str());
     }
+    if let Some(message) =
+        remove_remaining_volume_attached_containers(task_name, provider, volume)?
+    {
+        stdout.push_str(message.as_str());
+    }
 
     let inspect_output = Command::new(provider)
         .args(["volume", "inspect", volume])
@@ -9731,6 +9736,68 @@ fn remove_remaining_compose_service_containers(
 
     Ok(Some(format!(
         "removed remaining {provider} compose service containers for `{service}`: {}\n",
+        removed.join(", ")
+    )))
+}
+
+fn remove_remaining_volume_attached_containers(
+    task_name: &str,
+    provider: &str,
+    volume: &str,
+) -> Result<Option<String>, RunError> {
+    let output = Command::new(provider)
+        .args(["ps", "-aq", "--filter", &format!("volume={volume}")])
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not inspect remaining {provider} containers attached to volume `{volume}`: {source}"
+            ),
+        })?;
+    if !output.status.success() {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not inspect remaining {provider} containers attached to volume `{volume}`: {}",
+                rendered_process_failure(&output)
+            ),
+        });
+    }
+    let container_ids = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if container_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let mut removed = Vec::new();
+    for container_id in container_ids {
+        let rm_output = Command::new(provider)
+            .args(["container", "rm", "-f", &container_id])
+            .output()
+            .map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not remove remaining {provider} container `{container_id}` attached to volume `{volume}`: {source}"
+                ),
+            })?;
+        if !rm_output.status.success() {
+            return Err(RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not remove remaining {provider} container `{container_id}` attached to volume `{volume}`: {}",
+                    rendered_process_failure(&rm_output)
+                ),
+            });
+        }
+        removed.push(container_id);
+    }
+
+    Ok(Some(format!(
+        "removed remaining {provider} containers attached to volume `{volume}`: {}\n",
         removed.join(", ")
     )))
 }
@@ -53527,6 +53594,13 @@ if [ "$1" = "container" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
   exit 0
 fi
 
+if [ "$1" = "ps" ] && [ "$2" = "-aq" ] && [ "$3" = "--filter" ] && [ "$4" = "volume=app_postgres-data" ]; then
+  if [ -f "$state_dir/container.postgres" ]; then
+    printf '%s\n' "postgres-container"
+  fi
+  exit 0
+fi
+
 if [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then
   if [ -f "$state_dir/volume.$3" ]; then
     exit 0
@@ -53658,6 +53732,10 @@ if [ "$1" = "container" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
   exit 0
 fi
 
+if [ "$1" = "ps" ] && [ "$2" = "-aq" ] && [ "$3" = "--filter" ] && [ "$4" = "volume=app_postgres-data" ]; then
+  exit 0
+fi
+
 if [ "$1" = "compose" ] && [ "$2" = "up" ] && [ "$3" = "-d" ]; then
   : > "$state_dir/running.$4"
   : > "$state_dir/container.$4"
@@ -53723,6 +53801,137 @@ exit 1
             "{}",
             result.stdout
         );
+        assert!(!state_dir.join("volume.app_postgres-data").exists());
+    }
+
+    #[test]
+    fn reset_compose_service_volume_action_removes_any_remaining_volume_attached_containers() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  postgres:reset:
+    action:
+      kind: reset_compose_service_volume
+      service: postgres
+      volume: app_postgres-data
+      compose:
+        files:
+          - docker-compose.yml
+        project_name: app
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            format!(
+                r#"#!/bin/sh
+state_dir="{state_dir}"
+mkdir -p "$state_dir"
+
+if [ "$1" = "compose" ] && [ "$2" = "stop" ]; then
+  rm -f "$state_dir/running.$3"
+  exit 0
+fi
+
+if [ "$1" = "compose" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  rm -f "$state_dir/container.postgres"
+  exit 0
+fi
+
+if [ "$1" = "compose" ] && [ "$2" = "ps" ] && [ "$3" = "-aq" ]; then
+  exit 0
+fi
+
+if [ "$1" = "ps" ] && [ "$2" = "-aq" ] && [ "$3" = "--filter" ] && [ "$4" = "volume=app_postgres-data" ]; then
+  if [ -f "$state_dir/container.volume-holder" ]; then
+    printf '%s\n' "volume-holder"
+  fi
+  exit 0
+fi
+
+if [ "$1" = "container" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  if [ "$4" = "volume-holder" ]; then
+    rm -f "$state_dir/container.volume-holder"
+  fi
+  exit 0
+fi
+
+if [ "$1" = "compose" ] && [ "$2" = "up" ] && [ "$3" = "-d" ]; then
+  : > "$state_dir/running.$4"
+  : > "$state_dir/container.$4"
+  exit 0
+fi
+
+if [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then
+  if [ -f "$state_dir/volume.$3" ]; then
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ "$1" = "volume" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  if [ -f "$state_dir/container.volume-holder" ]; then
+    echo "volume still attached" >&2
+    exit 1
+  fi
+  rm -f "$state_dir/volume.$4"
+  exit 0
+fi
+
+exit 1
+"#,
+                state_dir = state_dir.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        fs::write(state_dir.join("running.postgres"), "").unwrap();
+        fs::write(state_dir.join("container.postgres"), "").unwrap();
+        fs::write(state_dir.join("container.volume-holder"), "").unwrap();
+        fs::write(state_dir.join("volume.app_postgres-data"), "").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let result = run_task(&fixture.contract, fixture.file_path(), "postgres:reset")
+            .expect("reset_compose_service_volume should remove any remaining volume-attached containers");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result
+                .stdout
+                .contains("removed remaining docker containers attached to volume `app_postgres-data`: volume-holder"),
+            "{}",
+            result.stdout
+        );
+        assert!(!state_dir.join("container.volume-holder").exists());
         assert!(!state_dir.join("volume.app_postgres-data").exists());
     }
 
