@@ -9093,6 +9093,9 @@ fn execute_native_file_action_task(
         crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => {
             execute_ensure_container_network_action(task_name, spec)
         }
+        crate::schema::TaskActionSpec::ResetComposeServiceVolume(spec) => {
+            execute_reset_compose_service_volume_action(task_name, spec, working_dir)
+        }
         crate::schema::TaskActionSpec::EnsureBundle(spec) => {
             execute_ensure_bundle_action(contract, task_name, spec, working_dir, env_overrides)
         }
@@ -9203,6 +9206,9 @@ fn execute_ensure_bundle_step(
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureContainerNetwork(spec) => {
             execute_ensure_container_network_action(task_name, spec)
+        }
+        crate::schema::TaskEnsureBundleStepSpec::ResetComposeServiceVolume(spec) => {
+            execute_reset_compose_service_volume_action(task_name, spec, working_dir)
         }
     }
 }
@@ -9544,6 +9550,229 @@ fn execute_ensure_container_network_action(
     Ok(file_action_output(format!(
         "ensured {provider} container network `{name}`\n"
     )))
+}
+
+fn execute_reset_compose_service_volume_action(
+    task_name: &str,
+    spec: &crate::schema::TaskResetComposeServiceVolumeActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    let service = spec.service.trim();
+    if service.is_empty() {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: String::from(
+                "action `reset_compose_service_volume` must declare a non-empty `service`",
+            ),
+        });
+    }
+    let volume = spec.volume.trim();
+    if volume.is_empty() {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: String::from(
+                "action `reset_compose_service_volume` must declare a non-empty `volume`",
+            ),
+        });
+    }
+
+    let provider = spec.provider.label();
+    let compose_env = compose_action_env_bindings(&spec.compose);
+    let compose_dir = compose_action_working_dir(working_dir, &spec.compose);
+    let mut stdout = String::new();
+
+    if let Some(message) = run_compose_service_reset_step(
+        task_name,
+        provider,
+        &compose_dir,
+        &compose_env,
+        ["compose", "stop", service],
+        format!("stop compose service `{service}`"),
+    )? {
+        stdout.push_str(message.as_str());
+    }
+    if let Some(message) = run_compose_service_reset_step(
+        task_name,
+        provider,
+        &compose_dir,
+        &compose_env,
+        ["compose", "rm", "-f", service],
+        format!("remove compose service `{service}`"),
+    )? {
+        stdout.push_str(message.as_str());
+    }
+
+    let inspect_output = Command::new(provider)
+        .args(["volume", "inspect", volume])
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not inspect {provider} volume `{volume}`: {source}"),
+        })?;
+    if inspect_output.status.success() {
+        let remove_output = Command::new(provider)
+            .args(["volume", "rm", "-f", volume])
+            .output()
+            .map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!("could not remove {provider} volume `{volume}`: {source}"),
+            })?;
+        if !remove_output.status.success() {
+            return Err(RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not remove {provider} volume `{volume}`: {}",
+                    rendered_process_failure(&remove_output)
+                ),
+            });
+        }
+        stdout.push_str(format!("removed {provider} volume `{volume}`\n").as_str());
+    } else {
+        stdout.push_str(
+            format!("{provider} volume `{volume}` was absent; no volume remove needed\n").as_str(),
+        );
+    }
+
+    let up_output = Command::new(provider)
+        .current_dir(&compose_dir)
+        .envs(&compose_env)
+        .args(["compose", "up", "-d", service])
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not restart {provider} compose service `{service}`: {source}"
+            ),
+        })?;
+    if !up_output.status.success() {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not restart {provider} compose service `{service}`: {}",
+                rendered_process_failure(&up_output)
+            ),
+        });
+    }
+    stdout.push_str(format!("restarted {provider} compose service `{service}`\n").as_str());
+
+    Ok(file_action_output(stdout))
+}
+
+fn compose_action_working_dir(
+    working_dir: &Path,
+    compose: &crate::schema::TaskComposeAdapterInputsSpec,
+) -> std::path::PathBuf {
+    compose
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|cwd| working_dir.join(cwd))
+        .unwrap_or_else(|| working_dir.to_path_buf())
+}
+
+fn compose_action_env_bindings(
+    compose: &crate::schema::TaskComposeAdapterInputsSpec,
+) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    let adapter_cwd = compose
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let rebase = |value: &str| {
+        if let Some(cwd) = adapter_cwd {
+            Path::new(value)
+                .strip_prefix(cwd)
+                .ok()
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|| value.trim().to_string())
+        } else {
+            value.trim().to_string()
+        }
+    };
+    if !compose.env_files.is_empty() {
+        env.insert(
+            String::from("COMPOSE_ENV_FILES"),
+            compose
+                .env_files
+                .iter()
+                .map(|value| rebase(value))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+    }
+    if !compose.files.is_empty() {
+        let separator = if cfg!(windows) { ";" } else { ":" };
+        env.insert(
+            String::from("COMPOSE_FILE"),
+            compose
+                .files
+                .iter()
+                .map(|value| rebase(value))
+                .collect::<Vec<_>>()
+                .join(separator),
+        );
+    }
+    if !compose.profiles.is_empty() {
+        env.insert(
+            String::from("COMPOSE_PROFILES"),
+            compose
+                .profiles
+                .iter()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+    }
+    if let Some(project_name) = compose
+        .project_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        env.insert(String::from("COMPOSE_PROJECT_NAME"), project_name.to_string());
+    }
+    env
+}
+
+fn run_compose_service_reset_step<const N: usize>(
+    task_name: &str,
+    provider: &str,
+    compose_dir: &Path,
+    compose_env: &BTreeMap<String, String>,
+    args: [&str; N],
+    label: String,
+) -> Result<Option<String>, RunError> {
+    let output = Command::new(provider)
+        .current_dir(compose_dir)
+        .envs(compose_env)
+        .args(args)
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not {label}: {source}"),
+        })?;
+    if output.status.success() {
+        return Ok(Some(format!("{label}\n")));
+    }
+    Ok(Some(format!(
+        "{label} returned non-zero and was treated as best-effort: {}\n",
+        rendered_process_failure(&output)
+    )))
+}
+
+fn rendered_process_failure(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        format!("exit status {}", output.status)
+    }
 }
 
 fn parse_env_keys(content: &str) -> BTreeSet<String> {
@@ -53145,6 +53374,130 @@ exit 1
             second.stdout.contains(
                 "docker container network `penpot_shared` already exists; no create needed"
             ),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
+    fn reset_compose_service_volume_action_resets_volume_and_restarts_service() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  postgres:reset:
+    action:
+      kind: reset_compose_service_volume
+      service: postgres
+      volume: app_postgres-data
+      compose:
+        files:
+          - docker-compose.yml
+        project_name: app
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            format!(
+                r#"#!/bin/sh
+state_dir="{state_dir}"
+mkdir -p "$state_dir"
+
+if [ "$1" = "compose" ] && [ "$2" = "stop" ]; then
+  if [ -f "$state_dir/service.$3" ]; then
+    rm -f "$state_dir/service.$3"
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ "$1" = "compose" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  exit 0
+fi
+
+if [ "$1" = "compose" ] && [ "$2" = "up" ] && [ "$3" = "-d" ]; then
+  : > "$state_dir/service.$4"
+  exit 0
+fi
+
+if [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then
+  if [ -f "$state_dir/volume.$3" ]; then
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ "$1" = "volume" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  rm -f "$state_dir/volume.$4"
+  exit 0
+fi
+
+exit 1
+"#,
+                state_dir = state_dir.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        fs::write(state_dir.join("service.postgres"), "").unwrap();
+        fs::write(state_dir.join("volume.app_postgres-data"), "").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "postgres:reset")
+            .expect("reset_compose_service_volume action should run");
+        let second = run_task(&fixture.contract, fixture.file_path(), "postgres:reset")
+            .expect("reset_compose_service_volume action should stay repeatable");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert!(
+            first.stdout.contains("stop compose service `postgres`"),
+            "{}",
+            first.stdout
+        );
+        assert!(
+            first.stdout.contains("removed docker volume `app_postgres-data`"),
+            "{}",
+            first.stdout
+        );
+        assert!(
+            first.stdout.contains("restarted docker compose service `postgres`"),
+            "{}",
+            first.stdout
+        );
+        assert!(state_dir.join("service.postgres").is_file());
+        assert!(!state_dir.join("volume.app_postgres-data").exists());
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second.stdout.contains("docker volume `app_postgres-data` was absent; no volume remove needed"),
             "{}",
             second.stdout
         );

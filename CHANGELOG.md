@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- added first-class `action.kind: reset_compose_service_volume`, so destructive Compose-managed
+  data reset lanes can be modeled as structured Ota actions instead of shell `docker compose` /
+  `docker volume rm` glue
+
 - widened `effects.network_kind` with first-class `integration_test`, so live or staging-backed
   verification lanes no longer need to collapse into `broad`; doctor findings, policy effect
   governance, and contract docs now carry a dedicated network classification for real-service test

@@ -3709,6 +3709,29 @@ fn validate_task_action(
                 )));
             }
         }
+        crate::schema::TaskActionSpec::ResetComposeServiceVolume(spec) => {
+            if spec.service.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `reset_compose_service_volume` must declare a non-empty `action.service`"
+                )));
+            }
+            if spec.service.contains('\n') || spec.service.contains('\r') {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `reset_compose_service_volume` `action.service` must not contain newline characters"
+                )));
+            }
+            if spec.volume.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `reset_compose_service_volume` must declare a non-empty `action.volume`"
+                )));
+            }
+            if spec.volume.contains('\n') || spec.volume.contains('\r') {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `reset_compose_service_volume` `action.volume` must not contain newline characters"
+                )));
+            }
+            validate_compose_adapter_inputs(Some(task_name), "action", &spec.compose, errors);
+        }
         crate::schema::TaskActionSpec::EnsureBundle(spec) => {
             if spec.steps.is_empty() {
                 errors.push(ValidationError::new(format!(
@@ -5116,6 +5139,29 @@ fn validate_task_ensure_bundle_step(
                     "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_container_network`) `{prefix}.name` must not contain newline characters"
                 )));
             }
+        }
+        crate::schema::TaskEnsureBundleStepSpec::ResetComposeServiceVolume(spec) => {
+            if spec.service.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`reset_compose_service_volume`) must declare a non-empty `{prefix}.service`"
+                )));
+            }
+            if spec.service.contains('\n') || spec.service.contains('\r') {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`reset_compose_service_volume`) `{prefix}.service` must not contain newline characters"
+                )));
+            }
+            if spec.volume.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`reset_compose_service_volume`) must declare a non-empty `{prefix}.volume`"
+                )));
+            }
+            if spec.volume.contains('\n') || spec.volume.contains('\r') {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` action `ensure_bundle` step `{index}` (`reset_compose_service_volume`) `{prefix}.volume` must not contain newline characters"
+                )));
+            }
+            validate_compose_adapter_inputs(Some(task_name), prefix.as_str(), &spec.compose, errors);
         }
     }
 }
@@ -7427,6 +7473,7 @@ pub enum ContractAdvisory {
     ReplaceableToolBootstrapOwnership(ReplaceableToolBootstrapOwnershipAdvisory),
     ReplaceableSystemdServiceOwnership(ReplaceableSystemdServiceOwnershipAdvisory),
     ReplaceableContainerNetworkOwnership(ReplaceableContainerNetworkOwnershipAdvisory),
+    ReplaceableComposeVolumeResetOwnership(ReplaceableComposeVolumeResetOwnershipAdvisory),
     ReplaceableAdapterInputOwnership(ReplaceableAdapterInputOwnershipAdvisory),
     NativePackageManagerLikelyWrongPlatform(NativePackageManagerLikelyWrongPlatformAdvisory),
     MixedNativePackageOwnership(MixedNativePackageOwnershipAdvisory),
@@ -7574,6 +7621,12 @@ pub struct ReplaceableSystemdServiceOwnershipAdvisory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplaceableContainerNetworkOwnershipAdvisory {
+    pub task_name: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceableComposeVolumeResetOwnershipAdvisory {
     pub task_name: String,
     pub command: String,
 }
@@ -7752,6 +7805,9 @@ impl ContractAdvisory {
             ContractAdvisory::ReplaceableContainerNetworkOwnership(_) => {
                 "OTA_CONTRACT_ADVISORY_REPLACEABLE_CONTAINER_NETWORK_OWNERSHIP"
             }
+            ContractAdvisory::ReplaceableComposeVolumeResetOwnership(_) => {
+                "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_VOLUME_RESET_OWNERSHIP"
+            }
             ContractAdvisory::ReplaceableAdapterInputOwnership(advisory) => {
                 advisory.family.replaceable_ownership_code()
             }
@@ -7908,6 +7964,10 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => format!(
                 "task `{}` hard-codes container network ownership in its task body",
+                advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableComposeVolumeResetOwnership(advisory) => format!(
+                "task `{}` hard-codes Compose-managed volume reset in its task body",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableAdapterInputOwnership(advisory) => match advisory.family {
@@ -8089,6 +8149,10 @@ impl ContractAdvisory {
                 "task `{}` hard-codes container network bootstrap inside its task body (`{}`), which hides Docker network ownership from Ota instead of declaring it under `action.kind: ensure_container_network`",
                 advisory.task_name, advisory.command
             ),
+            ContractAdvisory::ReplaceableComposeVolumeResetOwnership(advisory) => format!(
+                "task `{}` hard-codes Compose-managed service volume reset inside its task body (`{}`), which hides destructive Compose state reset from Ota instead of declaring it under `action.kind: reset_compose_service_volume`",
+                advisory.task_name, advisory.command
+            ),
             ContractAdvisory::ReplaceableAdapterInputOwnership(advisory) => {
                 replaceable_adapter_ownership_why(advisory)
             }
@@ -8177,6 +8241,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
             | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
+            | ContractAdvisory::ReplaceableComposeVolumeResetOwnership(_)
             | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
             | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
             | ContractAdvisory::MixedNativePackageOwnership(_)
@@ -8217,6 +8282,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
             | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
+            | ContractAdvisory::ReplaceableComposeVolumeResetOwnership(_)
             | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
             | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
             | ContractAdvisory::MixedNativePackageOwnership(_)
@@ -8258,6 +8324,7 @@ impl ContractAdvisory {
             | ContractAdvisory::ReplaceableToolBootstrapOwnership(_)
             | ContractAdvisory::ReplaceableSystemdServiceOwnership(_)
             | ContractAdvisory::ReplaceableContainerNetworkOwnership(_)
+            | ContractAdvisory::ReplaceableComposeVolumeResetOwnership(_)
             | ContractAdvisory::ReplaceableAdapterInputOwnership(_)
             | ContractAdvisory::NativePackageManagerLikelyWrongPlatform(_)
             | ContractAdvisory::MixedNativePackageOwnership(_)
@@ -8381,6 +8448,10 @@ impl ContractAdvisory {
             ),
             ContractAdvisory::ReplaceableContainerNetworkOwnership(advisory) => format!(
                 "move container network ownership out of task `{}` body: use `action.kind: ensure_container_network` so Ota owns Docker network bootstrap declaratively",
+                advisory.task_name
+            ),
+            ContractAdvisory::ReplaceableComposeVolumeResetOwnership(advisory) => format!(
+                "move destructive Compose volume reset out of task `{}` body: use `action.kind: reset_compose_service_volume` so Ota owns stop/rm/volume-reset/restart declaratively",
                 advisory.task_name
             ),
             ContractAdvisory::ReplaceableAdapterInputOwnership(advisory) => {
@@ -8569,6 +8640,9 @@ pub fn collect_contract_advisories_with_contract_path(
         contract,
     ));
     advisories.extend(collect_replaceable_container_network_ownership_advisories(
+        contract,
+    ));
+    advisories.extend(collect_replaceable_compose_volume_reset_ownership_advisories(
         contract,
     ));
     advisories.extend(collect_replaceable_compose_env_file_ownership_advisories(
@@ -9406,6 +9480,42 @@ fn collect_replaceable_container_network_ownership_advisories(
     advisories
 }
 
+fn collect_replaceable_compose_volume_reset_ownership_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.aggregate.is_some()
+            || task.action.as_ref().is_some_and(|action| {
+                matches!(
+                    action,
+                    crate::schema::TaskActionSpec::ResetComposeServiceVolume(_)
+                )
+            })
+        {
+            continue;
+        }
+
+        let task_shell_command = task
+            .run
+            .as_deref()
+            .or(task.script.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(command) = task_shell_command
+            && obvious_compose_volume_reset_shell(command)
+        {
+            advisories.push(ContractAdvisory::ReplaceableComposeVolumeResetOwnership(
+                ReplaceableComposeVolumeResetOwnershipAdvisory {
+                    task_name: task_name.clone(),
+                    command: command.to_string(),
+                },
+            ));
+        }
+    }
+    advisories
+}
+
 fn collect_replaceable_compose_env_file_ownership_advisories(
     contract: &Contract,
 ) -> Vec<ContractAdvisory> {
@@ -10038,6 +10148,16 @@ fn obvious_container_network_command(command: &TaskCommandSpec) -> bool {
             let trimmed = arg.trim();
             trimmed.eq_ignore_ascii_case("inspect") || trimmed.eq_ignore_ascii_case("create")
         })
+}
+
+fn obvious_compose_volume_reset_shell(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    lower.contains("docker compose")
+        && lower.contains("docker volume")
+        && lower.contains(" volume rm")
+        && (lower.contains(" compose stop ")
+            || lower.contains(" compose rm ")
+            || lower.contains(" compose up "))
 }
 
 fn obvious_replaceable_adapter_shell(family: AdapterInputFamily, command: &str) -> bool {
@@ -17396,6 +17516,32 @@ tasks:
     }
 
     #[test]
+    fn validates_reset_compose_service_volume_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  postgres:reset:
+    action:
+      kind: reset_compose_service_volume
+      service: postgres
+      volume: app_postgres-data
+      compose:
+        files:
+          - docker-compose.yml
+        project_name: app
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("reset_compose_service_volume action should validate");
+    }
+
+    #[test]
     fn validates_ensure_bundle_action_shape() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -17452,6 +17598,36 @@ tasks:
 
         validate_contract(&contract)
             .expect("ensure_bundle action with container network step should validate");
+    }
+
+    #[test]
+    fn validates_ensure_bundle_action_shape_with_compose_volume_reset_step() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:bootstrap:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: reset_compose_service_volume
+          service: postgres
+          volume: app_postgres-data
+          compose:
+            files:
+              - docker-compose.yml
+            project_name: app
+        - kind: ensure_directory
+          path: .cache/dev
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("ensure_bundle action with compose volume reset step should validate");
     }
 
     #[test]
@@ -32703,6 +32879,35 @@ tasks:
                 if value.task_name == "docker-build"
                     && value.family == AdapterInputFamily::Compose
                     && advisory.code() == "OTA_CONTRACT_ADVISORY_REPLACEABLE_COMPOSE_ENV_FILE_OWNERSHIP"
+        )));
+    }
+
+    #[test]
+    fn collects_replaceable_compose_volume_reset_ownership_advisory() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  postgres:reset:
+    script: |
+      docker compose stop postgres || true
+      docker compose rm -f postgres || true
+      if docker volume inspect app_postgres-data >/dev/null 2>&1; then
+        docker volume rm -f app_postgres-data
+      fi
+      docker compose up -d postgres
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ReplaceableComposeVolumeResetOwnership(value)
+                if value.task_name == "postgres:reset"
         )));
     }
 

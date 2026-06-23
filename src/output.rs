@@ -3771,6 +3771,11 @@ fn summarize_task_action<'a>(
             from: Some(spec.provider.label()),
             to: Some(spec.name.as_str()),
         }),
+        crate::schema::TaskActionSpec::ResetComposeServiceVolume(spec) => Some(TaskActionSummary {
+            kind: "reset_compose_service_volume",
+            from: Some(spec.service.as_str()),
+            to: Some(spec.volume.as_str()),
+        }),
         crate::schema::TaskActionSpec::EnsureBundle(_) => Some(TaskActionSummary {
             kind: "ensure_bundle",
             from: None,
@@ -3845,6 +3850,13 @@ pub fn summarize_task_action_owned(
                 kind: "ensure_container_network",
                 from: Some(spec.provider.label().to_string()),
                 to: Some(spec.name.clone()),
+            })
+        }
+        crate::schema::TaskActionSpec::ResetComposeServiceVolume(spec) => {
+            Some(WorkspaceTaskActionSummary {
+                kind: "reset_compose_service_volume",
+                from: Some(spec.service.clone()),
+                to: Some(spec.volume.clone()),
             })
         }
         crate::schema::TaskActionSpec::EnsureBundle(_) => Some(WorkspaceTaskActionSummary {

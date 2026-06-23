@@ -144,6 +144,12 @@ fn tasks_schema_includes_agent_and_variant_fields() {
             .any(|variant| variant["properties"]["kind"]
                 == json!({ "const": "ensure_container_network" }))
     );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"]
+                == json!({ "const": "reset_compose_service_volume" }))
+    );
     assert!(task_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_kind_enum.iter().any(|entry| entry == "container"));
     assert!(task_kind_enum.iter().any(|entry| entry == "sequence"));
@@ -169,6 +175,11 @@ fn tasks_schema_includes_agent_and_variant_fields() {
         task_kind_enum
             .iter()
             .any(|entry| entry == "ensure_container_network")
+    );
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "reset_compose_service_volume")
     );
     assert!(task_kind_enum.iter().any(|entry| entry == "ensure_bundle"));
     assert!(task_mode_kind_enum.iter().any(|entry| entry == "command"));
@@ -1380,6 +1391,12 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
             .any(|variant| variant["properties"]["kind"]
                 == json!({ "const": "ensure_container_network" }))
     );
+    assert!(
+        task_action_variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"]
+                == json!({ "const": "reset_compose_service_volume" }))
+    );
     assert!(task_kind_enum.iter().any(|entry| entry == "command"));
     assert!(task_kind_enum.iter().any(|entry| entry == "container"));
     assert!(task_kind_enum.iter().any(|entry| entry == "sequence"));
@@ -1404,6 +1421,11 @@ fn workspace_tasks_schema_exists_and_covers_repo_task_reports() {
         task_kind_enum
             .iter()
             .any(|entry| entry == "ensure_container_network")
+    );
+    assert!(
+        task_kind_enum
+            .iter()
+            .any(|entry| entry == "reset_compose_service_volume")
     );
     assert!(task_kind_enum.iter().any(|entry| entry == "ensure_bundle"));
 }

@@ -1580,6 +1580,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::ReplaceableComposeVolumeResetOwnership(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("replaceable Compose-managed volume reset"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::ReplaceableAdapterInputOwnership(value) => format!(
             "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -38971,6 +38982,13 @@ fn render_workflow_prepare_action_preview(action: &crate::output::TaskActionSumm
         "ensure_container_network" => {
             format!("ensure_container_network {}", action.to.unwrap_or("?"))
         }
+        "reset_compose_service_volume" => {
+            format!(
+                "reset_compose_service_volume {} -> {}",
+                action.from.unwrap_or("?"),
+                action.to.unwrap_or("?")
+            )
+        }
         "ensure_bundle" => String::from("ensure_bundle"),
         other => other.to_string(),
     }
@@ -39072,6 +39090,12 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
             }
             (None, Some(name)) => format!("ensure container network `{name}`"),
             _ => String::from("ensure container network"),
+        },
+        "reset_compose_service_volume" => match (action.from, action.to) {
+            (Some(service), Some(volume)) => {
+                format!("reset compose service `{service}` volume `{volume}`")
+            }
+            _ => String::from("reset compose service volume"),
         },
         _ => String::from("-"),
     }

@@ -922,6 +922,18 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "provider": { "enum": ["docker"] },
             "name": { "type": "string" }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "service", "volume"],
+          "properties": {
+            "kind": { "const": "reset_compose_service_volume" },
+            "provider": { "enum": ["docker"] },
+            "service": { "type": "string" },
+            "volume": { "type": "string" },
+            "compose": { "$ref": "#/$defs/taskComposeAdapterInputs" }
+          }
         }
       ]
     },

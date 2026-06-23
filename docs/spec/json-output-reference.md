@@ -211,6 +211,10 @@ Current shape:
       "introduced_in": "1.6.21"
     },
     {
+      "id": "tasks.action.reset_compose_service_volume",
+      "introduced_in": "1.6.22"
+    },
+    {
       "id": "tasks.action.ensure_bundle",
       "introduced_in": "1.6.17"
     },

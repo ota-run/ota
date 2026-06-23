@@ -5018,6 +5018,7 @@ pub enum TaskActionSpec {
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
     EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
+    ResetComposeServiceVolume(TaskResetComposeServiceVolumeActionSpec),
     EnsureBundle(TaskEnsureBundleActionSpec),
 }
 
@@ -5029,6 +5030,7 @@ impl TaskActionSpec {
             Self::EnsureFile(_) => "ensure_file",
             Self::EnsureDirectory(_) => "ensure_directory",
             Self::EnsureContainerNetwork(_) => "ensure_container_network",
+            Self::ResetComposeServiceVolume(_) => "reset_compose_service_volume",
             Self::EnsureBundle(_) => "ensure_bundle",
         }
     }
@@ -5075,6 +5077,12 @@ impl TaskActionSpec {
                 "ensure {} container network `{}` exists",
                 action.provider.label(),
                 action.name
+            ),
+            Self::ResetComposeServiceVolume(action) => format!(
+                "reset {} compose service `{}` volume `{}`",
+                action.provider.label(),
+                action.service,
+                action.volume
             ),
             Self::EnsureBundle(action) => {
                 format!(
@@ -5647,6 +5655,17 @@ pub struct TaskEnsureContainerNetworkActionSpec {
     pub name: String,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskResetComposeServiceVolumeActionSpec {
+    #[serde(default, skip_serializing_if = "is_default_container_network_provider")]
+    pub provider: TaskContainerNetworkProvider,
+    pub service: String,
+    pub volume: String,
+    #[serde(default)]
+    pub compose: TaskComposeAdapterInputsSpec,
+}
+
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskContainerNetworkProvider {
@@ -5681,6 +5700,7 @@ pub enum TaskEnsureBundleStepSpec {
     EnsureFile(TaskEnsureFileActionSpec),
     EnsureDirectory(TaskEnsureDirectoryActionSpec),
     EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
+    ResetComposeServiceVolume(TaskResetComposeServiceVolumeActionSpec),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

@@ -2103,7 +2103,8 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 `action` fields:
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
-  `ensure_file`, `ensure_directory`, `ensure_container_network`, or `ensure_bundle`
+  `ensure_file`, `ensure_directory`, `ensure_container_network`,
+  `reset_compose_service_volume`, or `ensure_bundle`
 - `action` is the first-class host file-preparation surface for deterministic repo mutations; in
   the current shipped slice it is native-only because it mutates the host working tree directly
   and Ota does not yet claim one cross-backend persistence/ownership model for container or remote
@@ -2136,6 +2137,15 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 - `action.kind: ensure_container_network`
   - `action.provider`: optional container runtime provider; currently `docker` (default `docker`)
   - `action.name`: required container network name to inspect/create
+- `action.kind: reset_compose_service_volume`
+  - `action.provider`: optional compose runtime provider; currently `docker` (default `docker`)
+  - `action.service`: required non-empty compose service name ota should stop, remove, and restart
+  - `action.volume`: required non-empty container volume name ota should remove before restart
+  - `action.compose.cwd`: optional repo-relative compose adapter working directory
+  - `action.compose.env_files`: optional ordered compose interpolation files projected through `COMPOSE_ENV_FILES`
+  - `action.compose.files`: optional ordered compose file list projected through `COMPOSE_FILE`
+  - `action.compose.profiles`: optional ordered compose profile list projected through `COMPOSE_PROFILES`
+  - `action.compose.project_name`: optional compose project name projected through `COMPOSE_PROJECT_NAME`
 - `action.kind: ensure_bundle`
   - `action.steps`: required ordered list of deterministic bootstrap steps
   - each `action.steps[]` entry uses one of:
@@ -2144,6 +2154,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
     - `kind: ensure_file`
     - `kind: ensure_directory`
     - `kind: ensure_container_network`
+    - `kind: reset_compose_service_volume`
   - each step uses the same fields and validation rules as the corresponding top-level action kind
 
 Use `action.kind: copy_if_missing` for setup steps like creating `.env.local` from
@@ -2177,6 +2188,12 @@ Use `action.kind: ensure_container_network` when setup needs one deterministic e
 network without shell glue. It inspects the named provider-owned network, creates it only when
 missing, and keeps Docker network bootstrap on a first-class declarative surface instead of
 hard-coding `docker network inspect/create` logic into `run`, `script`, or `command`.
+
+Use `action.kind: reset_compose_service_volume` when one setup or recovery lane truthfully owns a
+destructive Compose-managed data reset such as “stop the service, remove its named volume, then
+restart that service”. Keep compose adapter cwd, env files, file selection, profiles, and project
+name on the structured `action.compose.*` fields instead of hiding them in shell
+`docker compose ...` flags.
 
 Use `action.kind: ensure_bundle` when setup needs multiple deterministic bootstrap mutations in one
 task (for example env file seeding plus secret file creation plus cache directory creation, or one
