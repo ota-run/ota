@@ -43,6 +43,9 @@
 - added machine-readable dependency-plane provenance to `ota run --dry-run --json`, so
   `plan.dependency_steps[]` now reports each planned task step's parent task, selected backend,
   selected context, and backend-selection source including inherited parent backend resolution
+- refined `ota proof runtime` artifact diagnostics so `proof/*/doctor.json` now upgrades generic
+  run-exit blockers to concrete container-engine-unavailable execution findings when the captured
+  `up.log` shows Docker or Podman backend reachability failures
 - widened `ota receipt` with first-class workflow selection, so `ota receipt --workflow <name>`
   now reuses the selected workflow's env-profile/readiness lane and keeps `latest`, `promoted`,
   and archived receipt/snapshot selection scoped to that workflow instead of mixing receipt

@@ -1284,8 +1284,31 @@ fn collect_validate_warning_details(
             summary: advisory.summary(),
             why: advisory.why(),
             next: advisory.next(),
+            provenance: validate_warning_provenance(&advisory),
         })
         .collect()
+}
+
+fn validate_warning_provenance(
+    advisory: &ContractAdvisory,
+) -> Option<crate::output::DependencyPlaneProvenance> {
+    match advisory {
+        ContractAdvisory::DependsOnBoundary(value) => {
+            Some(crate::output::DependencyPlaneProvenance {
+                parent_task: value.parent_task.clone(),
+                dependency_task: value.dependency_task.clone(),
+                parent_backend: format_backend(value.parent.backend).to_string(),
+                parent_context: value.parent.context_name.clone(),
+                parent_backend_selection_source: value.parent_backend_selection_source.clone(),
+                dependency_backend: format_backend(value.dependency.backend).to_string(),
+                dependency_context: value.dependency.context_name.clone(),
+                dependency_backend_selection_source: value
+                    .dependency_backend_selection_source
+                    .clone(),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn validate_depends_on_why(
@@ -2454,28 +2477,6 @@ pub fn proof_runtime(
                     proof_summary_for_output.primary_blocker = Some(overridden_blocker);
                 }
                 let proof_doctor_mode = up_doctor_mode(contract, overrides, workflow_name);
-                let doctor_artifact_json = match proof_runtime_doctor_artifact_json(
-                    contract,
-                    &target.contract_path,
-                    &text_path_display,
-                    workflow_name,
-                    proof_doctor_mode,
-                    overrides,
-                    &proof_report,
-                    &proof_summary_for_output,
-                ) {
-                    Ok(body) => body,
-                    Err(error) => {
-                        let _ = stop_proof_runtime_up_process(&mut up_process);
-                        return CommandOutput::failure(error);
-                    }
-                };
-                if let Err(error) =
-                    write_proof_artifact(&doctor_artifact_path, &doctor_artifact_json)
-                {
-                    let _ = stop_proof_runtime_up_process(&mut up_process);
-                    return CommandOutput::failure(error);
-                }
                 let up_process_failure = proof_runtime_effective_up_process_failure(
                     &proof_summary_for_output,
                     up_process_failure,
@@ -2555,6 +2556,29 @@ pub fn proof_runtime(
                     proof_likely_cause.as_ref(),
                     &up_log_artifact_path,
                 );
+                let doctor_artifact_json = match proof_runtime_doctor_artifact_json(
+                    contract,
+                    &target.contract_path,
+                    &text_path_display,
+                    workflow_name,
+                    proof_doctor_mode,
+                    overrides,
+                    &proof_report,
+                    &proof_summary_for_output,
+                    proof_likely_cause.as_ref(),
+                ) {
+                    Ok(body) => body,
+                    Err(error) => {
+                        let _ = stop_proof_runtime_up_process(&mut up_process);
+                        return CommandOutput::failure(error);
+                    }
+                };
+                if let Err(error) =
+                    write_proof_artifact(&doctor_artifact_path, &doctor_artifact_json)
+                {
+                    let _ = stop_proof_runtime_up_process(&mut up_process);
+                    return CommandOutput::failure(error);
+                }
                 let workflow_env_artifacts =
                     selected_workflow_env_profile_rendered_artifact_entries(
                         &target.contract,
@@ -16154,18 +16178,8 @@ fn build_run_preview_plan(
     } else if let Ok(task_plan) =
         crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
     {
-        plan.dependency_chain = task_plan.tasks;
-        plan.dependency_steps = task_plan
-            .steps
-            .into_iter()
-            .map(|step| crate::output::RunPreviewDependencyStep {
-                task: step.task,
-                parent: step.parent,
-                backend: format_backend(step.backend).to_string(),
-                context: step.context,
-                backend_selection_source: step.backend_selection_source,
-            })
-            .collect();
+        plan.dependency_chain = task_plan.tasks.clone();
+        plan.dependency_steps = planned_dependency_steps_from_run_plan(task_plan);
     } else {
         plan.dependency_chain.push(task_name.to_string());
     }
@@ -16266,6 +16280,38 @@ fn build_run_preview_plan(
     }
 
     plan
+}
+
+fn planned_dependency_steps_from_run_plan(
+    task_plan: crate::runner::RunPlan,
+) -> Vec<crate::output::RunPreviewDependencyStep> {
+    task_plan
+        .steps
+        .into_iter()
+        .map(|step| crate::output::RunPreviewDependencyStep {
+            task: step.task,
+            parent: step.parent,
+            backend: format_backend(step.backend).to_string(),
+            context: step.context,
+            backend_selection_source: step.backend_selection_source,
+        })
+        .collect()
+}
+
+fn planned_dependency_steps_for_task(
+    contract: &Contract,
+    task_name: Option<&str>,
+    overrides: Option<ExecutionOverrides>,
+) -> Vec<crate::output::RunPreviewDependencyStep> {
+    let Some(task_name) = task_name else {
+        return Vec::new();
+    };
+    let Some(overrides) = overrides else {
+        return Vec::new();
+    };
+    crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
+        .map(planned_dependency_steps_from_run_plan)
+        .unwrap_or_default()
 }
 
 fn run_preview_task_execution_action(
@@ -47990,6 +48036,44 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_failure_class_marks_container_engine_unavailable() {
+        let dir = TempDir::new().expect("temp dir should create");
+        let up_log = dir.path().join("up.log");
+        fs::write(
+            &up_log,
+            "Cannot connect to the Docker daemon at unix:///Users/test/.orbstack/run/docker.sock. Is the docker daemon running?\n",
+        )
+        .expect("up log should write");
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("run exited"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+        let likely_cause =
+            super::proof_runtime_likely_cause(&summary, Some("run failed"), &up_log);
+        let class = super::proof_runtime_failure_class(
+            &summary,
+            "run",
+            None,
+            Some("run failed"),
+            likely_cause.as_ref(),
+            &up_log,
+        );
+        assert_eq!(class.as_deref(), Some("container_engine_unavailable"));
+    }
+
+    #[test]
     fn proof_runtime_failure_class_marks_readiness_timeout() {
         let summary = DoctorSummary {
             verdict: DoctorVerdict::NotReady,
@@ -50439,6 +50523,98 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_doctor_artifact_refines_container_engine_unavailable() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  contexts:
+    host:
+      backend: native
+tasks:
+  dev:
+    context: host
+    command:
+      exe: docker
+      args: [compose, up, -d]
+workflows:
+  default: app
+  app:
+    intent: packaged_runtime
+    run:
+      task: dev
+"#,
+        )
+        .expect("contract should parse");
+        let report = DoctorReport {
+            ok: false,
+            findings: vec![Finding {
+                identity: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("run exited"),
+                next: String::from("inspect up.log"),
+            }],
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+        };
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Run task exited before readiness"),
+                why: String::from("run exited"),
+                next: String::from("inspect up.log"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let body = super::proof_runtime_doctor_artifact_json(
+            &contract,
+            Path::new("ota.yaml"),
+            "./ota.yaml",
+            Some("app"),
+            DoctorMode::Native,
+            ExecutionOverrides::default(),
+            &report,
+            &summary,
+            Some(&super::ProofRuntimeLikelyCause::ContainerEngineUnavailable {
+                artifact: PathBuf::from("./.ota/proof/app/up.log"),
+                engine: String::from("docker"),
+                details: String::from(
+                    "Cannot connect to the Docker daemon at unix:///Users/test/.orbstack/run/docker.sock. Is the docker daemon running?",
+                ),
+            }),
+        )
+        .expect("doctor artifact should render");
+        let json: serde_json::Value =
+            serde_json::from_str(&body).expect("doctor artifact json should parse");
+
+        assert_eq!(
+            json["summary"]["primary_blocker"]["code"].as_str(),
+            Some("OTA_CONTAINER_BACKEND_UNAVAILABLE")
+        );
+        assert_eq!(
+            json["findings"][0]["code"].as_str(),
+            Some("OTA_CONTAINER_BACKEND_UNAVAILABLE")
+        );
+        assert_eq!(
+            json["findings"][0]["summary"].as_str(),
+            Some("Container engine unavailable: docker")
+        );
+    }
+
+    #[test]
     fn proof_runtime_status_json_includes_cleanup_failure() {
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
@@ -52682,6 +52858,7 @@ env:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "READY", None, Some(0))],
             blocked: Vec::new(),
             status: None,
@@ -53843,6 +54020,84 @@ tasks:
             Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
         );
         assert!(container_effects.1.contains("registry"));
+    }
+
+    #[test]
+    fn run_receipt_includes_dependency_plane_provenance() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: npm ci
+  setup:host:
+    context: host
+    run: npm ci
+  typecheck:
+    context: app
+    command:
+      exe: npm
+      args: [run, typecheck]
+    depends_on:
+      - setup
+    execution:
+      modes:
+        native:
+          context: host
+          depends_on:
+            - setup:host
+  deploy:
+    context: host
+    command:
+      exe: npm
+      args: [run, deploy]
+    depends_on:
+      - typecheck
+"#,
+        )
+        .expect("parse contract");
+
+        let receipt = super::run_execution_receipt(
+            &contract,
+            Path::new("ota.yaml"),
+            ExecutionOverrides::default(),
+            "deploy",
+            None,
+            &[ExecutedTaskStep {
+                name: String::from("deploy"),
+                exit_code: 0,
+                relation: TaskExecutionRelation::Requested,
+                generation: 0,
+                execution_note: None,
+            }],
+            &[],
+            &[],
+            0,
+            true,
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(receipt.dependency_steps.len(), 3);
+        assert_eq!(receipt.dependency_steps[0].task, "setup:host");
+        assert_eq!(
+            receipt.dependency_steps[1].backend_selection_source,
+            "inherited parent backend"
+        );
+        assert_eq!(receipt.dependency_steps[2].task, "deploy");
     }
 
     #[test]
@@ -57409,6 +57664,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(1, "setup", "OK", None, Some(0))],
             blocked: Vec::new(),
             status: None,
@@ -57495,6 +57751,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "provisioning",
@@ -57695,6 +57952,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: Vec::new(),
             blocked: Vec::new(),
             status: None,
@@ -57763,6 +58021,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "provisioning",
@@ -57860,6 +58119,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "provisioning",
@@ -57979,6 +58239,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "provisioning",
@@ -58059,6 +58320,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "provisioning",
@@ -58203,6 +58465,7 @@ tasks:
                 backend_fulfillment: None,
                 workloads: BTreeMap::new(),
                 policy: Vec::new(),
+                dependency_steps: Vec::new(),
                 steps: Vec::new(),
                 blocked: Vec::new(),
                 status: None,
@@ -63914,6 +64177,8 @@ tasks:
                     lifecycle: Some(Lifecycle::Persistent),
                     backend_binding: None,
                 },
+                parent_backend_selection_source: String::from("task context"),
+                dependency_backend_selection_source: String::from("task context"),
             },
         )];
         let rendered = strip_ansi_codes(&render_validate_success_output(
@@ -64024,7 +64289,55 @@ tasks:
                 && warning.owner == "repo_contract"
                 && warning.severity == "warn"
                 && warning.summary.contains("opaque shell `script`")
+                && warning.provenance.is_none()
         }));
+    }
+
+    #[test]
+    fn collect_validate_warning_details_exposes_depends_on_boundary_provenance() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: npm ci
+  build:
+    context: host
+    run: npm run build
+    depends_on:
+      - setup
+"#,
+        )
+        .unwrap();
+
+        let warnings = super::collect_validate_warning_details(&contract, None);
+        let warning = warnings
+            .iter()
+            .find(|warning| warning.code == "OTA_CONTRACT_ADVISORY_DEPENDS_ON_BOUNDARY")
+            .expect("depends_on boundary warning");
+
+        let provenance = warning.provenance.as_ref().expect("provenance");
+        assert_eq!(provenance.parent_task, "build");
+        assert_eq!(provenance.dependency_task, "setup");
+        assert_eq!(provenance.parent_backend, "native");
+        assert_eq!(provenance.dependency_backend, "container");
+        assert_eq!(provenance.parent_backend_selection_source, "task context");
+        assert_eq!(
+            provenance.dependency_backend_selection_source,
+            "task context"
+        );
     }
 
     #[test]
@@ -64914,6 +65227,7 @@ agent:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "setup",
@@ -66359,6 +66673,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "preconditions",
@@ -66417,6 +66732,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "services",
@@ -66475,6 +66791,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
             blocked: Vec::new(),
             status: None,
@@ -66558,6 +66875,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "dev",
@@ -66625,6 +66943,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "OK", None, Some(0))],
             blocked: Vec::new(),
             status: None,
@@ -66741,6 +67060,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "OK", None, Some(0))],
             blocked: Vec::new(),
             status: None,
@@ -66845,6 +67165,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "typecheck",
@@ -66965,6 +67286,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(137))],
             blocked: Vec::new(),
             status: None,
@@ -67025,6 +67347,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "dev",
@@ -69821,6 +70144,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(130))],
             blocked: Vec::new(),
             status: None,
@@ -69895,6 +70219,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "dev",
@@ -69962,6 +70287,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "dev",
@@ -70032,6 +70358,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "dev",
@@ -70096,6 +70423,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "dev",
@@ -70168,6 +70496,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
             blocked: Vec::new(),
             status: None,
@@ -70238,6 +70567,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "FAILED", None, Some(1))],
             blocked: Vec::new(),
             status: None,
@@ -71056,6 +71386,7 @@ tasks:
             backend_fulfillment: None,
             workloads,
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "post-setup diagnosis",
@@ -71200,6 +71531,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(1, "dev", "READY", None, None)],
             blocked: Vec::new(),
             status: None,
@@ -71304,6 +71636,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "sandbox",
@@ -71927,6 +72260,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "setup",
@@ -72012,6 +72346,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: vec![execution_receipt_step(
                 1,
                 "dev",
@@ -72087,6 +72422,7 @@ tasks:
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: Vec::new(),
             status: Some(String::from("blocked")),
             failed_task: Some(String::from("dev")),
@@ -80851,6 +81187,11 @@ fn run_execution_receipt_with_shared(
         backend_fulfillment,
         workloads: BTreeMap::new(),
         policy: policy_lines,
+        dependency_steps: planned_dependency_steps_for_task(
+            contract,
+            Some(task_name),
+            Some(overrides),
+        ),
         steps,
         status: Some(status),
         failed_task: failure_context
@@ -83328,6 +83669,7 @@ fn proof_runtime_doctor_artifact_json(
     overrides: ExecutionOverrides,
     report: &DoctorReport,
     summary: &DoctorSummary,
+    likely_cause: Option<&ProofRuntimeLikelyCause>,
 ) -> Result<String, String> {
     let rewritten_findings = rewrite_doctor_findings_for_contract(
         &report.findings,
@@ -83335,6 +83677,8 @@ fn proof_runtime_doctor_artifact_json(
         Some(doctor_mode),
         None,
     );
+    let refined_findings = proof_runtime_refined_doctor_findings(rewritten_findings, likely_cause);
+    let refined_summary = proof_runtime_refined_doctor_summary(summary, &refined_findings);
     let workflow_summary =
         resolve_selected_workflow_summary(contract, contract_path, workflow_name)?;
     let agent_summary = contract.agent.as_ref().and_then(AgentSummary::from_config);
@@ -83355,12 +83699,8 @@ fn proof_runtime_doctor_artifact_json(
         ok: report.ok,
         path: path_display,
         mode: doctor_mode.as_str(),
-        summary: summary.clone(),
-        finding_groups: doctor_finding_group_summaries(
-            &rewritten_findings,
-            Some(doctor_mode),
-            None,
-        ),
+        summary: refined_summary,
+        finding_groups: doctor_finding_group_summaries(&refined_findings, Some(doctor_mode), None),
         workflow: workflow_summary,
         agent: agent_summary,
         execution: execution_summary,
@@ -83370,8 +83710,72 @@ fn proof_runtime_doctor_artifact_json(
         extensions: &contract.extensions,
         fix: None,
         toolchains: selected_toolchains,
-        findings: &rewritten_findings,
+        findings: &refined_findings,
     }))
+}
+
+fn proof_runtime_refined_doctor_summary(
+    summary: &DoctorSummary,
+    findings: &[Finding],
+) -> DoctorSummary {
+    let mut refined = summary.clone();
+    if let Some(primary) = refined.primary_blocker.as_mut()
+        && primary.summary == "Run task exited before readiness"
+        && let Some(replacement) = findings
+            .iter()
+            .find(|finding| finding.summary != "Run task exited before readiness")
+    {
+        primary.summary = replacement.summary.clone();
+        primary.why = replacement.why.clone();
+        primary.next = replacement.next.clone();
+        primary.code = replacement
+            .identity
+            .as_ref()
+            .map(|identity| identity.code.clone());
+        primary.provenance = Some(String::from("host"));
+        primary.provenance_key = Some(String::from("repo_contract"));
+    }
+    refined
+}
+
+fn proof_runtime_refined_doctor_findings(
+    findings: Vec<Finding>,
+    likely_cause: Option<&ProofRuntimeLikelyCause>,
+) -> Vec<Finding> {
+    let Some(replacement) = likely_cause.and_then(proof_runtime_refined_run_exit_finding) else {
+        return findings;
+    };
+    findings
+        .into_iter()
+        .map(|finding| {
+            if finding.summary == "Run task exited before readiness" {
+                replacement.clone()
+            } else {
+                finding
+            }
+        })
+        .collect()
+}
+
+fn proof_runtime_refined_run_exit_finding(
+    likely_cause: &ProofRuntimeLikelyCause,
+) -> Option<Finding> {
+    match likely_cause {
+        ProofRuntimeLikelyCause::ContainerEngineUnavailable {
+            engine, details, ..
+        } => Some(Finding::identified(
+            "OTA_CONTAINER_BACKEND_UNAVAILABLE",
+            "execution",
+            "host",
+            FindingSeverity::Error,
+            format!("Container engine unavailable: {engine}"),
+            format!(
+                "the selected proof path could not reach a usable `{engine}` backend: {details}"
+            ),
+            "start or repair the selected container engine, then rerun `ota proof runtime`",
+        )),
+        _ => None,
+    }
 }
 
 fn wait_for_proof_runtime_readiness(
@@ -83798,6 +84202,11 @@ fn proof_runtime_ok(summary: &DoctorSummary, proof_error: Option<&str>) -> bool 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ProofRuntimeLikelyCause {
+    ContainerEngineUnavailable {
+        artifact: PathBuf,
+        engine: String,
+        details: String,
+    },
     ReadinessTargetMismatch {
         artifact: PathBuf,
         listener: Option<String>,
@@ -83844,6 +84253,11 @@ enum ProofRuntimeLikelyCause {
 impl ProofRuntimeLikelyCause {
     fn message(&self) -> String {
         match self {
+            Self::ContainerEngineUnavailable {
+                engine, details, ..
+            } => format!(
+                "container engine unavailable: ota could not reach a usable {engine} backend for the selected proof path ({details}); start or repair that engine before rerunning proof"
+            ),
             Self::ReadinessTargetMismatch {
                 declared_target,
                 observed_target,
@@ -83915,6 +84329,22 @@ impl ProofRuntimeLikelyCause {
 
     fn json_evidence(&self) -> ProofRuntimeLikelyCauseEvidence {
         match self {
+            Self::ContainerEngineUnavailable {
+                artifact,
+                engine,
+                details,
+            } => ProofRuntimeLikelyCauseEvidence {
+                kind: String::from("container_engine_unavailable"),
+                artifact: compact_repo_path(artifact),
+                signal: Some(details.clone()),
+                listener: None,
+                variable: None,
+                service: Some(engine.clone()),
+                host: None,
+                port: None,
+                declared_target: None,
+                observed_target: None,
+            },
             Self::ReadinessTargetMismatch {
                 artifact,
                 listener,
@@ -84042,6 +84472,10 @@ impl ProofRuntimeLikelyCause {
 
     fn is_readiness_target_mismatch(&self) -> bool {
         matches!(self, Self::ReadinessTargetMismatch { .. })
+    }
+
+    fn is_container_engine_unavailable(&self) -> bool {
+        matches!(self, Self::ContainerEngineUnavailable { .. })
     }
 
     fn is_dns_service_name_resolution_failure(&self) -> bool {
@@ -84197,6 +84631,9 @@ fn proof_runtime_likely_failure_class(
     if likely_cause.is_readiness_target_mismatch() {
         return Some(String::from("readiness_target_mismatch"));
     }
+    if likely_cause.is_container_engine_unavailable() {
+        return Some(String::from("container_engine_unavailable"));
+    }
     if likely_cause.is_dns_service_name_resolution_failure() {
         return Some(String::from("dns_service_name_resolution_failure"));
     }
@@ -84305,6 +84742,12 @@ fn proof_runtime_likely_cause(
         return None;
     }
 
+    if let Some(cause) =
+        proof_runtime_container_engine_unavailable_hint_from_log(up_log_artifact_path)
+    {
+        return Some(cause);
+    }
+
     if let Some(cause) = proof_runtime_readiness_target_mismatch_hint(up_log_artifact_path) {
         return Some(cause);
     }
@@ -84342,6 +84785,24 @@ fn proof_runtime_likely_cause(
 
 fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path: &Path) -> bool {
     proof_runtime_install_or_toolchain_failure_hint_from_log(up_log_artifact_path).is_some()
+}
+
+fn proof_runtime_container_engine_unavailable_hint_from_log(
+    up_log_artifact_path: &Path,
+) -> Option<ProofRuntimeLikelyCause> {
+    let log = fs::read_to_string(up_log_artifact_path).ok()?;
+    let details = extract_container_engine_unavailable_details("", &log)?;
+    let lowered = log.to_ascii_lowercase();
+    let engine = if lowered.contains("podman") {
+        "podman"
+    } else {
+        "docker"
+    };
+    Some(ProofRuntimeLikelyCause::ContainerEngineUnavailable {
+        artifact: up_log_artifact_path.to_path_buf(),
+        engine: String::from(engine),
+        details,
+    })
 }
 
 fn proof_runtime_install_or_toolchain_failure_hint_from_log(
@@ -88169,6 +88630,36 @@ fn repo_execution_receipt(
     exit_code: Option<i32>,
     next: Option<String>,
 ) -> ExecutionReceipt {
+    repo_execution_receipt_with_overrides(
+        path,
+        contract,
+        context,
+        status,
+        phase,
+        workflow_name,
+        service,
+        task,
+        findings,
+        exit_code,
+        next,
+        None,
+    )
+}
+
+fn repo_execution_receipt_with_overrides(
+    path: &Path,
+    contract: &Contract,
+    context: PhaseExecutionContext,
+    status: &str,
+    phase: &str,
+    workflow_name: Option<&str>,
+    service: Option<&str>,
+    task: Option<&str>,
+    findings: &[Finding],
+    exit_code: Option<i32>,
+    next: Option<String>,
+    execution_overrides: Option<ExecutionOverrides>,
+) -> ExecutionReceipt {
     let execution_backend = phase_execution_backend(&context).unwrap_or(Backend::Native);
     let effective_task_env = task
         .and_then(|task_name| contract.tasks.get(task_name))
@@ -88258,6 +88749,7 @@ fn repo_execution_receipt(
             execution_backend,
             &toolchain_names,
         ),
+        dependency_steps: planned_dependency_steps_for_task(contract, task, execution_overrides),
         steps,
         status: Some(receipt_status),
         failed_task: None,
@@ -89133,6 +89625,7 @@ fn workspace_up_receipt(
         backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
+        dependency_steps: Vec::new(),
         steps,
         status: Some(receipt_status),
         failed_task: None,
@@ -89219,6 +89712,7 @@ fn workspace_status_receipt(
         backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
+        dependency_steps: Vec::new(),
         steps,
         status: Some(receipt_status),
         failed_task: None,
@@ -89312,6 +89806,7 @@ fn workspace_run_receipt(
         backend_fulfillment: None,
         workloads: BTreeMap::new(),
         policy: Vec::new(),
+        dependency_steps: Vec::new(),
         steps,
         status: Some(receipt_status),
         failed_task: None,
@@ -91289,7 +91784,7 @@ fn preview_receipt(
             ))
             .unwrap_or(Backend::Native)
         });
-    let mut receipt = repo_execution_receipt(
+    let mut receipt = repo_execution_receipt_with_overrides(
         resolved_path,
         contract,
         if let Some(task_name) = preview_task {
@@ -91305,6 +91800,7 @@ fn preview_receipt(
         findings,
         None,
         findings.first().map(|finding| finding.next.clone()),
+        preview_task.map(|_| overrides),
     );
     receipt.toolchains =
         selected_workflow_toolchain_summaries(contract, overrides, workflow_name, preview_backend);
@@ -92968,7 +93464,7 @@ fn execute_repo_up_with_behavior(
             status: "BLOCKED",
             phase: "preconditions",
             preview: None,
-            receipt: repo_execution_receipt(
+            receipt: repo_execution_receipt_with_overrides(
                 resolved_path,
                 contract,
                 phase_context,
@@ -92980,6 +93476,7 @@ fn execute_repo_up_with_behavior(
                 &report.findings,
                 None,
                 report.findings.first().map(|finding| finding.next.clone()),
+                phase_task.as_deref().map(|_| overrides),
             ),
             report,
             service: None,
@@ -93560,7 +94057,7 @@ fn execute_repo_up_with_behavior(
                         status: "ACTIVATION FAILED",
                         phase: "activation",
                         preview: None,
-                        receipt: repo_execution_receipt(
+                        receipt: repo_execution_receipt_with_overrides(
                             resolved_path,
                             contract,
                             doctor_report_execution_context(
@@ -93578,6 +94075,7 @@ fn execute_repo_up_with_behavior(
                             &report.findings,
                             Some(outcome.exit_code),
                             Some(finding.next.clone()),
+                            None,
                         ),
                         report,
                         service: None,
@@ -93712,7 +94210,7 @@ fn execute_repo_up_with_behavior(
                     status: "PREPARE FAILED",
                     phase: "prepare",
                     preview: None,
-                    receipt: repo_execution_receipt(
+                    receipt: repo_execution_receipt_with_overrides(
                         resolved_path,
                         contract,
                         task_phase_execution_context(
@@ -93730,6 +94228,7 @@ fn execute_repo_up_with_behavior(
                         &[],
                         Some(outcome.exit_code),
                         None,
+                        Some(prepare_overrides),
                     ),
                     report: DoctorReport {
                         ok: false,
@@ -93770,7 +94269,7 @@ fn execute_repo_up_with_behavior(
                         status: "BLOCKED",
                         phase: "preconditions",
                         preview: None,
-                        receipt: repo_execution_receipt(
+                        receipt: repo_execution_receipt_with_overrides(
                             resolved_path,
                             contract,
                             doctor_report_execution_context(
@@ -93791,6 +94290,7 @@ fn execute_repo_up_with_behavior(
                                 .findings
                                 .first()
                                 .map(|finding| finding.next.clone()),
+                            Some(overrides),
                         ),
                         report: preflight,
                         service: None,
@@ -93880,7 +94380,7 @@ fn execute_repo_up_with_behavior(
                         status: "BLOCKED",
                         phase: "preconditions",
                         preview: None,
-                        receipt: repo_execution_receipt(
+                        receipt: repo_execution_receipt_with_overrides(
                             resolved_path,
                             contract,
                             doctor_report_execution_context(
@@ -93901,6 +94401,7 @@ fn execute_repo_up_with_behavior(
                                 .findings
                                 .first()
                                 .map(|finding| finding.next.clone()),
+                            None,
                         ),
                         report: preflight,
                         service: None,
@@ -93969,7 +94470,7 @@ fn execute_repo_up_with_behavior(
                     status: "SETUP FAILED",
                     phase: "setup",
                     preview: None,
-                    receipt: repo_execution_receipt(
+                    receipt: repo_execution_receipt_with_overrides(
                         resolved_path,
                         contract,
                         task_phase_execution_context(
@@ -93987,6 +94488,7 @@ fn execute_repo_up_with_behavior(
                         &[],
                         Some(outcome.exit_code),
                         None,
+                        Some(task_execution_overrides),
                     ),
                     report: DoctorReport {
                         ok: false,
@@ -94023,7 +94525,7 @@ fn execute_repo_up_with_behavior(
                             status: "BLOCKED",
                             phase: "provisioning",
                             preview: None,
-                            receipt: repo_execution_receipt(
+                            receipt: repo_execution_receipt_with_overrides(
                                 resolved_path,
                                 contract,
                                 doctor_report_execution_context(
@@ -94044,6 +94546,7 @@ fn execute_repo_up_with_behavior(
                                     .findings
                                     .first()
                                     .map(|finding| finding.next.clone()),
+                                Some(task_execution_overrides),
                             ),
                             report: refreshed,
                             service: None,
@@ -94152,7 +94655,7 @@ fn execute_repo_up_with_behavior(
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
                 let exit_code = run_phase_failure_exit_code(&outcome).unwrap_or(1);
-                let mut receipt = repo_execution_receipt(
+                let mut receipt = repo_execution_receipt_with_overrides(
                     resolved_path,
                     contract,
                     task_phase_execution_context(
@@ -94170,6 +94673,7 @@ fn execute_repo_up_with_behavior(
                     &[],
                     Some(exit_code),
                     None,
+                    Some(task_execution_overrides),
                 );
                 receipt.service_termination = outcome.service_termination.clone();
                 receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
