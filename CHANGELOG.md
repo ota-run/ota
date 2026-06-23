@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+- tightened V10 native prerequisite correlation so selected task-path
+  `requirements.native` and `requirements.any_of[..].native` ownership outranks broad
+  `native_prerequisites.*` declaration drift in semantic snapshot comparisons
 - fixed selected-path standalone tool acquisition version trust across `ota doctor`, `ota up`,
   and `ota run`: task-local wildcard requirements such as `tools: { yq: "*" }` now preserve the
   exact owned version declared under `tools.<name>` when the selected path resolves through

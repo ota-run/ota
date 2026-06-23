@@ -32019,6 +32019,14 @@ fn receipt_diff_declared_match_rank(
                         .path
                         .contains(&format!(".requirements.toolchains.{entity}"))
             }
+            "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
+                (change.path.contains(".requirements.native[")
+                    || change.path.contains(".requires.native[")
+                    || change.path.contains(".requirements.any_of[")
+                    || change.path.contains(".requires.any_of["))
+                    && (change.base.as_deref() == Some(&quoted_scalar(&entity))
+                        || change.target.as_deref() == Some(&quoted_scalar(&entity)))
+            }
             _ => false,
         };
         if selected_requirement_owner {
@@ -32058,6 +32066,15 @@ fn receipt_diff_declared_match_rank(
             || change
                 .path
                 .contains(&format!(".requirements.runtimes.{entity}"))
+        {
+            return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+        }
+        if (change.path.contains(".requirements.native[")
+            || change.path.contains(".requires.native[")
+            || change.path.contains(".requirements.any_of[")
+            || change.path.contains(".requires.any_of["))
+            && (change.base.as_deref() == Some(&quoted_scalar(&entity))
+                || change.target.as_deref() == Some(&quoted_scalar(&entity)))
         {
             return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
         }
@@ -33395,6 +33412,41 @@ tasks:
             provenance: None,
         };
         let finding = identified_finding("OTA_TOOL_MISSING", "Missing tool: fakecli");
+
+        let related = receipt_diff_likely_related_changes(
+            &[declaration.clone(), requirement.clone()],
+            &[finding],
+            None,
+        );
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, requirement.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_selected_native_requirement_over_top_level_native_declaration() {
+        let requirement = DiffChange {
+            path: String::from("tasks.install.requirements.any_of[0].native[0]"),
+            status: String::from("change"),
+            category: Some(String::from("execution")),
+            risk: Some(String::from("high")),
+            base: Some(quoted_scalar("ruby-native-gem-build-tools")),
+            target: Some(quoted_scalar("fake-ruby-native-prereq")),
+            provenance: None,
+        };
+        let declaration = DiffChange {
+            path: String::from("native_prerequisites.fake-ruby-native-prereq.description"),
+            status: String::from("add"),
+            category: Some(String::from("execution")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("Synthetic V10 native prerequisite pressure case")),
+            provenance: None,
+        };
+        let finding = identified_finding(
+            "OTA_NATIVE_PREREQUISITE_MISSING",
+            "Native prerequisite missing: fake-ruby-native-prereq",
+        );
 
         let related = receipt_diff_likely_related_changes(
             &[declaration.clone(), requirement.clone()],

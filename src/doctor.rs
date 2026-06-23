@@ -2271,6 +2271,16 @@ fn resolve_environment_finding_metadata(finding: &Finding) -> FindingResolvedMet
                 &["Missing environment variable: "],
             )
             .map(|variable| format!("env.vars.{variable}")),
+            "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
+                finding_suffix_after_prefix(
+                    finding.summary.trim(),
+                    &[
+                        "Native prerequisite missing: ",
+                        "Native prerequisite timed out: ",
+                    ],
+                )
+                .map(|name| format!("native_prerequisites.{name}"))
+            }
             "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => finding_suffix_after_prefix(
                 finding.summary.trim(),
                 &["Missing runtime: ", "Version mismatch for runtime: "],
@@ -2289,6 +2299,16 @@ fn resolve_environment_finding_metadata(finding: &Finding) -> FindingResolvedMet
                 &["Missing environment variable: "],
             )
             .map(str::to_string),
+            "OTA_NATIVE_PREREQUISITE_MISSING" | "OTA_NATIVE_PREREQUISITE_TIMED_OUT" => {
+                finding_suffix_after_prefix(
+                    finding.summary.trim(),
+                    &[
+                        "Native prerequisite missing: ",
+                        "Native prerequisite timed out: ",
+                    ],
+                )
+                .map(str::to_string)
+            }
             "OTA_RUNTIME_MISSING" | "OTA_RUNTIME_VERSION_MISMATCH" => finding_suffix_after_prefix(
                 finding.summary.trim(),
                 &["Missing runtime: ", "Version mismatch for runtime: "],
