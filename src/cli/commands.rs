@@ -50750,6 +50750,36 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_likely_cause_redundant_with_primary_blocker_matches_refined_identity() {
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 0,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: Some(String::from("OTA_CONTAINER_BACKEND_UNAVAILABLE")),
+                severity: FindingSeverity::Error,
+                summary: String::from("Container engine unavailable: docker"),
+                why: String::from("docker backend unavailable"),
+                next: String::from("repair docker"),
+                provenance: Some(String::from("host")),
+                provenance_key: Some(String::from("repo_contract")),
+            }),
+        };
+        let likely_cause = super::ProofRuntimeLikelyCause::ContainerEngineUnavailable {
+            artifact: PathBuf::from("./.ota/proof/app/up.log"),
+            engine: String::from("docker"),
+            details: String::from("Cannot connect to the Docker daemon"),
+        };
+
+        assert!(super::proof_runtime_likely_cause_redundant_with_primary_blocker(
+            &summary,
+            &likely_cause
+        ));
+    }
+
+    #[test]
     fn proof_runtime_status_json_includes_cleanup_failure() {
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
