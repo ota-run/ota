@@ -475,6 +475,8 @@ Current implementation:
 - `ota run` now supports container execution when context or legacy config provides `execution.*.container.image`
 - the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, overlays any declared `attachments.isolated_paths` with Ota-managed named volumes, and runs task bodies with `sh -lc`
 - ota injects `OTA_WORKSPACE` into task execution so backend-aware workspace-relative paths stay explicit without hardcoding `/workspace`
+- ota also injects `OTA_HOST_WORKSPACE` into task execution so host-launched tasks can still refer to the real repo path even when the selected backend or helper workflow path also publishes `OTA_WORKSPACE`
+- ota injects `OTA_HOST_UID` on Unix-like hosts so host-launched service and compose paths can pass the real host user id into deterministic env interpolation without shell `id -u` glue; on non-Unix hosts the value is absent unless the contract resolves it some other way
 - task env precedence is: resolved context env, then `tasks.<name>.env`, then selected `tasks.<name>.execution.modes.<mode>.env`
 - ota-derived cache env is fallback-only and currently covers `MAVEN_OPTS` for isolated `.m2`, `NPM_CONFIG_CACHE` for isolated `.npm`, `PNPM_STORE_DIR` for isolated `.pnpm-store`, `GRADLE_USER_HOME` for isolated `.gradle`, `PIP_CACHE_DIR` for isolated `.pip-cache`, and `POETRY_CACHE_DIR` for isolated `.pypoetry-cache`; explicit task or context env still wins
 - container contexts can declare `container.resources.memory` so ota requests a deterministic container memory limit; `ota run --memory <size>` overrides one run while keeping task identity and internal listener bind ports unchanged
@@ -1993,6 +1995,7 @@ tasks:
 - `default_mode`: optional `native`, `container`, or `remote`
 - `modes`: optional backend map
 - `modes.<mode>.context`: optional context override for that mode
+- `modes.<mode>.depends_on`: optional task dependency override for that mode
 - `modes.<mode>.lifecycle`: optional lifecycle override for that mode (container mode only)
 - `env_files`: optional ordered repo-relative dotenv overlays injected into the task process before task-level `env`
 - `adapter_inputs.overlays.compose.cwd`: canonical optional repo-relative adapter working directory ota should enter before executing the selected `docker compose` or `podman compose` task path; declared compose env files and compose files stay repo-relative in the contract and are projected relative to this adapter root at runtime
@@ -2045,7 +2048,9 @@ tasks:
 
 - `--mode` changes execution plane, not task identity; one task name can carry multiple mode branches
 - `default_mode` can stand alone when the task-level `run`/`script` already describes the default path
-- when a branch is selected, branch values override task-level values for `context`, `lifecycle`, `env`, `run`/`script`/`command`/`prepare`/`launch`, and `runtime`
+- when a branch is selected, branch values override task-level values for `context`, `depends_on`, `lifecycle`, `env`, `run`/`script`/`command`/`prepare`/`launch`, and `runtime`
+- `modes.<mode>.depends_on` replaces the task-level dependency list for that mode; omit it when the task-level `depends_on` already matches the selected execution plane
+- use `modes.<mode>.depends_on` when one task keeps the same identity but needs different preflight on host vs container instead of cloning tasks like `build:host`
 - use `env_files` for task-process dotenv overlays; use `adapter_inputs.overlays.compose.*` when one task path owns `docker compose` adapter root, interpolation input, compose file selection, compose profiles, or project naming and that ownership should stay declarative instead of being hard-coded into the shell body
 - use `adapter_inputs.overlays.bake.*` when one task path owns `docker buildx bake` adapter root or file selection and that truth should project through a first-class adapter surface instead of shell `cd ... &&` / `-f`
 - use `adapter_inputs.overlays.helm.*` when one task path owns Helm chart root, values-file selection, release naming, or namespace truth and that truth should project through a first-class adapter surface instead of shell `cd ... && helm ...`, chart positionals, or `--namespace`
@@ -2913,6 +2918,7 @@ Current execution model:
 - task `env` values are applied when ota runs the task and override repo-level env with the same name
 - when variants are declared, ota resolves the best matching `when.os` entry first and falls back to the default execution
 - `depends_on` runs before the task body
+- dependency-plane selection is explicit: when the parent task resolves to a backend and a dependency truthfully supports that same backend through `execution.default_mode` or `execution.modes.<mode>`, ota keeps the dependency on that plane for the invocation; otherwise the dependency falls back to its own canonical backend selection
 - `aggregate` replaces fake no-op wrappers such as `run: "true"` for verification entrypoints like `verify`
 - `after_success` runs only when the task body exits `0`
 - `after_failure` runs only when the task body exits non-zero

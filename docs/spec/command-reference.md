@@ -603,6 +603,9 @@ Current behavior:
   preparation report for the selected path
 - honors the selected path's declared readiness timing policy when a workflow/task surface
   defines startup timing such as `start_period`, `interval`, `timeout`, and `retries`
+- when the selected run task is a service launcher that exits successfully before the runtime is
+  actually ready, such as `docker compose up -d`, proof keeps probing until the declared
+  readiness budget expires instead of treating the launcher exit itself as a readiness failure
 - supports `--ready-timeout <DURATION>` to cap the runtime-proof readiness wait budget with
   explicit values such as `90s`, `5m`, or `1h`
 - uses the same backend/lifecycle override rules as `ota doctor` and `ota up`
@@ -1208,6 +1211,9 @@ Current behavior:
   the selected execution path, requirements, and planned actions
 - repo-level `--json` currently requires `--dry-run`, so the machine-readable run surface is
   `ota run <task> --dry-run --json`
+- preview JSON includes additive `plan.dependency_steps[]`, so automation can inspect each planned
+  task step's selected backend, context, parent task, and backend-selection source instead of
+  inferring dependency-plane inheritance from the task names alone
 - by default, interactive terminals stream raw child output live, while non-interactive text runs buffer output into the final report for a cleaner failure/success surface
 - `--stream` forces raw live child output in text mode when you want the old firehose behavior explicitly
 - when the requested task is a service runtime with declared readiness, `--stream` also shows live

@@ -26,6 +26,23 @@
 
 ## Unreleased
 
+- injected `OTA_HOST_WORKSPACE` and `OTA_HOST_UID` into task execution so host-launched tasks can
+  pass real repo-root and host-user identity through contract env truth instead of shell glue such
+  as `pwd` or `id -u`
+- fixed detached service-start readiness proof in `ota up` and `ota proof runtime`: when a
+  service launcher such as `docker compose up -d` exits successfully before the runtime itself is
+  ready, ota now keeps probing until the declared readiness budget expires instead of treating the
+  launcher exit as the failure boundary
+- deduped identical doctor findings and widened `.gitignore` hygiene recognition so parent `.ota/`
+  ignore entries satisfy the repo-artifact protection checks
+- widened task mode branches with first-class `execution.modes.<mode>.depends_on`, so one task can
+  keep stable identity while truthfully switching prerequisite chains per execution plane; planner,
+  runner, previews, `ota up` setup adjustment, task summaries, and boundary advisories now all
+  resolve selected dependencies from the active mode branch instead of silently falling back to the
+  task-level list
+- added machine-readable dependency-plane provenance to `ota run --dry-run --json`, so
+  `plan.dependency_steps[]` now reports each planned task step's parent task, selected backend,
+  selected context, and backend-selection source including inherited parent backend resolution
 - widened `ota receipt` with first-class workflow selection, so `ota receipt --workflow <name>`
   now reuses the selected workflow's env-profile/readiness lane and keeps `latest`, `promoted`,
   and archived receipt/snapshot selection scoped to that workflow instead of mixing receipt

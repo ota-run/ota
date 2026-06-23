@@ -28,6 +28,8 @@ use std::fs::{self, File};
 use std::hash::{Hash, Hasher};
 use std::io::{self, IsTerminal, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -1226,6 +1228,16 @@ impl DeclaredEnvSourceLoadError {
 #[derive(Debug, PartialEq, Eq)]
 pub struct RunPlan {
     pub tasks: Vec<String>,
+    pub steps: Vec<RunPlanStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPlanStep {
+    pub task: String,
+    pub parent: Option<String>,
+    pub backend: Backend,
+    pub context: Option<String>,
+    pub backend_selection_source: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1927,6 +1939,14 @@ fn clean_engine_timeout_cache() -> &'static Mutex<BTreeMap<String, String>> {
 }
 
 pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPlan, RunError> {
+    plan_task_execution_with_overrides(contract, task_name, ExecutionOverrides::default())
+}
+
+pub fn plan_task_execution_with_overrides(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Result<RunPlan, RunError> {
     if !contract.tasks.contains_key(task_name) {
         return Err(RunError::UnknownTask {
             task: task_name.to_string(),
@@ -1934,10 +1954,24 @@ pub fn plan_task_execution(contract: &Contract, task_name: &str) -> Result<RunPl
     }
 
     let mut ordered = Vec::new();
+    let mut steps = Vec::new();
     let mut visited = BTreeSet::new();
-    visit_task(task_name, &contract.tasks, &mut visited, &mut ordered);
+    visit_task_with_overrides(
+        contract,
+        task_name,
+        overrides,
+        overrides.backend.is_some(),
+        None,
+        None,
+        &mut visited,
+        &mut ordered,
+        &mut steps,
+    );
 
-    Ok(RunPlan { tasks: ordered })
+    Ok(RunPlan {
+        tasks: ordered,
+        steps,
+    })
 }
 
 pub fn resolve_task_env(
@@ -1963,10 +1997,36 @@ pub fn resolve_task_env(
     Ok(overrides)
 }
 
-fn expand_ota_workspace_templates(value: &str, ota_workspace: &str) -> String {
-    value
+fn host_uid_template_value(working_dir: &Path) -> Option<String> {
+    #[cfg(unix)]
+    {
+        fs::metadata(working_dir)
+            .ok()
+            .map(|metadata| metadata.uid().to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = working_dir;
+        None
+    }
+}
+
+fn expand_task_env_templates(
+    value: &str,
+    ota_workspace: &str,
+    host_workspace: &str,
+    host_uid: Option<&str>,
+) -> String {
+    let mut expanded = value
         .replace("${OTA_WORKSPACE}", ota_workspace)
         .replace("$OTA_WORKSPACE", ota_workspace)
+        .replace("${OTA_HOST_WORKSPACE}", host_workspace)
+        .replace("$OTA_HOST_WORKSPACE", host_workspace);
+    let host_uid = host_uid.unwrap_or("");
+    expanded = expanded
+        .replace("${OTA_HOST_UID}", host_uid)
+        .replace("$OTA_HOST_UID", host_uid);
+    expanded
 }
 
 fn url_component_encode(value: &str) -> String {
@@ -2252,6 +2312,8 @@ fn effective_task_env_for_backend_with_resolved_env(
     password_env_values: Option<&BTreeMap<String, ResolvedEnvValue>>,
 ) -> BTreeMap<String, String> {
     let ota_workspace = ota_workspace_for_backend(working_dir, backend);
+    let host_workspace = working_dir.display().to_string();
+    let host_uid = host_uid_template_value(working_dir);
     let backend_kind = resolved_execution_backend_kind(backend);
     let engine_hint = match backend {
         ResolvedExecutionBackend::Container { engine, .. } => Some(engine.as_str()),
@@ -2270,7 +2332,12 @@ fn effective_task_env_for_backend_with_resolved_env(
         .map(|(name, value)| {
             (
                 name,
-                expand_ota_workspace_templates(&value, ota_workspace.as_str()),
+                expand_task_env_templates(
+                    &value,
+                    ota_workspace.as_str(),
+                    host_workspace.as_str(),
+                    host_uid.as_deref(),
+                ),
             )
         }),
     );
@@ -2284,6 +2351,10 @@ fn effective_task_env_for_backend_with_resolved_env(
         password_env_values,
     ));
     env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
+    env.insert(String::from("OTA_HOST_WORKSPACE"), host_workspace);
+    if let Some(host_uid) = host_uid {
+        env.insert(String::from("OTA_HOST_UID"), host_uid);
+    }
     env
 }
 
@@ -2328,6 +2399,8 @@ pub(crate) fn effective_task_env_for_selection(
         &dependency_isolation_paths,
         ota_workspace.as_str(),
     );
+    let host_workspace = working_dir.display().to_string();
+    let host_uid = host_uid_template_value(working_dir);
     env.extend(load_task_env_file_values(task, backend, working_dir));
     let engine_hint = if backend == Backend::Container {
         effective_task_container_backend_for_target_resolution(contract, task_name, overrides)
@@ -2345,7 +2418,12 @@ pub(crate) fn effective_task_env_for_selection(
             .map(|(name, value)| {
                 (
                     name,
-                    expand_ota_workspace_templates(&value, ota_workspace.as_str()),
+                    expand_task_env_templates(
+                        &value,
+                        ota_workspace.as_str(),
+                        host_workspace.as_str(),
+                        host_uid.as_deref(),
+                    ),
                 )
             }),
     );
@@ -2359,6 +2437,10 @@ pub(crate) fn effective_task_env_for_selection(
         None,
     ));
     env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
+    env.insert(String::from("OTA_HOST_WORKSPACE"), host_workspace);
+    if let Some(host_uid) = host_uid {
+        env.insert(String::from("OTA_HOST_UID"), host_uid);
+    }
     Some(env)
 }
 
@@ -5711,12 +5793,13 @@ fn run_task_internal(
         repo_execution_lock_owner_for_backend(contract, task_name, overrides, &backend);
     let _active_repo_execution =
         register_active_repo_execution(task_name, working_dir, &lock_owner)?;
-    if overrides.skip_deps
-        && contract
-            .tasks
-            .get(task_name)
-            .is_some_and(|task| task.depends_on.is_empty())
-    {
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let effective_depends_on = contract
+        .tasks
+        .get(task_name)
+        .map(|task| task.depends_on_for_backend(effective.backend))
+        .unwrap_or_default();
+    if overrides.skip_deps && effective_depends_on.is_empty() {
         return Err(RunError::SkipDepsWithoutDependencies {
             task: task_name.to_string(),
         });
@@ -5725,7 +5808,6 @@ fn run_task_internal(
     if let ResolvedExecutionBackend::Container { lifecycle, .. } = &backend
         && matches!(lifecycle, Lifecycle::Ephemeral)
     {
-        let effective = effective_task_execution(contract, task_name, overrides);
         let runtime = contract
             .tasks
             .get(task_name)
@@ -6862,24 +6944,8 @@ fn execute_task_with_hooks(
                 .tasks
                 .get(child)
                 .expect("validated aggregate execution should only reference known tasks");
-            let child_default_mode = child_spec.mode_default_backend();
-            let child_backend_override = match requested_overrides.backend {
-                Some(selected_backend) => {
-                    if child_default_mode.is_some() {
-                        let child_supports_selected_backend = child_default_mode
-                            == Some(selected_backend)
-                            || child_spec.mode_execution_branch(selected_backend).is_some();
-                        if child_supports_selected_backend {
-                            Some(selected_backend)
-                        } else {
-                            None
-                        }
-                    } else {
-                        Some(selected_backend)
-                    }
-                }
-                None => None,
-            };
+            let child_backend_override = child_spec
+                .dependency_backend_override_for_parent(requested_overrides.backend, backend_kind);
             let child_overrides = ExecutionOverrides {
                 backend: child_backend_override,
                 lifecycle: requested_overrides.lifecycle,
@@ -7033,31 +7099,13 @@ fn execute_task_with_hooks(
     let mut backend_fulfillment = backend_fulfillment_preparation.evidence.clone();
 
     if !(requested_relation && requested_overrides.skip_deps) {
-        for dependency in &task.depends_on {
+        for dependency in task.depends_on_for_backend(backend_kind) {
             let dependency_spec = contract
                 .tasks
                 .get(dependency)
                 .expect("validated task execution should only reference known dependencies");
-            let dependency_default_mode = dependency_spec.mode_default_backend();
-            let dependency_backend_override = match requested_overrides.backend {
-                Some(selected_backend) => {
-                    if dependency_default_mode.is_some() {
-                        let dependency_supports_selected_backend = dependency_default_mode
-                            == Some(selected_backend)
-                            || dependency_spec
-                                .mode_execution_branch(selected_backend)
-                                .is_some();
-                        if dependency_supports_selected_backend {
-                            Some(selected_backend)
-                        } else {
-                            None
-                        }
-                    } else {
-                        Some(selected_backend)
-                    }
-                }
-                None => None,
-            };
+            let dependency_backend_override = dependency_spec
+                .dependency_backend_override_for_parent(requested_overrides.backend, backend_kind);
             let dependency_overrides = ExecutionOverrides {
                 backend: dependency_backend_override,
                 lifecycle: requested_overrides.lifecycle,
@@ -7398,10 +7446,13 @@ fn execute_task_with_hooks(
             .join("; ");
         notes.push(target_notes);
     }
-    if requested_relation && requested_overrides.skip_deps && !task.depends_on.is_empty() {
+    let effective_depends_on = task.depends_on_for_backend(
+        effective_task_execution(contract, task_name, requested_overrides).backend,
+    );
+    if requested_relation && requested_overrides.skip_deps && !effective_depends_on.is_empty() {
         notes.push(format!(
             "declared depends_on skipped by local override: {}",
-            task.depends_on.join(", ")
+            effective_depends_on.join(", ")
         ));
     }
     if let Some(note) = command_output.execution_note.clone() {
@@ -25829,29 +25880,83 @@ fn current_arch() -> &'static str {
     }
 }
 
-fn visit_task(
+fn visit_task_with_overrides(
+    contract: &Contract,
     task_name: &str,
-    tasks: &BTreeMap<String, TaskSpec>,
+    overrides: ExecutionOverrides,
+    explicit_backend_override: bool,
+    parent_task: Option<&str>,
+    parent_backend: Option<Backend>,
     visited: &mut BTreeSet<String>,
     ordered: &mut Vec<String>,
+    steps: &mut Vec<RunPlanStep>,
 ) {
     if !visited.insert(task_name.to_string()) {
         return;
     }
 
-    let task = tasks
+    let task = contract
+        .tasks
         .get(task_name)
         .expect("validated task plan should only reference known tasks");
+    let backend = effective_task_execution(contract, task_name, overrides).backend;
+    let context = task
+        .context_for_backend(contract.execution.as_ref(), backend)
+        .map(str::to_string);
+    let backend_selection_source = task
+        .backend_selection_source(
+            contract.execution.as_ref(),
+            backend,
+            explicit_backend_override,
+            parent_backend,
+        )
+        .to_string();
 
-    for dependency in &task.depends_on {
-        visit_task(dependency, tasks, visited, ordered);
+    for dependency in task.depends_on_for_backend(backend) {
+        let dependency_spec = contract
+            .tasks
+            .get(dependency)
+            .expect("validated task plan should only reference known tasks");
+        let dependency_overrides = ExecutionOverrides {
+            backend: dependency_spec
+                .dependency_backend_override_for_parent(overrides.backend, backend),
+            ..overrides
+        };
+        visit_task_with_overrides(
+            contract,
+            dependency,
+            dependency_overrides,
+            explicit_backend_override,
+            Some(task_name),
+            Some(backend),
+            visited,
+            ordered,
+            steps,
+        );
     }
     if let Some(aggregate) = task.aggregate.as_ref() {
         for child in &aggregate.tasks {
-            visit_task(child, tasks, visited, ordered);
+            visit_task_with_overrides(
+                contract,
+                child,
+                overrides,
+                explicit_backend_override,
+                Some(task_name),
+                Some(backend),
+                visited,
+                ordered,
+                steps,
+            );
         }
     }
 
+    steps.push(RunPlanStep {
+        task: task_name.to_string(),
+        parent: parent_task.map(str::to_string),
+        backend,
+        context,
+        backend_selection_source,
+    });
     ordered.push(task_name.to_string());
 }
 
@@ -26037,6 +26142,7 @@ mod tests {
     use std::fs::{self, File};
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::os::unix::fs::MetadataExt;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -26949,6 +27055,111 @@ tasks:
     }
 
     #[test]
+    fn plans_mode_specific_depends_on_for_selected_backend() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    run: echo setup
+  setup:host:
+    context: host
+    run: echo host-setup
+  build:
+    depends_on:
+      - setup
+    run: echo build
+    execution:
+      modes:
+        native:
+          depends_on:
+            - setup:host
+"#,
+        )
+        .unwrap();
+
+        let native_plan = super::plan_task_execution_with_overrides(
+            &contract,
+            "build",
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("native plan");
+        assert_eq!(native_plan.tasks, vec!["setup:host", "build"]);
+
+        let container_plan = super::plan_task_execution_with_overrides(
+            &contract,
+            "build",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("container plan");
+        assert_eq!(container_plan.tasks, vec!["setup", "build"]);
+    }
+
+    #[test]
+    fn plan_inherits_parent_backend_for_supported_dependency_modes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: npm ci
+  setup:host:
+    context: host
+    run: npm ci
+  typecheck:
+    context: app
+    run: npm run typecheck
+    depends_on:
+      - setup
+    execution:
+      modes:
+        native:
+          context: host
+          depends_on:
+            - setup:host
+  deploy:
+    context: host
+    run: npm run deploy
+    depends_on:
+      - typecheck
+"#,
+        )
+        .unwrap();
+
+        let plan = super::plan_task_execution(&contract, "deploy").expect("deploy plan");
+        assert_eq!(plan.tasks, vec!["setup:host", "typecheck", "deploy"]);
+    }
+
+    #[test]
     fn uses_default_env_values_when_process_env_is_missing() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -27475,6 +27686,8 @@ tasks:
     #[test]
     fn effective_task_env_for_backend_expands_workspace_templates_and_preserves_override_precedence()
      {
+        let fixture = TempDir::new().expect("tempdir should create");
+        let working_dir = fixture.path();
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -27498,6 +27711,8 @@ tasks:
     env:
       NPM_CONFIG_CACHE: ${OTA_WORKSPACE}/custom-npm
       CUSTOM_ROOT: ${OTA_WORKSPACE}/cache
+      HOST_ROOT: ${OTA_HOST_WORKSPACE}
+      USER_UID: ${OTA_HOST_UID}
     script: ./scripts/api/run.sh
 "#,
         )
@@ -27517,7 +27732,7 @@ tasks:
                 publications: Vec::new(),
                 dependency_isolation_paths: vec![String::from(".npm")],
             },
-            Path::new("/tmp/repo"),
+            working_dir,
         );
 
         assert_eq!(
@@ -27532,6 +27747,21 @@ tasks:
             env.get("CUSTOM_ROOT").map(String::as_str),
             Some("/workspace/cache")
         );
+        assert_eq!(
+            env.get("HOST_ROOT").map(String::as_str),
+            Some(working_dir.to_string_lossy().as_ref())
+        );
+        #[cfg(unix)]
+        {
+            let expected_uid = fs::metadata(working_dir)
+                .expect("repo fixture metadata should load")
+                .uid()
+                .to_string();
+            assert_eq!(
+                env.get("USER_UID").map(String::as_str),
+                Some(expected_uid.as_str())
+            );
+        }
     }
 
     #[test]
@@ -40601,6 +40831,59 @@ tasks:
         );
         assert!(outcome.execution_note.as_deref().is_some_and(|note| {
             note.contains("declared depends_on skipped by local override: setup")
+        }));
+    }
+
+    #[test]
+    fn run_task_skip_deps_uses_mode_specific_dependency_note() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+tasks:
+  setup:
+    script: |
+      echo setup >> run.log
+  setup:host:
+    context: host
+    script: |
+      echo host-setup >> run.log
+  build:
+    depends_on:
+      - setup
+    script: |
+      echo build >> run.log
+    execution:
+      modes:
+        native:
+          depends_on:
+            - setup:host
+"#,
+        );
+
+        let outcome = run_task_captured_with_args_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "build",
+            &[],
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                skip_deps: true,
+                ..ExecutionOverrides::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.executed_tasks, vec![String::from("build")]);
+        assert!(outcome.execution_note.as_deref().is_some_and(|note| {
+            note.contains("declared depends_on skipped by local override: setup:host")
         }));
     }
 

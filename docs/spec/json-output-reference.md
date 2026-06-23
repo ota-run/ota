@@ -752,6 +752,9 @@ Notes:
   files directly when they need the full topology or doctor surface
 - `workflow_env_artifacts` is additive and reports workflow-owned rendered env files plus the
   consuming task/service lanes that proof exercised
+- when the selected run task is a service launcher that exits successfully before the runtime is
+  actually ready, such as `docker compose up -d`, proof keeps using the declared readiness budget
+  instead of collapsing that launcher exit into an immediate proof failure
 - `likely_cause` is optional and appears only when ota can derive a higher-confidence runtime-drift
   hint from captured proof logs; treat it as advisory, not a replacement for `doctor.json` or
   `up.log`
@@ -2200,6 +2203,14 @@ shared readiness verdict.
   },
   "plan": {
     "dependency_chain": ["ci"],
+    "dependency_steps": [
+      {
+        "task": "ci",
+        "backend": "native",
+        "context": "host",
+        "backend_selection_source": "task context"
+      }
+    ],
     "actions": ["would execute `npm test` on the host"]
   }
 }
@@ -2214,8 +2225,13 @@ Use this when a human or agent needs the selected run plan before execution:
 - `env_summary`, `sources`, and `env` show the selected env state and blockers
 - `toolchains[]` keeps toolchain-owned capabilities on the toolchain instead of duplicating them as
   standalone runtime/tool evidence
-- `plan.dependency_chain`, `plan.requirement_lines`, `plan.actions`, and `plan.notes` show what
-  ota would check, activate, provision, or run
+- `plan.dependency_chain` is the ordered task graph ota would execute
+- `plan.dependency_steps[]` adds machine-readable backend provenance per planned task step, including
+  selected backend, selected context, parent task, and whether the backend came from `override`,
+  `task default mode`, `task context`, `mode context`, `mode branch support`, `default context`,
+  `contract preferred`, `default`, or `inherited parent backend`
+- `plan.requirement_lines`, `plan.actions`, and `plan.notes` show what ota would check, activate,
+  provision, or run
 - exit `0` means the preview is actionable; exit `1` means the preview is blocked by contract,
   env, or execution-plan problems
 - blocked previews still use the full preview envelope on stdout so automation can read

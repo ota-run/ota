@@ -166,6 +166,16 @@ fn doctor_command_string(mode: DoctorMode, lifecycle: Option<Lifecycle>) -> Stri
     command
 }
 
+fn dedupe_findings_preserve_order(findings: &mut Vec<Finding>) {
+    let mut deduped = Vec::with_capacity(findings.len());
+    for finding in findings.drain(..) {
+        if !deduped.contains(&finding) {
+            deduped.push(finding);
+        }
+    }
+    *findings = deduped;
+}
+
 fn rerun_doctor_command(mode: DoctorMode, lifecycle_override: Option<Lifecycle>) -> String {
     doctor_command_string(mode, doctor_selected_lifecycle(mode, lifecycle_override))
 }
@@ -4273,6 +4283,7 @@ fn diagnose_contract_with_scope(
         );
         if !unsupported_host_findings.is_empty() {
             findings.extend(unsupported_host_findings);
+            dedupe_findings_preserve_order(&mut findings);
             return DoctorReport {
                 ok: false,
                 provisioning: None,
@@ -4795,6 +4806,7 @@ fn diagnose_contract_with_scope(
             .iter()
             .any(|finding| finding.severity == FindingSeverity::Error)
     {
+        dedupe_findings_preserve_order(&mut findings);
         findings.sort_by_key(|finding| finding.severity);
         return DoctorReport {
             ok: false,
@@ -4828,6 +4840,7 @@ fn diagnose_contract_with_scope(
         }
     }
 
+    dedupe_findings_preserve_order(&mut findings);
     findings.sort_by_key(|finding| finding.severity);
 
     DoctorReport {
@@ -12546,24 +12559,63 @@ pub(crate) const OTA_RECEIPTS_GITIGNORE_ENTRY: &str = ".ota/receipts/*";
 pub(crate) const OTA_PROOF_GITIGNORE_ENTRY: &str = ".ota/proof/*";
 
 fn gitignore_has_ota_state_entry(contents: &str) -> bool {
-    contents
-        .lines()
-        .any(|line| matches!(line.trim(), ".ota/state/" | ".ota/state" | ".ota/state/*"))
+    contents.lines().any(|line| {
+        matches!(
+            line.trim(),
+            ".ota/"
+                | ".ota"
+                | ".ota/*"
+                | "/.ota/"
+                | "/.ota"
+                | "/.ota/*"
+                | ".ota/state/"
+                | ".ota/state"
+                | ".ota/state/*"
+                | "/.ota/state/"
+                | "/.ota/state"
+                | "/.ota/state/*"
+        )
+    })
 }
 
 fn gitignore_has_ota_receipts_entry(contents: &str) -> bool {
     contents.lines().any(|line| {
         matches!(
             line.trim(),
-            ".ota/receipts/" | ".ota/receipts" | ".ota/receipts/*"
+            ".ota/"
+                | ".ota"
+                | ".ota/*"
+                | "/.ota/"
+                | "/.ota"
+                | "/.ota/*"
+                | ".ota/receipts/"
+                | ".ota/receipts"
+                | ".ota/receipts/*"
+                | "/.ota/receipts/"
+                | "/.ota/receipts"
+                | "/.ota/receipts/*"
         )
     })
 }
 
 fn gitignore_has_ota_proof_entry(contents: &str) -> bool {
-    contents
-        .lines()
-        .any(|line| matches!(line.trim(), ".ota/proof/" | ".ota/proof" | ".ota/proof/*"))
+    contents.lines().any(|line| {
+        matches!(
+            line.trim(),
+            ".ota/"
+                | ".ota"
+                | ".ota/*"
+                | "/.ota/"
+                | "/.ota"
+                | "/.ota/*"
+                | ".ota/proof/"
+                | ".ota/proof"
+                | ".ota/proof/*"
+                | "/.ota/proof/"
+                | "/.ota/proof"
+                | "/.ota/proof/*"
+        )
+    })
 }
 
 pub(crate) fn repo_missing_ota_state_gitignore(root: &Path) -> Result<bool, String> {
@@ -21055,6 +21107,53 @@ tasks:
                 .iter()
                 .any(|finding| finding.summary == "Missing tool: definitely-not-installed")
         );
+    }
+
+    #[test]
+    fn preconditions_dedupe_identical_missing_tool_findings() {
+        let _guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          definitely-not-installed: "*"
+tasks:
+  setup:
+    context: host
+    command:
+      exe: definitely-not-installed
+    requirements:
+      tools:
+        definitely-not-installed: "*"
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, synthetic_contract_path());
+        let missing = report
+            .findings
+            .iter()
+            .filter(|finding| finding.summary == "Missing tool: definitely-not-installed")
+            .count();
+        assert_eq!(missing, 1, "{report:?}");
+    }
+
+    #[test]
+    fn repo_hygiene_accepts_parent_ota_gitignore_entry() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(fixture.path().join(".gitignore"), ".ota/\n").unwrap();
+
+        let missing = super::repo_missing_ota_state_gitignore(fixture.path()).unwrap();
+        assert!(!missing);
     }
 
     #[test]

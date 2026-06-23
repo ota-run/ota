@@ -2844,6 +2844,22 @@ fn validate_tasks(
                 errors,
             );
         }
+        if let Some(execution) = task.execution.as_ref() {
+            for (backend, branch) in execution.modes.iter() {
+                if let Some(branch_depends_on) = branch.depends_on.as_ref() {
+                    for dependency in branch_depends_on {
+                        validate_task_dependency_reference(
+                            tasks,
+                            name,
+                            &format!("execution.modes.{}.depends_on", format_backend(backend)),
+                            "depends on",
+                            dependency,
+                            errors,
+                        );
+                    }
+                }
+            }
+        }
         if let Some(aggregate) = task.aggregate.as_ref() {
             for dependency in &aggregate.tasks {
                 validate_task_dependency_reference(
@@ -10164,6 +10180,7 @@ fn file_check_replacement_guidance(check_name: &str, path: &str) -> String {
 
 fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
     let mut advisories = Vec::new();
+    let mut seen = BTreeSet::new();
     for (task_name, task) in &contract.tasks {
         let Some(parent_boundary) = default_task_execution_boundary(contract, task) else {
             continue;
@@ -10175,22 +10192,88 @@ fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAd
             if task_is_explicit_host_prepare_action(contract, dependency_task) {
                 continue;
             }
+            let dependency_backend = dependency_task
+                .dependency_backend_override_for_parent(None, parent_boundary.backend)
+                .unwrap_or_else(|| dependency_task.workflow_backend(contract.execution.as_ref()));
             let Some(dependency_boundary) =
-                default_task_execution_boundary(contract, dependency_task)
+                task_execution_boundary_for_backend(contract, dependency_task, dependency_backend)
             else {
                 continue;
             };
             if describe_boundary_differences(&parent_boundary, &dependency_boundary).is_empty() {
                 continue;
             }
-            advisories.push(ContractAdvisory::DependsOnBoundary(
-                DependsOnBoundaryAdvisory {
-                    parent_task: task_name.clone(),
-                    dependency_task: dependency_name.clone(),
-                    parent: parent_boundary.clone(),
-                    dependency: dependency_boundary,
-                },
-            ));
+            let advisory = DependsOnBoundaryAdvisory {
+                parent_task: task_name.clone(),
+                dependency_task: dependency_name.clone(),
+                parent: parent_boundary.clone(),
+                dependency: dependency_boundary,
+            };
+            let identity = (
+                advisory.parent_task.clone(),
+                advisory.dependency_task.clone(),
+                format_backend(advisory.parent.backend).to_string(),
+                advisory.parent.context_name.clone(),
+                format_backend(advisory.dependency.backend).to_string(),
+                advisory.dependency.context_name.clone(),
+            );
+            if seen.insert(identity) {
+                advisories.push(ContractAdvisory::DependsOnBoundary(advisory));
+            }
+        }
+        if let Some(execution) = task.execution.as_ref() {
+            for (backend, branch) in execution.modes.iter() {
+                let Some(branch_depends_on) = branch.depends_on.as_ref() else {
+                    continue;
+                };
+                let Some(parent_boundary) =
+                    task_execution_boundary_for_backend(contract, task, backend)
+                else {
+                    continue;
+                };
+                for dependency_name in branch_depends_on {
+                    let Some(dependency_task) = contract.tasks.get(dependency_name) else {
+                        continue;
+                    };
+                    if task_is_explicit_host_prepare_action(contract, dependency_task) {
+                        continue;
+                    }
+                    let dependency_backend = dependency_task
+                        .dependency_backend_override_for_parent(None, parent_boundary.backend)
+                        .unwrap_or_else(|| {
+                            dependency_task.workflow_backend(contract.execution.as_ref())
+                        });
+                    let Some(dependency_boundary) = task_execution_boundary_for_backend(
+                        contract,
+                        dependency_task,
+                        dependency_backend,
+                    ) else {
+                        continue;
+                    };
+                    if describe_boundary_differences(&parent_boundary, &dependency_boundary)
+                        .is_empty()
+                    {
+                        continue;
+                    }
+                    let advisory = DependsOnBoundaryAdvisory {
+                        parent_task: task_name.clone(),
+                        dependency_task: dependency_name.clone(),
+                        parent: parent_boundary.clone(),
+                        dependency: dependency_boundary,
+                    };
+                    let identity = (
+                        advisory.parent_task.clone(),
+                        advisory.dependency_task.clone(),
+                        format_backend(advisory.parent.backend).to_string(),
+                        advisory.parent.context_name.clone(),
+                        format_backend(advisory.dependency.backend).to_string(),
+                        advisory.dependency.context_name.clone(),
+                    );
+                    if seen.insert(identity) {
+                        advisories.push(ContractAdvisory::DependsOnBoundary(advisory));
+                    }
+                }
+            }
         }
     }
     advisories
@@ -11412,7 +11495,15 @@ fn default_task_execution_boundary(
     contract: &Contract,
     task: &TaskSpec,
 ) -> Option<TaskExecutionBoundary> {
-    let backend = task_execution_backend(contract, task, Backend::Native);
+    let backend = task.workflow_backend(contract.execution.as_ref());
+    task_execution_boundary_for_backend(contract, task, backend)
+}
+
+fn task_execution_boundary_for_backend(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: Backend,
+) -> Option<TaskExecutionBoundary> {
     let context_name = task_execution_context_name(contract, task, backend).map(str::to_string);
     let lifecycle = if let Some(branch) = task.mode_execution_branch(backend) {
         branch.lifecycle.or_else(|| {
@@ -12695,7 +12786,7 @@ fn task_edges(task: &TaskSpec) -> impl Iterator<Item = &String> {
     task.aggregate
         .iter()
         .flat_map(|aggregate| aggregate.tasks.iter())
-        .chain(task.depends_on.iter())
+        .chain(task.all_depends_on())
         .chain(task.after_success.iter())
         .chain(task.after_failure.iter())
         .chain(task.after_always.iter())
@@ -18427,6 +18518,201 @@ tasks:
     }
 
     #[test]
+    fn collects_depends_on_boundary_advisory_for_mode_specific_dependencies() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+    host:
+      backend: native
+tasks:
+  setup:
+    context: app
+    run: npm install
+  build:
+    context: app
+    run: npm run build
+    execution:
+      modes:
+        native:
+          context: host
+          depends_on:
+            - setup
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DependsOnBoundary(value)
+                if value.parent_task == "build" && value.dependency_task == "setup"
+        )));
+    }
+
+    #[test]
+    fn does_not_collect_false_root_depends_on_boundary_advisory_when_default_path_matches() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: npm ci
+  setup:host:
+    context: host
+    run: npm ci
+  typecheck:
+    context: app
+    run: npm run typecheck
+    depends_on:
+      - setup
+    execution:
+      modes:
+        native:
+          context: host
+          depends_on:
+            - setup:host
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DependsOnBoundary(value)
+                if value.parent_task == "typecheck" && value.dependency_task == "setup"
+        )));
+    }
+
+    #[test]
+    fn does_not_collect_false_depends_on_boundary_advisory_when_dependency_inherits_parent_mode() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: npm ci
+  setup:host:
+    context: host
+    run: npm ci
+  typecheck:
+    context: app
+    run: npm run typecheck
+    depends_on:
+      - setup
+    execution:
+      modes:
+        native:
+          context: host
+          depends_on:
+            - setup:host
+  deploy:
+    context: host
+    run: npm run deploy
+    depends_on:
+      - typecheck
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::DependsOnBoundary(value)
+                if value.parent_task == "deploy" && value.dependency_task == "typecheck"
+        )));
+    }
+
+    #[test]
+    fn dedupes_root_and_mode_specific_depends_on_boundary_advisories() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: npm install
+  build:
+    context: host
+    depends_on:
+      - setup
+    run: npm run build
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+          depends_on:
+            - setup
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract)
+            .into_iter()
+            .filter(|advisory| {
+                matches!(
+                    advisory,
+                    ContractAdvisory::DependsOnBoundary(value)
+                        if value.parent_task == "build" && value.dependency_task == "setup"
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(advisories.len(), 1, "{advisories:?}");
+    }
+
+    #[test]
     fn does_not_collect_attachment_use_advisory_for_supported_derived_maven_cache() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -22012,6 +22298,36 @@ tasks:
         let errors = validate_contract(&contract).unwrap_err();
         assert!(
             errors.errors().iter().any(|error| error.to_string() == "task `release` must not reference aggregate task `verify` from `depends_on`; expand the child tasks directly or make the aggregate the user-facing entrypoint"),
+            "{errors}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_mode_specific_depends_on_reference() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  build:
+    run: npm run build
+    execution:
+      modes:
+        native:
+          depends_on:
+            - setup
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(
+            errors
+                .errors()
+                .iter()
+                .any(|error| error.to_string() == "task `build` depends on unknown task `setup`"),
             "{errors}"
         );
     }

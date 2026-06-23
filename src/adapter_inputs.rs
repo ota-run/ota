@@ -1538,6 +1538,7 @@ mod tests {
                 modes: crate::schema::TaskModeBranchesSpec {
                     native: Some(crate::schema::TaskModeBranchSpec {
                         context: None,
+                        depends_on: None,
                         orchestrator: None,
                         lifecycle: None,
                         run: None,

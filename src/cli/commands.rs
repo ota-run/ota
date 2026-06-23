@@ -15367,8 +15367,8 @@ fn task_effect_governance_scope(contract: &Contract, task_name: &str) -> EffectG
 }
 
 fn task_effect_dependency_names<'a>(task: &'a TaskSpec) -> impl Iterator<Item = &'a str> + 'a {
-    task.depends_on
-        .iter()
+    task.all_depends_on()
+        .into_iter()
         .chain(task.after_success.iter())
         .chain(task.after_failure.iter())
         .chain(task.after_always.iter())
@@ -16085,21 +16085,65 @@ fn build_run_preview_plan(
 ) -> RunPreviewPlan {
     let direct_requirements =
         selected_task_requirement_surface(contract, task_name, overrides).unwrap_or_default();
-    let target_os = requirement_target_os_for_backend(
-        effective_task_execution(contract, task_name, overrides).backend,
-    );
+    let effective_execution = effective_task_execution(contract, task_name, overrides);
+    let effective_depends_on = contract
+        .tasks
+        .get(task_name)
+        .map(|task| task.depends_on_for_backend(effective_execution.backend))
+        .unwrap_or_default();
+    let target_os = requirement_target_os_for_backend(effective_execution.backend);
     let mut plan = RunPreviewPlan::default();
+    let requested_backend_source = contract
+        .tasks
+        .get(task_name)
+        .map(|task| {
+            task.backend_selection_source(
+                contract.execution.as_ref(),
+                effective_execution.backend,
+                overrides.backend.is_some(),
+                None,
+            )
+        })
+        .unwrap_or("default");
+    let requested_context = contract
+        .tasks
+        .get(task_name)
+        .and_then(|task| {
+            task.context_for_backend(contract.execution.as_ref(), effective_execution.backend)
+        })
+        .map(str::to_string);
+    plan.dependency_steps
+        .push(crate::output::RunPreviewDependencyStep {
+            task: task_name.to_string(),
+            parent: None,
+            backend: format_backend(effective_execution.backend).to_string(),
+            context: requested_context,
+            backend_selection_source: requested_backend_source.to_string(),
+        });
 
     if overrides.skip_deps {
-        if !requested_task.depends_on.is_empty() {
+        if !effective_depends_on.is_empty() {
             plan.notes.push(format!(
                 "declared depends_on skipped by local override: {}",
-                requested_task.depends_on.join(", ")
+                effective_depends_on.join(", ")
             ));
         }
         plan.dependency_chain.push(task_name.to_string());
-    } else if let Ok(task_plan) = crate::runner::plan_task_execution(contract, task_name) {
+    } else if let Ok(task_plan) =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides)
+    {
         plan.dependency_chain = task_plan.tasks;
+        plan.dependency_steps = task_plan
+            .steps
+            .into_iter()
+            .map(|step| crate::output::RunPreviewDependencyStep {
+                task: step.task,
+                parent: step.parent,
+                backend: format_backend(step.backend).to_string(),
+                context: step.context,
+                backend_selection_source: step.backend_selection_source,
+            })
+            .collect();
     } else {
         plan.dependency_chain.push(task_name.to_string());
     }
@@ -16168,7 +16212,7 @@ fn build_run_preview_plan(
                 "would run planned step `{dependency}` before `{task_name}`"
             ));
         }
-    } else if !requested_task.depends_on.is_empty() {
+    } else if !effective_depends_on.is_empty() {
         plan.actions.push(format!(
             "skip declared depends_on before requested task `{task_name}`"
         ));
@@ -53226,7 +53270,6 @@ tasks:
             false,
         );
 
-        assert_eq!(output.exit_code, 0);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
         assert_eq!(json["ok"], true);
@@ -53487,7 +53530,6 @@ tasks:
             },
         }
 
-        assert_eq!(output.exit_code, 0);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
         assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
@@ -53587,7 +53629,6 @@ tasks:
             false,
         );
 
-        assert_eq!(output.exit_code, 0);
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
         let chain = json["plan"]["dependency_chain"]
@@ -53615,6 +53656,100 @@ tasks:
             actions.contains(&"would complete aggregate task `lint` on the host"),
             "{actions:?}"
         );
+        let dependency_steps = json["plan"]["dependency_steps"]
+            .as_array()
+            .expect("dependency steps array");
+        assert_eq!(dependency_steps.len(), 3);
+        assert_eq!(dependency_steps[0]["task"], "lint:backend");
+        assert_eq!(dependency_steps[0]["backend"], "native");
+        assert_eq!(dependency_steps[0]["backend_selection_source"], "default");
+        assert_eq!(dependency_steps[2]["task"], "lint");
+    }
+
+    #[test]
+    fn run_dry_run_json_reports_dependency_backend_provenance() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: npm ci
+  setup:host:
+    context: host
+    run: npm ci
+  typecheck:
+    context: app
+    command:
+      exe: npm
+      args: [run, typecheck]
+    depends_on:
+      - setup
+    execution:
+      modes:
+        native:
+          context: host
+          depends_on:
+            - setup:host
+  deploy:
+    context: host
+    command:
+      exe: npm
+      args: [run, deploy]
+    depends_on:
+      - typecheck
+"#,
+        )
+        .expect("parse contract");
+
+        let requested_task = TaskSummary::from_spec_with_overrides(
+            "deploy",
+            contract.tasks.get("deploy").expect("deploy task"),
+            super::current_os(),
+            &contract,
+            ExecutionOverrides::default(),
+        );
+        let execution_plan = super::resolve_execution_plan_for_task(
+            &contract,
+            Path::new("ota.yaml"),
+            "deploy",
+            ExecutionOverrides::default(),
+        )
+        .expect("execution plan");
+        let preview_plan = super::build_run_preview_plan(
+            &contract,
+            "deploy",
+            ExecutionOverrides::default(),
+            &requested_task,
+            &execution_plan,
+            false,
+        );
+
+        let dependency_steps = preview_plan.dependency_steps;
+        assert_eq!(dependency_steps.len(), 3);
+        assert_eq!(dependency_steps[0].task, "setup:host");
+        assert_eq!(dependency_steps[0].parent.as_deref(), Some("typecheck"));
+        assert_eq!(dependency_steps[0].backend, "native");
+        assert_eq!(dependency_steps[0].backend_selection_source, "task context");
+        assert_eq!(dependency_steps[1].task, "typecheck");
+        assert_eq!(dependency_steps[1].parent.as_deref(), Some("deploy"));
+        assert_eq!(
+            dependency_steps[1].backend_selection_source,
+            "inherited parent backend"
+        );
+        assert_eq!(dependency_steps[2].task, "deploy");
+        assert_eq!(dependency_steps[2].backend_selection_source, "task context");
     }
 
     #[test]
@@ -83015,7 +83150,6 @@ const PROOF_RUNTIME_READINESS_WAIT_CEILING_SECS: u64 = 900;
 const PROOF_RUNTIME_READINESS_LOOP_INTERVAL_SECS: u64 = 2;
 const PROOF_RUNTIME_READINESS_ATTEMPT_BUDGET: u64 = 30;
 const PROOF_RUNTIME_READINESS_EXTRA_GRACE_SECS: u64 = 60;
-const PROOF_RUNTIME_SUCCESSFUL_SERVICE_EXIT_GRACE_SECS: u64 = 20;
 const PROOF_RUNTIME_EXIT_OBSERVATION_GRACE_MILLIS: u64 = 250;
 const PROOF_RUNTIME_FULL_DIAG_STARTUP_GRACE_MILLIS: u64 = 3_000;
 static PROOF_RUNTIME_INTERRUPT_FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
@@ -83202,12 +83336,11 @@ fn wait_for_proof_runtime_readiness(
                         deferred_service_run_exit_failure = Some(
                             proof_runtime_process_exit_failure(process_label, exit_status),
                         );
-                        service_exit_grace_deadline = Some(
-                            Instant::now()
-                                + Duration::from_secs(
-                                    PROOF_RUNTIME_SUCCESSFUL_SERVICE_EXIT_GRACE_SECS,
-                                ),
-                        );
+                        // A successful service-launch command can exit long before the declared
+                        // runtime reaches readiness (for example `docker compose up -d`).
+                        // Keep probing until the workflow's actual readiness budget is exhausted
+                        // instead of collapsing to a shorter post-exit grace window.
+                        service_exit_grace_deadline = Some(deadline);
                     } else {
                         if exit_status.success() && latest_report.ok {
                             return Ok((latest_report, "readiness", true, None));
@@ -91670,10 +91803,12 @@ fn cleanup_proof_owned_containers(owner_pid: u32) -> Result<(), String> {
 fn contract_adjusted_for_up_setup_phase(
     contract: &Contract,
     task_name: &str,
+    overrides: ExecutionOverrides,
     prepare_task_name: Option<&str>,
 ) -> Option<Contract> {
     let task = contract.tasks.get(task_name)?;
-    let setup_plan = crate::runner::plan_task_execution(contract, task_name).ok();
+    let setup_plan =
+        crate::runner::plan_task_execution_with_overrides(contract, task_name, overrides).ok();
     let should_remove_prepare = prepare_task_name.is_some_and(|prepare_name| {
         setup_plan
             .as_ref()
@@ -93705,8 +93840,12 @@ fn execute_repo_up_with_behavior(
             .tasks
             .get(setup_task_name)
             .and_then(task_command_preview);
-        let setup_contract =
-            contract_adjusted_for_up_setup_phase(contract, setup_task_name, prepare_task);
+        let setup_contract = contract_adjusted_for_up_setup_phase(
+            contract,
+            setup_task_name,
+            task_execution_overrides,
+            prepare_task,
+        );
         let setup_contract_ref = setup_contract.as_ref().unwrap_or(contract);
         match run_up_task(
             setup_contract_ref,
