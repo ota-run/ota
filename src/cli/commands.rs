@@ -50640,6 +50640,99 @@ workflows:
     }
 
     #[test]
+    fn proof_runtime_doctor_artifact_keeps_primary_blocker_without_refinement() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  contexts:
+    host:
+      backend: native
+tasks:
+  dev:
+    context: host
+    command:
+      exe: docker
+      args: [compose, up, -d]
+workflows:
+  default: app
+  app:
+    intent: packaged_runtime
+    run:
+      task: dev
+"#,
+        )
+        .expect("contract should parse");
+        let report = DoctorReport {
+            ok: false,
+            findings: vec![
+                Finding {
+                    identity: None,
+                    severity: FindingSeverity::Error,
+                    summary: String::from("Unsupported host platform for context: host"),
+                    why: String::from("platform mismatch"),
+                    next: String::from("use a supported host"),
+                },
+                Finding::identified(
+                    "OTA_AGENT_SAFE_TASK_NETWORKED_HYDRATION",
+                    "agent",
+                    "repo_contract",
+                    FindingSeverity::Warn,
+                    "Agent-safe task performs dependency hydration",
+                    "hydration warning",
+                    "keep this task out of routine agent-safe execution",
+                ),
+            ],
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+        };
+        let summary = DoctorSummary {
+            verdict: DoctorVerdict::NotReady,
+            agent_verdict: DoctorVerdict::Ready,
+            error_count: 1,
+            warn_count: 1,
+            info_count: 0,
+            primary_blocker: Some(DoctorPrimaryBlocker {
+                code: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Unsupported host platform for context: host"),
+                why: String::from("platform mismatch"),
+                next: String::from("use a supported host"),
+                provenance: None,
+                provenance_key: None,
+            }),
+        };
+
+        let body = super::proof_runtime_doctor_artifact_json(
+            &contract,
+            Path::new("ota.yaml"),
+            "./ota.yaml",
+            Some("app"),
+            DoctorMode::Native,
+            ExecutionOverrides::default(),
+            &report,
+            &summary,
+            None,
+        )
+        .expect("doctor artifact should render");
+        let json: serde_json::Value =
+            serde_json::from_str(&body).expect("doctor artifact json should parse");
+
+        assert_eq!(
+            json["summary"]["primary_blocker"]["summary"].as_str(),
+            Some("Unsupported host platform for context: host")
+        );
+        assert_eq!(
+            json["summary"]["primary_blocker"]["why"].as_str(),
+            Some("platform mismatch")
+        );
+    }
+
+    #[test]
     fn proof_runtime_status_json_includes_cleanup_failure() {
         let body: serde_json::Value =
             serde_json::from_str(&super::to_json(&crate::output::ProofRuntimeStatus {
@@ -83710,7 +83803,8 @@ fn proof_runtime_doctor_artifact_json(
         None,
     );
     let refined_findings = proof_runtime_refined_doctor_findings(rewritten_findings, likely_cause);
-    let refined_summary = proof_runtime_refined_doctor_summary(summary, &refined_findings);
+    let refined_summary =
+        proof_runtime_refined_doctor_summary(summary, &refined_findings, likely_cause);
     let workflow_summary =
         resolve_selected_workflow_summary(contract, contract_path, workflow_name)?;
     let agent_summary = contract.agent.as_ref().and_then(AgentSummary::from_config);
@@ -83749,13 +83843,19 @@ fn proof_runtime_doctor_artifact_json(
 fn proof_runtime_refined_doctor_summary(
     summary: &DoctorSummary,
     findings: &[Finding],
+    likely_cause: Option<&ProofRuntimeLikelyCause>,
 ) -> DoctorSummary {
     let mut refined = summary.clone();
+    let Some(replacement_code) = likely_cause
+        .and_then(proof_runtime_refined_run_exit_finding)
+        .map(|replacement| replacement.code().to_string())
+    else {
+        return refined;
+    };
     if let Some(primary) = refined.primary_blocker.as_mut()
-        && let Some(replacement) = findings.iter().find(|finding| {
-            finding.code() == "OTA_CONTAINER_BACKEND_UNAVAILABLE"
-                || finding.summary != primary.summary
-        })
+        && let Some(replacement) = findings
+            .iter()
+            .find(|finding| finding.code() == replacement_code)
     {
         primary.summary = replacement.summary.clone();
         primary.why = replacement.why.clone();
