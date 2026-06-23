@@ -7139,6 +7139,15 @@ fn diagnose_tools(
         );
     }
     for name in &requirement_surface.presence_only_tools {
+        if requirement_surface
+            .tools
+            .keys()
+            .any(|owned_tool_name| {
+                owned_tool_name == name || tool_executable_name(owned_tool_name) == name
+            })
+        {
+            continue;
+        }
         let executable_candidates = vec![name.to_string()];
         container_probe_started |= diagnose_command_version(
             "tool",
@@ -21147,6 +21156,50 @@ tasks:
             .filter(|finding| finding.summary == "Missing tool: definitely-not-installed")
             .count();
         assert_eq!(missing, 1, "{report:?}");
+    }
+
+    #[test]
+    fn preconditions_dedupe_missing_tool_alias_for_owned_requirement() {
+        let _guard = env_mutex_lock();
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          maven: "*"
+tasks:
+  setup:
+    context: host
+    command:
+      exe: mvn
+      args:
+        - test
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_preconditions(&contract, synthetic_contract_path());
+        let canonical_missing = report
+            .findings
+            .iter()
+            .filter(|finding| finding.summary == "Missing tool: maven")
+            .count();
+        assert_eq!(canonical_missing, 1, "{report:?}");
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.summary != "Missing tool: mvn"),
+            "{report:?}"
+        );
     }
 
     #[test]
