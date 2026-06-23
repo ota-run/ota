@@ -9588,6 +9588,7 @@ fn execute_reset_compose_service_volume_action(
         &compose_env,
         ["compose", "stop", service],
         format!("stop compose service `{service}`"),
+        true,
     )? {
         stdout.push_str(message.as_str());
     }
@@ -9598,6 +9599,7 @@ fn execute_reset_compose_service_volume_action(
         &compose_env,
         ["compose", "rm", "-f", service],
         format!("remove compose service `{service}`"),
+        false,
     )? {
         stdout.push_str(message.as_str());
     }
@@ -9744,6 +9746,7 @@ fn run_compose_service_reset_step<const N: usize>(
     compose_env: &BTreeMap<String, String>,
     args: [&str; N],
     label: String,
+    best_effort: bool,
 ) -> Result<Option<String>, RunError> {
     let output = Command::new(provider)
         .current_dir(compose_dir)
@@ -9756,6 +9759,12 @@ fn run_compose_service_reset_step<const N: usize>(
         })?;
     if output.status.success() {
         return Ok(Some(format!("{label}\n")));
+    }
+    if !best_effort {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not {label}: {}", rendered_process_failure(&output)),
+        });
     }
     Ok(Some(format!(
         "{label} returned non-zero and was treated as best-effort: {}\n",
@@ -53501,6 +53510,106 @@ exit 1
             "{}",
             second.stdout
         );
+    }
+
+    #[test]
+    fn reset_compose_service_volume_action_fails_when_service_remove_fails() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  postgres:reset:
+    action:
+      kind: reset_compose_service_volume
+      service: postgres
+      volume: app_postgres-data
+      compose:
+        files:
+          - docker-compose.yml
+        project_name: app
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            format!(
+                r#"#!/bin/sh
+state_dir="{state_dir}"
+mkdir -p "$state_dir"
+
+if [ "$1" = "compose" ] && [ "$2" = "stop" ]; then
+  exit 0
+fi
+
+if [ "$1" = "compose" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  echo "compose rm failed" >&2
+  exit 1
+fi
+
+if [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then
+  if [ -f "$state_dir/volume.$3" ]; then
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ "$1" = "volume" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  rm -f "$state_dir/volume.$4"
+  exit 0
+fi
+
+exit 1
+"#,
+                state_dir = state_dir.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        fs::write(state_dir.join("volume.app_postgres-data"), "").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let error = run_task(&fixture.contract, fixture.file_path(), "postgres:reset")
+            .expect_err("reset_compose_service_volume should fail when compose rm fails");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        match error {
+            RunError::FileActionFailed { message, .. } => {
+                assert!(
+                    message.contains("could not remove compose service `postgres`"),
+                    "{}",
+                    message
+                );
+                assert!(message.contains("compose rm failed"), "{}", message);
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

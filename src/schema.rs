@@ -5650,16 +5650,16 @@ pub struct TaskEnsureDirectoryActionSpec {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskEnsureContainerNetworkActionSpec {
-    #[serde(default, skip_serializing_if = "is_default_container_network_provider")]
-    pub provider: TaskContainerNetworkProvider,
+    #[serde(default, skip_serializing_if = "is_default_container_runtime_provider")]
+    pub provider: TaskContainerRuntimeProvider,
     pub name: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskResetComposeServiceVolumeActionSpec {
-    #[serde(default, skip_serializing_if = "is_default_container_network_provider")]
-    pub provider: TaskContainerNetworkProvider,
+    #[serde(default, skip_serializing_if = "is_default_container_runtime_provider")]
+    pub provider: TaskContainerRuntimeProvider,
     pub service: String,
     pub volume: String,
     #[serde(default)]
@@ -5668,12 +5668,12 @@ pub struct TaskResetComposeServiceVolumeActionSpec {
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum TaskContainerNetworkProvider {
+pub enum TaskContainerRuntimeProvider {
     #[default]
     Docker,
 }
 
-impl TaskContainerNetworkProvider {
+impl TaskContainerRuntimeProvider {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Docker => "docker",
@@ -5681,8 +5681,8 @@ impl TaskContainerNetworkProvider {
     }
 }
 
-const fn is_default_container_network_provider(value: &TaskContainerNetworkProvider) -> bool {
-    matches!(value, TaskContainerNetworkProvider::Docker)
+const fn is_default_container_runtime_provider(value: &TaskContainerRuntimeProvider) -> bool {
+    matches!(value, TaskContainerRuntimeProvider::Docker)
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
