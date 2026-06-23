@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- fixed V10 receipt-diff correlation fallback so `ota receipt --baseline latest` now marks
+  resolved blockers as likely related when contract drift clearly explains a resolved finding and
+  no new material blockers were introduced; semantic snapshot diffs no longer collapse to
+  `no_clear_correlation` just because the change fixed one blocker while other unrelated blockers
+  still remain
 - fixed `ota receipt --snapshot latest` and `--baseline latest` fallback for archived repo
   receipts that predate workflow-scoped identity widening, so Ota now resolves the newest
   matching contract lineage first by exact identity and then by same-contract lineage instead of

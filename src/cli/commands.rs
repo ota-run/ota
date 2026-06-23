@@ -32979,6 +32979,26 @@ mod receipt_diff_correlation_tests {
     }
 
     #[test]
+    fn receipt_diff_marks_resolved_toolchain_drift_as_likely_related_without_new_blockers() {
+        let change = diff_change("toolchains.python.version", "change");
+        let finding = identified_finding(
+            "OTA_RUNTIME_VERSION_MISMATCH",
+            "Version mismatch for runtime: python",
+        );
+
+        let related = receipt_diff_likely_related_changes(
+            std::slice::from_ref(&change),
+            std::slice::from_ref(&finding),
+            None,
+        );
+        let correlation = receipt_diff_correlation(&[change], &related, &[finding]);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, "toolchains.python.version");
+        assert_eq!(correlation, ReceiptDiffCorrelation::LikelyRelated);
+    }
+
+    #[test]
     fn receipt_diff_matches_execution_runtime_requirement_reference() {
         let change = diff_change("execution.contexts.host.requirements.runtimes.node", "add");
         let finding = identified_finding(
@@ -33927,15 +33947,15 @@ tasks:
 fn receipt_diff_correlation(
     contract_changes: &[DiffChange],
     likely_related_changes: &[DiffChange],
-    introduced: &[Finding],
+    correlation_findings: &[Finding],
 ) -> ReceiptDiffCorrelation {
-    let has_blocking_or_warning = introduced
+    let has_blocking_or_warning = correlation_findings
         .iter()
         .any(|finding| finding.severity != FindingSeverity::Info);
     if has_blocking_or_warning && !likely_related_changes.is_empty() {
         ReceiptDiffCorrelation::LikelyRelated
     } else if has_blocking_or_warning
-        && receipt_diff_has_possible_category_overlap(contract_changes, introduced)
+        && receipt_diff_has_possible_category_overlap(contract_changes, correlation_findings)
     {
         ReceiptDiffCorrelation::PossiblyRelated
     } else {
@@ -34063,8 +34083,19 @@ fn build_repo_receipt_diff_report(
         }
         None => Vec::new(),
     };
-    let likely_related_changes =
-        receipt_diff_likely_related_changes(&contract_changes, &introduced, Some(current_contract));
+    let use_introduced_for_correlation = introduced
+        .iter()
+        .any(|finding| finding.severity != FindingSeverity::Info);
+    let correlation_findings = if use_introduced_for_correlation {
+        &introduced
+    } else {
+        &resolved
+    };
+    let likely_related_changes = receipt_diff_likely_related_changes(
+        &contract_changes,
+        correlation_findings,
+        Some(current_contract),
+    );
     let summary = ReceiptDiffSummary {
         baseline_ok: baseline.ok,
         current_ok: current.ok,
@@ -34083,7 +34114,7 @@ fn build_repo_receipt_diff_report(
             correlation: receipt_diff_correlation(
                 &contract_changes,
                 &likely_related_changes,
-                &introduced,
+                correlation_findings,
             ),
         },
         introduced: receipt_diff_counts(&introduced),
