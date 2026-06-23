@@ -21,7 +21,7 @@
 //   If you need additional information or have any questions, please email: os@ota.run
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 
@@ -4600,7 +4600,14 @@ fn command_output(
     mode: ProvisioningOutputMode,
     loader_label: Option<&str>,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
-    let mut child = Command::new(command);
+    let resolved_command = if command.contains(std::path::MAIN_SEPARATOR)
+        && Path::new(command).is_relative()
+    {
+        working_dir.join(command)
+    } else {
+        PathBuf::from(command)
+    };
+    let mut child = Command::new(&resolved_command);
     child.args(args);
     command_output_from_child(child, command, working_dir, mode, loader_label)
 }
@@ -6193,6 +6200,33 @@ mod tests {
         unsafe {
             env::set_var("PATH", original_path);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_output_executes_relative_repo_managed_binary_from_working_dir() {
+        let temp = TempDir::new().unwrap();
+        let managed_bin = temp.path().join(".ota/state/source-managed/bin");
+        fs::create_dir_all(&managed_bin).unwrap();
+        let tool = managed_bin.join("vale");
+        fs::write(
+            &tool,
+            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'vale version 3.15.1'\n  exit 0\nfi\nexit 1\n",
+        )
+        .unwrap();
+        make_executable(&tool);
+
+        let output = super::command_output(
+            "./.ota/state/source-managed/bin/vale",
+            &["--version"],
+            temp.path(),
+            ProvisioningOutputMode::Capture,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        assert!(output.stdout.contains("vale version 3.15.1"));
     }
 
     #[test]

@@ -12316,6 +12316,12 @@ fn version_probe_program<'a>(name: &'a str, resolved_path: Option<&'a Path>) -> 
         return resolved_path.unwrap_or_else(|| Path::new(name)).as_os_str();
     }
 
+    if let Some(path) = resolved_path
+        && is_repo_owned_source_managed_probe_path(path)
+    {
+        return path.as_os_str();
+    }
+
     #[cfg(windows)]
     if let Some(path) = resolved_path
         && is_cmd_wrapper_path(path)
@@ -12324,6 +12330,13 @@ fn version_probe_program<'a>(name: &'a str, resolved_path: Option<&'a Path>) -> 
     }
 
     OsStr::new(name)
+}
+
+fn is_repo_owned_source_managed_probe_path(path: &Path) -> bool {
+    let Ok(current_dir) = std::env::current_dir() else {
+        return false;
+    };
+    path.starts_with(current_dir.join(".ota/state/source-managed/bin"))
 }
 
 #[cfg(windows)]
@@ -16694,6 +16707,14 @@ workflows:
                 .iter()
                 .all(|finding| finding.code() != "OTA_TOOL_VERSION_MISMATCH"),
             "unexpected version findings: {:?}",
+            report.findings
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .all(|finding| finding.code() != "OTA_TOOL_PROBE_FAILED"),
+            "unexpected probe-failed findings: {:?}",
             report.findings
         );
     }

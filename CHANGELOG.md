@@ -34,6 +34,10 @@
   tool through `tools.<name>.acquisition.provider: release_asset`, follow-up `ota doctor` and
   `ota up` diagnosis now probe the repo-managed `.ota/state/source-managed/bin` path too instead of
   falsely saying the tool is unavailable on `PATH` after fulfillment already succeeded
+- fixed repo-managed release-asset probe execution across provisioning and doctor: follow-up
+  `vale --version` style probes now execute the managed binary correctly from the repo working
+  directory instead of tripping over relative `.ota/state/source-managed/bin/...` paths during
+  post-fulfillment verification
 - Normalize detected Node engine unions like `22 || 24` into explicit semver branches and honor
   those unions during runtime/toolchain matching, so detector-owned Node version truth no longer
   misclassifies valid installed Node majors.
