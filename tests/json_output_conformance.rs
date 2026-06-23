@@ -399,6 +399,40 @@ tasks:
 }
 
 #[test]
+fn tasks_json_output_with_compose_volume_reset_matches_published_schema() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: task-demo
+tasks:
+  postgres:reset:
+    action:
+      kind: reset_compose_service_volume
+      service: postgres
+      volume: app_postgres-data
+      compose:
+        files:
+          - docker-compose.yml
+        project_name: app
+"#,
+    );
+
+    let json = run_ota(
+        &["tasks", "--json", fixture.path().to_str().unwrap()],
+        fixture.path(),
+    );
+    assert_matches_schema("tasks.json", &json);
+    assert_eq!(json["tasks"][0]["name"], "postgres:reset");
+    assert_eq!(json["tasks"][0]["kind"], "reset_compose_service_volume");
+    assert_eq!(json["tasks"][0]["action"]["kind"], "reset_compose_service_volume");
+    assert_eq!(json["tasks"][0]["action"]["from"], "postgres");
+    assert_eq!(json["tasks"][0]["action"]["to"], "app_postgres-data");
+}
+
+#[test]
 fn tasks_json_output_reports_command_shape() {
     let fixture = TempDir::new().expect("fixture");
     write_contract(
@@ -1102,6 +1136,52 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("run-preview.json", &json);
+}
+
+#[test]
+fn run_dry_run_json_output_reports_compose_volume_reset_action() {
+    let fixture = TempDir::new().expect("fixture");
+    write_contract(
+        &fixture,
+        r#"
+version: 1
+project:
+  name: run-preview-demo
+tasks:
+  postgres:reset:
+    action:
+      kind: reset_compose_service_volume
+      service: postgres
+      volume: app_postgres-data
+      compose:
+        files:
+          - docker-compose.yml
+        project_name: app
+"#,
+    );
+
+    let json = run_ota(
+        &[
+            "run",
+            "postgres:reset",
+            "--dry-run",
+            "--json",
+            fixture.path().to_str().unwrap(),
+        ],
+        fixture.path(),
+    );
+    assert_matches_schema("run-preview.json", &json);
+    assert_eq!(json["requested_task"]["kind"], "reset_compose_service_volume");
+    assert_eq!(
+        json["requested_task"]["action"]["kind"],
+        "reset_compose_service_volume"
+    );
+    assert_eq!(json["requested_task"]["action"]["from"], "postgres");
+    assert_eq!(json["requested_task"]["action"]["to"], "app_postgres-data");
+    assert_eq!(
+        json["plan"]["actions"][0],
+        "would run task action `reset_compose_service_volume` on the host"
+    );
 }
 
 #[test]
