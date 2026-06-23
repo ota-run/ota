@@ -1832,6 +1832,9 @@ Task-effect rules:
   lockfile-backed package-manager install or first-class image hydration; keep
 - use `effects.network_kind: integration_test` for live, staging, or remote-backed verification
   lanes that depend on real services, credentials, or seeded environments beyond the local repo
+- test tasks that declare `requires_services` or `effects.external_state` should normally classify
+  that lane as `integration_test`; validate/doctor surface an advisory when that real-service test
+  truth is left broad or omitted
 - use `effects.network_kind: tool_bootstrap` for finite contract-owned tool installation lanes
   such as bootstrapping `uv` through `pip`; keep
   `effects.network_kind: broad` (or omit `network_kind`) for wider API/remote-call execution

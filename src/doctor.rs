@@ -5006,6 +5006,14 @@ fn diagnose_contract_advisories(
                 }
                 ContractAdvisory::AgentSafeTaskExternalState(advisory)
             }
+            ContractAdvisory::MissingIntegrationTestNetworkKind(advisory) => {
+                if !selected_task_names.is_empty()
+                    && !selected_task_names.contains(advisory.task_name.as_str())
+                {
+                    continue;
+                }
+                ContractAdvisory::MissingIntegrationTestNetworkKind(advisory)
+            }
         };
 
         findings.push(contract_advisory_finding(advisory));
@@ -5112,6 +5120,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
             "Agent-safe task `{}` mutates external state: {}",
             advisory.task_name,
             advisory.systems.join(", ")
+        ),
+        ContractAdvisory::MissingIntegrationTestNetworkKind(advisory) => format!(
+            "Test task `{}` uses real service verification without `effects.network_kind: integration_test`",
+            advisory.task_name
         ),
     };
 
@@ -7167,13 +7179,9 @@ fn diagnose_tools(
         );
     }
     for name in &requirement_surface.presence_only_tools {
-        if requirement_surface
-            .tools
-            .keys()
-            .any(|owned_tool_name| {
-                owned_tool_name == name || tool_executable_name(owned_tool_name) == name
-            })
-        {
+        if requirement_surface.tools.keys().any(|owned_tool_name| {
+            owned_tool_name == name || tool_executable_name(owned_tool_name) == name
+        }) {
             continue;
         }
         let executable_candidates = vec![name.to_string()];

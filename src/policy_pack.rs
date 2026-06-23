@@ -2052,10 +2052,7 @@ fn resolve_network_effect_governance_decision(
                 return (decision, String::from("policies.effects.tasks.network"));
             }
         }
-        (
-            EffectGovernanceScope::Task,
-            crate::schema::TaskNetworkEffectKind::IntegrationTest,
-        ) => {
+        (EffectGovernanceScope::Task, crate::schema::TaskNetworkEffectKind::IntegrationTest) => {
             if let Some(decision) = task.integration_test {
                 return (
                     decision,

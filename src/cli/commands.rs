@@ -1748,6 +1748,17 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::MissingIntegrationTestNetworkKind(value) => format!(
+            "{} task `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            paint_key("Risk:"),
+            render_validate_warning_detail("missing integration-test network classification"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
     }
 }
 
@@ -15447,6 +15458,10 @@ fn collect_task_closure_effects(
                 (Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap), _)
                 | (_, crate::schema::TaskNetworkEffectKind::ToolBootstrap) => {
                     crate::schema::TaskNetworkEffectKind::ToolBootstrap
+                }
+                (Some(crate::schema::TaskNetworkEffectKind::IntegrationTest), _)
+                | (_, crate::schema::TaskNetworkEffectKind::IntegrationTest) => {
+                    crate::schema::TaskNetworkEffectKind::IntegrationTest
                 }
                 _ => crate::schema::TaskNetworkEffectKind::DependencyHydration,
             });
@@ -54198,6 +54213,46 @@ tasks:
             Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
         );
         assert!(container_effects.1.contains("registry"));
+    }
+
+    #[test]
+    fn effect_policy_closure_preserves_integration_test_kind() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+tasks:
+  verify:
+    run: pnpm test
+    depends_on:
+      - setup
+      - test:integration
+  setup:
+    run: pnpm install
+    effects:
+      network: true
+      network_kind: dependency_hydration
+  test:integration:
+    category: test
+    run: pnpm test:integration
+    effects:
+      network: true
+      network_kind: integration_test
+      external_state:
+        - postgres
+"#,
+        )
+        .expect("parse contract");
+
+        let effects =
+            super::collect_task_closure_effects(&contract, "verify", ExecutionOverrides::default());
+        assert_eq!(
+            effects.0,
+            Some(crate::schema::TaskNetworkEffectKind::IntegrationTest)
+        );
+        assert!(effects.1.contains("postgres"));
     }
 
     #[test]

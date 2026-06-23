@@ -30,6 +30,10 @@
   verification lanes no longer need to collapse into `broad`; doctor findings, policy effect
   governance, and contract docs now carry a dedicated network classification for real-service test
   paths
+- fixed `integration_test` effect-kind aggregation so agent-safe advisories and selected-task
+  effect closure reporting preserve real-service verification lanes instead of collapsing them into
+  dependency hydration, and validate now nudges service-backed test tasks onto
+  `effects.network_kind: integration_test`
 - fixed native `ota proof runtime` post-run diagnosis to activate the same `mise` path surface as
   `ota doctor`, `ota up`, and `ota run`, so proof no longer re-checks toolchain-owned runtimes on
   an older parent PATH after the child `ota up --stream` path already resolved through

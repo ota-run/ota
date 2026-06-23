@@ -7440,6 +7440,7 @@ pub enum ContractAdvisory {
     AgentBootstrapBranchTracking(AgentBootstrapBranchTrackingAdvisory),
     AgentSafeTaskNetwork(AgentSafeTaskNetworkAdvisory),
     AgentSafeTaskExternalState(AgentSafeTaskExternalStateAdvisory),
+    MissingIntegrationTestNetworkKind(MissingIntegrationTestNetworkKindAdvisory),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -7676,6 +7677,11 @@ pub struct AgentSafeTaskExternalStateAdvisory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingIntegrationTestNetworkKindAdvisory {
+    pub task_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskExecutionBoundary {
     pub context_name: Option<String>,
     pub backend: Backend,
@@ -7793,6 +7799,9 @@ impl ContractAdvisory {
             },
             ContractAdvisory::AgentSafeTaskExternalState(_) => {
                 "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_EXTERNAL_STATE"
+            }
+            ContractAdvisory::MissingIntegrationTestNetworkKind(_) => {
+                "OTA_CONTRACT_ADVISORY_MISSING_INTEGRATION_TEST_NETWORK_KIND"
             }
         }
     }
@@ -7966,6 +7975,10 @@ impl ContractAdvisory {
                 advisory.task_name,
                 advisory.systems.join(", ")
             ),
+            ContractAdvisory::MissingIntegrationTestNetworkKind(advisory) => format!(
+                "test task `{}` uses real service verification without `effects.network_kind: integration_test`",
+                advisory.task_name
+            ),
         }
     }
 
@@ -8134,6 +8147,10 @@ impl ContractAdvisory {
                 advisory.task_name,
                 advisory.systems.join(", ")
             ),
+            ContractAdvisory::MissingIntegrationTestNetworkKind(advisory) => format!(
+                "task `{}` is a test lane that depends on declared services or external state, but its effects do not classify that path as `integration_test`; this weakens Ota's ability to distinguish real service-backed verification from generic network usage",
+                advisory.task_name
+            ),
         }
     }
 
@@ -8172,7 +8189,8 @@ impl ContractAdvisory {
             | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
-            | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
+            | ContractAdvisory::AgentSafeTaskExternalState(_)
+            | ContractAdvisory::MissingIntegrationTestNetworkKind(_) => None,
         }
     }
 
@@ -8211,7 +8229,8 @@ impl ContractAdvisory {
             | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
-            | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
+            | ContractAdvisory::AgentSafeTaskExternalState(_)
+            | ContractAdvisory::MissingIntegrationTestNetworkKind(_) => None,
         }
     }
 
@@ -8251,7 +8270,8 @@ impl ContractAdvisory {
             | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
-            | ContractAdvisory::AgentSafeTaskExternalState(_) => None,
+            | ContractAdvisory::AgentSafeTaskExternalState(_)
+            | ContractAdvisory::MissingIntegrationTestNetworkKind(_) => None,
         }
     }
 
@@ -8423,6 +8443,10 @@ impl ContractAdvisory {
                 advisory.task_name,
                 advisory.systems.join(", ")
             ),
+            ContractAdvisory::MissingIntegrationTestNetworkKind(advisory) => format!(
+                "declare `effects.network: true` with `effects.network_kind: integration_test` for `{}`, and keep `requires_services`, `requirements.env`, and `effects.external_state` explicit on that verification lane",
+                advisory.task_name
+            ),
         }
     }
 }
@@ -8563,6 +8587,9 @@ pub fn collect_contract_advisories_with_contract_path(
     ));
     advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
     advisories.extend(collect_agent_safe_task_effect_advisories(contract));
+    advisories.extend(collect_missing_integration_test_network_kind_advisories(
+        contract,
+    ));
     advisories
 }
 
@@ -11193,6 +11220,10 @@ fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<Contrac
                     | (_, TaskNetworkEffectKind::ToolBootstrap) => {
                         TaskNetworkEffectKind::ToolBootstrap
                     }
+                    (Some(TaskNetworkEffectKind::IntegrationTest), _)
+                    | (_, TaskNetworkEffectKind::IntegrationTest) => {
+                        TaskNetworkEffectKind::IntegrationTest
+                    }
                     _ => TaskNetworkEffectKind::DependencyHydration,
                 });
             }
@@ -11224,6 +11255,29 @@ fn collect_agent_safe_task_effect_advisories(contract: &Contract) -> Vec<Contrac
         }
     }
 
+    advisories
+}
+
+fn collect_missing_integration_test_network_kind_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        if task.category.as_deref() != Some("test") {
+            continue;
+        }
+        if task.effects.network_kind == Some(TaskNetworkEffectKind::IntegrationTest) {
+            continue;
+        }
+        if task.requires_services.is_empty() && task.effects.external_state.is_empty() {
+            continue;
+        }
+        advisories.push(ContractAdvisory::MissingIntegrationTestNetworkKind(
+            MissingIntegrationTestNetworkKindAdvisory {
+                task_name: task_name.clone(),
+            },
+        ));
+    }
     advisories
 }
 
@@ -31224,6 +31278,99 @@ tasks:
             advisory,
             ContractAdvisory::AgentSafeTaskExternalState(value)
                 if value.task_name == "verify" && value.systems == vec![String::from("docker")]
+        )));
+    }
+
+    #[test]
+    fn collects_agent_safe_task_integration_test_advisory_from_dependency_closure() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  verify:
+    run: pnpm test:live
+    safe_for_agent: true
+    depends_on: [integration]
+  integration:
+    run: pnpm test:integration
+    effects:
+      network: true
+      network_kind: integration_test
+      external_state:
+        - postgres
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::AgentSafeTaskNetwork(value)
+                if value.task_name == "verify"
+                    && value.network_kind == TaskNetworkEffectKind::IntegrationTest
+        )));
+    }
+
+    #[test]
+    fn collects_missing_integration_test_network_kind_advisory_for_service_backed_test_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    category: test
+    run: bundle exec rspec
+    requires_services:
+      - postgres
+    effects:
+      external_state:
+        - postgres
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::MissingIntegrationTestNetworkKind(value)
+                if value.task_name == "test"
+        )));
+    }
+
+    #[test]
+    fn skips_missing_integration_test_network_kind_advisory_when_task_is_classified() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:
+    category: test
+    run: bundle exec rspec
+    requires_services:
+      - postgres
+    effects:
+      network: true
+      network_kind: integration_test
+      external_state:
+        - postgres
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(!advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::MissingIntegrationTestNetworkKind(value)
+                if value.task_name == "test"
         )));
     }
 

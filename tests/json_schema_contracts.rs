@@ -207,7 +207,11 @@ fn published_contract_schema_includes_integration_test_network_kind() {
         .as_array()
         .expect("task effects network kind enum");
 
-    assert!(network_kind_enum.iter().any(|entry| entry == "integration_test"));
+    assert!(
+        network_kind_enum
+            .iter()
+            .any(|entry| entry == "integration_test")
+    );
 }
 
 #[test]
