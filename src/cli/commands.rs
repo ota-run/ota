@@ -2481,6 +2481,23 @@ pub fn proof_runtime(
                     &proof_summary_for_output,
                     up_process_failure,
                 );
+                let proof_likely_cause = proof_runtime_likely_cause(
+                    &proof_summary_for_output,
+                    up_process_failure,
+                    &up_log_artifact_path,
+                );
+                proof_summary_for_output =
+                    proof_runtime_refined_doctor_summary(&proof_summary_for_output, proof_likely_cause.as_ref());
+                let proof_likely_cause_text = proof_likely_cause.as_ref().and_then(|cause| {
+                    (!proof_runtime_likely_cause_redundant_with_primary_blocker(
+                        &proof_summary_for_output,
+                        cause,
+                    ))
+                    .then(|| cause.message())
+                });
+                let proof_likely_cause_evidence = proof_likely_cause
+                    .as_ref()
+                    .map(ProofRuntimeLikelyCause::json_evidence);
                 let primary_blocker =
                     proof_runtime_blocking_primary_blocker(&proof_summary_for_output);
                 let primary_blocker_error = primary_blocker
@@ -2537,17 +2554,6 @@ pub fn proof_runtime(
                     proof_runtime_phase_label(refined_proof_phase.as_str())
                 };
                 let ok = proof_runtime_ok(&proof_summary_for_output, proof_error.as_deref());
-                let proof_likely_cause = proof_runtime_likely_cause(
-                    &proof_summary_for_output,
-                    up_process_failure,
-                    &up_log_artifact_path,
-                );
-                let proof_likely_cause_text = proof_likely_cause
-                    .as_ref()
-                    .map(ProofRuntimeLikelyCause::message);
-                let proof_likely_cause_evidence = proof_likely_cause
-                    .as_ref()
-                    .map(ProofRuntimeLikelyCause::json_evidence);
                 let proof_failure_class = proof_runtime_failure_class(
                     &proof_summary_for_output,
                     refined_proof_phase.as_str(),
@@ -47756,6 +47762,17 @@ unable to get image 'ollama/ollama:latest': Cannot connect to the Docker daemon 
     }
 
     #[test]
+    fn normalize_container_engine_unavailable_details_strips_why_wrapper() {
+        let normalized = super::normalize_container_engine_unavailable_details(
+            "Why: container execution resolved `docker`, but `docker info` could not reach a usable container backend: Cannot connect to the Docker daemon at unix:///tmp/docker.sock. Is the docker daemon running?",
+        );
+        assert_eq!(
+            normalized,
+            "container execution resolved `docker`, but `docker info` could not reach a usable container backend: Cannot connect to the Docker daemon at unix:///tmp/docker.sock. Is the docker daemon running?"
+        );
+    }
+
+    #[test]
     fn detached_run_failure_hint_falls_back_to_last_relevant_line() {
         let dir = TempDir::new().expect("temp dir should create");
         let log_path = dir.path().join("up-detached-run.log");
@@ -83803,8 +83820,7 @@ fn proof_runtime_doctor_artifact_json(
         None,
     );
     let refined_findings = proof_runtime_refined_doctor_findings(rewritten_findings, likely_cause);
-    let refined_summary =
-        proof_runtime_refined_doctor_summary(summary, &refined_findings, likely_cause);
+    let refined_summary = proof_runtime_refined_doctor_summary(summary, likely_cause);
     let workflow_summary =
         resolve_selected_workflow_summary(contract, contract_path, workflow_name)?;
     let agent_summary = contract.agent.as_ref().and_then(AgentSummary::from_config);
@@ -83842,21 +83858,14 @@ fn proof_runtime_doctor_artifact_json(
 
 fn proof_runtime_refined_doctor_summary(
     summary: &DoctorSummary,
-    findings: &[Finding],
     likely_cause: Option<&ProofRuntimeLikelyCause>,
 ) -> DoctorSummary {
     let mut refined = summary.clone();
-    let Some(replacement_code) = likely_cause
-        .and_then(proof_runtime_refined_run_exit_finding)
-        .map(|replacement| replacement.code().to_string())
+    let Some(replacement) = likely_cause.and_then(proof_runtime_refined_run_exit_finding)
     else {
         return refined;
     };
-    if let Some(primary) = refined.primary_blocker.as_mut()
-        && let Some(replacement) = findings
-            .iter()
-            .find(|finding| finding.code() == replacement_code)
-    {
+    if let Some(primary) = refined.primary_blocker.as_mut() {
         primary.summary = replacement.summary.clone();
         primary.why = replacement.why.clone();
         primary.next = replacement.next.clone();
@@ -83910,6 +83919,19 @@ fn proof_runtime_refined_run_exit_finding(
         )),
         _ => None,
     }
+}
+
+fn proof_runtime_likely_cause_redundant_with_primary_blocker(
+    summary: &DoctorSummary,
+    likely_cause: &ProofRuntimeLikelyCause,
+) -> bool {
+    let Some(primary) = summary.primary_blocker.as_ref() else {
+        return false;
+    };
+    let Some(replacement) = proof_runtime_refined_run_exit_finding(likely_cause) else {
+        return false;
+    };
+    primary.code.as_deref() == Some(replacement.code())
 }
 
 fn wait_for_proof_runtime_readiness(
@@ -84926,6 +84948,11 @@ fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path
 
 fn normalize_container_engine_unavailable_details(details: &str) -> String {
     let mut trimmed = details.trim().trim_start_matches('»').trim().to_string();
+    if let Some(rest) = trimmed.strip_prefix("Why:") {
+        trimmed = rest.trim().to_string();
+    } else if let Some(rest) = trimmed.strip_prefix("why:") {
+        trimmed = rest.trim().to_string();
+    }
     let prefix = "container engine unavailable:";
     while trimmed.contains(prefix) {
         let Some(start) = trimmed.find('(') else {
