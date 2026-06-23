@@ -9603,6 +9603,15 @@ fn execute_reset_compose_service_volume_action(
     )? {
         stdout.push_str(message.as_str());
     }
+    if let Some(message) = remove_remaining_compose_service_containers(
+        task_name,
+        provider,
+        &compose_dir,
+        &compose_env,
+        service,
+    )? {
+        stdout.push_str(message.as_str());
+    }
 
     let inspect_output = Command::new(provider)
         .args(["volume", "inspect", volume])
@@ -9658,6 +9667,72 @@ fn execute_reset_compose_service_volume_action(
     stdout.push_str(format!("restarted {provider} compose service `{service}`\n").as_str());
 
     Ok(file_action_output(stdout))
+}
+
+fn remove_remaining_compose_service_containers(
+    task_name: &str,
+    provider: &str,
+    compose_dir: &Path,
+    compose_env: &BTreeMap<String, String>,
+    service: &str,
+) -> Result<Option<String>, RunError> {
+    let output = Command::new(provider)
+        .current_dir(compose_dir)
+        .envs(compose_env)
+        .args(["compose", "ps", "-aq", service])
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not inspect remaining compose service containers for `{service}`: {source}"
+            ),
+        })?;
+    if !output.status.success() {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not inspect remaining compose service containers for `{service}`: {}",
+                rendered_process_failure(&output)
+            ),
+        });
+    }
+    let container_ids = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if container_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let mut removed = Vec::new();
+    for container_id in container_ids {
+        let rm_output = Command::new(provider)
+            .args(["container", "rm", "-f", &container_id])
+            .output()
+            .map_err(|source| RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not remove remaining {provider} container `{container_id}` for compose service `{service}`: {source}"
+                ),
+            })?;
+        if !rm_output.status.success() {
+            return Err(RunError::FileActionFailed {
+                task: task_name.to_string(),
+                message: format!(
+                    "could not remove remaining {provider} container `{container_id}` for compose service `{service}`: {}",
+                    rendered_process_failure(&rm_output)
+                ),
+            });
+        }
+        removed.push(container_id);
+    }
+
+    Ok(Some(format!(
+        "removed remaining {provider} compose service containers for `{service}`: {}\n",
+        removed.join(", ")
+    )))
 }
 
 fn compose_action_working_dir(
@@ -53422,19 +53497,33 @@ state_dir="{state_dir}"
 mkdir -p "$state_dir"
 
 if [ "$1" = "compose" ] && [ "$2" = "stop" ]; then
-  if [ -f "$state_dir/service.$3" ]; then
-    rm -f "$state_dir/service.$3"
+  if [ -f "$state_dir/running.$3" ]; then
+    rm -f "$state_dir/running.$3"
     exit 0
   fi
   exit 1
 fi
 
 if [ "$1" = "compose" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  rm -f "$state_dir/container.$4"
+  exit 0
+fi
+
+if [ "$1" = "compose" ] && [ "$2" = "ps" ] && [ "$3" = "-aq" ]; then
+  if [ -f "$state_dir/container.$4" ]; then
+    printf '%s\n' "$4-container"
+  fi
   exit 0
 fi
 
 if [ "$1" = "compose" ] && [ "$2" = "up" ] && [ "$3" = "-d" ]; then
-  : > "$state_dir/service.$4"
+  : > "$state_dir/running.$4"
+  : > "$state_dir/container.$4"
+  exit 0
+fi
+
+if [ "$1" = "container" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  rm -f "$state_dir/container.postgres"
   exit 0
 fi
 
@@ -53459,7 +53548,8 @@ exit 1
         let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
         permissions.set_mode(0o755);
         fs::set_permissions(&docker_path, permissions).unwrap();
-        fs::write(state_dir.join("service.postgres"), "").unwrap();
+        fs::write(state_dir.join("running.postgres"), "").unwrap();
+        fs::write(state_dir.join("container.postgres"), "").unwrap();
         fs::write(state_dir.join("volume.app_postgres-data"), "").unwrap();
 
         let original_path = env::var_os("PATH");
@@ -53502,7 +53592,8 @@ exit 1
             "{}",
             first.stdout
         );
-        assert!(state_dir.join("service.postgres").is_file());
+        assert!(state_dir.join("running.postgres").is_file());
+        assert!(state_dir.join("container.postgres").is_file());
         assert!(!state_dir.join("volume.app_postgres-data").exists());
         assert_eq!(second.exit_code, 0);
         assert!(
@@ -53510,6 +53601,129 @@ exit 1
             "{}",
             second.stdout
         );
+    }
+
+    #[test]
+    fn reset_compose_service_volume_action_removes_leftover_service_container_before_volume_reset() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  postgres:reset:
+    action:
+      kind: reset_compose_service_volume
+      service: postgres
+      volume: app_postgres-data
+      compose:
+        files:
+          - docker-compose.yml
+        project_name: app
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            format!(
+                r#"#!/bin/sh
+state_dir="{state_dir}"
+mkdir -p "$state_dir"
+
+if [ "$1" = "compose" ] && [ "$2" = "stop" ]; then
+  rm -f "$state_dir/running.$3"
+  exit 0
+fi
+
+if [ "$1" = "compose" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  # Simulate compose reporting success while leaving the stopped container behind.
+  exit 0
+fi
+
+if [ "$1" = "compose" ] && [ "$2" = "ps" ] && [ "$3" = "-aq" ]; then
+  if [ -f "$state_dir/container.$4" ]; then
+    printf '%s\n' "$4-container"
+  fi
+  exit 0
+fi
+
+if [ "$1" = "container" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  rm -f "$state_dir/container.postgres"
+  exit 0
+fi
+
+if [ "$1" = "compose" ] && [ "$2" = "up" ] && [ "$3" = "-d" ]; then
+  : > "$state_dir/running.$4"
+  : > "$state_dir/container.$4"
+  exit 0
+fi
+
+if [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then
+  if [ -f "$state_dir/volume.$3" ]; then
+    exit 0
+  fi
+  exit 1
+fi
+
+if [ "$1" = "volume" ] && [ "$2" = "rm" ] && [ "$3" = "-f" ]; then
+  if [ -f "$state_dir/container.postgres" ]; then
+    echo "volume still attached" >&2
+    exit 1
+  fi
+  rm -f "$state_dir/volume.$4"
+  exit 0
+fi
+
+exit 1
+"#,
+                state_dir = state_dir.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+        fs::write(state_dir.join("running.postgres"), "").unwrap();
+        fs::write(state_dir.join("container.postgres"), "").unwrap();
+        fs::write(state_dir.join("volume.app_postgres-data"), "").unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let result = run_task(&fixture.contract, fixture.file_path(), "postgres:reset")
+            .expect("reset_compose_service_volume should remove leftover containers before volume reset");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(result.exit_code, 0);
+        assert!(
+            result
+                .stdout
+                .contains("removed remaining docker compose service containers for `postgres`: postgres-container"),
+            "{}",
+            result.stdout
+        );
+        assert!(!state_dir.join("volume.app_postgres-data").exists());
     }
 
     #[test]
