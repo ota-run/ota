@@ -707,11 +707,24 @@ pub struct RunPreviewPlan {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub dependency_chain: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dependency_steps: Vec<RunPreviewDependencyStep>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub requirement_lines: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct RunPreviewDependencyStep {
+    pub task: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    pub backend: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    pub backend_selection_source: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -3373,7 +3386,7 @@ impl<'a> TaskSummary<'a> {
             aggregate: summarize_task_aggregate(resolved_execution.aggregate()),
             effects: TaskEffectsSummary::from_spec(&task.effects),
             selected_variant_os: resolved_execution.os,
-            depends_on: task.depends_on.clone(),
+            depends_on: task.depends_on_for_backend(selected_backend).to_vec(),
             requires_services: task.requires_services.clone(),
             when_checks: task.when.checks.clone(),
             after_success: task.after_success.clone(),
@@ -3424,6 +3437,10 @@ impl<'a> TaskSummary<'a> {
                             TaskModeView {
                                 mode: task_mode_name(backend),
                                 context: branch_effective.context_name,
+                                depends_on: branch
+                                    .depends_on
+                                    .clone()
+                                    .unwrap_or_else(|| task.depends_on.clone()),
                                 env_files: branch.env_files.iter().map(String::as_str).collect(),
                                 adapter_inputs: summarize_task_adapter_inputs(
                                     &branch.adapter_inputs,
@@ -3483,6 +3500,8 @@ pub struct TaskModeView<'a> {
     pub mode: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_files: Vec<&'a str>,
     #[serde(skip_serializing_if = "TaskAdapterInputsSummary::is_empty")]

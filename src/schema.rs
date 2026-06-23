@@ -513,7 +513,7 @@ impl Contract {
             }
         }
 
-        for dependency in &task.depends_on {
+        for dependency in task.all_depends_on() {
             self.collect_task_dependency_closure(dependency, visited, ordered);
         }
 
@@ -3811,6 +3811,114 @@ pub struct TaskSpec {
 }
 
 impl TaskSpec {
+    pub fn all_depends_on(&self) -> Vec<&String> {
+        let mut dependencies = self.depends_on.iter().collect::<Vec<_>>();
+        if let Some(execution) = self.execution.as_ref() {
+            for (_, branch) in execution.modes.iter() {
+                if let Some(branch_depends_on) = branch.depends_on.as_ref() {
+                    dependencies.extend(branch_depends_on.iter());
+                }
+            }
+        }
+        dependencies
+    }
+
+    pub fn depends_on_for_backend(&self, backend: Backend) -> &[String] {
+        self.mode_execution_branch(backend)
+            .and_then(|branch| branch.depends_on.as_deref())
+            .unwrap_or(self.depends_on.as_slice())
+    }
+
+    pub fn dependency_backend_override_for_parent(
+        &self,
+        requested_backend: Option<Backend>,
+        inherited_backend: Backend,
+    ) -> Option<Backend> {
+        let preferred_backend = requested_backend.unwrap_or(inherited_backend);
+
+        if requested_backend.is_some() {
+            if self.mode_default_backend().is_some() {
+                let supports_selected_backend = self.mode_default_backend()
+                    == Some(preferred_backend)
+                    || self.mode_execution_branch(preferred_backend).is_some();
+                if supports_selected_backend {
+                    Some(preferred_backend)
+                } else {
+                    None
+                }
+            } else {
+                Some(preferred_backend)
+            }
+        } else if self.mode_default_backend() == Some(preferred_backend)
+            || self.mode_execution_branch(preferred_backend).is_some()
+        {
+            Some(preferred_backend)
+        } else {
+            None
+        }
+    }
+
+    pub fn backend_selection_source(
+        &self,
+        execution: Option<&Execution>,
+        selected_backend: Backend,
+        explicit_override: bool,
+        inherited_backend: Option<Backend>,
+    ) -> &'static str {
+        if explicit_override {
+            return "override";
+        }
+
+        let canonical_backend = self.workflow_backend(execution);
+        if inherited_backend == Some(selected_backend)
+            && canonical_backend != selected_backend
+            && self.dependency_backend_override_for_parent(None, selected_backend)
+                == Some(selected_backend)
+        {
+            return "inherited parent backend";
+        }
+
+        if self.mode_default_backend() == Some(selected_backend) {
+            return "task default mode";
+        }
+
+        if self
+            .mode_execution_branch(selected_backend)
+            .and_then(|branch| branch.context.as_deref())
+            .is_some()
+        {
+            return "mode context";
+        }
+
+        if let Some(context_name) = self.context.as_deref()
+            && let Some(context) =
+                execution.and_then(|execution| execution.contexts.get(context_name))
+            && context.backend == selected_backend
+        {
+            return "task context";
+        }
+
+        if execution
+            .and_then(Execution::default_context)
+            .is_some_and(|(_, context)| context.backend == selected_backend)
+        {
+            return "default context";
+        }
+
+        if execution
+            .and_then(|execution| execution.preferred)
+            .is_some_and(|backend| backend == selected_backend)
+        {
+            return "contract preferred";
+        }
+
+        if self.mode_execution_branch(selected_backend).is_some() {
+            return "mode branch support";
+        }
+
+        "default"
+    }
+
     pub fn default_execution_kind(&self) -> Option<&'static str> {
         match (
             self.run.as_ref(),
@@ -4716,6 +4824,8 @@ impl TaskModeBranchesSpec {
 pub struct TaskModeBranchSpec {
     #[serde(default)]
     pub context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<Vec<String>>,
     #[serde(default)]
     pub orchestrator: Option<TaskExecutionOrchestratorSpec>,
     #[serde(default)]

@@ -1,0 +1,49 @@
+# Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+
+version: 1
+project:
+  name: receipt-workflow-history
+  description: Reference contract showing workflow-scoped receipt archive and baseline truth
+  type: application
+
+env:
+  vars:
+    APP_PORT:
+      required: false
+      default: "3000"
+  profiles:
+    app:
+      render:
+        dotenv:
+          path: .env.app
+          include:
+            - APP_PORT
+
+tasks:
+  verify:
+    description: Run the finite verification lane
+    command:
+      exe: npm
+      args:
+        - run
+        - verify
+  dev:
+    description: Start the long-running app lane
+    launch:
+      kind: command
+      exe: npm
+      args:
+        - run
+        - dev
+
+workflows:
+  default: verify
+  verify:
+    run:
+      task: verify
+  app:
+    env:
+      profile: app
+    run:
+      task: dev

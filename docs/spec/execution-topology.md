@@ -302,6 +302,8 @@ tasks:
       modes:
         native:
           context: host
+          depends_on:
+            - setup:host
           env:
             DB_URL: jdbc:postgresql://127.0.0.1:5432/app
           launch:
@@ -311,6 +313,8 @@ tasks:
         container:
           context: app
           lifecycle: persistent
+          depends_on:
+            - setup
           env:
             DB_URL: jdbc:postgresql://postgres:5432/app
           launch:
@@ -326,7 +330,8 @@ This keeps task identity stable:
 - `ota run start` uses `default_mode` when declared
 - `ota run start --mode native` selects `modes.native`
 - `ota run start --mode container` selects `modes.container`
-- mode branches can override `context`, `lifecycle`, `env`, `run`/`script`/`launch`, and `runtime`
+- mode branches can override `context`, `depends_on`, `lifecycle`, `env`, `run`/`script`/`launch`, and `runtime`
+- `modes.<mode>.depends_on` replaces the task-level dependency list for that selected mode, which is the canonical way to keep host/container preflight truthful without splitting task identity
 - if a selected mode branch is missing, ota falls back to the task-level execution body and task-level execution settings
 
 ### `execution.contexts.<name>.attachments.isolated_paths`

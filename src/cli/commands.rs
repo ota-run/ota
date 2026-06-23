@@ -15343,7 +15343,13 @@ fn run_preview_preconditions_report(
         task_name,
         overrides,
     );
-    append_safe_task_effect_policy_findings(contract, contract_path, task_name, &mut report);
+    append_safe_task_effect_policy_findings(
+        contract,
+        contract_path,
+        task_name,
+        overrides,
+        &mut report,
+    );
     report
 }
 
@@ -15366,18 +15372,10 @@ fn task_effect_governance_scope(contract: &Contract, task_name: &str) -> EffectG
     }
 }
 
-fn task_effect_dependency_names<'a>(task: &'a TaskSpec) -> impl Iterator<Item = &'a str> + 'a {
-    task.all_depends_on()
-        .into_iter()
-        .chain(task.after_success.iter())
-        .chain(task.after_failure.iter())
-        .chain(task.after_always.iter())
-        .map(String::as_str)
-}
-
 fn collect_task_closure_effects(
     contract: &Contract,
     task_name: &str,
+    overrides: ExecutionOverrides,
 ) -> (
     Option<crate::schema::TaskNetworkEffectKind>,
     BTreeSet<String>,
@@ -15385,10 +15383,12 @@ fn collect_task_closure_effects(
     let mut network_kind: Option<crate::schema::TaskNetworkEffectKind> = None;
     let mut external_state = BTreeSet::new();
     let mut visited = BTreeSet::new();
-    let mut stack = vec![task_name.to_string()];
+    let mut stack = vec![(task_name.to_string(), overrides)];
 
-    while let Some(current) = stack.pop() {
-        if !visited.insert(current.clone()) {
+    while let Some((current, current_overrides)) = stack.pop() {
+        let backend =
+            effective_task_execution(contract, current.as_str(), current_overrides).backend;
+        if !visited.insert((current.clone(), format_backend(backend).to_string())) {
             continue;
         }
         let Some(task) = contract.tasks.get(current.as_str()) else {
@@ -15410,9 +15410,27 @@ fn collect_task_closure_effects(
             });
         }
         external_state.extend(task.effects.external_state.iter().cloned());
-        for dependency in task_effect_dependency_names(task) {
-            if contract.tasks.contains_key(dependency) {
-                stack.push(dependency.to_string());
+        for dependency in task.depends_on_for_backend(backend) {
+            let Some(dependency_task) = contract.tasks.get(dependency) else {
+                continue;
+            };
+            stack.push((
+                dependency.to_string(),
+                ExecutionOverrides {
+                    backend: dependency_task
+                        .dependency_backend_override_for_parent(current_overrides.backend, backend),
+                    ..current_overrides
+                },
+            ));
+        }
+        for hook in task
+            .after_success
+            .iter()
+            .chain(task.after_failure.iter())
+            .chain(task.after_always.iter())
+        {
+            if contract.tasks.contains_key(hook) {
+                stack.push((hook.to_string(), ExecutionOverrides::default()));
             }
         }
     }
@@ -15424,11 +15442,13 @@ fn safe_task_effect_policy_lines(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
+    overrides: ExecutionOverrides,
 ) -> Vec<String> {
     let Ok(Some((policy_pack, _policy_path))) = load_org_policy_pack_auto(contract_path) else {
         return Vec::new();
     };
-    let (network_kind, external_state) = collect_task_closure_effects(contract, task_name);
+    let (network_kind, external_state) =
+        collect_task_closure_effects(contract, task_name, overrides);
     let scope = task_effect_governance_scope(contract, task_name);
     let overrides = current_effect_governance_overrides();
     policy_pack
@@ -15452,12 +15472,14 @@ fn append_safe_task_effect_policy_findings(
     contract: &Contract,
     contract_path: &Path,
     task_name: &str,
+    execution_overrides: ExecutionOverrides,
     report: &mut DoctorReport,
 ) {
     let Ok(Some((policy_pack, policy_path))) = load_org_policy_pack_auto(contract_path) else {
         return;
     };
-    let (network_kind, external_state) = collect_task_closure_effects(contract, task_name);
+    let (network_kind, external_state) =
+        collect_task_closure_effects(contract, task_name, execution_overrides);
     let scope = task_effect_governance_scope(contract, task_name);
     let overrides = current_effect_governance_overrides();
     let decisions = policy_pack.effect_governance_decisions(
@@ -53753,6 +53775,77 @@ tasks:
     }
 
     #[test]
+    fn effect_policy_closure_uses_selected_mode_specific_dependencies() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      container:
+        image: node:24-bookworm
+tasks:
+  setup:
+    context: app
+    run: npm ci
+    effects:
+      network: true
+      network_kind: dependency_hydration
+      external_state:
+        - registry
+  setup:host:
+    context: host
+    run: npm ci
+  typecheck:
+    context: app
+    command:
+      exe: npm
+      args: [run, typecheck]
+    depends_on:
+      - setup
+    execution:
+      modes:
+        native:
+          context: host
+          depends_on:
+            - setup:host
+"#,
+        )
+        .expect("parse contract");
+
+        let native_effects = super::collect_task_closure_effects(
+            &contract,
+            "typecheck",
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                ..ExecutionOverrides::default()
+            },
+        );
+        assert_eq!(native_effects.0, None);
+        assert!(native_effects.1.is_empty());
+
+        let container_effects = super::collect_task_closure_effects(
+            &contract,
+            "typecheck",
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+        );
+        assert_eq!(
+            container_effects.0,
+            Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
+        );
+        assert!(container_effects.1.contains("registry"));
+    }
+
+    #[test]
     fn run_dry_run_blocks_when_selected_task_requirements_do_not_match_host() {
         let _guard = crate::test_support::env_mutex_lock();
         let repo = tempfile::tempdir().expect("repo tempdir");
@@ -80718,6 +80811,7 @@ fn run_execution_receipt_with_shared(
         contract,
         contract_path,
         task_name,
+        overrides,
     ));
 
     ExecutionReceipt {
@@ -92738,6 +92832,7 @@ fn append_up_safe_task_effect_policy_findings(
     contract: &Contract,
     contract_path: &Path,
     workflow_name: Option<&str>,
+    overrides: ExecutionOverrides,
     report: &mut DoctorReport,
 ) {
     let mut task_names = BTreeSet::new();
@@ -92748,7 +92843,13 @@ fn append_up_safe_task_effect_policy_findings(
         task_names.insert(activation_task.to_string());
     }
     for task_name in task_names {
-        append_safe_task_effect_policy_findings(contract, contract_path, &task_name, report);
+        append_safe_task_effect_policy_findings(
+            contract,
+            contract_path,
+            &task_name,
+            overrides,
+            report,
+        );
     }
 }
 
@@ -92903,6 +93004,7 @@ fn execute_repo_up_with_behavior(
         contract,
         resolved_path,
         workflow_name,
+        overrides,
         &mut preflight,
     );
     if dry_run {
@@ -93052,6 +93154,7 @@ fn execute_repo_up_with_behavior(
                     contract,
                     resolved_path,
                     workflow_name,
+                    overrides,
                     &mut preflight,
                 );
             }
@@ -93501,6 +93604,7 @@ fn execute_repo_up_with_behavior(
             contract,
             resolved_path,
             workflow_name,
+            overrides,
             &mut preflight,
         );
     }
@@ -93657,6 +93761,7 @@ fn execute_repo_up_with_behavior(
                     contract,
                     resolved_path,
                     workflow_name,
+                    overrides,
                     &mut preflight,
                 );
                 if !preflight.ok && setup_task.is_none() {
@@ -93766,6 +93871,7 @@ fn execute_repo_up_with_behavior(
                     contract,
                     resolved_path,
                     workflow_name,
+                    overrides,
                     &mut preflight,
                 );
                 if !preflight.ok && setup_task.is_none() {

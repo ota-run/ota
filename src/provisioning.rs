@@ -4600,13 +4600,12 @@ fn command_output(
     mode: ProvisioningOutputMode,
     loader_label: Option<&str>,
 ) -> Result<ProvisioningCommandOutput, ProvisioningBackendError> {
-    let resolved_command = if command.contains(std::path::MAIN_SEPARATOR)
-        && Path::new(command).is_relative()
-    {
-        working_dir.join(command)
-    } else {
-        PathBuf::from(command)
-    };
+    let resolved_command =
+        if command.contains(std::path::MAIN_SEPARATOR) && Path::new(command).is_relative() {
+            working_dir.join(command)
+        } else {
+            PathBuf::from(command)
+        };
     let mut child = Command::new(&resolved_command);
     child.args(args);
     command_output_from_child(child, command, working_dir, mode, loader_label)
