@@ -32000,6 +32000,31 @@ fn receipt_diff_declared_match_rank(
     change: &DiffChange,
     finding: &Finding,
 ) -> Option<ReceiptDiffCorrelationMatchKind> {
+    if let Some(entity) = finding.correlation_entity() {
+        let selected_requirement_owner = match finding.code() {
+            "OTA_TOOL_MISSING"
+            | "OTA_TOOL_PROBE_FAILED"
+            | "OTA_TOOL_VERSION_MISMATCH"
+            | "OTA_TOOL_VERSION_UNPARSEABLE" => {
+                change.path.contains(&format!(".requirements.tools.{entity}"))
+            }
+            "OTA_RUNTIME_MISSING"
+            | "OTA_RUNTIME_PROBE_FAILED"
+            | "OTA_RUNTIME_VERSION_MISMATCH"
+            | "OTA_RUNTIME_VERSION_UNPARSEABLE" => {
+                change
+                    .path
+                    .contains(&format!(".requirements.runtimes.{entity}"))
+                    || change
+                        .path
+                        .contains(&format!(".requirements.toolchains.{entity}"))
+            }
+            _ => false,
+        };
+        if selected_requirement_owner {
+            return Some(ReceiptDiffCorrelationMatchKind::ExactOwner);
+        }
+    }
     if let Some(owner_prefix) = finding.correlation_owner_prefix() {
         if let Some(kind) = receipt_diff_owner_match_kind(&change.path, &owner_prefix) {
             return Some(kind);
@@ -33341,6 +33366,38 @@ tasks:
 
         let related = receipt_diff_likely_related_changes(
             &[generic.clone(), requirement.clone()],
+            &[finding],
+            None,
+        );
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, requirement.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_selected_task_tool_requirement_over_top_level_tool_declaration() {
+        let requirement = DiffChange {
+            path: String::from("tasks.ch:up.requirements.tools.fakecli"),
+            status: String::from("add"),
+            category: Some(String::from("toolchain")),
+            risk: Some(String::from("high")),
+            base: None,
+            target: Some(quoted_scalar("*")),
+            provenance: None,
+        };
+        let declaration = DiffChange {
+            path: String::from("tools.fakecli.version"),
+            status: String::from("add"),
+            category: Some(String::from("toolchain")),
+            risk: Some(String::from("medium")),
+            base: None,
+            target: Some(quoted_scalar("*")),
+            provenance: None,
+        };
+        let finding = identified_finding("OTA_TOOL_MISSING", "Missing tool: fakecli");
+
+        let related = receipt_diff_likely_related_changes(
+            &[declaration.clone(), requirement.clone()],
             &[finding],
             None,
         );

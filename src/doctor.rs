@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 
 use semver::{Op, VersionReq};
 use serde::ser::{SerializeStruct, Serializer};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::execution::{
@@ -97,9 +97,8 @@ pub enum FindingSeverity {
     Info,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
-    #[serde(default)]
     pub identity: Option<FindingIdentity>,
     pub severity: FindingSeverity,
     pub summary: String,
@@ -3831,6 +3830,53 @@ impl Serialize for Finding {
         }
 
         state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Finding {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct FindingJson {
+            #[serde(default)]
+            identity: Option<FindingIdentity>,
+            #[serde(default)]
+            code: Option<String>,
+            #[serde(default)]
+            category: Option<String>,
+            #[serde(default)]
+            owner: Option<String>,
+            severity: FindingSeverity,
+            summary: String,
+            why: String,
+            next: String,
+        }
+
+        let finding = FindingJson::deserialize(deserializer)?;
+        let identity = finding.identity.or_else(|| {
+            let code = finding.code?;
+            let category = finding.category?;
+            let owner = finding.owner?;
+            if code.is_empty() || category.is_empty() || owner.is_empty() {
+                None
+            } else {
+                Some(FindingIdentity {
+                    code,
+                    category,
+                    owner,
+                })
+            }
+        });
+
+        Ok(Finding {
+            identity,
+            severity: finding.severity,
+            summary: finding.summary,
+            why: finding.why,
+            next: finding.next,
+        })
     }
 }
 
@@ -13013,6 +13059,26 @@ mod tests {
             "provenance_key": json.get("provenance_key").and_then(|value| value.as_str()),
             "policy_reason": json.get("policy_reason").and_then(|value| value.as_str()),
         })
+    }
+
+    #[test]
+    fn finding_deserialize_restores_identity_from_flat_receipt_fields() {
+        let json = serde_json::json!({
+            "code": "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE",
+            "category": "contract",
+            "owner": "repo_contract",
+            "severity": "warn",
+            "summary": "Selected task path mutates external state: clickhouse, postgres",
+            "why": "the selected task path declares external state",
+            "next": "keep effects.external_state explicit"
+        });
+
+        let finding: Finding =
+            serde_json::from_value(json).expect("flat receipt finding should deserialize");
+
+        assert_eq!(finding.code(), "OTA_SELECTED_TASK_PATH_EXTERNAL_STATE");
+        assert_eq!(finding.category(), "contract");
+        assert_eq!(finding.owner(), "repo_contract");
     }
 
     fn current_native_package_test_case() -> (&'static str, &'static str, &'static str, &'static str)

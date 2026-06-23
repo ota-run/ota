@@ -77,9 +77,19 @@
   `possibly_related`, and `no_clear_correlation` without inferring correlation posture from
   `likely_related_changes[]` alone; `possibly_related` is now reserved for coarse same-family
   overlap, while unrelated contract drift stays `no_clear_correlation`
+- fixed archived receipt finding identity round-trip for V10 compare, so
+  `ota receipt --json --baseline ...` no longer emits phantom `introduced[]` / `resolved[]`
+  findings when the archived baseline and current receipt are semantically unchanged; archived
+  flat `code` / `category` / `owner` finding fields now deserialize back into stable finding
+  identity instead of collapsing to anonymous `OTA_DOCTOR_FINDING_UNKNOWN` matches
 - tightened `likely_related_changes[]` ordering across adjacent plausible lanes, so receipt diff
   now ranks the published contract-change evidence globally by semantic match strength instead of
   emitting changes in finding-visit order when multiple adjacent assumptions all look plausible
+- tightened missing tool/runtime correlation ordering across broad declaration vs selected-path
+  requirement truth, so `likely_related_changes[]` now prefers
+  `tasks.<name>.requirements.tools.<tool>` / `.requirements.runtimes.<runtime>` /
+  `.requirements.toolchains.<toolchain>` over broader `tools.<name>` or `toolchains.<name>`
+  catalog drift when the selected task path is the sharper operational owner of the failure
 - moved more receipt diff entity recovery into declared doctor finding metadata, so env, tool,
   runtime, check, and service correlation matches now prefer published owner/entity truth over
   CLI-side summary parsing when ranking exact owner, requirement-reference, and name-reference
