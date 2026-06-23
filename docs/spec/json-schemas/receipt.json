@@ -247,6 +247,21 @@
               "type": "array",
               "items": { "type": "string" }
             },
+            "dependency_steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["task", "backend", "backend_selection_source"],
+                "properties": {
+                  "task": { "type": "string" },
+                  "parent": { "type": "string" },
+                  "backend": { "type": "string" },
+                  "context": { "type": "string" },
+                  "backend_selection_source": { "type": "string" }
+                }
+              }
+            },
             "steps": {
               "type": "array",
               "items": {

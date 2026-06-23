@@ -73,6 +73,7 @@ The receipt includes:
 - `acquired`
 - `env`
 - `policy`
+- `dependency_steps`
 - `runtime`
 - `workloads`
 - `service_termination`
@@ -101,6 +102,10 @@ When execution was blocked by an active repo-execution ownership conflict, recei
 include `execution_conflict`; this records the typed ownership reasons such as `host_service`,
 `compose_project`, or `persistent_backend_family` while keeping the existing `blocked[]`
 compatibility lane.
+When a receipt comes from a selected task-backed execution path, it can also include
+`dependency_steps`; each entry records the executed task step's selected backend, optional
+selected context, optional parent task, and `backend_selection_source` such as `override`,
+`task default mode`, or `inherited parent backend`.
 `target` is only present when the actual recorded execution phase used a real named target.
 That includes persistent backends, remote targets, and named ephemeral task or diagnosis
 containers. Previews and host-side phases stay targetless.
@@ -128,6 +133,8 @@ contract identity when that metadata exists.
 - semantic drift correlation prefers the sharpest declared contract owner or named reference ota can
   recover honestly, such as reusable `surfaces.<name>` or `readiness.probes.<name>`, before broad
   same-family drift
+- selected dependency-plane provenance should survive into receipts when ota executed a task-backed
+  path, not only into dry-run preview output
 - no hidden auto-fix behavior
 - provenance for policy-backed provisioning when that layer exists
 

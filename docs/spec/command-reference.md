@@ -188,7 +188,9 @@ Hosted validation guidance:
 - use `ota validate --json` and `ota doctor --json` for repo gating
 - use `ota workspace validate --json`, `ota workspace doctor --json`, and `ota workspace explain --json` for workspace gating and remediation planning
 - `ota validate --json` keeps legacy `warnings[]` strings and also exposes additive
-  `warning_details[]` entries with stable advisory codes for governance-aware tooling
+  `warning_details[]` entries with stable advisory codes for governance-aware tooling; selected
+  dependency-plane boundary advisories also carry additive provenance describing which backend
+  selection lane won on the parent and dependency task
 - use `ota workspace tasks --json` and `ota workspace list --json` for workspace inventory, task availability, and preflight readiness summaries
 - do not mutate contracts during hosted validation
 
@@ -1344,6 +1346,9 @@ ota run build --skip-deps
 - prints task progress and advisory notes on stderr when output is streaming
 - prints a summary in text output, and emits an execution receipt on stderr after task output when `--receipt` is set
 - execution receipts include backend, remote `provider` / `target` / optional `cwd` when relevant, lifecycle, container image when relevant, resolved container memory when requested, acquired paths, env sources, step summary data, resolved runtime listener endpoints, optional `service_termination` details for post-readiness service stops, and optional `host_service_cleanup` evidence when ota attempted host-managed service shutdown during cleanup; text receipts also print the winning env source for each resolved value
+- task-backed execution receipts also carry additive `dependency_steps[]`, so the archived run path
+  preserves each executed dependency step's selected backend, optional context, parent task, and
+  backend-selection source instead of only the flattened dependency order
 - returns the child process exit code
 
 Use this when the contract is already the source of truth and you want deterministic task execution.

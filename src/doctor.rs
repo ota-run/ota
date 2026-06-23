@@ -5242,6 +5242,8 @@ fn normalize_depends_on_boundary_for_overrides(
         dependency_task: advisory.dependency_task,
         parent,
         dependency,
+        parent_backend_selection_source: advisory.parent_backend_selection_source,
+        dependency_backend_selection_source: advisory.dependency_backend_selection_source,
     })
 }
 

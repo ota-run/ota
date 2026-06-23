@@ -7448,6 +7448,8 @@ pub struct DependsOnBoundaryAdvisory {
     pub dependency_task: String,
     pub parent: TaskExecutionBoundary,
     pub dependency: TaskExecutionBoundary,
+    pub parent_backend_selection_source: String,
+    pub dependency_backend_selection_source: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10208,6 +10210,22 @@ fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAd
                 dependency_task: dependency_name.clone(),
                 parent: parent_boundary.clone(),
                 dependency: dependency_boundary,
+                parent_backend_selection_source: task
+                    .backend_selection_source(
+                        contract.execution.as_ref(),
+                        parent_boundary.backend,
+                        false,
+                        None,
+                    )
+                    .to_string(),
+                dependency_backend_selection_source: dependency_task
+                    .backend_selection_source(
+                        contract.execution.as_ref(),
+                        dependency_backend,
+                        false,
+                        Some(parent_boundary.backend),
+                    )
+                    .to_string(),
             };
             let identity = (
                 advisory.parent_task.clone(),
@@ -10260,6 +10278,22 @@ fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAd
                         dependency_task: dependency_name.clone(),
                         parent: parent_boundary.clone(),
                         dependency: dependency_boundary,
+                        parent_backend_selection_source: task
+                            .backend_selection_source(
+                                contract.execution.as_ref(),
+                                parent_boundary.backend,
+                                false,
+                                None,
+                            )
+                            .to_string(),
+                        dependency_backend_selection_source: dependency_task
+                            .backend_selection_source(
+                                contract.execution.as_ref(),
+                                dependency_backend,
+                                false,
+                                Some(parent_boundary.backend),
+                            )
+                            .to_string(),
                     };
                     let identity = (
                         advisory.parent_task.clone(),

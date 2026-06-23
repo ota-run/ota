@@ -282,6 +282,12 @@ When validate warnings exist, `warnings[]` remains the backward-compatible strin
 `warning_details[]` carries the stable machine-readable advisory objects with:
 `code`, `category`, `owner`, `severity`, `summary`, `why`, and `next`.
 
+Some advisory families also carry additive `provenance`. For selected dependency-plane boundary
+advisories, that includes `provenance.parent_backend_selection_source` and
+`provenance.dependency_backend_selection_source`, so automation can see whether the boundary came
+from a task default mode, inherited parent backend, override, or another execution-selection lane
+without scraping the summary text.
+
 Failure shape can also include:
 
 - `next`: optional safe follow-up command, used for trust-sensitive refusal and review-first flows
@@ -3415,6 +3421,9 @@ Root monorepo summary output can also include grouped member findings under `mem
 Optional fields:
 
 - `receipt`: execution receipt for the executed repo `up` phase, including additive `receipt.contract_identity`; monorepo aggregate output keeps grouped `members` results instead of a top-level receipt
+- `receipt.dependency_steps`: additive executed dependency-plane provenance for task-backed phases,
+  using the same `task` / `backend` / optional `context` / optional `parent_task` /
+  `backend_selection_source` shape as preview `plan.dependency_steps[]`
 - `receipt.native_prerequisites`: additive selected native prerequisite detail for the executed native task/setup path, including provisioning guidance and any applied native activation
 - `service`: present when a required service start command fails
 - `task`: present when a task failure is reported
@@ -4345,6 +4354,10 @@ identifies the workspace contract with `project.type = "workspace"` and workspac
 When an execution receipt includes `next`, additive `receipt.next_steps` carries the same
 follow-up lane as an ordered string array so agents and CI do not need to split the human review
 string themselves.
+When a receipt is tied to a selected task path, additive `receipt.dependency_steps[]` records the
+executed dependency-plane truth for each task step using the same structured shape as preview
+`plan.dependency_steps[]`, so archived receipts preserve which backend-selection lane actually won
+during execution instead of only the flattened task order.
 
 Optional per-repo fields:
 

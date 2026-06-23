@@ -898,15 +898,25 @@ fn detect_schema_includes_comparison_preview() {
 #[test]
 fn receipt_schema_includes_receipt_and_findings() {
     let schema = load_schema("docs/spec/json-schemas/receipt.json");
-    let success = &schema["oneOf"][0]["properties"];
+    let variants = schema["oneOf"].as_array().expect("receipt oneOf");
+    let success = &variants[0]["properties"];
     let success_summary = &success["summary"]["properties"];
     let success_receipt = &success["receipt"]["properties"];
-    let diff = &schema["oneOf"][1]["properties"];
+    let diff = &variants
+        .iter()
+        .find(|variant| variant["properties"]["mode"]["const"] == "diff")
+        .expect("diff variant")["properties"];
     let diff_baseline = &diff["baseline"]["properties"];
     let diff_summary = &diff["summary"]["properties"];
-    let history = &schema["oneOf"][2]["properties"];
+    let history = &variants
+        .iter()
+        .find(|variant| variant["properties"]["mode"]["const"] == "history")
+        .expect("history variant")["properties"];
     let history_summary = &history["summary"]["properties"];
-    let failure = &schema["oneOf"][3]["properties"];
+    let failure = &variants
+        .iter()
+        .find(|variant| variant["properties"]["ok"]["const"] == false)
+        .expect("failure variant")["properties"];
 
     assert!(success.get("mode").is_some());
     assert!(success.get("receipt").is_some());
@@ -916,6 +926,7 @@ fn receipt_schema_includes_receipt_and_findings() {
     assert!(success_receipt.get("failed_task").is_some());
     assert!(success_receipt.get("failed_dependency").is_some());
     assert!(success_receipt.get("failure_origin").is_some());
+    assert!(success_receipt.get("dependency_steps").is_some());
     assert!(success_receipt.get("next_steps").is_some());
     assert!(success.get("findings").is_some());
     assert!(success.get("promoted_baseline").is_some());
@@ -1006,9 +1017,11 @@ fn validate_schema_includes_summary_counts() {
     let schema = load_schema("docs/spec/json-schemas/validate.json");
     let success = &schema["oneOf"][0]["properties"];
     let failure = &schema["oneOf"][1]["properties"];
+    let success_warning = &success["warning_details"]["items"]["properties"];
 
     assert!(success.get("summary").is_some());
     assert!(failure.get("summary").is_some());
+    assert!(success_warning.get("provenance").is_some());
     assert_eq!(
         schema["oneOf"][0]["required"],
         serde_json::json!(["ok", "path"])

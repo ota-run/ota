@@ -271,6 +271,20 @@ pub struct ExecutionReceiptStep {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct DependencyPlaneProvenance {
+    pub parent_task: String,
+    pub dependency_task: String,
+    pub parent_backend: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_context: Option<String>,
+    pub parent_backend_selection_source: String,
+    pub dependency_backend: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependency_context: Option<String>,
+    pub dependency_backend_selection_source: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutionReceiptEnvSource {
     pub name: String,
     pub value: String,
@@ -463,6 +477,8 @@ pub struct ExecutionReceipt {
     pub workloads: BTreeMap<String, ResolvedTaskRuntime>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub policy: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependency_steps: Vec<RunPreviewDependencyStep>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<ExecutionReceiptStep>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -598,6 +614,9 @@ impl Serialize for ExecutionReceipt {
         if !self.policy.is_empty() {
             map.serialize_entry("policy", &self.policy)?;
         }
+        if !self.dependency_steps.is_empty() {
+            map.serialize_entry("dependency_steps", &self.dependency_steps)?;
+        }
         if !self.steps.is_empty() {
             map.serialize_entry("steps", &self.steps)?;
         }
@@ -716,7 +735,7 @@ pub struct RunPreviewPlan {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct RunPreviewDependencyStep {
     pub task: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2476,6 +2495,8 @@ pub struct ValidateWarning {
     pub summary: String,
     pub why: String,
     pub next: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<DependencyPlaneProvenance>,
 }
 
 #[derive(Debug, Serialize)]

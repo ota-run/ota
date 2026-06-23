@@ -44,7 +44,27 @@
               "severity": { "type": "string" },
               "summary": { "type": "string" },
               "why": { "type": "string" },
-              "next": { "type": "string" }
+              "next": { "type": "string" },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "parent_task",
+                  "dependency_task",
+                  "parent_backend",
+                  "dependency_backend",
+                  "parent_backend_selection_source",
+                  "dependency_backend_selection_source"
+                ],
+                "properties": {
+                  "parent_task": { "type": "string" },
+                  "dependency_task": { "type": "string" },
+                  "parent_backend": { "type": "string" },
+                  "dependency_backend": { "type": "string" },
+                  "parent_backend_selection_source": { "type": "string" },
+                  "dependency_backend_selection_source": { "type": "string" }
+                }
+              }
             }
           }
         }
@@ -91,7 +111,27 @@
               "severity": { "type": "string" },
               "summary": { "type": "string" },
               "why": { "type": "string" },
-              "next": { "type": "string" }
+              "next": { "type": "string" },
+              "provenance": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "parent_task",
+                  "dependency_task",
+                  "parent_backend",
+                  "dependency_backend",
+                  "parent_backend_selection_source",
+                  "dependency_backend_selection_source"
+                ],
+                "properties": {
+                  "parent_task": { "type": "string" },
+                  "dependency_task": { "type": "string" },
+                  "parent_backend": { "type": "string" },
+                  "dependency_backend": { "type": "string" },
+                  "parent_backend_selection_source": { "type": "string" },
+                  "dependency_backend_selection_source": { "type": "string" }
+                }
+              }
             }
           }
         },

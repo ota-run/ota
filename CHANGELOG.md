@@ -43,6 +43,9 @@
 - added machine-readable dependency-plane provenance to `ota run --dry-run --json`, so
   `plan.dependency_steps[]` now reports each planned task step's parent task, selected backend,
   selected context, and backend-selection source including inherited parent backend resolution
+- widened the same dependency-plane provenance into validate advisories and execution receipts, so
+  `warning_details[].provenance` now explains selected dependency-boundary source lanes and
+  task-backed `receipt.dependency_steps[]` preserves the backend-selection truth ota actually ran
 - refined `ota proof runtime` artifact diagnostics so `proof/*/doctor.json` now upgrades generic
   run-exit blockers to concrete container-engine-unavailable execution findings when the captured
   `up.log` shows Docker or Podman backend reachability failures

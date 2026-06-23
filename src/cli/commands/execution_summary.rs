@@ -806,6 +806,7 @@ mod tests {
             backend_fulfillment: None,
             workloads: BTreeMap::new(),
             policy: Vec::new(),
+            dependency_steps: Vec::new(),
             steps: Vec::new(),
             blocked: Vec::new(),
             status: None,
