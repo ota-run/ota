@@ -47731,6 +47731,31 @@ Memory:      4GiB
     }
 
     #[test]
+    fn detached_run_failure_hint_promotes_container_engine_unavailable() {
+        let dir = TempDir::new().expect("temp dir should create");
+        let log_path = dir.path().join("up-detached-run.log");
+        fs::write(
+            &log_path,
+            r#"
+unable to get image 'ollama/ollama:latest': Cannot connect to the Docker daemon at unix:///Users/test/.orbstack/run/docker.sock. Is the docker daemon running?
+◉ ERROR  Container engine unavailable
+`compose:up` could not use container engine `docker`
+"#,
+        )
+        .expect("log should write");
+
+        let hint = super::detached_run_failure_hint_from_log(&log_path);
+        assert_eq!(
+            hint.as_ref()
+                .map(super::ProofRuntimeLikelyCause::message)
+                .as_deref(),
+            Some(
+                "container engine unavailable: ota could not reach a usable docker backend for the selected proof path (unable to get image 'ollama/ollama:latest': Cannot connect to the Docker daemon at unix:///Users/test/.orbstack/run/docker.sock. Is the docker daemon running?); start or repair that engine before rerunning proof",
+            )
+        );
+    }
+
+    #[test]
     fn detached_run_failure_hint_falls_back_to_last_relevant_line() {
         let dir = TempDir::new().expect("temp dir should create");
         let log_path = dir.path().join("up-detached-run.log");
@@ -78114,20 +78139,27 @@ fn extract_container_engine_unavailable_details(stdout: &str, stderr: &str) -> O
         return None;
     }
 
+    let matcher = |line: &&str| {
+        let lower = line.to_ascii_lowercase();
+        lower.contains("unable to connect to podman socket")
+            || lower.contains("cannot connect to podman")
+            || lower.contains("cannot connect to the docker daemon")
+            || lower.contains("failed to connect to the docker api")
+            || lower.contains("docker daemon is not running")
+            || lower.contains("pipe/docker_engine")
+            || lower.contains("error while dialing")
+            || lower.contains("connection refused")
+    };
     let detail_line = lines
         .iter()
         .rev()
         .find(|line| {
-            let lower = line.to_ascii_lowercase();
-            lower.contains("unable to connect to podman socket")
-                || lower.contains("cannot connect to podman")
-                || lower.contains("cannot connect to the docker daemon")
-                || lower.contains("failed to connect to the docker api")
-                || lower.contains("docker daemon is not running")
-                || lower.contains("pipe/docker_engine")
-                || lower.contains("error while dialing")
-                || lower.contains("connection refused")
+            matcher(line)
+                && !line
+                    .to_ascii_lowercase()
+                    .contains("container engine unavailable: ota could not reach a usable")
         })
+        .or_else(|| lines.iter().rev().find(|line| matcher(line)))
         .copied()
         .unwrap_or("container engine backend is unavailable");
     Some(
@@ -83720,10 +83752,10 @@ fn proof_runtime_refined_doctor_summary(
 ) -> DoctorSummary {
     let mut refined = summary.clone();
     if let Some(primary) = refined.primary_blocker.as_mut()
-        && primary.summary == "Run task exited before readiness"
-        && let Some(replacement) = findings
-            .iter()
-            .find(|finding| finding.summary != "Run task exited before readiness")
+        && let Some(replacement) = findings.iter().find(|finding| {
+            finding.code() == "OTA_CONTAINER_BACKEND_UNAVAILABLE"
+                || finding.summary != primary.summary
+        })
     {
         primary.summary = replacement.summary.clone();
         primary.why = replacement.why.clone();
@@ -83748,7 +83780,9 @@ fn proof_runtime_refined_doctor_findings(
     findings
         .into_iter()
         .map(|finding| {
-            if finding.summary == "Run task exited before readiness" {
+            if finding.summary == "Run task exited before readiness"
+                || finding.code() == "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+            {
                 replacement.clone()
             } else {
                 finding
@@ -84775,6 +84809,9 @@ fn proof_runtime_likely_cause(
         artifact_dir.join("up-detached-run.log"),
         up_log_artifact_path.to_path_buf(),
     ] {
+        if let Some(cause) = proof_runtime_container_engine_unavailable_hint_from_log(&candidate) {
+            return Some(cause);
+        }
         let Some(cause) = runtime_loopback_drift_hint_from_log(candidate.as_path()) else {
             continue;
         };
@@ -84787,11 +84824,38 @@ fn proof_runtime_log_indicates_install_or_toolchain_failure(up_log_artifact_path
     proof_runtime_install_or_toolchain_failure_hint_from_log(up_log_artifact_path).is_some()
 }
 
+fn normalize_container_engine_unavailable_details(details: &str) -> String {
+    let mut trimmed = details.trim().trim_start_matches('»').trim().to_string();
+    let prefix = "container engine unavailable:";
+    while trimmed.contains(prefix) {
+        let Some(start) = trimmed.find('(') else {
+            break;
+        };
+        let end = trimmed
+            .rfind("); start or repair")
+            .or_else(|| trimmed.rfind(')'));
+        let Some(end) = end else {
+            break;
+        };
+        if end <= start {
+            break;
+        }
+        trimmed = trimmed[start + 1..end]
+            .trim()
+            .trim_start_matches('»')
+            .trim()
+            .to_string();
+    }
+    trimmed
+}
+
 fn proof_runtime_container_engine_unavailable_hint_from_log(
     up_log_artifact_path: &Path,
 ) -> Option<ProofRuntimeLikelyCause> {
     let log = fs::read_to_string(up_log_artifact_path).ok()?;
-    let details = extract_container_engine_unavailable_details("", &log)?;
+    let details = normalize_container_engine_unavailable_details(
+        &extract_container_engine_unavailable_details("", &log)?,
+    );
     let lowered = log.to_ascii_lowercase();
     let engine = if lowered.contains("podman") {
         "podman"
@@ -92189,6 +92253,19 @@ fn parse_port_from_line(line: &str) -> Option<u16> {
 
 fn detached_run_failure_hint_from_log(path: &Path) -> Option<ProofRuntimeLikelyCause> {
     let contents = fs::read_to_string(path).ok()?;
+    if let Some(details) = extract_container_engine_unavailable_details("", &contents) {
+        let lowered = contents.to_ascii_lowercase();
+        let engine = if lowered.contains("podman") {
+            "podman"
+        } else {
+            "docker"
+        };
+        return Some(ProofRuntimeLikelyCause::ContainerEngineUnavailable {
+            artifact: path.to_path_buf(),
+            engine: String::from(engine),
+            details: normalize_container_engine_unavailable_details(&details),
+        });
+    }
     for raw_line in contents.lines() {
         let line = strip_ansi_codes(raw_line).trim().to_string();
         let lowered = line.to_ascii_lowercase();
