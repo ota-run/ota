@@ -31,6 +31,9 @@
   no new material blockers were introduced; semantic snapshot diffs no longer collapse to
   `no_clear_correlation` just because the change fixed one blocker while other unrelated blockers
   still remain
+- tightened V10 likely-related ordering for missing env drift so adjacent metadata siblings such
+  as `secret` no longer ride along with causal `required` changes; receipt diff now publishes the
+  sharpest env assumption instead of same-owner noise
 - fixed `ota receipt --snapshot latest` and `--baseline latest` fallback for archived repo
   receipts that predate workflow-scoped identity widening, so Ota now resolves the newest
   matching contract lineage first by exact identity and then by same-contract lineage instead of

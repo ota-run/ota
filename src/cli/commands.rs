@@ -32282,6 +32282,13 @@ fn receipt_diff_declared_match_rank(
         }
     }
     if let Some(owner_prefix) = finding.correlation_owner_prefix() {
+        if finding.code() == "OTA_ENV_MISSING"
+            && change.path.starts_with(&format!("{owner_prefix}."))
+            && !change.path.ends_with(".required")
+            && !change.path.ends_with(".default")
+        {
+            return None;
+        }
         if let Some(kind) = receipt_diff_owner_match_kind(&change.path, &owner_prefix) {
             return Some(kind);
         }
@@ -33067,6 +33074,46 @@ mod receipt_diff_correlation_tests {
 
         assert_eq!(matched.rank, ReceiptDiffCorrelationMatchKind::OwnerSubtree);
         assert_eq!(matched.lane_priority, 1);
+    }
+
+    #[test]
+    fn receipt_diff_ignores_non_causal_env_metadata_for_missing_env_correlation() {
+        let required = DiffChange {
+            path: String::from("env.vars.DATABASE_URL.required"),
+            status: String::from("add"),
+            category: Some(String::from("env")),
+            risk: Some(String::from("high")),
+            base: None,
+            target: Some(String::from("true")),
+            provenance: None,
+        };
+        let secret = DiffChange {
+            path: String::from("env.vars.DATABASE_URL.secret"),
+            status: String::from("add"),
+            category: Some(String::from("env")),
+            risk: Some(String::from("high")),
+            base: None,
+            target: Some(String::from("true")),
+            provenance: None,
+        };
+        let finding = Finding::identified(
+            "OTA_ENV_MISSING",
+            "environment",
+            "repo_contract",
+            FindingSeverity::Error,
+            "Missing environment variable: DATABASE_URL",
+            "why",
+            "next",
+        );
+
+        let related = receipt_diff_likely_related_changes(
+            &[secret.clone(), required.clone()],
+            &[finding],
+            None,
+        );
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].path, required.path);
     }
 
     #[test]
