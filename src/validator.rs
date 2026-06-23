@@ -7783,6 +7783,9 @@ impl ContractAdvisory {
                 TaskNetworkEffectKind::DependencyHydration => {
                     "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_DEPENDENCY_HYDRATION"
                 }
+                TaskNetworkEffectKind::IntegrationTest => {
+                    "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_INTEGRATION_TEST"
+                }
                 TaskNetworkEffectKind::ToolBootstrap => {
                     "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_TOOL_BOOTSTRAP"
                 }
@@ -8430,6 +8433,10 @@ fn agent_safe_network_summary(advisory: &AgentSafeTaskNetworkAdvisory) -> String
             "agent-safe task `{}` performs network dependency hydration",
             advisory.task_name
         ),
+        TaskNetworkEffectKind::IntegrationTest => format!(
+            "agent-safe task `{}` performs network integration testing",
+            advisory.task_name
+        ),
         TaskNetworkEffectKind::ToolBootstrap => format!(
             "agent-safe task `{}` performs network tool bootstrap",
             advisory.task_name
@@ -8447,6 +8454,10 @@ fn agent_safe_network_why(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
             "task `{}` is declared agent-safe and performs dependency hydration over the network (for example lockfile-backed package-manager fetches); this is narrower than arbitrary remote mutation but still depends on registry/service reachability outside repo write boundaries",
             advisory.task_name
         ),
+        TaskNetworkEffectKind::IntegrationTest => format!(
+            "task `{}` is declared agent-safe and performs live, staging, or remote-backed verification over the network; this is narrower than arbitrary remote mutation but still depends on real service reachability plus non-local credentials or seeded fixtures",
+            advisory.task_name
+        ),
         TaskNetworkEffectKind::ToolBootstrap => format!(
             "task `{}` is declared agent-safe and bootstraps required tooling over the network (for example installing `uv` through `pip`) before execution; this is narrower than arbitrary remote mutation but still depends on package index reachability and mutable tool-install state outside repo write boundaries",
             advisory.task_name
@@ -8462,6 +8473,10 @@ fn agent_safe_network_next(advisory: &AgentSafeTaskNetworkAdvisory) -> String {
     match advisory.network_kind {
         TaskNetworkEffectKind::DependencyHydration => format!(
             "keep `effects.network: true` with `effects.network_kind: dependency_hydration` explicit for `{}`, and keep lockfile/provenance discipline strict on this task path",
+            advisory.task_name
+        ),
+        TaskNetworkEffectKind::IntegrationTest => format!(
+            "keep `effects.network: true` with `effects.network_kind: integration_test`, `requirements.env`, and any real `effects.external_state` explicit for `{}`, and remove the task from `agent.safe_tasks` or `safe_for_agent: true` when unattended live verification is not acceptable",
             advisory.task_name
         ),
         TaskNetworkEffectKind::ToolBootstrap => format!(

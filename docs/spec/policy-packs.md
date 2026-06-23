@@ -218,6 +218,8 @@ That makes the value visible immediately:
 - `effects.tasks.network` controls broad network lanes for selected task paths.
 - `effects.tasks.dependency_hydration` controls lockfile-backed hydration lanes
   (`effects.network_kind: dependency_hydration`) for selected task paths.
+- `effects.tasks.integration_test` controls live, staging, or remote-backed verification lanes
+  (`effects.network_kind: integration_test`) for selected task paths.
 - `effects.tasks.external_state_default` sets the default decision for selected-task
   external-state targets when no target-specific override is declared.
 - `effects.tasks.external_state.<target>` overrides external-state decisions per target token.
@@ -229,6 +231,8 @@ That makes the value visible immediately:
 - `effects.safe_tasks.network` controls broad network lanes for safe-task paths.
 - `effects.safe_tasks.dependency_hydration` controls lockfile-backed hydration lanes
   (`effects.network_kind: dependency_hydration`) for safe-task paths.
+- `effects.safe_tasks.integration_test` controls live, staging, or remote-backed verification
+  lanes (`effects.network_kind: integration_test`) for safe-task paths.
 - `effects.safe_tasks.external_state_default` sets the default decision for safe-task external
   state targets when no target-specific override is declared.
 - `effects.safe_tasks.external_state.<target>` overrides external-state decisions per target token

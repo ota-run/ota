@@ -201,6 +201,16 @@ fn tasks_schema_includes_agent_and_variant_fields() {
 }
 
 #[test]
+fn published_contract_schema_includes_integration_test_network_kind() {
+    let schema = load_schema("docs/spec/json-schemas/contract.json");
+    let network_kind_enum = schema["$defs"]["taskEffects"]["properties"]["network_kind"]["enum"]
+        .as_array()
+        .expect("task effects network kind enum");
+
+    assert!(network_kind_enum.iter().any(|entry| entry == "integration_test"));
+}
+
+#[test]
 fn services_schema_covers_published_service_summary_fields() {
     let schema = load_schema("docs/spec/json-schemas/services.json");
     let success = &schema["oneOf"][0]["properties"];

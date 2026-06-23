@@ -1818,8 +1818,8 @@ Fields:
 - `writes`: optional list of normalized relative paths the task body is expected to mutate
 - `network`: optional boolean; set `true` when the task requires network access or reaches out to
   remote services during execution
-- `network_kind`: optional network lane classifier (`broad`, `dependency_hydration`, or `tool_bootstrap`) for
-  networked task paths
+- `network_kind`: optional network lane classifier (`broad`, `dependency_hydration`,
+  `integration_test`, or `tool_bootstrap`) for networked task paths
 - `external_state`: optional list of lowercase tokens naming out-of-repo state the task mutates,
   such as `docker` or `postgres`
 
@@ -1830,6 +1830,8 @@ Task-effect rules:
   dependency should stay explicit for CI and agent execution
 - use `effects.network_kind: dependency_hydration` for finite dependency acquisition lanes such as
   lockfile-backed package-manager install or first-class image hydration; keep
+- use `effects.network_kind: integration_test` for live, staging, or remote-backed verification
+  lanes that depend on real services, credentials, or seeded environments beyond the local repo
 - use `effects.network_kind: tool_bootstrap` for finite contract-owned tool installation lanes
   such as bootstrapping `uv` through `pip`; keep
   `effects.network_kind: broad` (or omit `network_kind`) for wider API/remote-call execution

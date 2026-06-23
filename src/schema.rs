@@ -3730,6 +3730,7 @@ impl TaskEffectsSpec {
 pub enum TaskNetworkEffectKind {
     Broad,
     DependencyHydration,
+    IntegrationTest,
     ToolBootstrap,
 }
 
@@ -3738,6 +3739,7 @@ impl TaskNetworkEffectKind {
         match self {
             Self::Broad => "broad",
             Self::DependencyHydration => "dependency_hydration",
+            Self::IntegrationTest => "integration_test",
             Self::ToolBootstrap => "tool_bootstrap",
         }
     }

@@ -1726,6 +1726,9 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
                 crate::schema::TaskNetworkEffectKind::DependencyHydration => {
                     "network dependency hydration"
                 }
+                crate::schema::TaskNetworkEffectKind::IntegrationTest => {
+                    "network integration testing"
+                }
                 crate::schema::TaskNetworkEffectKind::ToolBootstrap => "network tool bootstrap",
                 crate::schema::TaskNetworkEffectKind::Broad => "network access",
             }),
@@ -2257,6 +2260,7 @@ pub fn proof_runtime(
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
+    activate_mise_paths_for_current_process();
     let ready_timeout = match ready_timeout {
         Some(value) => match parse_readiness_duration_spec(value) {
             Some(duration) => Some(duration),
@@ -2486,8 +2490,10 @@ pub fn proof_runtime(
                     up_process_failure,
                     &up_log_artifact_path,
                 );
-                proof_summary_for_output =
-                    proof_runtime_refined_doctor_summary(&proof_summary_for_output, proof_likely_cause.as_ref());
+                proof_summary_for_output = proof_runtime_refined_doctor_summary(
+                    &proof_summary_for_output,
+                    proof_likely_cause.as_ref(),
+                );
                 let proof_likely_cause_text = proof_likely_cause.as_ref().and_then(|cause| {
                     (!proof_runtime_likely_cause_redundant_with_primary_blocker(
                         &proof_summary_for_output,
@@ -48102,8 +48108,7 @@ workflows:
                 provenance_key: None,
             }),
         };
-        let likely_cause =
-            super::proof_runtime_likely_cause(&summary, Some("run failed"), &up_log);
+        let likely_cause = super::proof_runtime_likely_cause(&summary, Some("run failed"), &up_log);
         let class = super::proof_runtime_failure_class(
             &summary,
             "run",
@@ -50773,10 +50778,12 @@ workflows:
             details: String::from("Cannot connect to the Docker daemon"),
         };
 
-        assert!(super::proof_runtime_likely_cause_redundant_with_primary_blocker(
-            &summary,
-            &likely_cause
-        ));
+        assert!(
+            super::proof_runtime_likely_cause_redundant_with_primary_blocker(
+                &summary,
+                &likely_cause
+            )
+        );
     }
 
     #[test]
@@ -75212,6 +75219,94 @@ workflows:
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn proof_runtime_activates_mise_paths_before_parent_re_diagnosis() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let bin_dir = fixture.path().join("bin");
+        let fake_home = TempDir::new().unwrap();
+        let local_bin = fake_home.path().join(".local").join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::create_dir_all(&local_bin).unwrap();
+
+        write_executable_script(
+            &fake_command_path(&bin_dir, "node"),
+            "#!/bin/sh\necho 'v23.11.0'\n",
+        );
+        write_executable_script(&local_bin.join("mise"), "#!/bin/sh\necho 'mise 2025.1.0'\n");
+        write_executable_script(&local_bin.join("node"), "#!/bin/sh\necho 'v22.12.0'\n");
+
+        let original_home = env::var_os("HOME");
+        let original_path = env::var_os("PATH");
+        let joined_path =
+            env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        unsafe {
+            env::set_var("HOME", fake_home.path());
+            env::set_var("PATH", &joined_path);
+        }
+
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: proof-runtime-mise
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+toolchains:
+  node:
+    version: "^22.12.0"
+tasks:
+  dev:
+    context: host
+    launch:
+      kind: command
+      exe: node
+      args:
+        - --version
+    requirements:
+      toolchains:
+        - node
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let output = super::proof_runtime(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("app"),
+            None,
+            ExecutionOverrides::default(),
+            OutputFormat::Json,
+            false,
+        );
+
+        match original_home {
+            Some(path) => unsafe { env::set_var("HOME", path) },
+            None => unsafe { env::remove_var("HOME") },
+        }
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("proof runtime json");
+        assert_eq!(json["ok"], true, "{}", output.stdout);
+    }
+
     #[test]
     fn up_blocks_remote_setup_contexts_before_running_setup() {
         let contract = parse_contract_str(
@@ -83891,8 +83986,7 @@ fn proof_runtime_refined_doctor_summary(
     likely_cause: Option<&ProofRuntimeLikelyCause>,
 ) -> DoctorSummary {
     let mut refined = summary.clone();
-    let Some(replacement) = likely_cause.and_then(proof_runtime_refined_run_exit_finding)
-    else {
+    let Some(replacement) = likely_cause.and_then(proof_runtime_refined_run_exit_finding) else {
         return refined;
     };
     if let Some(primary) = refined.primary_blocker.as_mut() {

@@ -3629,6 +3629,11 @@ impl Finding {
             {
                 "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_DEPENDENCY_HYDRATION"
             }
+            s if s.starts_with("Agent-safe task `")
+                && s.contains(" performs network integration testing") =>
+            {
+                "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_INTEGRATION_TEST"
+            }
             s if s.starts_with("Agent-safe task `") && s.contains(" requires network access") => {
                 "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK"
             }
@@ -5088,6 +5093,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
                 "Agent-safe task `{}` performs network dependency hydration",
                 advisory.task_name
             ),
+            TaskNetworkEffectKind::IntegrationTest => format!(
+                "Agent-safe task `{}` performs network integration testing",
+                advisory.task_name
+            ),
             TaskNetworkEffectKind::ToolBootstrap => format!(
                 "Agent-safe task `{}` performs network tool bootstrap",
                 advisory.task_name
@@ -5127,6 +5136,7 @@ fn diagnose_selected_task_effects(
 
     let mut broad_network_tasks = Vec::new();
     let mut hydration_network_tasks = Vec::new();
+    let mut integration_test_network_tasks = Vec::new();
     let mut tool_bootstrap_tasks = Vec::new();
     let mut external_state_tasks = Vec::new();
     let mut external_state_systems = BTreeSet::new();
@@ -5140,6 +5150,9 @@ fn diagnose_selected_task_effects(
                 TaskNetworkEffectKind::Broad => broad_network_tasks.push(task_name.clone()),
                 TaskNetworkEffectKind::DependencyHydration => {
                     hydration_network_tasks.push(task_name.clone())
+                }
+                TaskNetworkEffectKind::IntegrationTest => {
+                    integration_test_network_tasks.push(task_name.clone())
                 }
                 TaskNetworkEffectKind::ToolBootstrap => {
                     tool_bootstrap_tasks.push(task_name.clone())
@@ -5181,6 +5194,21 @@ fn diagnose_selected_task_effects(
             ),
             "the selected task path includes tasks with `effects.network_kind: dependency_hydration`; this is a narrower network lane (for example lockfile-backed package-manager fetches), but still depends on registry reachability",
             "keep lockfiles and package-manager provenance strict for these tasks, and keep `effects.network_kind: dependency_hydration` explicit on that path",
+        ));
+    }
+
+    if !integration_test_network_tasks.is_empty() {
+        findings.push(Finding::identified(
+            "OTA_SELECTED_TASK_PATH_INTEGRATION_TEST",
+            "execution",
+            "repo_contract",
+            FindingSeverity::Info,
+            format!(
+                "Selected task path performs network integration testing: {}",
+                integration_test_network_tasks.join(", ")
+            ),
+            "the selected task path includes tasks with `effects.network_kind: integration_test`; this is a narrower network lane for staging, live, or remote-backed verification, but still depends on real service reachability and non-local test credentials or fixtures",
+            "keep the live or staging dependency surface explicit through `requirements.env`, `effects.external_state`, and `effects.network_kind: integration_test`, and avoid treating these lanes as routine safe-task execution",
         ));
     }
 
@@ -14031,6 +14059,37 @@ workflows:
             finding.severity == FindingSeverity::Info
                 && finding.summary
                     == "Selected task path performs network dependency hydration: setup"
+        }));
+    }
+
+    #[test]
+    fn doctor_surfaces_selected_task_path_integration_test_effects() {
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  test:live:
+    run: npm run test:live
+    effects:
+      network: true
+      network_kind: integration_test
+workflows:
+  default: verify
+  verify:
+    run:
+      task: test:live
+"#,
+        )
+        .unwrap();
+
+        let report = diagnose_contract(&contract, synthetic_contract_path());
+        assert!(report.findings.iter().any(|finding| {
+            finding.severity == FindingSeverity::Info
+                && finding.summary
+                    == "Selected task path performs network integration testing: test:live"
         }));
     }
 

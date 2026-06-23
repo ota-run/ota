@@ -203,7 +203,7 @@
         },
         "network": { "type": "boolean" },
         "network_kind": {
-          "enum": ["broad", "dependency_hydration", "tool_bootstrap"]
+          "enum": ["broad", "dependency_hydration", "integration_test", "tool_bootstrap"]
         },
         "external_state": {
           "type": "array",

@@ -1175,7 +1175,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "properties": {
         "writes": { "$ref": "#/$defs/stringArray" },
         "network": { "type": "boolean" },
-        "network_kind": { "enum": ["broad", "dependency_hydration", "tool_bootstrap"] },
+        "network_kind": { "enum": ["broad", "dependency_hydration", "integration_test", "tool_bootstrap"] },
         "external_state": { "$ref": "#/$defs/stringArray" }
       }
     },

@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- widened `effects.network_kind` with first-class `integration_test`, so live or staging-backed
+  verification lanes no longer need to collapse into `broad`; doctor findings, policy effect
+  governance, and contract docs now carry a dedicated network classification for real-service test
+  paths
+- fixed native `ota proof runtime` post-run diagnosis to activate the same `mise` path surface as
+  `ota doctor`, `ota up`, and `ota run`, so proof no longer re-checks toolchain-owned runtimes on
+  an older parent PATH after the child `ota up --stream` path already resolved through
+  `HOME/.local/bin` / `mise`-owned host toolchain truth
 - injected `OTA_HOST_WORKSPACE` and `OTA_HOST_UID` into task execution so host-launched tasks can
   pass real repo-root and host-user identity through contract env truth instead of shell glue such
   as `pwd` or `id -u`

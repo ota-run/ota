@@ -133,6 +133,8 @@ pub struct PolicyTaskEffectsRules {
     #[serde(default)]
     pub dependency_hydration: Option<PolicyEffectDecision>,
     #[serde(default)]
+    pub integration_test: Option<PolicyEffectDecision>,
+    #[serde(default)]
     pub external_state_default: Option<PolicyEffectDecision>,
     #[serde(default)]
     pub external_state: BTreeMap<String, PolicyEffectDecision>,
@@ -1988,6 +1990,32 @@ fn resolve_network_effect_governance_decision(
                 return (decision, String::from("policies.effects.tasks.network"));
             }
         }
+        (
+            EffectGovernanceScope::SafeTask,
+            crate::schema::TaskNetworkEffectKind::IntegrationTest,
+        ) => {
+            if let Some(decision) = safe.integration_test {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.integration_test"),
+                );
+            }
+            if let Some(decision) = safe.network {
+                return (
+                    decision,
+                    String::from("policies.effects.safe_tasks.network"),
+                );
+            }
+            if let Some(decision) = task.integration_test {
+                return (
+                    decision,
+                    String::from("policies.effects.tasks.integration_test"),
+                );
+            }
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
         (EffectGovernanceScope::SafeTask, crate::schema::TaskNetworkEffectKind::Broad) => {
             if let Some(decision) = safe.network {
                 return (
@@ -2018,6 +2046,20 @@ fn resolve_network_effect_governance_decision(
                 return (
                     decision,
                     String::from("policies.effects.tasks.dependency_hydration"),
+                );
+            }
+            if let Some(decision) = task.network {
+                return (decision, String::from("policies.effects.tasks.network"));
+            }
+        }
+        (
+            EffectGovernanceScope::Task,
+            crate::schema::TaskNetworkEffectKind::IntegrationTest,
+        ) => {
+            if let Some(decision) = task.integration_test {
+                return (
+                    decision,
+                    String::from("policies.effects.tasks.integration_test"),
                 );
             }
             if let Some(decision) = task.network {
@@ -4068,6 +4110,51 @@ policies:
                     && decision.source == "policies.effects.tasks.external_state.docker"
             }),
             "{decisions:?}"
+        );
+    }
+
+    #[test]
+    fn integration_test_effect_policy_decisions_use_narrower_rules_before_network() {
+        let policy: OrgPolicyPack = serde_yaml::from_str(
+            r#"
+policies:
+  effects:
+    tasks:
+      network: deny
+      integration_test: warn
+    safe_tasks:
+      network: deny
+      integration_test: warn
+"#,
+        )
+        .unwrap();
+
+        let safe_task_decisions = policy.safe_task_effect_governance_decisions(
+            Some(crate::schema::TaskNetworkEffectKind::IntegrationTest),
+            &BTreeSet::new(),
+        );
+        let task_decisions = policy.effect_governance_decisions(
+            EffectGovernanceScope::Task,
+            Some(crate::schema::TaskNetworkEffectKind::IntegrationTest),
+            &BTreeSet::new(),
+            None,
+        );
+
+        assert!(
+            safe_task_decisions.iter().any(|decision| {
+                decision.effect == "network:integration_test"
+                    && decision.decision == PolicyEffectDecision::Warn
+                    && decision.source == "policies.effects.safe_tasks.integration_test"
+            }),
+            "{safe_task_decisions:?}"
+        );
+        assert!(
+            task_decisions.iter().any(|decision| {
+                decision.effect == "network:integration_test"
+                    && decision.decision == PolicyEffectDecision::Warn
+                    && decision.source == "policies.effects.tasks.integration_test"
+            }),
+            "{task_decisions:?}"
         );
     }
 
