@@ -39768,6 +39768,13 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
             paint_code(&format!("ota run {run_task}"))
         ));
     }
+    if let Some(attach_task) = workflow.attach_task {
+        output.push_str(&format!(
+            "\n  {} `{}`",
+            paint_key("Attach:"),
+            paint_code(&format!("ota run {attach_task}"))
+        ));
+    }
     if let Some(launch) = workflow.run_task_launch.as_ref() {
         output.push_str(&format!(
             "\n  {} {}",
@@ -51486,6 +51493,7 @@ tasks:
             prepare_action: None,
             setup_task: Some("setup"),
             run_task: Some("dev"),
+            attach_task: None,
             run_task_launch: None,
             required_services: vec![String::from("postgres")],
             readiness_checks: vec![String::from("app-health")],
@@ -51588,6 +51596,7 @@ tasks:
             prepare_action: None,
             setup_task: None,
             run_task: Some("devenv:up"),
+            attach_task: None,
             run_task_launch: None,
             required_services: Vec::new(),
             readiness_checks: Vec::new(),
@@ -57145,6 +57154,7 @@ tasks:
                 prepare_action: None,
                 setup_task: Some("install:app"),
                 run_task: Some("build"),
+                attach_task: None,
                 run_task_launch: None,
                 required_services: Vec::new(),
                 readiness_checks: vec![
@@ -59328,6 +59338,7 @@ tasks:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             None,
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
 
@@ -59413,6 +59424,7 @@ tasks:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             None,
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
 
@@ -59487,6 +59499,7 @@ workflows:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             Some("app"),
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
 
@@ -59543,6 +59556,7 @@ workflows:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             Some("app"),
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
 
@@ -59597,6 +59611,7 @@ workflows:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             Some("app@ws1"),
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
 
@@ -61008,6 +61023,7 @@ tasks:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             None,
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
 
@@ -61294,6 +61310,7 @@ workflows:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             Some("contributor"),
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
         let requirement_surface = super::up_policy_requirement_surface(
@@ -61801,6 +61818,7 @@ workflows:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             Some("contributor"),
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
         assert_eq!(
@@ -62198,6 +62216,7 @@ workflows:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             Some("contributor"),
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
         assert!(
@@ -62711,6 +62730,7 @@ tasks:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             None,
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
 
@@ -62755,6 +62775,7 @@ tasks:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             None,
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
 
@@ -62799,6 +62820,7 @@ tasks:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             None,
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
 
@@ -62849,6 +62871,7 @@ tasks:
             Path::new("/tmp/ota.yaml"),
             ExecutionOverrides::default(),
             None,
+            super::UpRunBehaviorPreference::Auto,
             &preflight,
         );
 
@@ -66108,6 +66131,7 @@ execution:
             prepare_action: None,
             setup_task: Some("setup"),
             run_task: Some("dev"),
+            attach_task: None,
             run_task_launch: None,
             required_services: Vec::new(),
             readiness_checks: Vec::new(),
@@ -68941,6 +68965,60 @@ workflows:
             super::UpRunBehaviorPreference::Attach,
         );
         assert_eq!(behavior, super::UpRunBehavior::Attach);
+    }
+
+    #[test]
+    fn resolve_up_run_behavior_attach_preference_keeps_service_running_when_workflow_declares_attach_task()
+     {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: up-behavior
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+  attach:
+    requirements:
+      tools:
+        docker: "*"
+    compose:
+      kind: attach
+      service: app
+      exe: tmux
+      args:
+        - attach
+        - -t
+        - app
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    attach:
+      task: attach
+"#,
+        )
+        .unwrap();
+
+        let behavior = super::resolve_up_run_behavior(
+            &contract,
+            None,
+            ExecutionOverrides::default(),
+            super::UpRunBehaviorPreference::Attach,
+        );
+        assert_eq!(behavior, super::UpRunBehavior::DetachedLeaveRunning);
     }
 
     #[test]
@@ -78059,7 +78137,7 @@ fn run_single_contract_target(
     ) {
         return Err(failure);
     }
-    if stream_output {
+    if stream_output || task_requires_interactive_stream(&target.contract, task_name, overrides) {
         return run_single_contract_target_streaming(
             task_name,
             overrides,
@@ -78082,6 +78160,23 @@ fn run_single_contract_target(
         &details_footer,
         persist_logs,
     )
+}
+
+fn task_requires_interactive_stream(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> bool {
+    let task_name = canonical_declared_task_name(contract, task_name);
+    let Some(task) = contract.tasks.get(task_name.as_str()) else {
+        return false;
+    };
+    let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
+    task.resolved_execution_for_backend(backend, current_os())
+        .and_then(|execution| execution.compose())
+        .is_some_and(|compose| {
+            compose.invocation.kind == crate::schema::TaskComposeExecutionKind::Attach
+        })
 }
 
 fn run_selected_precondition_failure(
@@ -92862,6 +92957,7 @@ fn render_up_preview_native_preparation_action(
 fn append_up_preview_service_actions_for_workflow(
     contract: &Contract,
     workflow_name: Option<&str>,
+    run_behavior_preference: UpRunBehaviorPreference,
     actions: &mut Vec<String>,
 ) {
     for selector in selected_workflow_instance_prerequisite_selectors(contract, workflow_name) {
@@ -92902,6 +92998,13 @@ fn append_up_preview_service_actions_for_workflow(
 
     if let Some(run_task) = activation_task {
         actions.push(format!("activate workflow task `{run_task}`"));
+    }
+    if matches!(run_behavior_preference, UpRunBehaviorPreference::Attach)
+        && let Some(attach_task) = selected_up_attach_task_name(contract, workflow_name)
+    {
+        actions.push(format!(
+            "attach to the declared interactive workflow session via task `{attach_task}`"
+        ));
     }
 }
 
@@ -92961,6 +93064,7 @@ fn build_up_preview(
     resolved_path: &Path,
     overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
+    run_behavior_preference: UpRunBehaviorPreference,
     preflight: &DoctorReport,
 ) -> RepoUpPreview {
     let primary_task = selected_up_primary_task_name(contract, workflow_name);
@@ -93034,7 +93138,12 @@ fn build_up_preview(
         }
     }
 
-    append_up_preview_service_actions_for_workflow(contract, workflow_name, &mut actions);
+    append_up_preview_service_actions_for_workflow(
+        contract,
+        workflow_name,
+        run_behavior_preference,
+        &mut actions,
+    );
 
     actions.push(String::from("re-check repo readiness"));
 
@@ -93209,7 +93318,15 @@ fn resolve_up_run_behavior(
     preference: UpRunBehaviorPreference,
 ) -> UpRunBehavior {
     match preference {
-        UpRunBehaviorPreference::Attach => UpRunBehavior::Attach,
+        UpRunBehaviorPreference::Attach => {
+            if selected_up_attach_task_name(contract, workflow_name).is_some()
+                && selected_up_run_task_is_service(contract, workflow_name, overrides)
+            {
+                UpRunBehavior::DetachedLeaveRunning
+            } else {
+                UpRunBehavior::Attach
+            }
+        }
         UpRunBehaviorPreference::Detach => UpRunBehavior::DetachedLeaveRunning,
         UpRunBehaviorPreference::Auto => {
             if selected_up_run_task_is_service(contract, workflow_name, overrides) {
@@ -95135,8 +95252,14 @@ fn execute_repo_up_with_behavior(
             findings: vec![blocker.clone()],
         };
         if dry_run {
-            let preview =
-                build_up_preview(contract, resolved_path, overrides, workflow_name, &report);
+            let preview = build_up_preview(
+                contract,
+                resolved_path,
+                overrides,
+                workflow_name,
+                run_behavior_preference,
+                &report,
+            );
             let receipt = preview_receipt(
                 contract,
                 resolved_path,
@@ -95213,6 +95336,7 @@ fn execute_repo_up_with_behavior(
             resolved_path,
             overrides,
             workflow_name,
+            run_behavior_preference,
             &preflight,
         );
         let preview_ok = !doctor_verdict_blocks_preview(preview.summary.verdict);
@@ -96503,6 +96627,87 @@ fn execute_repo_up_with_behavior(
         workflow_name,
         diagnosis_overrides,
     );
+    if report.ok
+        && matches!(run_behavior_preference, UpRunBehaviorPreference::Attach)
+        && let Some(attach_task_name) = selected_up_attach_task_name(contract, workflow_name)
+    {
+        let attach_task_command = contract
+            .tasks
+            .get(attach_task_name)
+            .and_then(task_command_preview);
+        match run_up_task(
+            contract,
+            resolved_path,
+            attach_task_name,
+            overrides,
+            policy_env,
+            RepoExecutionMode::Stream,
+        ) {
+            Ok(outcome) if run_phase_failure_exit_code(&outcome).is_none() => {
+                stdout.push_str(&outcome.stdout);
+                stderr.push_str(&outcome.stderr);
+                executed_task_names.extend(outcome.executed_tasks);
+            }
+            Ok(outcome) => {
+                stdout.push_str(&outcome.stdout);
+                stderr.push_str(&outcome.stderr);
+                let exit_code = run_phase_failure_exit_code(&outcome).unwrap_or(1);
+                let mut receipt = repo_execution_receipt_with_overrides(
+                    resolved_path,
+                    contract,
+                    task_phase_execution_context(
+                        contract,
+                        resolved_path,
+                        attach_task_name,
+                        overrides,
+                        outcome.target.clone(),
+                    ),
+                    "ATTACH FAILED",
+                    "attach",
+                    workflow_name,
+                    None,
+                    Some(attach_task_name),
+                    &[],
+                    Some(exit_code),
+                    None,
+                    Some(overrides),
+                );
+                receipt.service_termination = outcome.service_termination.clone();
+                receipt.host_service_cleanup = outcome.host_service_cleanup.clone();
+                return Ok(RepoUpResult {
+                    ok: false,
+                    status: "ATTACH FAILED",
+                    phase: "attach",
+                    preview: None,
+                    receipt,
+                    report,
+                    service: None,
+                    service_command: None,
+                    task: Some(attach_task_name.to_string()),
+                    task_command: attach_task_command,
+                    exit_code: Some(exit_code),
+                    stdout,
+                    stderr,
+                });
+            }
+            Err(error) => {
+                if let Some(blocked_result) = up_backend_fulfillment_blocked_result(
+                    contract,
+                    resolved_path,
+                    workflow_name,
+                    overrides,
+                    attach_task_name,
+                    attach_task_command.clone(),
+                    stdout.clone(),
+                    stderr.clone(),
+                    &error,
+                ) {
+                    return Ok(blocked_result);
+                }
+                return Err(render_up_run_error(resolved_path, overrides, error));
+            }
+        }
+    }
     let workloads = resolve_up_workloads(
         setup_task,
         setup_runtime.as_ref(),
@@ -99643,6 +99848,15 @@ fn selected_up_run_task_name<'a>(
 ) -> Option<&'a str> {
     contract
         .selected_run_task_name_for(workflow_name)
+        .filter(|name| contract.tasks.contains_key(*name))
+}
+
+fn selected_up_attach_task_name<'a>(
+    contract: &'a Contract,
+    workflow_name: Option<&str>,
+) -> Option<&'a str> {
+    contract
+        .selected_attach_task_name_for(workflow_name)
         .filter(|name| contract.tasks.contains_key(*name))
 }
 

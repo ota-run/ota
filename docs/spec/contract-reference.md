@@ -1828,6 +1828,8 @@ Compose execution notes:
 
 - use `tasks.<name>.compose` when the truthful task body is a direct `docker|podman compose exec`
   or `run` command inside a declared service
+- use `compose.kind: attach` when the truthful lane re-attaches to an existing interactive
+  session inside a declared Compose service, such as `tmux attach` inside a running dev container
 - `compose.detach: true` is supported for `kind: exec` when the truthful lane starts a detached
   in-service bootstrap or background process and Ota should own that launch directly
 - `compose.rm: true` remains valid only for `kind: run`
@@ -1919,14 +1921,14 @@ Task-effect rules:
 
 `compose` fields:
 
-- `compose.kind`: required Compose execution shape; ota ships `exec` and `run`
+- `compose.kind`: required Compose execution shape; ota ships `exec`, `run`, and `attach`
 - `compose.engine`: optional Compose CLI engine; `docker` by default, `podman` also supported
 - `compose.service`: required Compose service name
 - `compose.workdir`: optional in-container working directory passed through `compose exec/run -w`
 - `compose.exe`: required executable to run inside the selected service
 - `compose.args`: optional argument list passed to `compose.exe`
 - `compose.rm`: optional `compose run --rm`; valid only with `kind: run`
-- `compose.tty`: optional TTY preservation; omitted means ota adds `-T` for deterministic non-interactive execution
+- `compose.tty`: optional TTY preservation for `exec` and `run`; omitted means ota adds `-T` for deterministic non-interactive execution. `kind: attach` is always interactive and preserves TTY by definition.
 
 `compose` rules:
 
@@ -1935,6 +1937,8 @@ Task-effect rules:
 - `compose` currently requires `requirements.tools.docker` or `requirements.tools.podman` to keep the host Compose engine truthful
 - keep host-side Compose adapter truth under `adapter_inputs.compose` or workflow overlays; keep only service-side command truth under `compose`
 - `compose.rm` is only valid with `compose.kind: run`
+- `compose.detach` is only valid with `compose.kind: exec`
+- `compose.kind: attach` must not declare `compose.rm` or `compose.detach`
 
 `prepare` fields:
 
@@ -3193,6 +3197,9 @@ Fields:
   - current workflow prepare shape requires exactly one of `<name>.prepare.task` or `<name>.prepare.action`
 - `<name>.setup.task`: optional task ota should treat as the preparation phase for that workflow
 - `<name>.run.task`: optional task ota should treat as the primary runnable surface for that workflow
+- `<name>.attach.task`: optional task ota should treat as the canonical interactive re-attach lane for that workflow
+  - use this when the truthful workflow path starts in the background and a separate named task re-attaches to an existing interactive session
+  - `ota up --attach` uses this lane after readiness when it is declared instead of assuming the run task itself stays foreground
 - `<name>.services.required`: optional services that belong to that workflow
 - `<name>.readiness.checks`: optional readiness checks that belong to that workflow
 - `<name>.readiness.probes`: optional reusable readiness probes that belong to that workflow

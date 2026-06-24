@@ -94,6 +94,22 @@ tasks:
       args:
         - compose
         - down
+  app:attach:
+    context: host
+    env:
+      APP_SOURCE_PATH: ${OTA_HOST_WORKSPACE}
+    adapter_inputs:
+      compose:
+        files:
+          - docker-compose.yml
+        project_name: app-ws0
+    compose:
+      kind: attach
+      service: app
+      exe: sh
+    requirements:
+      tools:
+        docker: "*"
 workflows:
   default: app
   app:
@@ -120,6 +136,10 @@ workflows:
             adapter_inputs:
               compose:
                 project_name: app-ws1
+          app:attach:
+            adapter_inputs:
+              compose:
+                project_name: app-ws1
           app:down:
             adapter_inputs:
               compose:
@@ -140,6 +160,10 @@ workflows:
             adapter_inputs:
               compose:
                 project_name: app-ws2
+          app:attach:
+            adapter_inputs:
+              compose:
+                project_name: app-ws2
           app:down:
             adapter_inputs:
               compose:
@@ -149,6 +173,8 @@ workflows:
             port: 23000
     run:
       task: app:up
+    attach:
+      task: app:attach
 agent:
   safe_tasks:
     - app:down

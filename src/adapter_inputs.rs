@@ -1773,6 +1773,7 @@ mod tests {
             prepare: None::<WorkflowPrepareSpec>,
             setup: None,
             run: None,
+            attach: None,
             services: WorkflowServicesSpec::default(),
             readiness: WorkflowReadinessSpec::default(),
             exposes: Vec::new(),

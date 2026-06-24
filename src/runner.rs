@@ -2620,11 +2620,14 @@ fn projected_compose_invocation_command_for_task(
     exe: &str,
     args: &[String],
 ) -> crate::schema::TaskCommandSpec {
-    let mut projected_args = vec![String::from("compose"), String::from(compose.kind.label())];
+    let mut projected_args = vec![
+        String::from("compose"),
+        String::from(compose.compose_subcommand()),
+    ];
     if compose.detach {
         projected_args.push(String::from("-d"));
     }
-    if !compose.tty {
+    if !compose.tty && compose.kind != crate::schema::TaskComposeExecutionKind::Attach {
         projected_args.push(String::from("-T"));
     }
     if compose.rm {

@@ -42,6 +42,11 @@
   can now materialize structured `json` and `toml` artifacts from ordered merge sources with
   instance-aware placeholder substitution and optional `merge_into_existing`; Penpot can now model
   per-workspace MCP/client config generation as contract truth instead of a repo-local merge helper
+- added first-class interactive workflow attach ownership with `workflows.<name>.attach.task` and
+  `tasks.<name>.compose.kind: attach`, so detached session workflows can declare one canonical
+  re-attach lane and `ota up --attach` now keeps the service runtime running, proves readiness, and
+  then enters the declared interactive session instead of assuming the run task itself stays
+  foreground
 - hardened unreleased git installs in the official shell and PowerShell installers by defaulting
   `CARGO_NET_GIT_FETCH_WITH_CLI=true` on `--from-git` lanes, so contract-owned git revision and
   branch bootstrap paths no longer depend on Cargo's flakier libgit transport on hosted runners

@@ -520,7 +520,7 @@ enum Commands {
         /// Stream raw live service-start and setup output in text mode.
         #[arg(long, action = ArgAction::SetTrue)]
         stream: bool,
-        /// Keep up attached to the workflow run task process.
+        /// Attach to the workflow run task process, or to the declared workflow attach task after readiness.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "detach")]
         attach: bool,
         /// Keep the proved workflow run task running after readiness confirms.

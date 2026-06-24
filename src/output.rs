@@ -2807,6 +2807,8 @@ pub struct WorkflowSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_task: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub attach_task: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub run_task_launch: Option<TaskLaunchSummary<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub required_services: Vec<String>,
@@ -2917,6 +2919,7 @@ impl<'a> WorkflowSummary<'a> {
                 .and_then(|phase| summarize_task_action(phase.action.as_ref())),
             setup_task: workflow.setup.as_ref().map(|phase| phase.task.as_str()),
             run_task: workflow.run.as_ref().map(|phase| phase.task.as_str()),
+            attach_task: workflow.attach.as_ref().map(|phase| phase.task.as_str()),
             run_task_launch: workflow
                 .run
                 .as_ref()

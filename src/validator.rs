@@ -3629,6 +3629,30 @@ fn validate_task_compose_invocation(
             "task `{task_name}` {scope} must only declare `{field_path}.detach: true` with `kind: exec`"
         )));
     }
+    if compose.kind == crate::schema::TaskComposeExecutionKind::Attach {
+        if compose.rm {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: attach`"
+            )));
+        }
+        if compose.detach {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` {scope} must not declare `{field_path}.detach: true` with `kind: attach`"
+            )));
+        }
+    }
+}
+
+fn task_supports_workflow_attach(
+    _contract: &crate::schema::Contract,
+    task: &crate::schema::TaskSpec,
+    backend: crate::schema::Backend,
+) -> bool {
+    task.resolved_execution_for_backend(backend, std::env::consts::OS)
+        .and_then(|execution| execution.compose())
+        .is_some_and(|compose| {
+            compose.invocation.kind == crate::schema::TaskComposeExecutionKind::Attach
+        })
 }
 
 fn compose_cli_requirement_name(engine: crate::schema::ComposeCliEngine) -> &'static str {
@@ -14073,6 +14097,28 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 errors,
             );
         }
+        if let Some(attach) = workflow.attach.as_ref() {
+            validate_task_reference(
+                &format!("workflows.{name}.attach.task"),
+                Some(attach.task.as_str()),
+                &contract.tasks,
+                errors,
+            );
+            if let Some(task) = contract.tasks.get(attach.task.as_str()) {
+                let attach_backend = workflow
+                    .run
+                    .as_ref()
+                    .and_then(|run| contract.tasks.get(run.task.as_str()))
+                    .map(|run_task| run_task.workflow_backend(contract.execution.as_ref()))
+                    .unwrap_or_else(|| task.workflow_backend(contract.execution.as_ref()));
+                if !task_supports_workflow_attach(contract, task, attach_backend) {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.attach.task` must resolve to a first-class interactive attach body for backend `{}`",
+                        format_backend(attach_backend)
+                    )));
+                }
+            }
+        }
         for service in &workflow.services.required {
             if !contract.services.contains_key(service) {
                 errors.push(ValidationError::new(format!(
@@ -22911,6 +22957,95 @@ tasks:
             errors.errors()[0].to_string(),
             "task `dev` task must only declare `compose.rm: true` with `kind: run`"
         );
+    }
+
+    #[test]
+    fn rejects_compose_attach_with_detach() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  attach:
+    compose:
+      kind: attach
+      detach: true
+      service: api
+      exe: tmux
+      args:
+        - attach
+        - -t
+        - app
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors
+            .errors()
+            .iter()
+            .any(|error| error.to_string()
+                == "task `attach` task with `compose.engine: docker` must declare `requirements.tools.docker`"));
+        assert!(errors
+            .errors()
+            .iter()
+            .any(|error| error.to_string()
+                == "task `attach` task must only declare `compose.detach: true` with `kind: exec`"));
+        assert!(errors
+            .errors()
+            .iter()
+            .any(|error| error.to_string()
+                == "task `attach` task must not declare `compose.detach: true` with `kind: attach`"));
+    }
+
+    #[test]
+    fn rejects_workflow_attach_task_without_attach_body() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo dev
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+  shell:
+    command:
+      exe: docker
+      args:
+        - compose
+        - exec
+        - main
+        - sh
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    attach:
+      task: shell
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors
+            .errors()
+            .iter()
+            .any(|error| error.to_string()
+                == "`workflows.app.attach.task` must resolve to a first-class interactive attach body for backend `native`"));
     }
 
     #[test]

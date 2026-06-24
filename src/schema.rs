@@ -374,6 +374,13 @@ impl Contract {
             })
     }
 
+    pub fn selected_attach_task_name_for(&self, workflow_name: Option<&str>) -> Option<&str> {
+        self.selected_workflow(workflow_name)
+            .and_then(|(_, workflow)| workflow.attach.as_ref())
+            .map(|phase| phase.task.as_str())
+            .filter(|task| !task.trim().is_empty())
+    }
+
     pub fn task_dependency_closure_names(
         &self,
         roots: impl IntoIterator<Item = String>,
@@ -648,6 +655,8 @@ pub struct WorkflowSpec {
     pub setup: Option<WorkflowTaskRefSpec>,
     #[serde(default)]
     pub run: Option<WorkflowTaskRefSpec>,
+    #[serde(default)]
+    pub attach: Option<WorkflowTaskRefSpec>,
     #[serde(default)]
     pub services: WorkflowServicesSpec,
     #[serde(default)]
@@ -5241,15 +5250,27 @@ impl TaskComposeInvocationSpec {
         match self.kind {
             TaskComposeExecutionKind::Exec => "compose_exec",
             TaskComposeExecutionKind::Run => "compose_run",
+            TaskComposeExecutionKind::Attach => "compose_attach",
+        }
+    }
+
+    pub const fn compose_subcommand(&self) -> &'static str {
+        match self.kind {
+            TaskComposeExecutionKind::Exec | TaskComposeExecutionKind::Attach => "exec",
+            TaskComposeExecutionKind::Run => "run",
         }
     }
 
     pub fn preview_prefix(&self) -> String {
-        let mut preview = format!("{} compose {}", self.engine.as_str(), self.kind.label());
+        let mut preview = format!(
+            "{} compose {}",
+            self.engine.as_str(),
+            self.compose_subcommand()
+        );
         if self.detach {
             preview.push_str(" -d");
         }
-        if !self.tty {
+        if !self.tty && self.kind != TaskComposeExecutionKind::Attach {
             preview.push_str(" -T");
         }
         if self.rm {
@@ -5307,6 +5328,7 @@ pub enum TaskComposeExecutionKind {
     Exec,
     #[default]
     Run,
+    Attach,
 }
 
 impl TaskComposeExecutionKind {
@@ -5314,6 +5336,7 @@ impl TaskComposeExecutionKind {
         match self {
             Self::Exec => "exec",
             Self::Run => "run",
+            Self::Attach => "attach",
         }
     }
 }
