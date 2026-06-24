@@ -164,7 +164,7 @@ use crate::schema::{
     TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
     TaskTargetActivationSpec, TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec,
     ToolAcquisitionProvider, ToolAcquisitionSpec, format_memory_size_bytes,
-    parse_memory_size_bytes, parse_readiness_duration_spec,
+    parse_memory_size_bytes, parse_readiness_duration_spec, split_workflow_selector,
 };
 use crate::toolchains::{
     ToolchainOwnedCapabilityKind, declared_toolchain_contract,
@@ -15857,6 +15857,7 @@ fn render_run_preview_target(
         member,
         &env_report,
         &preconditions_report,
+        overrides,
     );
     let (requested_context, selected_context) = run_preview_context_selection(
         declared_execution.as_ref(),
@@ -15960,8 +15961,16 @@ fn run_preview_summary(
     member: Option<&str>,
     env_report: &EnvReport,
     preconditions_report: &DoctorReport,
+    overrides: ExecutionOverrides,
 ) -> DoctorSummary {
-    let mut summary = doctor_preview_summary_for_provisioning(
+    let activation_actions = requirement_surface_activation_actions(
+        &selected_task_activation_requirement_surface(contract, task_name, overrides)
+            .unwrap_or_default(),
+        requirement_target_os_for_backend(
+            effective_task_execution(contract, task_name, overrides).backend,
+        ),
+    );
+    let mut summary = doctor_preview_summary_for_resolution(
         preconditions_report,
         DoctorVerdict::Ready,
         preconditions_report
@@ -15969,6 +15978,7 @@ fn run_preview_summary(
             .as_ref()
             .map(|provisioning| provisioning.request.actions.as_slice())
             .unwrap_or(&[]),
+        &activation_actions,
     );
     let has_doctor_env_finding = preconditions_report
         .findings
@@ -16001,34 +16011,43 @@ fn run_preview_summary(
     summary
 }
 
-fn doctor_preview_summary_for_provisioning(
+fn doctor_preview_summary_for_resolution(
     report: &DoctorReport,
     agent_verdict: DoctorVerdict,
     provisioning_actions: &[crate::policy_pack::ProvisioningAction],
+    activation_actions: &[RequirementActivationAction],
 ) -> DoctorSummary {
     let mut summary = doctor_summary(report, agent_verdict);
     if matches!(summary.verdict, DoctorVerdict::NotReady)
-        && preview_errors_are_fully_provisionable(&report.findings, provisioning_actions)
+        && preview_errors_are_fully_resolvable(
+            &report.findings,
+            provisioning_actions,
+            activation_actions,
+        )
     {
         summary.verdict = DoctorVerdict::Risky;
     }
     summary
 }
 
-fn preview_errors_are_fully_provisionable(
+fn preview_errors_are_fully_resolvable(
     findings: &[Finding],
     provisioning_actions: &[crate::policy_pack::ProvisioningAction],
+    activation_actions: &[RequirementActivationAction],
 ) -> bool {
     let error_findings = findings
         .iter()
         .filter(|finding| finding.severity == FindingSeverity::Error)
         .collect::<Vec<_>>();
     !error_findings.is_empty()
-        && !provisioning_actions.is_empty()
+        && !(provisioning_actions.is_empty() && activation_actions.is_empty())
         && error_findings.iter().all(|finding| {
             provisioning_actions
                 .iter()
                 .any(|action| finding_targets_provisioning_action(finding, action))
+                || activation_actions
+                    .iter()
+                    .any(|action| finding_targets_activation_action(finding, action))
         })
 }
 
@@ -16298,17 +16317,17 @@ fn build_run_preview_plan(
             "skip declared depends_on before requested task `{task_name}`"
         ));
     }
+    let activation_surface =
+        selected_task_activation_requirement_surface(contract, task_name, overrides)
+            .unwrap_or_default();
+    for action in requirement_surface_activation_actions(&activation_surface, target_os) {
+        plan.actions
+            .push(render_up_preview_activation_action(&action));
+    }
     if matches!(
         effective_task_execution(contract, task_name, overrides).backend,
         Backend::Native
     ) {
-        let activation_surface =
-            selected_task_activation_requirement_surface(contract, task_name, overrides)
-                .unwrap_or_default();
-        for action in requirement_surface_activation_actions(&activation_surface, target_os) {
-            plan.actions
-                .push(render_up_preview_activation_action(&action));
-        }
         for action in selected_task_native_activation_actions(contract, task_name, overrides) {
             plan.actions
                 .push(render_up_preview_native_activation_action(&action));
@@ -16781,19 +16800,13 @@ fn selected_task_activation_requirement_surface(
     task_name: &str,
     overrides: ExecutionOverrides,
 ) -> Option<RequirementSurface> {
-    if !matches!(
-        effective_task_execution(contract, task_name, overrides).backend,
-        Backend::Native
-    ) {
-        return None;
-    }
-
     let requirement_surface = selected_task_requirement_surface(contract, task_name, overrides)?;
     let required_tool_names = requirement_surface
         .tools
         .keys()
         .cloned()
         .collect::<BTreeSet<_>>();
+    let effective_backend = effective_task_execution(contract, task_name, overrides).backend;
     Some(
         requirement_surface_with_toolchain_owned_tools_for_required_tools(
             contract,
@@ -16801,7 +16814,7 @@ fn selected_task_activation_requirement_surface(
             &selected_task_scoped_toolchain_names(contract, task_name, overrides)
                 .into_iter()
                 .collect(),
-            requirement_target_os_for_backend(Backend::Native),
+            requirement_target_os_for_backend(effective_backend),
             Some(&required_tool_names),
         ),
     )
@@ -28895,7 +28908,10 @@ pub fn workspace_list(
                                     {
                                         (String::from("INVALID CONTRACT"), None)
                                     } else if let Some(workflow_name) = repo.workflow.as_deref() {
-                                        if contract.workflow(workflow_name).is_none() {
+                                        if !selected_workflow_selector_is_valid(
+                                            &contract,
+                                            workflow_name,
+                                        ) {
                                             (
                                                 String::from("INVALID WORKFLOW"),
                                                 WorkspaceExecutionSummary::from_contract_with_policy(
@@ -39598,10 +39614,18 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
 
 fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<bool>) -> String {
     let mut output = format!("{} {}", list_bullet(), paint(workflow.name, "1"));
+    let workflow_selector = workflow
+        .instance
+        .as_ref()
+        .map(|instance| format!("{}@{instance}", workflow.name))
+        .unwrap_or_else(|| workflow.name.to_string());
     if let Some(intent) = workflow.intent
         && !intent.trim().is_empty()
     {
         output.push_str(&format!("\n  {} {}", paint_key("Intent:"), intent));
+    }
+    if let Some(instance) = workflow.instance.as_deref() {
+        output.push_str(&format!("\n  {} {}", paint_key("Instance:"), instance));
     }
     if let Some(description) = workflow.description
         && !description.trim().is_empty()
@@ -39615,12 +39639,15 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
     output.push_str(&format!(
         "\n  {} `{}`",
         paint_key("Use:"),
-        paint_code(&format!("ota up --workflow {}", workflow.name))
+        paint_code(&format!("ota up --workflow {}", workflow_selector))
     ));
     output.push_str(&format!(
         "\n  {} `{}`",
         paint_key("Proof:"),
-        paint_code(&format!("ota proof runtime --workflow {}", workflow.name))
+        paint_code(&format!(
+            "ota proof runtime --workflow {}",
+            workflow_selector
+        ))
     ));
     if let Some(prepare_task) = workflow.prepare_task {
         output.push_str(&format!(
@@ -51361,6 +51388,7 @@ tasks:
         let inputs = BTreeMap::new();
         let workflow = WorkflowSummary {
             name: "app",
+            instance: None,
             intent: Some("local_development"),
             description: Some("Primary local app workflow"),
             notes: Some("Use this to validate local startup before release"),
@@ -54114,7 +54142,7 @@ tasks:
         );
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
-        assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
+        assert_eq!(json["preview_status"], "RUNNABLE");
         assert_eq!(
             json["provisioning_request"]["actions"][0]["source"],
             expected_source
@@ -54204,7 +54232,7 @@ tasks:
 
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
-        assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
+        assert_eq!(json["preview_status"], "RUNNABLE");
         assert_eq!(
             json["provisioning_request"]["actions"][0]["source"],
             "release-asset"
@@ -54760,6 +54788,105 @@ tasks:
         assert_eq!(json["ok"], true);
         assert_eq!(json["preview_status"], "RUNNABLE");
         assert_eq!(json["resolved"]["backend"], "native");
+    }
+
+    #[test]
+    fn run_dry_run_allows_selected_native_corepack_activation_when_package_manager_is_missing() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("create fake bin");
+        write_executable_script(
+            &fake_command_path(&bin_dir, "node"),
+            if cfg!(windows) {
+                "@echo off\r\necho v20.12.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'v20.12.0'\n"
+            },
+        );
+        write_executable_script(
+            &fake_command_path(&bin_dir, "corepack"),
+            if cfg!(windows) {
+                "@echo off\r\necho corepack 0.31.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'corepack 0.31.0'\n"
+            },
+        );
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).expect("join fake path");
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: flowise
+toolchains:
+  node:
+    provider: corepack
+    version: ">=20,<25"
+    package_managers:
+      pnpm: "10.26.0"
+    fulfillment: run
+tasks:
+  install:
+    run: pnpm install
+    requirements:
+      toolchains:
+        - node
+      tools:
+        pnpm: "10.26.0"
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "install",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["preview_status"], "RUNNABLE");
+        assert_eq!(json["resolved"]["backend"], "native");
+        let actions = json["plan"]["actions"]
+            .as_array()
+            .expect("preview actions should be present");
+        assert!(actions.iter().any(|action| {
+            action
+                .as_str()
+                .unwrap_or_default()
+                .contains("activate tool `pnpm` via `corepack` (`pnpm@10.26.0`)")
+        }));
     }
 
     #[test]
@@ -56883,6 +57010,7 @@ tasks:
             default: false,
             workflow: WorkflowSummary {
                 name: "build",
+                instance: None,
                 intent: Some("local_build"),
                 description: Some("Build artifacts for local installation testing"),
                 notes: Some("Use this path before packaging artifacts for manual QA."),
@@ -59372,6 +59500,76 @@ workflows:
     }
 
     #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_applies_instance_overlays() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-adjustment
+surfaces:
+  ui:
+    kind: http
+    port: 3000
+tasks:
+  dev:
+    env:
+      PENPOT_SOURCE_PATH: .
+    adapter_inputs:
+      compose:
+        project_name: penpotdev-ws0
+    run: docker compose up -d
+workflows:
+  default: devenv
+  devenv:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0:
+        env:
+          PENPOT_SOURCE_PATH: .
+      ws1:
+        env:
+          PENPOT_SOURCE_PATH: ../workspaces/ws1
+        tasks:
+          dev:
+            adapter_inputs:
+              compose:
+                project_name: penpotdev-ws1
+        surfaces:
+          ui:
+            port: 13000
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(
+            &contract,
+            Some("devenv@ws1"),
+        )
+        .expect("workflow instance should adjust contract");
+        assert_eq!(
+            adjusted
+                .surfaces
+                .get("ui")
+                .map(|surface| surface.port),
+            Some(13000)
+        );
+        let task = adjusted.tasks.get("dev").expect("task should exist");
+        assert_eq!(
+            task.env.get("PENPOT_SOURCE_PATH").map(String::as_str),
+            Some("../workspaces/ws1")
+        );
+        assert_eq!(
+            task.adapter_inputs
+                .effective_compose()
+                .and_then(|compose| compose.project_name),
+            Some(String::from("penpotdev-ws1"))
+        );
+    }
+
+    #[test]
     fn contract_adjusted_for_selected_workflow_env_profile_binds_rendered_dotenv_to_compose_services()
      {
         let contract = parse_contract_str(
@@ -61229,7 +61427,7 @@ workflows:
     }
 
     #[test]
-    fn selected_up_activation_actions_skip_container_scoped_corepack_package_managers() {
+    fn selected_up_activation_actions_include_container_scoped_corepack_package_managers() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -61298,7 +61496,8 @@ workflows:
             &preflight,
         );
 
-        assert!(actions.is_empty());
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(actions[0].tool_name, "pnpm");
     }
 
     #[test]
@@ -65503,6 +65702,7 @@ execution:
         };
         let workflow = WorkflowSummary {
             name: "app",
+            instance: None,
             intent: Some("local_development"),
             description: None,
             notes: None,
@@ -76385,6 +76585,27 @@ fn workflow_selection_error(
     contract_path: &Path,
     workflow_name: &str,
 ) -> String {
+    let (selected_workflow_name, selected_instance_name) = split_workflow_selector(workflow_name);
+    if let Some(workflow) = contract.workflow(selected_workflow_name)
+        && let Some(instance_name) = selected_instance_name
+    {
+        let available_instances = workflow
+            .instances
+            .as_ref()
+            .map(|instances| instances.items.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        if available_instances.is_empty() {
+            return format!(
+                "workflow `{selected_workflow_name}` in `{}` does not declare instance `{instance_name}`",
+                compact_contract_path(contract_path)
+            );
+        }
+        return format!(
+            "workflow `{selected_workflow_name}` in `{}` does not declare instance `{instance_name}`; available instances: {}",
+            compact_contract_path(contract_path),
+            available_instances.join(", ")
+        );
+    }
     let available = contract
         .workflows
         .as_ref()
@@ -76404,19 +76625,32 @@ fn workflow_selection_error(
     }
 }
 
+fn selected_workflow_selector_is_valid(contract: &Contract, workflow_name: &str) -> bool {
+    let (selected_workflow_name, selected_instance_name) = split_workflow_selector(workflow_name);
+    if contract.workflow(selected_workflow_name).is_none() {
+        return false;
+    }
+    if selected_instance_name.is_some() {
+        return contract
+            .selected_workflow_instance(Some(workflow_name))
+            .is_some();
+    }
+    true
+}
+
 fn resolve_selected_workflow_summary<'a>(
     contract: &'a Contract,
     contract_path: &Path,
     workflow_name: Option<&'a str>,
 ) -> Result<Option<WorkflowSummary<'a>>, String> {
-    if let Some(workflow_name) = workflow_name
-        && contract.workflow(workflow_name).is_none()
-    {
-        return Err(workflow_selection_error(
-            contract,
-            contract_path,
-            workflow_name,
-        ));
+    if let Some(workflow_name) = workflow_name {
+        if !selected_workflow_selector_is_valid(contract, workflow_name) {
+            return Err(workflow_selection_error(
+                contract,
+                contract_path,
+                workflow_name,
+            ));
+        }
     }
     Ok(WorkflowSummary::from_contract_selected_with_path(
         contract,
@@ -77481,6 +77715,7 @@ fn run_selected_precondition_failure(
         member,
         &env_report,
         &preconditions_report,
+        overrides,
     );
     if !doctor_verdict_blocks_preview(summary.verdict) {
         return None;
@@ -77514,6 +77749,7 @@ fn run_selected_precondition_failure(
                     member,
                     &env_report,
                     &refreshed_report,
+                    overrides,
                 );
                 if !doctor_verdict_blocks_preview(refreshed_summary.verdict) {
                     return None;
@@ -91419,18 +91655,18 @@ fn selected_up_activation_actions(
     workflow_name: Option<&str>,
     preflight: &DoctorReport,
 ) -> Vec<RequirementActivationAction> {
-    if !matches!(
-        up_doctor_mode(contract, overrides, workflow_name),
-        DoctorMode::Native
-    ) {
-        return Vec::new();
-    }
-
     let requirement_surface = up_activation_requirement_surface(contract, overrides, workflow_name);
+    let target_os = requirement_target_os_for_backend(
+        match up_doctor_mode(contract, overrides, workflow_name) {
+            DoctorMode::Container => Backend::Container,
+            DoctorMode::Native => Backend::Native,
+            DoctorMode::Remote => Backend::Remote,
+        },
+    );
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
-    requirement_surface_activation_actions(&requirement_surface, current_os())
+    requirement_surface_activation_actions(&requirement_surface, target_os)
         .into_iter()
         .filter(|action| {
             !policy_provisioned_tools.contains(action.tool_name.as_str())
@@ -91485,12 +91721,7 @@ fn up_activation_requirement_surface(
 
     for task_name in task_names {
         let task_name = task_name.as_str();
-        if !matches!(
-            effective_task_execution(contract, task_name, overrides).backend,
-            Backend::Native
-        ) {
-            continue;
-        }
+        let effective_backend = effective_task_execution(contract, task_name, overrides).backend;
         let mut toolchain_names =
             selected_task_scoped_toolchain_names(contract, task_name, overrides)
                 .into_iter()
@@ -91506,7 +91737,7 @@ fn up_activation_requirement_surface(
             contract,
             &surface,
             &toolchain_names,
-            requirement_target_os_for_backend(Backend::Native),
+            requirement_target_os_for_backend(effective_backend),
             Some(&required_tool_names),
         );
     }
@@ -92405,10 +92636,11 @@ fn build_up_preview(
     actions.push(String::from("re-check repo readiness"));
 
     RepoUpPreview {
-        summary: doctor_preview_summary_for_provisioning(
+        summary: doctor_preview_summary_for_resolution(
             preflight,
             crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
             &selected_actions,
+            &activation_actions,
         ),
         contract_identity: repo_contract_identity(contract),
         execution: UpPreviewExecution {
@@ -92423,7 +92655,15 @@ fn build_up_preview(
         blockers: preflight
             .findings
             .iter()
-            .filter(|finding| finding.severity == FindingSeverity::Error)
+            .filter(|finding| {
+                finding.severity == FindingSeverity::Error
+                    && !activation_actions
+                        .iter()
+                        .any(|action| finding_targets_activation_action(finding, action))
+                    && !selected_actions
+                        .iter()
+                        .any(|action| finding_targets_provisioning_action(finding, action))
+            })
             .cloned()
             .collect(),
     }
@@ -93109,26 +93349,60 @@ fn contract_adjusted_for_selected_workflow_env_profile(
     contract: &Contract,
     workflow_name: Option<&str>,
 ) -> Option<Contract> {
+    let selected_instance = contract.selected_workflow_instance(workflow_name).cloned();
     let has_workflow_env_or_adapter_inputs = contract
         .selected_workflow(workflow_name)
         .is_some_and(|(_, workflow)| workflow.env.is_some() || !workflow.adapter_inputs.is_empty());
-    if !has_workflow_env_or_adapter_inputs {
+    if !has_workflow_env_or_adapter_inputs && selected_instance.is_none() {
         return None;
     }
-    let profile = contract
+
+    let mut adjusted = contract.clone();
+    let task_names = adjusted.selected_workflow_task_closure_names(workflow_name);
+    if let Some(instance) = selected_instance.as_ref() {
+        for (surface_name, overlay) in &instance.surfaces {
+            let Some(surface) = adjusted.surfaces.get_mut(surface_name.as_str()) else {
+                continue;
+            };
+            if let Some(port) = overlay.port {
+                surface.port = port;
+            }
+            if let Some(path) = overlay.path.as_ref() {
+                surface.path = Some(path.clone());
+            }
+        }
+
+        for task_name in &task_names {
+            let Some(task) = adjusted.tasks.get_mut(task_name.as_str()) else {
+                continue;
+            };
+            for (name, value) in &instance.env {
+                task.env.insert(name.clone(), value.clone());
+            }
+            if let Some(task_overlay) = instance.tasks.get(task_name.as_str()) {
+                for (name, value) in &task_overlay.env {
+                    task.env.insert(name.clone(), value.clone());
+                }
+                if !task_overlay.adapter_inputs.is_empty() {
+                    bind_workflow_adapter_overlays(task, &task_overlay.adapter_inputs);
+                }
+            }
+        }
+    }
+
+    let profile = adjusted
         .selected_workflow_env_profile(workflow_name)
         .cloned()
         .unwrap_or_default();
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
-    let adapter_task_names = contract.selected_workflow_run_task_closure_names(workflow_name);
+    let adapter_task_names = adjusted.selected_workflow_run_task_closure_names(workflow_name);
     let rendered_dotenv_path = profile
         .render
         .as_ref()
         .and_then(|render| render.dotenv.as_ref())
         .map(|dotenv| dotenv.path.clone());
     let compose_env_file_services =
-        contract.selected_workflow_compose_env_file_service_names(workflow_name);
-    let mut workflow_adapter_inputs = contract
+        adjusted.selected_workflow_compose_env_file_service_names(workflow_name);
+    let mut workflow_adapter_inputs = adjusted
         .selected_workflow_adapter_overlay(workflow_name)
         .into_task_adapter_inputs();
     if let Some(path) = rendered_dotenv_path.as_ref() {
@@ -93143,11 +93417,10 @@ fn contract_adjusted_for_selected_workflow_env_profile(
         && profile.sources.is_empty()
         && compose_env_file_services.is_empty()
         && workflow_adapter_inputs.is_empty()
+        && selected_instance.is_none()
     {
         return None;
     }
-
-    let mut adjusted = contract.clone();
     let mut merged_sources = profile.sources.clone();
     for source in &adjusted.env.sources {
         if !merged_sources.iter().any(|existing| existing == source) {
@@ -94067,7 +94340,7 @@ fn execute_repo_up_with_behavior(
     let mut stdout = String::new();
     let mut stderr = String::new();
     if let Some(workflow_name) = workflow_name
-        && contract.workflow(workflow_name).is_none()
+        && !selected_workflow_selector_is_valid(contract, workflow_name)
     {
         return Err(workflow_selection_error(
             contract,
@@ -97198,7 +97471,7 @@ fn run_workspace_repo_execution_plan(
             }
 
             if let Some(workflow_name) = repo.workflow.as_deref()
-                && contract.workflow(workflow_name).is_none()
+                && !selected_workflow_selector_is_valid(&contract, workflow_name)
             {
                 return WorkspaceRepoExecutionPlanReport {
                     name: repo.name,

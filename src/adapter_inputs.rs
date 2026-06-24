@@ -1762,6 +1762,7 @@ mod tests {
                 bake: None,
                 helm: None,
             },
+            instances: None,
             env: Some(WorkflowEnvSpec {
                 profile: None,
                 compose_env_file_services: Vec::new(),

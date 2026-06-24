@@ -203,9 +203,10 @@ impl Contract {
     }
 
     pub fn workflow(&self, name: &str) -> Option<&WorkflowSpec> {
+        let (workflow_name, _) = split_workflow_selector(name);
         self.workflows
             .as_ref()
-            .and_then(|workflows| workflows.items.get(name))
+            .and_then(|workflows| workflows.items.get(workflow_name))
     }
 
     pub fn default_workflow(&self) -> Option<(&str, &WorkflowSpec)> {
@@ -218,13 +219,50 @@ impl Contract {
 
     pub fn selected_workflow(&self, name: Option<&str>) -> Option<(&str, &WorkflowSpec)> {
         match name {
-            Some(name) => self
-                .workflows
-                .as_ref()
-                .and_then(|workflows| workflows.items.get_key_value(name))
-                .map(|(name, workflow)| (name.as_str(), workflow)),
+            Some(name) => {
+                let (workflow_name, _) = split_workflow_selector(name);
+                self.workflows
+                    .as_ref()
+                    .and_then(|workflows| workflows.items.get_key_value(workflow_name))
+                    .map(|(name, workflow)| (name.as_str(), workflow))
+            }
             None => self.default_workflow(),
         }
+    }
+
+    pub fn selected_workflow_instance_name(&self, workflow_name: Option<&str>) -> Option<String> {
+        let (selected_workflow_name, workflow) = self.selected_workflow(workflow_name)?;
+        let instances = workflow.instances.as_ref()?;
+        let explicit = workflow_name
+            .and_then(|name| split_workflow_selector(name).1)
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        match explicit {
+            Some(instance_name) if instances.items.contains_key(instance_name) => {
+                Some(instance_name.to_string())
+            }
+            Some(_) => None,
+            None => {
+                let default_name = instances.default.trim();
+                (!default_name.is_empty() && instances.items.contains_key(default_name))
+                    .then(|| default_name.to_string())
+                    .or_else(|| {
+                        self.workflow(selected_workflow_name)
+                            .and_then(|workflow| workflow.instances.as_ref())
+                            .and_then(|items| items.items.keys().next().cloned())
+                    })
+            }
+        }
+    }
+
+    pub fn selected_workflow_instance(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Option<&WorkflowInstanceSpec> {
+        let (_, workflow) = self.selected_workflow(workflow_name)?;
+        let instances = workflow.instances.as_ref()?;
+        let instance_name = self.selected_workflow_instance_name(workflow_name)?;
+        instances.items.get(instance_name.as_str())
     }
 
     pub fn selected_setup_task_name(&self) -> Option<&str> {
@@ -549,6 +587,8 @@ pub struct WorkflowSpec {
     pub notes: Option<String>,
     #[serde(default, skip_serializing_if = "TaskAdapterInputsSpec::is_empty")]
     pub adapter_inputs: TaskAdapterInputsSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instances: Option<WorkflowInstanceCatalog>,
     #[serde(default)]
     pub env: Option<WorkflowEnvSpec>,
     #[serde(default)]
@@ -569,6 +609,46 @@ pub struct WorkflowSpec {
 #[serde(deny_unknown_fields)]
 pub struct WorkflowTaskRefSpec {
     pub task: String,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct WorkflowInstanceCatalog {
+    pub default: String,
+    #[serde(flatten)]
+    pub items: BTreeMap<String, WorkflowInstanceSpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceSpec {
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tasks: BTreeMap<String, WorkflowInstanceTaskOverlaySpec>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub surfaces: BTreeMap<String, WorkflowInstanceSurfaceOverlaySpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceTaskOverlaySpec {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "TaskAdapterInputsSpec::is_empty")]
+    pub adapter_inputs: TaskAdapterInputsSpec,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceSurfaceOverlaySpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -646,6 +726,14 @@ impl WorkflowExposeSpec {
             Self::Url(url) => url.clone(),
             Self::SurfaceRef { surface } => format!("surface:{surface}"),
         }
+    }
+}
+
+pub(crate) fn split_workflow_selector(selector: &str) -> (&str, Option<&str>) {
+    let trimmed = selector.trim();
+    match trimmed.split_once('@') {
+        Some((workflow, instance)) => (workflow.trim(), Some(instance.trim())),
+        None => (trimmed, None),
     }
 }
 
@@ -8533,6 +8621,57 @@ workflows:
         assert_eq!(
             contract.selected_workflow_task_closure_names(Some("app")),
             vec![String::from("setup:env:local"), String::from("setup")]
+        );
+    }
+
+    #[test]
+    fn selected_workflow_resolves_named_instance_from_selector() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0:
+        env:
+          PENPOT_SOURCE_PATH: .
+      ws1:
+        env:
+          PENPOT_SOURCE_PATH: ../workspaces/ws1
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract
+                .selected_workflow(Some("app@ws1"))
+                .map(|(name, _)| name),
+            Some("app")
+        );
+        assert_eq!(
+            contract.selected_workflow_instance_name(Some("app@ws1")),
+            Some(String::from("ws1"))
+        );
+        assert_eq!(
+            contract.selected_workflow_instance_name(Some("app")),
+            Some(String::from("ws0"))
+        );
+        assert_eq!(
+            contract
+                .selected_workflow_instance(Some("app@ws1"))
+                .and_then(|instance| instance.env.get("PENPOT_SOURCE_PATH"))
+                .map(String::as_str),
+            Some("../workspaces/ws1")
         );
     }
 

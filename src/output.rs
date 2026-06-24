@@ -2789,6 +2789,8 @@ pub struct AgentSummary<'a> {
 pub struct WorkflowSummary<'a> {
     pub name: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub intent: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<&'a str>,
@@ -2899,6 +2901,7 @@ impl<'a> WorkflowSummary<'a> {
         }
         Some(Self {
             name: workflow_name,
+            instance: None,
             intent: workflow.intent.as_deref(),
             description: workflow.description.as_deref(),
             notes: workflow.notes.as_deref(),
@@ -2956,7 +2959,9 @@ impl<'a> WorkflowSummary<'a> {
         workflow_name: Option<&str>,
     ) -> Option<Self> {
         let (name, _) = contract.selected_workflow(workflow_name)?;
-        Self::from_contract_named_inner(contract, contract_path, name)
+        let mut summary = Self::from_contract_named_inner(contract, contract_path, name)?;
+        summary.instance = contract.selected_workflow_instance_name(workflow_name);
+        Some(summary)
     }
 
     pub fn list_from_contract(contract: &'a Contract) -> Vec<ListedWorkflowSummary<'a>> {

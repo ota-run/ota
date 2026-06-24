@@ -13698,6 +13698,87 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                 )));
             }
         }
+        if let Some(instances) = workflow.instances.as_ref() {
+            if instances.default.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.instances.default` must not be empty"
+                )));
+            }
+            if instances.items.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.instances` must declare at least one named instance in addition to `default`"
+                )));
+            } else if !instances.items.contains_key(instances.default.trim()) {
+                errors.push(ValidationError::new(format!(
+                    "`workflows.{name}.instances.default` references unknown instance `{}`",
+                    instances.default
+                )));
+            }
+            for (instance_name, instance) in &instances.items {
+                if instance_name.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "`workflows.{name}.instances` must not declare an empty instance name"
+                    )));
+                }
+                for (surface_name, overlay) in &instance.surfaces {
+                    if !contract.surfaces.contains_key(surface_name) {
+                        errors.push(ValidationError::new(format!(
+                            "`workflows.{name}.instances.{instance_name}.surfaces` references unknown surface `{surface_name}`"
+                        )));
+                    }
+                    if overlay.port == Some(0) {
+                        errors.push(ValidationError::new(format!(
+                            "`workflows.{name}.instances.{instance_name}.surfaces.{surface_name}.port` must be between 1 and 65535"
+                        )));
+                    }
+                    if overlay
+                        .path
+                        .as_deref()
+                        .is_some_and(|value| value.trim().is_empty())
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "`workflows.{name}.instances.{instance_name}.surfaces.{surface_name}.path` must not be empty"
+                        )));
+                    }
+                }
+                for (task_name, overlay) in &instance.tasks {
+                    validate_task_reference(
+                        &format!("workflows.{name}.instances.{instance_name}.tasks"),
+                        Some(task_name.as_str()),
+                        &contract.tasks,
+                        errors,
+                    );
+                    validate_workflow_adapter_inputs(
+                        name,
+                        &format!(
+                            "workflows.{name}.instances.{instance_name}.tasks.{task_name}.adapter_inputs"
+                        ),
+                        &overlay.adapter_inputs,
+                        errors,
+                    );
+                    if !overlay.adapter_inputs.is_empty()
+                        && let Some(task) = contract.tasks.get(task_name)
+                    {
+                        let supports =
+                            overlay
+                                .adapter_inputs
+                                .declared_families()
+                                .all(|family_name| {
+                                    ADAPTER_INPUT_FAMILIES
+                                        .iter()
+                                        .copied()
+                                        .find(|family| family.family_name() == family_name)
+                                        .is_none_or(|family| family.task_supports(task))
+                                });
+                        if !supports {
+                            errors.push(ValidationError::new(format!(
+                                "`workflows.{name}.instances.{instance_name}.tasks.{task_name}.adapter_inputs` requires `{task_name}` to support each declared adapter input family"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
         if workflow.env.is_some() || !workflow.adapter_inputs.is_empty() {
             let empty_env = crate::schema::WorkflowEnvSpec::default();
             let env = workflow.env.as_ref().unwrap_or(&empty_env);
