@@ -11147,6 +11147,9 @@ fn maybe_activate_corepack_shims_on_run_path(
     current_os: &str,
     state: &mut TaskRunState,
 ) -> Result<(), RunError> {
+    if matches!(backend, ResolvedExecutionBackend::Container { .. }) {
+        return Ok(());
+    }
     if probe_backend_command_version(backend, contract_working_dir(contract_path), "node")
         .ok()
         .flatten()
