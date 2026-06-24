@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- fixed container backend fulfillment for Corepack-owned package managers, so tasks that declare
+  `toolchains.node.fulfillment.source: corepack` no longer fail preflight just because fresh
+  container images do not already ship `pnpm` or `yarn`; ota now treats those package managers as
+  source-managed task capabilities instead of image preconditions
 - added first-class workflow-instance selection with `workflow@instance`, so one declared workflow
   can now own named instance overlays for task env, adapter inputs, and surfaced host ports without
   splitting that runtime family into pseudo-workflows; ota now also injects `OTA_HOST_HOME` for

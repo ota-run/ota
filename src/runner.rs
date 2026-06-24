@@ -10591,6 +10591,7 @@ struct BackendFulfillmentPlan {
     target_os: String,
     declared_runtimes: BTreeMap<String, String>,
     declared_tools: BTreeMap<String, String>,
+    source_managed_tools: BTreeSet<String>,
     probe_backend: ResolvedExecutionBackend,
     provisioning_target: Option<ProvisioningExecutionTarget>,
 }
@@ -10749,7 +10750,13 @@ fn maybe_fulfill_backend_requirements_on_run_path(
         working_dir,
         active_policy,
         plan.target_os.as_str(),
-    );
+    )
+    .into_iter()
+    .filter(|gap| {
+        !(gap.kind == ProvisioningTargetKind::Tool
+            && plan.source_managed_tools.contains(gap.name.as_str()))
+    })
+    .collect::<Vec<_>>();
     if missing.is_empty() {
         if plan.strategy == BackendFulfillmentStrategy::Immediate {
             state
@@ -11538,9 +11545,10 @@ fn backend_fulfillment_plan(
             backend_label: String::from("native"),
             mode,
             strategy: BackendFulfillmentStrategy::Immediate,
-            target_os,
+            target_os: target_os.clone(),
             declared_runtimes,
             declared_tools,
+            source_managed_tools: BTreeSet::new(),
             probe_backend: backend.clone(),
             provisioning_target,
         }));
@@ -11583,9 +11591,16 @@ fn backend_fulfillment_plan(
             backend_label: String::from("native"),
             mode: BackendFulfillmentMode::Run,
             strategy: BackendFulfillmentStrategy::Immediate,
-            target_os,
+            target_os: target_os.clone(),
             declared_runtimes,
             declared_tools,
+            source_managed_tools: source_managed_tool_names_for_execution(
+                contract,
+                task,
+                Backend::Native,
+                task.context_for_backend(contract.execution.as_ref(), Backend::Native),
+                target_os.as_str(),
+            ),
             probe_backend: backend.clone(),
             provisioning_target,
         }));
@@ -11647,6 +11662,7 @@ fn backend_fulfillment_plan(
             target_os,
             declared_runtimes,
             declared_tools,
+            source_managed_tools: BTreeSet::new(),
             probe_backend: backend.clone(),
             provisioning_target,
         }));
@@ -11720,6 +11736,7 @@ fn backend_fulfillment_plan(
             target_os,
             declared_runtimes,
             declared_tools,
+            source_managed_tools: BTreeSet::new(),
             probe_backend,
             provisioning_target,
         }));
@@ -11783,9 +11800,16 @@ fn backend_fulfillment_plan(
         backend_label: String::from("container"),
         mode,
         strategy,
-        target_os,
+        target_os: target_os.clone(),
         declared_runtimes,
         declared_tools,
+        source_managed_tools: source_managed_tool_names_for_execution(
+            contract,
+            task,
+            Backend::Container,
+            Some(context_name),
+            target_os.as_str(),
+        ),
         probe_backend,
         provisioning_target,
     }))
@@ -11855,6 +11879,30 @@ fn backend_fulfillment_cache_key(
         }) => format!("{backend_unit}::container:{container_name}"),
         _ => backend_unit,
     }
+}
+
+fn source_managed_tool_names_for_execution(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: Backend,
+    context_name: Option<&str>,
+    target_os: &str,
+) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for toolchain_name in contract.task_toolchain_names_for_execution(task, backend, context_name) {
+        let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+            continue;
+        };
+        if toolchain.fulfillment_source() != Some(crate::schema::ToolchainFulfillmentSource::Corepack)
+        {
+            continue;
+        }
+        if !toolchain.active_for_os(target_os) {
+            continue;
+        }
+        names.extend(toolchain.package_managers_for_os(target_os).into_keys());
+    }
+    names
 }
 
 fn shared_local_backend_requirement_versions(
@@ -57376,6 +57424,80 @@ tasks:
             activation.contains("prepare pnpm@10.24.0 --activate"),
             "{activation}"
         );
+        let logged = fs::read_to_string(&pnpm_log).unwrap();
+        assert!(logged.contains("install"), "{logged}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn container_dependency_hydration_runs_with_corepack_owned_pnpm_without_image_preinstall() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:22-bookworm
+tasks:
+  install:
+    context: app
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        mode: install
+    requirements:
+      toolchains:
+        - node
+    effects:
+      network: true
+      network_kind: dependency_hydration
+      writes:
+        - node_modules
+toolchains:
+  node:
+    provider: corepack
+    version: "^22.12.0"
+    package_managers:
+      pnpm: "10.24.0"
+    fulfillment:
+      source: corepack
+      mode: run
+"#,
+        );
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
+        let bin_dir = fixture.dir.path().join("bin");
+        let pnpm_log = fixture.dir.path().join("pnpm.log");
+        let pnpm_path = bin_dir.join("pnpm");
+        let corepack_body = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.24.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.24.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\nfi\nexit 1\n",
+            pnpm_path.display(),
+            pnpm_log.display(),
+            pnpm_path.display()
+        );
+        write_fake_bin(&bin_dir, "corepack", &corepack_body);
+
+        let outcome = super::run_task_internal(
+            &fixture.contract,
+            fixture.file_path(),
+            "install",
+            &[],
+            ExecutionOverrides::default(),
+            None,
+            TaskExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
         let logged = fs::read_to_string(&pnpm_log).unwrap();
         assert!(logged.contains("install"), "{logged}");
     }
