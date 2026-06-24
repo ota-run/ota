@@ -2627,7 +2627,13 @@ fn projected_compose_invocation_command_for_task(
     if compose.detach {
         projected_args.push(String::from("-d"));
     }
-    if !compose.tty && compose.kind != crate::schema::TaskComposeExecutionKind::Attach {
+    if !compose.tty
+        && matches!(
+            compose.kind,
+            crate::schema::TaskComposeExecutionKind::Exec
+                | crate::schema::TaskComposeExecutionKind::Run
+        )
+    {
         projected_args.push(String::from("-T"));
     }
     if compose.rm {
@@ -2642,8 +2648,20 @@ fn projected_compose_invocation_command_for_task(
         projected_args.push(String::from("-w"));
         projected_args.push(workdir.to_string());
     }
-    projected_args.push(compose.service.trim().to_string());
-    projected_args.push(exe.trim().to_string());
+    if !compose.service.trim().is_empty() {
+        projected_args.push(compose.service.trim().to_string());
+    }
+    projected_args.extend(
+        compose
+            .services
+            .iter()
+            .map(|service| service.trim())
+            .filter(|service| !service.is_empty())
+            .map(str::to_string),
+    );
+    if !exe.trim().is_empty() {
+        projected_args.push(exe.trim().to_string());
+    }
     projected_args.extend(args.iter().cloned());
     crate::schema::TaskCommandSpec {
         exe: compose.engine.as_str().to_string(),
@@ -11571,12 +11589,15 @@ fn wrap_container_command_for_corepack_activation(
         return command.to_string();
     };
 
+    let selected_container_context =
+        selected_task_context_for_backend(contract, task_name, Backend::Container)
+            .map(|(name, _)| name);
     let mut command_parts = Vec::new();
     for toolchain_name in contract
         .task_toolchain_names_for_execution(
             task,
             Backend::Container,
-            task.context_for_backend(contract.execution.as_ref(), Backend::Container),
+            selected_container_context,
         )
         .into_iter()
     {
@@ -11589,12 +11610,12 @@ fn wrap_container_command_for_corepack_activation(
         {
             continue;
         }
-        command_parts.push(String::from(
-            "mkdir -p \"$HOME/.local/bin\" && corepack enable --install-directory \"$HOME/.local/bin\" && export PATH=\"$HOME/.local/bin:$PATH\"",
-        ));
         for (package_name, version) in toolchain.package_managers_for_os("linux") {
             command_parts.push(format!(
                 "corepack prepare {package_name}@{version} --activate"
+            ));
+            command_parts.push(format!(
+                "{package_name}() {{ corepack {package_name} \"$@\"; }}"
             ));
         }
     }
@@ -11603,7 +11624,7 @@ fn wrap_container_command_for_corepack_activation(
     }
     command_parts.push(command.to_string());
 
-    command_parts.join(" && ")
+    format!("set -e\n{}", command_parts.join("\n"))
 }
 
 fn toolchain_fulfillment_cache_key(
@@ -57278,6 +57299,50 @@ tasks:
                 String::from("exec"),
                 String::from("rails"),
                 String::from("server"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_compose_up_uses_service_groups_without_exec_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  staged:up:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    compose:
+      kind: up
+      detach: true
+      services:
+        - web
+        - worker
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("staged:up").unwrap();
+        let projected = super::projected_compose_command_for_task(
+            task,
+            Backend::Native,
+            task.compose.as_ref().unwrap(),
+        );
+
+        assert_eq!(projected.exe, "docker");
+        assert_eq!(projected.cwd.as_deref(), Some("infra"));
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("compose"),
+                String::from("up"),
+                String::from("-d"),
+                String::from("web"),
+                String::from("worker"),
             ]
         );
     }

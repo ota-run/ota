@@ -2128,65 +2128,14 @@ pub fn execution_topology(
 
     finalize_debug(
         match load_and_validate_target(&resolved_path, member) {
-            Ok(target) => {
-                let contract_path_display = target.contract_path.display().to_string();
-                let contract_identity = repo_contract_identity(&target.contract);
-                let declared_execution =
-                    ExecutionSummary::from_contract(&target.contract, &target.contract_path);
-                let shared_backends = build_execution_topology_shared_backend_summaries(
-                    target.contract.execution.as_ref(),
-                );
-                let readiness_probes =
-                    build_execution_topology_readiness_probe_summaries(&target.contract);
-                let surfaces = build_execution_topology_surface_summaries(&target.contract);
-                let services = target
-                    .contract
-                    .services
-                    .iter()
-                    .map(|(name, service)| ServiceSummary::from_spec(name, service))
-                    .collect::<Vec<_>>();
-                let tasks = target
-                    .contract
-                    .tasks
-                    .iter()
-                    .map(|(name, task)| {
-                        build_execution_topology_task_summary(
-                            name,
-                            task,
-                            current_os(),
-                            &target.contract,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
-                match format {
-                    OutputFormat::Text => CommandOutput::success(render_execution_topology_text(
-                        &text_path_display,
-                        &contract_identity,
-                        declared_execution.as_ref(),
-                        &shared_backends,
-                        &readiness_probes,
-                        &surfaces,
-                        &services,
-                        &tasks,
-                    )),
-                    OutputFormat::Json => {
-                        CommandOutput::success(to_json(&ExecutionTopologySuccess {
-                            ok: true,
-                            path: &path_display,
-                            contract: &contract_path_display,
-                            member,
-                            contract_identity,
-                            declared_execution,
-                            shared_backends,
-                            readiness_probes,
-                            surfaces,
-                            services,
-                            tasks,
-                        }))
-                    }
-                }
-            }
+            Ok(target) => render_execution_topology_output(
+                &target.contract,
+                &target.contract_path,
+                &path_display,
+                member,
+                &text_path_display,
+                format,
+            ),
             Err(ContractProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_repo_contract_output(
                     "EXECUTION TOPOLOGY",
@@ -2271,6 +2220,59 @@ pub fn execution_topology(
         debug,
         debug_lines,
     )
+}
+
+fn render_execution_topology_output(
+    contract: &Contract,
+    contract_path: &Path,
+    path_display: &str,
+    member: Option<&str>,
+    text_path_display: &str,
+    format: OutputFormat,
+) -> CommandOutput {
+    let contract_path_display = contract_path.display().to_string();
+    let contract_identity = repo_contract_identity(contract);
+    let declared_execution = ExecutionSummary::from_contract(contract, contract_path);
+    let shared_backends =
+        build_execution_topology_shared_backend_summaries(contract.execution.as_ref());
+    let readiness_probes = build_execution_topology_readiness_probe_summaries(contract);
+    let surfaces = build_execution_topology_surface_summaries(contract);
+    let services = contract
+        .services
+        .iter()
+        .map(|(name, service)| ServiceSummary::from_spec(name, service))
+        .collect::<Vec<_>>();
+    let tasks = contract
+        .tasks
+        .iter()
+        .map(|(name, task)| build_execution_topology_task_summary(name, task, current_os(), contract))
+        .collect::<Vec<_>>();
+
+    match format {
+        OutputFormat::Text => CommandOutput::success(render_execution_topology_text(
+            text_path_display,
+            &contract_identity,
+            declared_execution.as_ref(),
+            &shared_backends,
+            &readiness_probes,
+            &surfaces,
+            &services,
+            &tasks,
+        )),
+        OutputFormat::Json => CommandOutput::success(to_json(&ExecutionTopologySuccess {
+            ok: true,
+            path: path_display,
+            contract: &contract_path_display,
+            member,
+            contract_identity,
+            declared_execution,
+            shared_backends,
+            readiness_probes,
+            surfaces,
+            services,
+            tasks,
+        })),
+    }
 }
 
 pub fn proof_runtime(
@@ -2382,12 +2384,14 @@ pub fn proof_runtime(
                     Ok(summary) => summary,
                     Err(error) => return CommandOutput::failure_with_code(error, 2),
                 };
-                let effective_workflow_name =
-                    workflow_summary.as_ref().map(|workflow| workflow.name);
+                let effective_workflow_selector = workflow_summary
+                    .as_ref()
+                    .map(workflow_selector_from_summary)
+                    .or_else(|| workflow_name.map(str::to_string));
                 let artifact_dir = proof_runtime_artifact_dir(
                     contract_working_dir(&target.contract_path),
                     member,
-                    effective_workflow_name,
+                    effective_workflow_selector.as_deref(),
                 );
                 if let Err(error) = fs::create_dir_all(&artifact_dir) {
                     return CommandOutput::failure(command_message_failure_text(
@@ -2409,16 +2413,14 @@ pub fn proof_runtime(
                 let doctor_artifact_display = compact_path(&doctor_artifact_path, ".");
                 let up_log_artifact_display = compact_path(&up_log_artifact_path, ".");
 
-                let topology_output = execution_topology(
-                    Some(resolved_path.as_path()),
-                    file_override,
+                let topology_output = render_execution_topology_output(
+                    contract,
+                    &target.contract_path,
+                    &path_display,
                     member,
+                    &text_path_display,
                     OutputFormat::Json,
-                    false,
                 );
-                if topology_output.exit_code != 0 {
-                    return topology_output;
-                }
                 if let Err(error) =
                     write_proof_artifact(&topology_artifact_path, &topology_output.stdout)
                 {
@@ -2464,7 +2466,7 @@ pub fn proof_runtime(
                     .map(|error| error.to_string());
                 let workload_cleanup_error = cleanup_selected_workflow_native_service_workloads(
                     contract,
-                    effective_workflow_name,
+                    effective_workflow_selector.as_deref(),
                     overrides,
                 )
                 .err();
@@ -2472,7 +2474,7 @@ pub fn proof_runtime(
                     clean_execution_report_for_workflow(
                         contract,
                         &target.contract_path,
-                        effective_workflow_name,
+                        effective_workflow_selector.as_deref(),
                     )
                     .err()
                 } else {
@@ -2618,14 +2620,14 @@ pub fn proof_runtime(
                     selected_workflow_env_profile_rendered_artifact_entries(
                         &target.contract,
                         &target.contract_path,
-                        effective_workflow_name,
+                        effective_workflow_selector.as_deref(),
                     );
 
                 match format {
                     OutputFormat::Text => CommandOutput {
                         stdout: render_proof_runtime_text(
                             &text_path_display,
-                            effective_workflow_name,
+                            effective_workflow_selector.as_deref(),
                             &target.contract_path,
                             text_phase,
                             status,
@@ -2647,7 +2649,7 @@ pub fn proof_runtime(
                             ok,
                             path: &path_display,
                             mode: "runtime-proof",
-                            workflow: effective_workflow_name,
+                            workflow: effective_workflow_selector.as_deref(),
                             phase: json_phase,
                             summary: proof_summary_for_output,
                             artifacts: Some(ProofRuntimeArtifacts {
@@ -15977,6 +15979,7 @@ fn run_preview_summary(
         requirement_target_os_for_backend(
             effective_task_execution(contract, task_name, overrides).backend,
         ),
+        effective_task_execution(contract, task_name, overrides).backend,
     );
     let mut summary = doctor_preview_summary_for_resolution(
         preconditions_report,
@@ -16057,6 +16060,26 @@ fn preview_errors_are_fully_resolvable(
                     .iter()
                     .any(|action| finding_targets_activation_action(finding, action))
         })
+}
+
+fn suppress_post_up_resolved_error_findings(
+    report: &mut DoctorReport,
+    provisioning_actions: &[crate::policy_pack::ProvisioningAction],
+    activation_actions: &[RequirementActivationAction],
+) {
+    report.findings.retain(|finding| {
+        finding.severity != FindingSeverity::Error
+            || !(provisioning_actions
+                .iter()
+                .any(|action| finding_targets_provisioning_action(finding, action))
+                || activation_actions
+                    .iter()
+                    .any(|action| finding_targets_activation_action(finding, action)))
+    });
+    report.ok = !report
+        .findings
+        .iter()
+        .any(|finding| finding.severity == FindingSeverity::Error);
 }
 
 fn run_preview_env_primary_blocker(
@@ -16328,7 +16351,11 @@ fn build_run_preview_plan(
     let activation_surface =
         selected_task_activation_requirement_surface(contract, task_name, overrides)
             .unwrap_or_default();
-    for action in requirement_surface_activation_actions(&activation_surface, target_os) {
+    for action in requirement_surface_activation_actions(
+        &activation_surface,
+        target_os,
+        effective_task_execution(contract, task_name, overrides).backend,
+    ) {
         plan.actions
             .push(render_up_preview_activation_action(&action));
     }
@@ -16405,6 +16432,19 @@ fn run_preview_task_execution_action(
     };
     if let Some(command) = task.run.or(task.script) {
         return format!("would execute `{command}`{backend_detail}");
+    }
+    if let Some(command) = task.command.as_ref() {
+        let preview = std::iter::once(command.exe)
+            .chain(command.args.iter().copied())
+            .collect::<Vec<_>>()
+            .join(" ");
+        return format!("would execute `{preview}`{backend_detail}");
+    }
+    if let Some(compose) = task.compose.as_ref() {
+        return format!(
+            "would execute `{}`{backend_detail}",
+            render_task_compose_text(compose)
+        );
     }
     if let Some(launch) = task.launch.as_ref() {
         if let Some(exe) = launch.exe {
@@ -39151,7 +39191,7 @@ fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary
     if compose.detach {
         preview.push_str(" -d");
     }
-    if !compose.tty {
+    if !compose.tty && matches!(compose.kind, "exec" | "run") {
         preview.push_str(" -T");
     }
     if compose.rm {
@@ -39161,10 +39201,20 @@ fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary
         preview.push_str(" -w ");
         preview.push_str(workdir);
     }
-    preview.push(' ');
-    preview.push_str(compose.service);
-    preview.push(' ');
-    preview.push_str(compose.exe);
+    if let Some(service) = compose.service.filter(|service| !service.trim().is_empty()) {
+        preview.push(' ');
+        preview.push_str(service);
+    }
+    for service in &compose.services {
+        if !service.trim().is_empty() {
+            preview.push(' ');
+            preview.push_str(service);
+        }
+    }
+    if let Some(exe) = compose.exe.filter(|exe| !exe.trim().is_empty()) {
+        preview.push(' ');
+        preview.push_str(exe);
+    }
     if !compose.args.is_empty() {
         preview.push(' ');
         preview.push_str(&compose.args.join(" "));
@@ -39368,7 +39418,7 @@ fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> 
                 (
                     compose.engine,
                     compose.kind,
-                    compose.service,
+                    compose.service.unwrap_or(""),
                     compose.workdir,
                     compose.rm,
                     compose.detach,
@@ -39436,7 +39486,7 @@ fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> 
                 (
                     compose.engine,
                     compose.kind,
-                    compose.service.as_str(),
+                    compose.service.as_deref().unwrap_or(""),
                     compose.workdir.as_deref(),
                     compose.rm,
                     compose.detach,
@@ -39703,11 +39753,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
 
 fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<bool>) -> String {
     let mut output = format!("{} {}", list_bullet(), paint(workflow.name, "1"));
-    let workflow_selector = workflow
-        .instance
-        .as_ref()
-        .map(|instance| format!("{}@{instance}", workflow.name))
-        .unwrap_or_else(|| workflow.name.to_string());
+    let workflow_selector = workflow_selector_from_summary(workflow);
     if let Some(intent) = workflow.intent
         && !intent.trim().is_empty()
     {
@@ -39858,6 +39904,14 @@ fn render_workflow_summary_text(workflow: &WorkflowSummary<'_>, default: Option<
         ));
     }
     output
+}
+
+fn workflow_selector_from_summary(workflow: &WorkflowSummary<'_>) -> String {
+    workflow
+        .instance
+        .as_ref()
+        .map(|instance| format!("{}@{instance}", workflow.name))
+        .unwrap_or_else(|| workflow.name.to_string())
 }
 
 fn render_tasks_overview_text(
@@ -46591,8 +46645,9 @@ mod tests {
 
     use super::{
         DetectComparisonMode, OutputFormat, PlainModeGuard, RepoExecutionMode, RepoUpPreview,
-        RepoUpResult, adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings,
-        build_env_report, build_env_report_with_overrides, build_up_preview,
+        RepoUpResult, RequirementActivationAction,
+        adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings, build_env_report,
+        build_env_report_with_overrides, build_up_preview,
         collect_validate_warnings, compact_contract_file_path_relative_to,
         compact_path_relative_to, compact_policy_path_relative_to_contract,
         contractless_signal_summary_parts, doctor as doctor_command,
@@ -52076,8 +52131,9 @@ tasks:
             compose: Some(crate::output::TaskComposeExecutionSummary {
                 kind: "exec",
                 engine: "docker",
-                service: "api",
-                exe: "bundle",
+                service: Some("api"),
+                services: Vec::new(),
+                exe: Some("bundle"),
                 args: vec!["exec", "rails", "db:migrate"],
                 workdir: Some("/workspace"),
                 rm: false,
@@ -59209,6 +59265,8 @@ tasks:
                 plan: UpPreviewPlan {
                     actions: Vec::new(),
                     skipped: Vec::new(),
+                    dependency_chain: Vec::new(),
+                    dependency_steps: Vec::new(),
                 },
                 blockers: Vec::new(),
             }),
@@ -61914,6 +61972,44 @@ workflows:
 
         assert_eq!(actions.len(), 1, "{actions:?}");
         assert_eq!(actions[0].tool_name, "pnpm");
+    }
+
+    #[test]
+    fn post_up_diagnosis_suppresses_errors_resolved_by_activation_actions() {
+        let mut report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding {
+                identity: None,
+                severity: FindingSeverity::Error,
+                summary: String::from("Missing tool: pnpm"),
+                why: String::from(
+                    "pnpm is declared in the contract but is not available inside container image `ghcr.io/example/app:latest`",
+                ),
+                next: String::from(
+                    "update `execution.backends.container.image` (currently `ghcr.io/example/app:latest`) so `pnpm` is available, then rerun `ota doctor --mode container`",
+                ),
+            }],
+        };
+        let activation_actions = vec![RequirementActivationAction {
+            tool_name: String::from("pnpm"),
+            backend: Backend::Container,
+            acquisition: ToolAcquisitionSpec {
+                provider: ToolAcquisitionProvider::Corepack,
+                package: Some(String::from("pnpm")),
+                source_config: None,
+                version: Some(String::from("10.22.0")),
+                shell: None,
+                run: None,
+            },
+        }];
+
+        super::suppress_post_up_resolved_error_findings(&mut report, &[], &activation_actions);
+
+        assert!(report.ok);
+        assert!(report.findings.is_empty(), "{report:?}");
     }
 
     #[test]
@@ -92008,6 +92104,7 @@ fn selected_up_provisioning_actions(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RequirementActivationAction {
     tool_name: String,
+    backend: Backend,
     acquisition: ToolAcquisitionSpec,
 }
 
@@ -92026,6 +92123,7 @@ struct NativeRequirementPreparationAction {
 fn requirement_surface_activation_actions(
     requirement_surface: &RequirementSurface,
     target_os: &str,
+    backend: Backend,
 ) -> Vec<RequirementActivationAction> {
     requirement_surface
         .tools
@@ -92037,6 +92135,7 @@ fn requirement_surface_activation_actions(
                 .cloned()
                 .map(|acquisition| RequirementActivationAction {
                     tool_name: name.clone(),
+                    backend,
                     acquisition,
                 })
         })
@@ -92159,7 +92258,15 @@ fn selected_up_activation_actions(
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
-    requirement_surface_activation_actions(&requirement_surface, target_os)
+    requirement_surface_activation_actions(
+        &requirement_surface,
+        target_os,
+        match up_doctor_mode(contract, overrides, workflow_name) {
+            DoctorMode::Container => Backend::Container,
+            DoctorMode::Native => Backend::Native,
+            DoctorMode::Remote => Backend::Remote,
+        },
+    )
         .into_iter()
         .filter(|action| {
             !policy_provisioned_tools.contains(action.tool_name.as_str())
@@ -92956,12 +93063,14 @@ fn render_up_preview_native_preparation_action(
 
 fn append_up_preview_service_actions_for_workflow(
     contract: &Contract,
+    contract_path: &Path,
+    overrides: ExecutionOverrides,
     workflow_name: Option<&str>,
     run_behavior_preference: UpRunBehaviorPreference,
-    actions: &mut Vec<String>,
+    plan: &mut UpPreviewPlan,
 ) {
     for selector in selected_workflow_instance_prerequisite_selectors(contract, workflow_name) {
-        actions.push(format!(
+        plan.actions.push(format!(
             "activate prerequisite workflow instance `{selector}` before the selected instance"
         ));
     }
@@ -92972,9 +93081,10 @@ fn append_up_preview_service_actions_for_workflow(
     let activation_task = selected_up_activation_task_name(contract, workflow_name);
 
     if let Some(prepare_task) = selected_up_prepare_task_name(contract, workflow_name) {
-        actions.push(format!("run host prepare task `{prepare_task}`"));
+        plan.actions
+            .push(format!("run host prepare task `{prepare_task}`"));
     } else if let Some(prepare_action) = selected_up_prepare_action(contract, workflow_name) {
-        actions.push(format!(
+        plan.actions.push(format!(
             "run workflow-owned host prepare action `{}`",
             prepare_action.preview()
         ));
@@ -92982,27 +93092,87 @@ fn append_up_preview_service_actions_for_workflow(
     append_up_preview_service_phase_actions(
         contract,
         &pre_setup_services,
-        actions,
+        &mut plan.actions,
         setup_task.map(|task| format!("before `{task}`")).as_deref(),
     );
     if let Some(setup_task) = setup_task {
-        actions.push(format!("run task `{setup_task}`"));
+        plan.actions.push(format!("run task `{setup_task}`"));
     }
 
     append_up_preview_service_phase_actions(
         contract,
         &post_setup_services,
-        actions,
+        &mut plan.actions,
         setup_task.map(|task| format!("after `{task}`")).as_deref(),
     );
 
     if let Some(run_task) = activation_task {
-        actions.push(format!("activate workflow task `{run_task}`"));
+        let requested_task = contract
+            .tasks
+            .get(run_task)
+            .map(|task| {
+                TaskSummary::from_spec_with_overrides(
+                    run_task,
+                    task,
+                    current_os(),
+                    contract,
+                    overrides,
+                )
+            });
+        let execution_plan =
+            resolve_execution_plan_for_task(contract, contract_path, run_task, overrides).ok();
+        if let (Some(requested_task), Some(execution_plan)) = (requested_task, execution_plan) {
+            let effective_execution = effective_task_execution(contract, run_task, overrides);
+            let effective_depends_on = contract
+                .tasks
+                .get(run_task)
+                .map(|task| task.depends_on_for_backend(effective_execution.backend))
+                .unwrap_or_default();
+            let dependency_chain = if overrides.skip_deps {
+                vec![run_task.to_string()]
+            } else if let Ok(task_plan) =
+                crate::runner::plan_task_execution_with_overrides(contract, run_task, overrides)
+            {
+                task_plan.tasks.clone()
+            } else {
+                vec![run_task.to_string()]
+            };
+
+            plan.dependency_chain = dependency_chain;
+            plan.dependency_steps =
+                planned_dependency_steps_for_task(contract, Some(run_task), Some(overrides));
+
+            if !overrides.skip_deps {
+                for dependency in plan
+                    .dependency_chain
+                    .iter()
+                    .take(plan.dependency_chain.len().saturating_sub(1))
+                {
+                    plan.actions.push(format!(
+                        "would run planned step `{dependency}` before `{run_task}`"
+                    ));
+                }
+            } else if !effective_depends_on.is_empty() {
+                plan.actions.push(format!(
+                    "skip declared depends_on before requested task `{run_task}`"
+                ));
+            }
+            plan.actions
+                .push(run_preview_task_execution_action(&requested_task, &execution_plan));
+            if matches!(effective_execution.lifecycle, Some(Lifecycle::Persistent)) {
+                plan.actions.push(String::from(
+                    "would persist durable task logs under `.ota/state/logs/`",
+                ));
+            }
+        } else {
+            plan.actions
+                .push(format!("activate workflow task `{run_task}`"));
+        }
     }
     if matches!(run_behavior_preference, UpRunBehaviorPreference::Attach)
         && let Some(attach_task) = selected_up_attach_task_name(contract, workflow_name)
     {
-        actions.push(format!(
+        plan.actions.push(format!(
             "attach to the declared interactive workflow session via task `{attach_task}`"
         ));
     }
@@ -93132,20 +93302,36 @@ fn build_up_preview(
     for action in requirement_surface_activation_actions(
         &up_activation_requirement_surface(contract, overrides, workflow_name),
         current_os(),
+        match up_doctor_mode(contract, overrides, workflow_name) {
+            DoctorMode::Container => Backend::Container,
+            DoctorMode::Native => Backend::Native,
+            DoctorMode::Remote => Backend::Remote,
+        },
     ) {
         if policy_provisioned_tools.contains(action.tool_name.as_str()) {
             skipped.push(render_up_preview_skipped_activation_action(&action));
         }
     }
 
+    let mut plan = UpPreviewPlan {
+        actions: Vec::new(),
+        skipped: Vec::new(),
+        dependency_chain: Vec::new(),
+        dependency_steps: Vec::new(),
+    };
+    plan.actions = actions;
+    plan.skipped = skipped;
+
     append_up_preview_service_actions_for_workflow(
         contract,
+        resolved_path,
+        overrides,
         workflow_name,
         run_behavior_preference,
-        &mut actions,
+        &mut plan,
     );
 
-    actions.push(String::from("re-check repo readiness"));
+    plan.actions.push(String::from("re-check repo readiness"));
 
     RepoUpPreview {
         summary: doctor_preview_summary_for_resolution(
@@ -93163,7 +93349,7 @@ fn build_up_preview(
             target,
             task: primary_task.map(String::from),
         },
-        plan: UpPreviewPlan { actions, skipped },
+        plan,
         blockers: preflight
             .findings
             .iter()
@@ -94789,6 +94975,18 @@ fn run_activation_action(
 ) -> Result<CommandRunResult, String> {
     match action.acquisition.provider {
         ToolAcquisitionProvider::Corepack => {
+            if action.backend == Backend::Container {
+                return Ok(CommandRunResult {
+                    exit_code: 0,
+                    executed_tasks: Vec::new(),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    target: None,
+                    runtime: None,
+                    service_termination: None,
+                    host_service_cleanup: Vec::new(),
+                });
+            }
             run_corepack_activation_action(&action.acquisition, working_dir, mode)
         }
         ToolAcquisitionProvider::Command => {
@@ -95454,7 +95652,7 @@ fn execute_repo_up_with_behavior(
         selected_up_provisioning_actions(contract, overrides, workflow_name, &preflight);
     if !provisioning_actions.is_empty() {
         let provisioning_request = crate::policy_pack::ProvisioningBackendRequest {
-            actions: provisioning_actions,
+            actions: provisioning_actions.clone(),
         };
         match apply_provisioning_request_with_target(
             &provisioning_request,
@@ -95973,7 +96171,16 @@ fn execute_repo_up_with_behavior(
         });
     }
 
-    if !preflight.ok && setup_task.is_none() && prepare_task.is_none() && prepare_action.is_none() {
+    if !preflight.ok
+        && setup_task.is_none()
+        && prepare_task.is_none()
+        && prepare_action.is_none()
+        && !preview_errors_are_fully_resolvable(
+            &preflight.findings,
+            &provisioning_actions,
+            &activation_actions,
+        )
+    {
         return Ok(RepoUpResult {
             ok: false,
             status: "NOT READY",
@@ -96111,7 +96318,14 @@ fn execute_repo_up_with_behavior(
                     overrides,
                     &mut preflight,
                 );
-                if !preflight.ok && setup_task.is_none() {
+                if !preflight.ok
+                    && setup_task.is_none()
+                    && !preview_errors_are_fully_resolvable(
+                        &preflight.findings,
+                        &provisioning_actions,
+                        &activation_actions,
+                    )
+                {
                     return Ok(RepoUpResult {
                         ok: false,
                         status: "BLOCKED",
@@ -96222,7 +96436,14 @@ fn execute_repo_up_with_behavior(
                     overrides,
                     &mut preflight,
                 );
-                if !preflight.ok && setup_task.is_none() {
+                if !preflight.ok
+                    && setup_task.is_none()
+                    && !preview_errors_are_fully_resolvable(
+                        &preflight.findings,
+                        &provisioning_actions,
+                        &activation_actions,
+                    )
+                {
                     return Ok(RepoUpResult {
                         ok: false,
                         status: "BLOCKED",
@@ -96367,7 +96588,13 @@ fn execute_repo_up_with_behavior(
                         workflow_name,
                         overrides,
                     );
-                    if !refreshed.ok {
+                    if !refreshed.ok
+                        && !preview_errors_are_fully_resolvable(
+                            &refreshed.findings,
+                            &provisioning_actions,
+                            &activation_actions,
+                        )
+                    {
                         return Ok(RepoUpResult {
                             ok: false,
                             status: "BLOCKED",
@@ -96619,13 +96846,18 @@ fn execute_repo_up_with_behavior(
     diagnosis_overrides.memory = overrides.memory;
     diagnosis_overrides.skip_deps = overrides.skip_deps;
 
-    let report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+    let mut report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
         contract,
         resolved_path,
         doctor_mode,
         diagnosis_overrides.lifecycle,
         workflow_name,
         diagnosis_overrides,
+    );
+    suppress_post_up_resolved_error_findings(
+        &mut report,
+        &provisioning_actions,
+        &activation_actions,
     );
     if report.ok
         && matches!(run_behavior_preference, UpRunBehaviorPreference::Attach)
