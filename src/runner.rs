@@ -11028,9 +11028,6 @@ fn maybe_activate_corepack_shims_on_run_path(
     current_os: &str,
     state: &mut TaskRunState,
 ) -> Result<(), RunError> {
-    if matches!(backend, ResolvedExecutionBackend::Container { .. }) {
-        return Ok(());
-    }
     if probe_backend_command_version(backend, contract_working_dir(contract_path), "node")
         .ok()
         .flatten()
@@ -52131,6 +52128,170 @@ tasks:
             super::BackendFulfillmentStrategy::DeferredEphemeralContainer
         );
         assert!(plan.provisioning_target.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn container_mode_override_dependency_hydration_runs_with_corepack_owned_pnpm() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: flowise
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:20-bookworm
+toolchains:
+  node:
+    version: "^20.20.2"
+    fulfillment:
+      source: corepack
+      mode: run
+    package_managers:
+      pnpm: "10.26.0"
+tasks:
+  install:
+    context: host
+    env:
+      CI: "false"
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        manager: pnpm
+        mode: install
+        frozen_lockfile: false
+        cwd: .
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+        container:
+          context: app
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
+        let bin_dir = fixture.dir.path().join("bin");
+        let pnpm_log = fixture.dir.path().join("pnpm.log");
+        let pnpm_path = bin_dir.join("pnpm");
+        let corepack_body = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.26.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.26.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\nfi\nexit 1\n",
+            pnpm_path.display(),
+            pnpm_log.display(),
+            pnpm_path.display()
+        );
+        write_fake_bin(&bin_dir, "corepack", &corepack_body);
+
+        let outcome = super::run_task_internal(
+            &fixture.contract,
+            fixture.file_path(),
+            "install",
+            &[],
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            None,
+            TaskExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(&pnpm_log).unwrap();
+        assert!(logged.contains("install"), "{logged}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn container_mode_override_command_runs_with_corepack_owned_pnpm() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: flowise
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:20-bookworm
+toolchains:
+  node:
+    version: "^20.20.2"
+    fulfillment:
+      source: corepack
+      mode: run
+    package_managers:
+      pnpm: "10.26.0"
+tasks:
+  lint:
+    context: host
+    command:
+      exe: pnpm
+      args:
+        - lint
+    execution:
+      default_mode: native
+      modes:
+        native:
+          context: host
+        container:
+          context: app
+          command:
+            exe: pnpm
+            args:
+              - lint
+    requirements:
+      toolchains:
+        - node
+"#,
+        );
+        let _docker = install_fake_docker_on_path(fixture.dir.path());
+        let bin_dir = fixture.dir.path().join("bin");
+        let pnpm_log = fixture.dir.path().join("pnpm.log");
+        let pnpm_path = bin_dir.join("pnpm");
+        let corepack_body = format!(
+            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.26.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.26.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\nfi\nexit 1\n",
+            pnpm_path.display(),
+            pnpm_log.display(),
+            pnpm_path.display()
+        );
+        write_fake_bin(&bin_dir, "corepack", &corepack_body);
+
+        let outcome = super::run_task_internal(
+            &fixture.contract,
+            fixture.file_path(),
+            "lint",
+            &[],
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            None,
+            TaskExecutionMode::Capture,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(&pnpm_log).unwrap();
+        assert!(logged.contains("lint"), "{logged}");
     }
 
     #[test]
