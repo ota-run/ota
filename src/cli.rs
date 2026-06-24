@@ -31949,6 +31949,84 @@ tasks:
     }
 
     #[test]
+    fn up_dry_run_json_includes_workflow_task_dependency_plan() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+tasks:
+  prep:
+    run: printf ready > prepared.txt
+  dev:
+    depends_on:
+      - prep
+    launch:
+      kind: command
+      exe: npm
+      args:
+        - run
+        - dev
+    runtime:
+      kind: service
+      listeners:
+        web:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              path: /
+"#,
+        );
+
+        let output = run_with(["ota", "up", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        let chain = json["plan"]["dependency_chain"]
+            .as_array()
+            .expect("dependency chain array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(chain, vec!["prep", "dev"]);
+        let actions = json["plan"]["actions"]
+            .as_array()
+            .expect("actions array")
+            .iter()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            actions.contains(&"would run planned step `prep` before `dev`"),
+            "{actions:?}"
+        );
+        assert!(
+            actions.contains(&"would launch `npm run dev` on the host"),
+            "{actions:?}"
+        );
+        let dependency_steps = json["plan"]["dependency_steps"]
+            .as_array()
+            .expect("dependency steps array");
+        assert_eq!(dependency_steps.len(), 2);
+        assert_eq!(dependency_steps[0]["task"], "prep");
+        assert_eq!(dependency_steps[1]["task"], "dev");
+    }
+
+    #[test]
     fn up_dry_run_warning_preview_surfaces_shared_verdict_and_primary_warning() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(

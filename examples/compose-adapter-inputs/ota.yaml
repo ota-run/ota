@@ -65,6 +65,42 @@ services:
       file: docker-compose.yml
       service: postgres
 tasks:
+  compose:staged:up:
+    context: host
+    description: Start a finite staged Compose service group through first-class compose ownership
+    adapter_inputs:
+      overlays:
+        compose:
+          cwd: docker
+          files:
+            - docker/docker-compose.yml
+          profiles:
+            - runtime
+    compose:
+      kind: up
+      detach: true
+      services:
+        - postgres
+        - api
+    requirements:
+      tools:
+        docker: "*"
+  compose:build:
+    context: host
+    description: Build selected Compose services through first-class compose ownership
+    adapter_inputs:
+      overlays:
+        compose:
+          cwd: docker
+          files:
+            - docker/docker-compose.yml
+    compose:
+      kind: build
+      services:
+        - api
+    requirements:
+      tools:
+        docker: "*"
   compose:up:
     context: host
     description: Start the compose stack with task-owned adapter truth
@@ -96,11 +132,8 @@ tasks:
             - docker/docker-compose.yml
           profiles:
             - app
-    command:
-      exe: docker
-      args:
-        - compose
-        - down
+    compose:
+      kind: down
     requirements:
       tools:
         docker: "*"

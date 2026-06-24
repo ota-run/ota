@@ -1826,12 +1826,14 @@ extensions:
 
 Compose execution notes:
 
-- use `tasks.<name>.compose` when the truthful task body is a direct `docker|podman compose exec`
-  or `run` command inside a declared service
+- use `tasks.<name>.compose` when the truthful task body is a finite `docker|podman compose`
+  lane ota should own structurally, whether that is a service-side `exec`/`run`/`attach` command
+  or a staged `compose up`, `compose build`, or project-scoped `compose down` adapter invocation
 - use `compose.kind: attach` when the truthful lane re-attaches to an existing interactive
   session inside a declared Compose service, such as `tmux attach` inside a running dev container
 - `compose.detach: true` is supported for `kind: exec` when the truthful lane starts a detached
-  in-service bootstrap or background process and Ota should own that launch directly
+  in-service bootstrap or background process and Ota should own that launch directly; `kind: up`
+  also supports `detach: true` for staged service-group bring-up
 - `compose.rm: true` remains valid only for `kind: run`
 
 Fields:
@@ -1846,7 +1848,7 @@ Fields:
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
 - `command`: optional structured finite command body
-- `compose`: optional structured Compose execution body for `docker|podman compose exec/run/attach`
+- `compose`: optional structured Compose execution body for `docker|podman compose exec/run/attach/up/down/build`
 - `prepare`: optional first-class finite preparation body for machine-readable setup or dependency hydration
 - `launch`: optional structured launch source for inspectable command or packaged container starts
 - `action`: optional first-class native setup action for small cross-platform repo-file mutations
@@ -1921,23 +1923,29 @@ Task-effect rules:
 
 `compose` fields:
 
-- `compose.kind`: required Compose execution shape; ota ships `exec`, `run`, and `attach`
+- `compose.kind`: required Compose execution shape; ota ships `exec`, `run`, `attach`, `up`, `down`, and `build`
 - `compose.engine`: optional Compose CLI engine; `docker` by default, `podman` also supported
-- `compose.service`: required Compose service name
+- `compose.service`: required Compose service name for `kind: exec`, `run`, or `attach`
+- `compose.services`: optional ordered service list for `kind: up` or `kind: build`
 - `compose.workdir`: optional in-container working directory passed through `compose exec/run -w`
-- `compose.exe`: required executable to run inside the selected service
-- `compose.args`: optional argument list passed to `compose.exe`
+- `compose.exe`: required executable to run inside the selected service for `kind: exec`, `run`, or `attach`
+- `compose.args`: optional argument list passed to `compose.exe` for `kind: exec`, `run`, or `attach`
 - `compose.rm`: optional `compose run --rm`; valid only with `kind: run`
 - `compose.tty`: optional TTY preservation for `exec` and `run`; omitted means ota adds `-T` for deterministic non-interactive execution. `kind: attach` is always interactive and preserves TTY by definition.
 
 `compose` rules:
 
-- use `compose` when the repo truth is a service-side finite command such as `bundle exec rails db:migrate`, `python manage.py migrate`, or `npm run lint` inside a declared Compose service
+- use `compose` when the repo truth is a service-side finite command such as `bundle exec rails db:migrate`, `python manage.py migrate`, or `npm run lint` inside a declared Compose service, or when one finite staged task truthfully owns `docker compose up [-d] <services...>`, `docker compose build [services...]`, or `docker compose down`
 - `compose` is a task body, so it is mutually exclusive with `run`, `script`, `command`, `prepare`, `launch`, `action`, and `aggregate`
 - `compose` currently requires `requirements.tools.docker` or `requirements.tools.podman` to keep the host Compose engine truthful
-- keep host-side Compose adapter truth under `adapter_inputs.compose` or workflow overlays; keep only service-side command truth under `compose`
+- keep host-side Compose adapter truth under `adapter_inputs.compose` or workflow overlays; keep service-side command truth or staged compose subcommand truth under `compose`
+- `compose.kind: exec`, `run`, and `attach` require `compose.service`
+- `compose.kind: up` uses `compose.services` for staged service-group activation and must not declare `compose.service`
+- `compose.kind: build` uses optional `compose.services` for staged image build selection and must not declare `compose.service`
+- `compose.kind: down` is project-scoped and must not declare `compose.service` or `compose.services`
+- `compose.workdir`, `compose.exe`, and `compose.args` only apply to `compose.kind: exec`, `run`, or `attach`
 - `compose.rm` is only valid with `compose.kind: run`
-- `compose.detach` is only valid with `compose.kind: exec`
+- `compose.detach` is only valid with `compose.kind: exec` or `compose.kind: up`
 - `compose.kind: attach` must not declare `compose.rm` or `compose.detach`
 
 `prepare` fields:

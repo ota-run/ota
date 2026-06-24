@@ -57347,6 +57347,48 @@ tasks:
         );
     }
 
+    #[test]
+    fn projected_compose_build_uses_service_groups_without_exec_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    compose:
+      kind: build
+      services:
+        - web
+        - worker
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("image:build").unwrap();
+        let projected = super::projected_compose_command_for_task(
+            task,
+            Backend::Native,
+            task.compose.as_ref().unwrap(),
+        );
+
+        assert_eq!(projected.exe, "docker");
+        assert_eq!(projected.cwd.as_deref(), Some("infra"));
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("compose"),
+                String::from("build"),
+                String::from("web"),
+                String::from("worker"),
+            ]
+        );
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn dependency_hydration_prepare_can_wrap_typed_command_through_compose() {

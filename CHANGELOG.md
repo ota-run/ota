@@ -26,12 +26,13 @@
 
 ## Unreleased
 
-- widened `tasks.<name>.compose` with first-class `compose.kind: up` and `compose.kind: down`,
-  so repos can model staged `docker|podman compose up [-d] <services...>` and project-scoped
-  `compose down` lanes without falling back to opaque host-shell `docker compose ...` glue; the
-  same pass also widened workflow `prepare.task` to accept finite native `compose` bodies and
-  tightened `ota up --dry-run --json` action text so `command` and `compose` tasks publish the
-  actual structured execution preview instead of generic task placeholders
+- widened `tasks.<name>.compose` with first-class `compose.kind: up`, `compose.kind: down`, and
+  `compose.kind: build`, so repos can model staged `docker|podman compose up [-d] <services...>`,
+  project-scoped `compose down`, and `compose build [services...]` lanes without falling back to
+  opaque host-shell `docker compose ...` glue; the same pass also widened workflow
+  `prepare.task` to accept finite native `compose` bodies and tightened
+  `ota up --dry-run --json` action text so `command` and `compose` tasks publish the actual
+  structured execution preview instead of generic task placeholders
 - fixed runtime-proof workflow-instance selection and container Corepack run-path fulfillment, so
   `ota proof runtime --workflow <name>@<instance>` now preserves instance overlays in topology,
   cleanup, and proof artifacts, and container-mode setup/run lanes now honor selected container

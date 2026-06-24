@@ -5234,7 +5234,10 @@ pub struct TaskComposeInvocationSpec {
     pub kind: TaskComposeExecutionKind,
     #[serde(default, skip_serializing_if = "is_default_compose_cli_engine")]
     pub engine: ComposeCliEngine,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub service: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workdir: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -5251,6 +5254,9 @@ impl TaskComposeInvocationSpec {
             TaskComposeExecutionKind::Exec => "compose_exec",
             TaskComposeExecutionKind::Run => "compose_run",
             TaskComposeExecutionKind::Attach => "compose_attach",
+            TaskComposeExecutionKind::Up => "compose_up",
+            TaskComposeExecutionKind::Down => "compose_down",
+            TaskComposeExecutionKind::Build => "compose_build",
         }
     }
 
@@ -5258,6 +5264,9 @@ impl TaskComposeInvocationSpec {
         match self.kind {
             TaskComposeExecutionKind::Exec | TaskComposeExecutionKind::Attach => "exec",
             TaskComposeExecutionKind::Run => "run",
+            TaskComposeExecutionKind::Up => "up",
+            TaskComposeExecutionKind::Down => "down",
+            TaskComposeExecutionKind::Build => "build",
         }
     }
 
@@ -5270,7 +5279,12 @@ impl TaskComposeInvocationSpec {
         if self.detach {
             preview.push_str(" -d");
         }
-        if !self.tty && self.kind != TaskComposeExecutionKind::Attach {
+        if !self.tty
+            && matches!(
+                self.kind,
+                TaskComposeExecutionKind::Exec | TaskComposeExecutionKind::Run
+            )
+        {
             preview.push_str(" -T");
         }
         if self.rm {
@@ -5284,8 +5298,17 @@ impl TaskComposeInvocationSpec {
             preview.push_str(" -w ");
             preview.push_str(workdir);
         }
-        preview.push(' ');
-        preview.push_str(self.service.as_str());
+        if !self.service.trim().is_empty() {
+            preview.push(' ');
+            preview.push_str(self.service.as_str());
+        }
+        for service in &self.services {
+            let service = service.trim();
+            if !service.is_empty() {
+                preview.push(' ');
+                preview.push_str(service);
+            }
+        }
         preview
     }
 
@@ -5306,6 +5329,7 @@ impl TaskComposeInvocationSpec {
 pub struct TaskComposeExecutionSpec {
     #[serde(flatten)]
     pub invocation: TaskComposeInvocationSpec,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub exe: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
@@ -5317,8 +5341,14 @@ impl TaskComposeExecutionSpec {
     }
 
     pub fn preview(&self) -> String {
-        self.invocation
-            .preview_with_command(self.exe.as_str(), self.args.as_slice())
+        match self.invocation.kind {
+            TaskComposeExecutionKind::Up | TaskComposeExecutionKind::Down => {
+                self.invocation.preview_prefix()
+            }
+            _ => self
+                .invocation
+                .preview_with_command(self.exe.as_str(), self.args.as_slice()),
+        }
     }
 }
 
@@ -5329,6 +5359,9 @@ pub enum TaskComposeExecutionKind {
     #[default]
     Run,
     Attach,
+    Up,
+    Down,
+    Build,
 }
 
 impl TaskComposeExecutionKind {
@@ -5337,6 +5370,9 @@ impl TaskComposeExecutionKind {
             Self::Exec => "exec",
             Self::Run => "run",
             Self::Attach => "attach",
+            Self::Up => "up",
+            Self::Down => "down",
+            Self::Build => "build",
         }
     }
 }
@@ -7997,6 +8033,7 @@ tasks:
                             kind: super::TaskComposeExecutionKind::Run,
                             engine: super::ComposeCliEngine::Docker,
                             service: String::from("app"),
+                            services: Vec::new(),
                             workdir: Some(String::from("/workspace")),
                             rm: true,
                             detach: false,

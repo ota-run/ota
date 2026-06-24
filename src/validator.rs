@@ -3607,9 +3607,18 @@ fn validate_task_compose_invocation(
     compose: &crate::schema::TaskComposeInvocationSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    if compose.service.trim().is_empty() {
+    let has_service = !compose.service.trim().is_empty();
+    let has_services = compose
+        .services
+        .iter()
+        .any(|service| !service.trim().is_empty());
+    if compose
+        .services
+        .iter()
+        .any(|service| service.trim().is_empty())
+    {
         errors.push(ValidationError::new(format!(
-            "task `{task_name}` {scope} must declare a non-empty `{field_path}.service`"
+            "task `{task_name}` {scope} must not declare empty `{field_path}.services[]` entries"
         )));
     }
     if let Some(workdir) = compose.workdir.as_deref()
@@ -3619,26 +3628,119 @@ fn validate_task_compose_invocation(
             "task `{task_name}` {scope} must not declare an empty `{field_path}.workdir`"
         )));
     }
-    if compose.rm && compose.kind != crate::schema::TaskComposeExecutionKind::Run {
-        errors.push(ValidationError::new(format!(
-            "task `{task_name}` {scope} must only declare `{field_path}.rm: true` with `kind: run`"
-        )));
-    }
-    if compose.detach && compose.kind != crate::schema::TaskComposeExecutionKind::Exec {
-        errors.push(ValidationError::new(format!(
-            "task `{task_name}` {scope} must only declare `{field_path}.detach: true` with `kind: exec`"
-        )));
-    }
-    if compose.kind == crate::schema::TaskComposeExecutionKind::Attach {
-        if compose.rm {
-            errors.push(ValidationError::new(format!(
-                "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: attach`"
-            )));
+    match compose.kind {
+        crate::schema::TaskComposeExecutionKind::Exec
+        | crate::schema::TaskComposeExecutionKind::Run
+        | crate::schema::TaskComposeExecutionKind::Attach => {
+            if !has_service {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must declare a non-empty `{field_path}.service`"
+                )));
+            }
+            if has_services {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.services` with `kind: {}`",
+                    compose.kind.label()
+                )));
+            }
+            if compose.rm && compose.kind != crate::schema::TaskComposeExecutionKind::Run {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must only declare `{field_path}.rm: true` with `kind: run`"
+                )));
+            }
+            if compose.detach && compose.kind != crate::schema::TaskComposeExecutionKind::Exec {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must only declare `{field_path}.detach: true` with `kind: exec`"
+                )));
+            }
+            if compose.kind == crate::schema::TaskComposeExecutionKind::Attach {
+                if compose.rm {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: attach`"
+                    )));
+                }
+                if compose.detach {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` {scope} must not declare `{field_path}.detach: true` with `kind: attach`"
+                    )));
+                }
+            }
         }
-        if compose.detach {
-            errors.push(ValidationError::new(format!(
-                "task `{task_name}` {scope} must not declare `{field_path}.detach: true` with `kind: attach`"
-            )));
+        crate::schema::TaskComposeExecutionKind::Up => {
+            if has_service {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.service` with `kind: up`; use `{field_path}.services`"
+                )));
+            }
+            if compose.rm {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: up`"
+                )));
+            }
+            if compose.workdir.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.workdir` with `kind: up`"
+                )));
+            }
+            if compose.tty {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: up`"
+                )));
+            }
+        }
+        crate::schema::TaskComposeExecutionKind::Down => {
+            if has_service || has_services {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.service` or `{field_path}.services` with `kind: down`"
+                )));
+            }
+            if compose.rm {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: down`"
+                )));
+            }
+            if compose.detach {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.detach: true` with `kind: down`"
+                )));
+            }
+            if compose.workdir.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.workdir` with `kind: down`"
+                )));
+            }
+            if compose.tty {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: down`"
+                )));
+            }
+        }
+        crate::schema::TaskComposeExecutionKind::Build => {
+            if has_service {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.service` with `kind: build`; use `{field_path}.services`"
+                )));
+            }
+            if compose.rm {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: build`"
+                )));
+            }
+            if compose.detach {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.detach: true` with `kind: build`"
+                )));
+            }
+            if compose.workdir.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.workdir` with `kind: build`"
+                )));
+            }
+            if compose.tty {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: build`"
+                )));
+            }
         }
     }
 }
@@ -3694,10 +3796,35 @@ fn validate_task_compose_execution(
     errors: &mut Vec<ValidationError>,
 ) {
     validate_task_compose_invocation(task_name, scope, field_path, &compose.invocation, errors);
-    if compose.exe.trim().is_empty() {
+    if matches!(
+        compose.invocation.kind,
+        crate::schema::TaskComposeExecutionKind::Exec
+            | crate::schema::TaskComposeExecutionKind::Run
+            | crate::schema::TaskComposeExecutionKind::Attach
+    ) && compose.exe.trim().is_empty()
+    {
         errors.push(ValidationError::new(format!(
             "task `{task_name}` {scope} must declare a non-empty `{field_path}.exe`"
         )));
+    }
+    if matches!(
+        compose.invocation.kind,
+        crate::schema::TaskComposeExecutionKind::Up
+            | crate::schema::TaskComposeExecutionKind::Down
+            | crate::schema::TaskComposeExecutionKind::Build
+    ) {
+        if !compose.exe.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` {scope} must not declare `{field_path}.exe` with `kind: {}`",
+                compose.invocation.kind.label()
+            )));
+        }
+        if !compose.args.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` {scope} must not declare `{field_path}.args` with `kind: {}`",
+                compose.invocation.kind.label()
+            )));
+        }
     }
 }
 
@@ -14051,10 +14178,11 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         && task.run.is_none()
                         && task.script.is_none()
                         && task.command.is_none()
+                        && task.compose.is_none()
                         && task.prepare.is_none()
                     {
                         errors.push(ValidationError::new(format!(
-                            "`workflows.{name}.prepare.task` must reference one native finite task body (`run`, `script`, `command`, `prepare`, or `action`), not `{task_name}`"
+                            "`workflows.{name}.prepare.task` must reference one native finite task body (`run`, `script`, `command`, `compose`, `prepare`, or `action`), not `{task_name}`"
                         )));
                     }
                     if task_execution_backend(contract, task, Backend::Native) != Backend::Native {
@@ -23001,6 +23129,98 @@ tasks:
     }
 
     #[test]
+    fn rejects_compose_up_with_exec_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  staged:up:
+    compose:
+      kind: up
+      service: api
+      workdir: /workspace
+      exe: npm
+      args:
+        - run
+        - dev
+      services:
+        - web
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(messages.contains(&String::from(
+            "task `staged:up` task must not declare `compose.service` with `kind: up`; use `compose.services`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `staged:up` task must not declare `compose.workdir` with `kind: up`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `staged:up` task must not declare `compose.exe` with `kind: up`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `staged:up` task must not declare `compose.args` with `kind: up`"
+        )));
+    }
+
+    #[test]
+    fn rejects_compose_build_with_exec_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    compose:
+      kind: build
+      service: api
+      detach: true
+      workdir: /workspace
+      exe: npm
+      args:
+        - run
+        - build
+      services:
+        - web
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(messages.contains(&String::from(
+            "task `image:build` task must not declare `compose.service` with `kind: build`; use `compose.services`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `image:build` task must not declare `compose.detach: true` with `kind: build`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `image:build` task must not declare `compose.workdir` with `kind: build`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `image:build` task must not declare `compose.exe` with `kind: build`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `image:build` task must not declare `compose.args` with `kind: build`"
+        )));
+    }
+
+    #[test]
     fn rejects_workflow_attach_task_without_attach_body() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -23046,6 +23266,36 @@ workflows:
             .iter()
             .any(|error| error.to_string()
                 == "`workflows.app.attach.task` must resolve to a first-class interactive attach body for backend `native`"));
+    }
+
+    #[test]
+    fn allows_workflow_prepare_task_to_use_finite_native_compose_body() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  postgres:up:
+    compose:
+      kind: up
+      detach: true
+      services:
+        - postgres
+    requirements:
+      tools:
+        docker: "*"
+workflows:
+  default: local
+  local:
+    prepare:
+      task: postgres:up
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("workflow prepare should accept compose up");
     }
 
     #[test]

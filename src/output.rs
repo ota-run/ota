@@ -2390,6 +2390,10 @@ pub struct UpPreviewPlan {
     pub actions: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dependency_chain: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dependency_steps: Vec<RunPreviewDependencyStep>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3574,8 +3578,12 @@ pub struct TaskCommandSummary<'a> {
 pub struct TaskComposeExecutionSummary<'a> {
     pub kind: &'static str,
     pub engine: &'static str,
-    pub service: &'a str,
-    pub exe: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exe: Option<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3592,7 +3600,10 @@ pub struct TaskComposeExecutionSummary<'a> {
 pub struct TaskComposeInvocationSummary<'a> {
     pub kind: &'static str,
     pub engine: &'static str,
-    pub service: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workdir: Option<&'a str>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -3733,7 +3744,10 @@ pub struct WorkspaceTaskPrepareSummary {
 pub struct WorkspaceTaskComposeInvocationSummary {
     pub kind: &'static str,
     pub engine: &'static str,
-    pub service: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workdir: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -3780,8 +3794,15 @@ fn summarize_task_compose<'a>(
     compose.map(|compose| TaskComposeExecutionSummary {
         kind: compose.invocation.kind.label(),
         engine: compose.invocation.engine.as_str(),
-        service: compose.invocation.service.as_str(),
-        exe: compose.exe.as_str(),
+        service: (!compose.invocation.service.trim().is_empty())
+            .then_some(compose.invocation.service.as_str()),
+        services: compose
+            .invocation
+            .services
+            .iter()
+            .map(String::as_str)
+            .collect(),
+        exe: (!compose.exe.trim().is_empty()).then_some(compose.exe.as_str()),
         args: compose.args.iter().map(String::as_str).collect(),
         workdir: compose.invocation.workdir.as_deref(),
         rm: compose.invocation.rm,
@@ -3796,7 +3817,8 @@ fn summarize_task_compose_invocation<'a>(
     compose.map(|compose| TaskComposeInvocationSummary {
         kind: compose.kind.label(),
         engine: compose.engine.as_str(),
-        service: compose.service.as_str(),
+        service: (!compose.service.trim().is_empty()).then_some(compose.service.as_str()),
+        services: compose.services.iter().map(String::as_str).collect(),
         workdir: compose.workdir.as_deref(),
         rm: compose.rm,
         detach: compose.detach,
@@ -3810,7 +3832,8 @@ fn summarize_task_compose_invocation_owned(
     compose.map(|compose| WorkspaceTaskComposeInvocationSummary {
         kind: compose.kind.label(),
         engine: compose.engine.as_str(),
-        service: compose.service.clone(),
+        service: (!compose.service.trim().is_empty()).then_some(compose.service.clone()),
+        services: compose.services.clone(),
         workdir: compose.workdir.clone(),
         rm: compose.rm,
         detach: compose.detach,
@@ -4782,7 +4805,78 @@ tasks:
         assert_eq!(summary.kind, "compose_exec");
         let compose = summary.compose.expect("compose summary should exist");
         assert_eq!(compose.kind, "exec");
+        assert_eq!(compose.service, Some("api"));
         assert!(compose.detach);
+    }
+
+    #[test]
+    fn summarize_task_compose_up_uses_service_groups() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  staged:up:
+    compose:
+      kind: up
+      detach: true
+      services:
+        - web
+        - worker
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "staged:up",
+            contract.tasks.get("staged:up").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.kind, "compose_up");
+        let compose = summary.compose.expect("compose summary should exist");
+        assert_eq!(compose.kind, "up");
+        assert_eq!(compose.service, None);
+        assert_eq!(compose.services, vec!["web", "worker"]);
+        assert_eq!(compose.exe, None);
+        assert!(compose.detach);
+    }
+
+    #[test]
+    fn summarize_task_compose_build_uses_service_groups() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  image:build:
+    compose:
+      kind: build
+      services:
+        - web
+        - worker
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "image:build",
+            contract.tasks.get("image:build").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.kind, "compose_build");
+        let compose = summary.compose.expect("compose summary should exist");
+        assert_eq!(compose.kind, "build");
+        assert_eq!(compose.service, None);
+        assert_eq!(compose.services, vec!["web", "worker"]);
+        assert_eq!(compose.exe, None);
     }
 
     #[test]
@@ -4821,7 +4915,7 @@ tasks:
 
         assert_eq!(compose.kind, "run");
         assert_eq!(compose.engine, "docker");
-        assert_eq!(compose.service, "app");
+        assert_eq!(compose.service, Some("app"));
         assert_eq!(compose.workdir, Some("/workspace"));
         assert!(compose.rm);
     }
