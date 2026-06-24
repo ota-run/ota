@@ -2526,8 +2526,9 @@ Surface attachment rules:
   normalized listener truth
 - attached surface names become normalized listener names
 - a runtime must not attach an unknown surface
-- a runtime must not declare `runtime.listeners.<name>` and also attach `runtime.surfaces.<name>`
-  for the same name
+- a runtime may intentionally declare `runtime.listeners.<name>` and also attach
+  `runtime.surfaces.<name>` when one published surface maps 1:1 to one explicit listener; this is
+  the canonical same-name publication shape for workflow exposes and surface-backed runtime proof
 - `runtime.surfaces.<name>.bind.port` must preserve the declared top-level surface port with
   `mode: fixed`
 - if a runtime attaches exactly one surface, has no inline `runtime.readiness`, and that surface
@@ -3366,6 +3367,9 @@ Current behavior:
 - keep instance truth bounded and explicit: this first-class lane is for instance-specific env overrides, task adapter input overrides, and surface port/path overlays, not arbitrary free-form templating across the whole contract
 - use `workflows.<name>.instances.<instance>.env` when every task on the selected workflow path should inherit one instance-specific env value such as a cloned workspace root
 - use `workflows.<name>.instances.<instance>.tasks.<task>.adapter_inputs` when one selected task path needs instance-specific compose project naming, bake files, or other adapter-owned truth without splitting the workflow into repo-local shell variants
+- use `workflows.<name>.instances.<instance>.tasks.<task>.runtime` when one selected task path needs instance-specific service listener publication or readiness selection and the base task already owns explicit `runtime` truth
+- keep workflow-instance runtime specialization on the task runtime boundary: override existing listener bind/project ports or readiness fields there instead of inventing a separate workflow-level listener model
+- workflow-instance task runtime overlays currently merge onto an existing top-level task `runtime`; they do not invent new listeners or replace runtime ownership from scratch
 - use `workflows.<name>.instances.<instance>.surfaces.<surface>` when the selected instance publishes the same surface shape on different host ports or paths and Ota should keep proof, exposure, and command guidance aligned on the selected instance
 - use `prepare.task` when the workflow needs one explicit host-side finite normalization/bootstrap step before setup and that step already deserves its own reusable task identity
 - use `prepare.action` when the workflow itself honestly owns one deterministic bootstrap action or bundle and creating a synthetic helper task would only add glue

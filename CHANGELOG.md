@@ -59,6 +59,14 @@
   can now materialize structured `json` and `toml` artifacts from ordered merge sources with
   instance-aware placeholder substitution and optional `merge_into_existing`; Penpot can now model
   per-workspace MCP/client config generation as contract truth instead of a repo-local merge helper
+- widened workflow-instance task overlays with `workflows.<name>.instances.<instance>.tasks.<task>.runtime`,
+  so selected workflow instances can now specialize existing task runtime listeners and readiness
+  fields without inventing a parallel workflow-local listener model; instance-scoped bind/project
+  port truth now merges onto the base task runtime and stays visible to validation, dry-run, and
+  runtime proof
+- fixed runtime surface/listener split-brain by allowing one explicit task listener to share the
+  same name as one attached published surface; surface-backed runtime proof and workflow exposure
+  now align with the validator instead of forcing duplicate or renamed publication truth
 - added first-class interactive workflow attach ownership with `workflows.<name>.attach.task` and
   `tasks.<name>.compose.kind: attach`, so detached session workflows can declare one canonical
   re-attach lane and `ota up --attach` now keeps the service runtime running, proves readiness, and

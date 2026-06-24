@@ -61,11 +61,27 @@ tasks:
         project_name: app-ws0
     runtime:
       kind: service
+      listeners:
+        ui:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+              path: /
       surfaces:
         - ui
       readiness:
         kind: http
-        listener: ui
+        listener: ui:http
         path: /
         interval: 3s
         timeout: 3s
@@ -136,6 +152,18 @@ workflows:
             adapter_inputs:
               compose:
                 project_name: app-ws1
+            runtime:
+              listeners:
+                ui:http:
+                  bind:
+                    port:
+                      mode: fixed
+                      value: 13000
+                  project:
+                    host:
+                      port:
+                        mode: fixed
+                        value: 13000
           app:attach:
             adapter_inputs:
               compose:
@@ -160,6 +188,18 @@ workflows:
             adapter_inputs:
               compose:
                 project_name: app-ws2
+            runtime:
+              listeners:
+                ui:http:
+                  bind:
+                    port:
+                      mode: fixed
+                      value: 23000
+                  project:
+                    host:
+                      port:
+                        mode: fixed
+                        value: 23000
           app:attach:
             adapter_inputs:
               compose:

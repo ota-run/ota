@@ -3029,16 +3029,6 @@ fn validate_runtime_surface_attachments(
 
         let surface = &contract.surfaces[surface_name];
 
-        if runtime.listeners.contains_key(surface_name.as_str())
-            && !runtime
-                .normalized_surface_listeners
-                .contains(surface_name.as_str())
-        {
-            errors.push(ValidationError::new(format!(
-                "`{field_path}.surfaces` attaches surface `{surface_name}`, but `{field_path}.listeners.{surface_name}` is already declared"
-            )));
-        }
-
         if let Some(bind) = attachment.bind.as_ref()
             && let Some(port) = bind.port.as_ref()
             && (port.mode != crate::schema::TaskRuntimePortMode::Fixed
@@ -14125,6 +14115,16 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                             )));
                         }
                     }
+                    if let Some(runtime_overlay) = overlay.runtime.as_ref() {
+                        validate_workflow_instance_task_runtime_overlay(
+                            contract,
+                            name.as_str(),
+                            instance_name.as_str(),
+                            task_name.as_str(),
+                            runtime_overlay,
+                            errors,
+                        );
+                    }
                 }
             }
             let mut topology_visiting = BTreeSet::new();
@@ -15720,6 +15720,168 @@ fn validate_workflow_instance_topology_cycle(
     visited.insert(instance_name.to_string());
 }
 
+fn validate_workflow_instance_task_runtime_overlay(
+    contract: &crate::schema::Contract,
+    workflow_name: &str,
+    instance_name: &str,
+    task_name: &str,
+    overlay: &crate::schema::WorkflowInstanceTaskRuntimeOverlaySpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(task) = contract.tasks.get(task_name) else {
+        return;
+    };
+    let Some(runtime) = task.runtime.as_ref() else {
+        errors.push(ValidationError::new(format!(
+            "`workflows.{workflow_name}.instances.{instance_name}.tasks.{task_name}.runtime` requires base task `{task_name}` to declare top-level `runtime`"
+        )));
+        return;
+    };
+
+    let field_prefix =
+        format!("workflows.{workflow_name}.instances.{instance_name}.tasks.{task_name}.runtime");
+
+    if overlay
+        .backend_binding
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "`{field_prefix}.backend_binding` must not be empty"
+        )));
+    }
+
+    if let Some(readiness) = overlay.readiness.as_ref() {
+        validate_workflow_instance_runtime_readiness_overlay(
+            &field_prefix,
+            runtime,
+            readiness,
+            errors,
+        );
+    }
+
+    for (listener_name, listener_overlay) in &overlay.listeners {
+        let Some(base_listener) = runtime.listeners.get(listener_name.as_str()) else {
+            errors.push(ValidationError::new(format!(
+                "`{field_prefix}.listeners` references unknown base listener `{listener_name}`"
+            )));
+            continue;
+        };
+        if let Some(bind) = listener_overlay.bind.as_ref() {
+            if bind
+                .address
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "`{field_prefix}.listeners.{listener_name}.bind.address` must not be empty"
+                )));
+            }
+            if let Some(port) = bind.port.as_ref() {
+                validate_task_runtime_port_overlay(
+                    port,
+                    &format!("`{field_prefix}.listeners.{listener_name}.bind.port`"),
+                    errors,
+                );
+            }
+        }
+        if let Some(project) = listener_overlay.project.as_ref()
+            && let Some(host) = project.host.as_ref()
+        {
+            if host
+                .address
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "`{field_prefix}.listeners.{listener_name}.project.host.address` must not be empty"
+                )));
+            }
+            if let Some(port) = host.port.as_ref() {
+                validate_task_runtime_host_port_overlay(
+                    port,
+                    &format!("`{field_prefix}.listeners.{listener_name}.project.host.port`"),
+                    errors,
+                );
+            }
+            if host.path.as_deref().is_some_and(|value| value.trim().is_empty()) {
+                errors.push(ValidationError::new(format!(
+                    "`{field_prefix}.listeners.{listener_name}.project.host.path` must not be empty"
+                )));
+            }
+            if base_listener.protocol.url_scheme().is_none() && host.path.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "`{field_prefix}.listeners.{listener_name}.project.host.path` requires base listener `{listener_name}` to use an HTTP-family protocol"
+                )));
+            }
+        }
+    }
+}
+
+fn validate_task_runtime_port_overlay(
+    overlay: &crate::schema::WorkflowInstanceTaskRuntimePortOverlaySpec,
+    field_path: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    if overlay.value == Some(0) {
+        errors.push(ValidationError::new(format!(
+            "{field_path} must be between 1 and 65535"
+        )));
+    }
+}
+
+fn validate_task_runtime_host_port_overlay(
+    overlay: &crate::schema::WorkflowInstanceTaskRuntimeHostPortOverlaySpec,
+    field_path: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    if overlay.value == Some(0) {
+        errors.push(ValidationError::new(format!(
+            "{field_path} must be between 1 and 65535"
+        )));
+    }
+}
+
+fn validate_workflow_instance_runtime_readiness_overlay(
+    field_prefix: &str,
+    runtime: &crate::schema::TaskRuntimeSpec,
+    readiness: &crate::schema::TaskRuntimeReadinessSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if readiness
+        .listener
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|listener| !runtime.listeners.contains_key(listener))
+    {
+        let listener = readiness.listener.as_deref().map(str::trim).unwrap_or_default();
+        errors.push(ValidationError::new(format!(
+            "`{field_prefix}.readiness.listener` references unknown base listener `{listener}`"
+        )));
+    }
+    for signal_probe in &readiness.signal_probes {
+        if signal_probe.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "`{field_prefix}.readiness.signal_probes` must not include empty probe names"
+            )));
+        }
+    }
+    if readiness
+        .path
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty())
+    {
+        errors.push(ValidationError::new(format!(
+            "`{field_prefix}.readiness.path` must not be empty"
+        )));
+    }
+    validate_runtime_readiness_timing(
+        &format!("{field_prefix} task overlay"),
+        readiness,
+        errors,
+    );
+}
+
 fn format_backend(backend: crate::schema::Backend) -> &'static str {
     match backend {
         crate::schema::Backend::Native => "native",
@@ -16102,6 +16264,120 @@ workflows:
         assert!(
             rendered.contains(
                 "`workflows.app.instances.ws0.topology.requires_instances` references unknown instance `ws9`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn rejects_workflow_instance_runtime_overlay_without_base_task_runtime() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-runtime-validation
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0:
+        tasks:
+          dev:
+            runtime:
+              listeners:
+                ui:
+                  bind:
+                    port:
+                      mode: fixed
+                      value: 4300
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("runtime overlay should fail");
+        let rendered = errors.to_string();
+        assert!(
+            rendered.contains(
+                "`workflows.app.instances.ws0.tasks.dev.runtime` requires base task `dev` to declare top-level `runtime`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn rejects_workflow_instance_runtime_overlay_for_unknown_listener() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-runtime-validation
+surfaces:
+  ui:
+    kind: http
+    port: 3000
+    path: /
+tasks:
+  dev:
+    launch:
+      kind: command
+      exe: npm
+      args:
+        - run
+        - dev
+    runtime:
+      kind: service
+      listeners:
+        ui:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+              path: /
+      surfaces:
+        - ui
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0:
+        tasks:
+          dev:
+            runtime:
+              listeners:
+                missing:
+                  bind:
+                    port:
+                      mode: fixed
+                      value: 4300
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("unknown listener should fail");
+        let rendered = errors.to_string();
+        assert!(
+            rendered.contains(
+                "`workflows.app.instances.ws0.tasks.dev.runtime.listeners` references unknown base listener `missing`"
             ),
             "{rendered}"
         );

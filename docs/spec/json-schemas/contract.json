@@ -709,7 +709,71 @@
       "additionalProperties": false,
       "properties": {
         "env": { "$ref": "#/$defs/stringMap" },
-        "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" }
+        "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
+        "runtime": { "$ref": "#/$defs/workflowInstanceTaskRuntimeOverlay" }
+      }
+    },
+    "workflowInstanceTaskRuntimePortOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["fixed", "discover", "auto"] },
+        "value": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "workflowInstanceTaskRuntimeHostPortOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["fixed", "auto"] },
+        "value": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "workflowInstanceTaskRuntimeBindOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "type": "string" },
+        "port": { "$ref": "#/$defs/workflowInstanceTaskRuntimePortOverlay" }
+      }
+    },
+    "workflowInstanceTaskRuntimeHostProjectionOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "type": "string" },
+        "port": { "$ref": "#/$defs/workflowInstanceTaskRuntimeHostPortOverlay" },
+        "primary": { "type": "boolean" },
+        "path": { "type": "string" }
+      }
+    },
+    "workflowInstanceTaskRuntimeProjectionOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": { "$ref": "#/$defs/workflowInstanceTaskRuntimeHostProjectionOverlay" }
+      }
+    },
+    "workflowInstanceTaskRuntimeListenerOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bind": { "$ref": "#/$defs/workflowInstanceTaskRuntimeBindOverlay" },
+        "project": { "$ref": "#/$defs/workflowInstanceTaskRuntimeProjectionOverlay" }
+      }
+    },
+    "workflowInstanceTaskRuntimeOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend_binding": { "type": "string" },
+        "readiness": { "$ref": "#/$defs/taskRuntimeReadiness" },
+        "listeners": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/workflowInstanceTaskRuntimeListenerOverlay"
+          }
+        }
       }
     },
     "workflowInstanceSurfaceOverlay": {

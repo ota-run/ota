@@ -13656,10 +13656,15 @@ pub fn tasks(
     finalize_debug(
         match load_and_validate_target(&resolved_path, single_member) {
             Ok(target) if members.is_empty() || members.len() == 1 => {
-                let task_summaries = listed_task_summaries(&target.contract, all, &filters);
-                let agent_summary = listed_agent_summary(&target.contract, all, &task_summaries);
-                let workflow_summary = match resolve_selected_workflow_summary(
+                let adjusted_contract = contract_adjusted_for_selected_workflow_env_profile(
                     &target.contract,
+                    workflow_name,
+                );
+                let contract = adjusted_contract.as_ref().unwrap_or(&target.contract);
+                let task_summaries = listed_task_summaries(contract, all, &filters);
+                let agent_summary = listed_agent_summary(contract, all, &task_summaries);
+                let workflow_summary = match resolve_selected_workflow_summary(
+                    contract,
                     &target.contract_path,
                     workflow_name,
                 ) {
@@ -60040,6 +60045,319 @@ workflows:
     }
 
     #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_applies_instance_runtime_overlays() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-runtime-adjustment
+surfaces:
+  ui:
+    kind: http
+    port: 3000
+    path: /
+tasks:
+  devenv:start:
+    launch:
+      kind: command
+      exe: ./manage.sh
+      args:
+        - start
+    runtime:
+      kind: service
+      listeners:
+        ui:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+              path: /
+      surfaces:
+        - ui
+workflows:
+  default: devenv
+  devenv:
+    run:
+      task: devenv:start
+    instances:
+      default: ws0
+      ws0: {}
+      ci:
+        tasks:
+          devenv:start:
+            runtime:
+              listeners:
+                ui:http:
+                  bind:
+                    port:
+                      mode: fixed
+                      value: 43449
+                  project:
+                    host:
+                      port:
+                        mode: fixed
+                        value: 43449
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(
+            &contract,
+            Some("devenv@ci"),
+        )
+        .expect("workflow instance should adjust contract");
+        let task = adjusted.tasks.get("devenv:start").expect("task should exist");
+        let runtime = task.runtime.as_ref().expect("runtime should exist");
+        let listener = runtime
+            .listeners
+            .get("ui:http")
+            .expect("listener should exist");
+        assert_eq!(listener.bind.port.value, Some(43449));
+        assert_eq!(
+            listener
+                .project
+                .host
+                .as_ref()
+                .and_then(|host| host.port.value),
+            Some(43449)
+        );
+    }
+
+    #[test]
+    fn contract_adjusted_for_selected_workflow_env_profile_preserves_port_values_on_mode_only_runtime_overlay() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-runtime-port-mode-adjustment
+surfaces:
+  ui:
+    kind: http
+    port: 3000
+    path: /
+tasks:
+  devenv:start:
+    launch:
+      kind: command
+      exe: ./manage.sh
+      args:
+        - start
+    runtime:
+      kind: service
+      listeners:
+        ui:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+              primary: true
+              path: /
+      surfaces:
+        - ui
+workflows:
+  default: devenv
+  devenv:
+    run:
+      task: devenv:start
+    instances:
+      default: ws0
+      ws0: {}
+      ci:
+        tasks:
+          devenv:start:
+            runtime:
+              listeners:
+                ui:http:
+                  bind:
+                    port:
+                      mode: auto
+                  project:
+                    host:
+                      port:
+                        mode: auto
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(
+            &contract,
+            Some("devenv@ci"),
+        )
+        .expect("workflow instance should adjust contract");
+        let task = adjusted.tasks.get("devenv:start").expect("task should exist");
+        let runtime = task.runtime.as_ref().expect("runtime should exist");
+        let listener = runtime
+            .listeners
+            .get("ui:http")
+            .expect("listener should exist");
+        assert_eq!(
+            listener.bind.port.mode,
+            crate::schema::TaskRuntimePortMode::Auto
+        );
+        assert_eq!(listener.bind.port.value, Some(3000));
+        let host = listener
+            .project
+            .host
+            .as_ref()
+            .expect("project host should exist");
+        assert_eq!(
+            host.port.mode,
+            crate::schema::TaskRuntimeHostPortMode::Auto
+        );
+        assert_eq!(host.port.value, Some(3000));
+    }
+
+    #[test]
+    fn selected_workflow_summary_uses_adjusted_instance_runtime_and_surface_truth() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-summary-adjustment
+surfaces:
+  ui:
+    kind: https
+    port: 3449
+    path: /
+  ui:http:
+    kind: http
+    port: 3450
+    path: /
+tasks:
+  devenv:start:
+    command:
+      exe: docker
+      args:
+        - compose
+        - ps
+        - main
+    runtime:
+      kind: service
+      listeners:
+        ui:
+          protocol: https
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3449
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3449
+              path: /
+              primary: true
+        ui:http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3450
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3450
+              path: /
+      surfaces:
+        ui: {}
+        ui:http: {}
+workflows:
+  default: devenv
+  devenv:
+    run:
+      task: devenv:start
+    exposes:
+      - surface: ui
+      - surface: ui:http
+    instances:
+      default: ws0
+      ws0: {}
+      ci:
+        tasks:
+          devenv:start:
+            runtime:
+              listeners:
+                ui:
+                  bind:
+                    port:
+                      mode: fixed
+                      value: 43449
+                  project:
+                    host:
+                      port:
+                        mode: fixed
+                        value: 43449
+                ui:http:
+                  bind:
+                    port:
+                      mode: fixed
+                      value: 43450
+                  project:
+                    host:
+                      port:
+                        mode: fixed
+                        value: 43450
+        surfaces:
+          ui:
+            port: 43449
+          ui:http:
+            port: 43450
+"#,
+        )
+        .unwrap();
+
+        let adjusted = super::contract_adjusted_for_selected_workflow_env_profile(
+            &contract,
+            Some("devenv@ci"),
+        )
+        .expect("workflow instance should adjust contract");
+        let summary = super::resolve_selected_workflow_summary(
+            &adjusted,
+            Path::new("ota.yaml"),
+            Some("devenv@ci"),
+        )
+        .expect("workflow summary should resolve")
+        .expect("workflow summary should exist");
+
+        assert_eq!(summary.instance.as_deref(), Some("ci"));
+        assert!(
+            summary
+                .exposes
+                .contains(&String::from("https://127.0.0.1:43449/"))
+        );
+        assert!(
+            summary
+                .exposes
+                .contains(&String::from("http://127.0.0.1:43450/"))
+        );
+    }
+
+    #[test]
     fn execute_repo_up_runs_prerequisite_workflow_instances_before_selected_instance() {
         let fixture = tempdir().expect("tempdir");
         let contract_path = fixture.path().join("ota.yaml");
@@ -94313,6 +94631,9 @@ fn contract_adjusted_for_selected_workflow_env_profile(
                 if !task_overlay.adapter_inputs.is_empty() {
                     apply_workflow_instance_task_adapter_inputs(task, &task_overlay.adapter_inputs);
                 }
+                if let Some(runtime_overlay) = task_overlay.runtime.as_ref() {
+                    apply_workflow_instance_task_runtime(task, runtime_overlay);
+                }
             }
         }
     }
@@ -94484,6 +94805,149 @@ fn apply_workflow_instance_task_adapter_inputs(
         }
         if helm.namespace.is_some() {
             task_helm.namespace = helm.namespace.clone();
+        }
+    }
+}
+
+fn apply_workflow_instance_task_runtime(
+    task: &mut TaskSpec,
+    overlay: &crate::schema::WorkflowInstanceTaskRuntimeOverlaySpec,
+) {
+    let Some(runtime) = task.runtime.as_mut() else {
+        return;
+    };
+
+    if let Some(backend_binding) = overlay.backend_binding.as_ref() {
+        runtime.backend_binding = Some(backend_binding.clone());
+    }
+
+    if let Some(readiness_overlay) = overlay.readiness.as_ref() {
+        let readiness = runtime
+            .readiness
+            .get_or_insert_with(empty_task_runtime_readiness);
+        merge_runtime_readiness_overlay(readiness, readiness_overlay);
+    }
+
+    for (listener_name, listener_overlay) in &overlay.listeners {
+        let Some(listener) = runtime.listeners.get_mut(listener_name.as_str()) else {
+            continue;
+        };
+        merge_runtime_listener_overlay(listener, listener_overlay);
+    }
+}
+
+fn empty_task_runtime_readiness() -> crate::schema::TaskRuntimeReadinessSpec {
+    crate::schema::TaskRuntimeReadinessSpec {
+        probe: None,
+        signal_probes: Vec::new(),
+        kind: None,
+        listener: None,
+        method: None,
+        path: None,
+        headers: BTreeMap::new(),
+        success: None,
+        body: None,
+        interval: None,
+        timeout: None,
+        retries: None,
+        start_period: None,
+    }
+}
+
+fn merge_runtime_readiness_overlay(
+    target: &mut crate::schema::TaskRuntimeReadinessSpec,
+    overlay: &crate::schema::TaskRuntimeReadinessSpec,
+) {
+    if overlay.probe.is_some() {
+        target.probe = overlay.probe.clone();
+    }
+    if !overlay.signal_probes.is_empty() {
+        target.signal_probes = overlay.signal_probes.clone();
+    }
+    if overlay.kind.is_some() {
+        target.kind = overlay.kind;
+    }
+    if overlay.listener.is_some() {
+        target.listener = overlay.listener.clone();
+    }
+    if overlay.method.is_some() {
+        target.method = overlay.method;
+    }
+    if overlay.path.is_some() {
+        target.path = overlay.path.clone();
+    }
+    if !overlay.headers.is_empty() {
+        target.headers = overlay.headers.clone();
+    }
+    if overlay.success.is_some() {
+        target.success = overlay.success.clone();
+    }
+    if overlay.body.is_some() {
+        target.body = overlay.body.clone();
+    }
+    if overlay.interval.is_some() {
+        target.interval = overlay.interval.clone();
+    }
+    if overlay.timeout.is_some() {
+        target.timeout = overlay.timeout.clone();
+    }
+    if overlay.retries.is_some() {
+        target.retries = overlay.retries;
+    }
+    if overlay.start_period.is_some() {
+        target.start_period = overlay.start_period.clone();
+    }
+}
+
+fn merge_runtime_listener_overlay(
+    target: &mut crate::schema::TaskRuntimeListenerSpec,
+    overlay: &crate::schema::WorkflowInstanceTaskRuntimeListenerOverlaySpec,
+) {
+    if let Some(bind_overlay) = overlay.bind.as_ref() {
+        if let Some(address) = bind_overlay.address.as_ref() {
+            target.bind.address = address.clone();
+        }
+        if let Some(port_overlay) = bind_overlay.port.as_ref() {
+            if let Some(mode) = port_overlay.mode {
+                target.bind.port.mode = mode;
+            }
+            if port_overlay.value.is_some() {
+                target.bind.port.value = port_overlay.value;
+            }
+        }
+    }
+
+    if let Some(project_overlay) = overlay.project.as_ref()
+        && let Some(host_overlay) = project_overlay.host.as_ref()
+    {
+        let host = target
+            .project
+            .host
+            .get_or_insert_with(|| crate::schema::TaskRuntimeHostProjectionSpec {
+                address: String::from("127.0.0.1"),
+                port: crate::schema::TaskRuntimeHostPortSpec {
+                    mode: crate::schema::TaskRuntimeHostPortMode::Fixed,
+                    value: None,
+                },
+                primary: false,
+                path: None,
+            });
+        if let Some(address) = host_overlay.address.as_ref() {
+            host.address = address.clone();
+        }
+        if let Some(port_overlay) = host_overlay.port.as_ref() {
+            if let Some(mode) = port_overlay.mode {
+                host.port.mode = mode;
+            }
+            if port_overlay.value.is_some() {
+                host.port.value = port_overlay.value;
+            }
+        }
+        if let Some(primary) = host_overlay.primary {
+            host.primary = primary;
+        }
+        if host_overlay.path.is_some() {
+            host.path = host_overlay.path.clone();
         }
     }
 }

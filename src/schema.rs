@@ -709,6 +709,8 @@ pub struct WorkflowInstanceTaskOverlaySpec {
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "TaskAdapterInputsSpec::is_empty")]
     pub adapter_inputs: TaskAdapterInputsSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<WorkflowInstanceTaskRuntimeOverlaySpec>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -718,6 +720,73 @@ pub struct WorkflowInstanceSurfaceOverlaySpec {
     pub port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceTaskRuntimeOverlaySpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_binding: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<TaskRuntimeReadinessSpec>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub listeners: BTreeMap<String, WorkflowInstanceTaskRuntimeListenerOverlaySpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceTaskRuntimeListenerOverlaySpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind: Option<WorkflowInstanceTaskRuntimeBindOverlaySpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<WorkflowInstanceTaskRuntimeProjectionOverlaySpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceTaskRuntimeBindOverlaySpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<WorkflowInstanceTaskRuntimePortOverlaySpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceTaskRuntimePortOverlaySpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<TaskRuntimePortMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<u16>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceTaskRuntimeProjectionOverlaySpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<WorkflowInstanceTaskRuntimeHostProjectionOverlaySpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceTaskRuntimeHostProjectionOverlaySpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<WorkflowInstanceTaskRuntimeHostPortOverlaySpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceTaskRuntimeHostPortOverlaySpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<TaskRuntimeHostPortMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<u16>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -9604,7 +9673,7 @@ tasks:
     }
 
     #[test]
-    fn attached_surface_listener_name_collision_fails_validation() {
+    fn attached_surface_listener_name_collision_validates() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -9628,14 +9697,8 @@ tasks:
 "#,
         )
         .expect("surface/listener collision should still parse structurally");
-        let error = validate_contract(&contract)
-            .expect_err("surface/listener collision should fail validation");
-
-        assert!(
-            error.to_string().contains(
-                "`tasks.dev.runtime.surfaces` attaches surface `backend`, but `tasks.dev.runtime.listeners.backend` is already declared"
-            )
-        );
+        validate_contract(&contract)
+            .expect("same-name surface/listener publication should validate");
     }
 
     #[test]

@@ -1871,6 +1871,10 @@ fn full_contract_schema_is_published_and_covered_by_schema_publication() {
     let env_profile_render = &schema["$defs"]["envProfileRender"]["properties"];
     let workflow = &schema["$defs"]["workflowSpec"]["properties"];
     let workflow_env = &schema["$defs"]["workflowEnv"]["properties"];
+    let workflow_instance_task_overlay =
+        &schema["$defs"]["workflowInstanceTaskOverlay"]["properties"];
+    let workflow_instance_runtime_overlay =
+        &schema["$defs"]["workflowInstanceTaskRuntimeOverlay"]["properties"];
     assert!(task_spec.get("compose").is_some());
     assert!(task_mode_branch.get("compose").is_some());
     assert!(task_launch_variants.iter().any(|variant| {
@@ -1880,6 +1884,9 @@ fn full_contract_schema_is_published_and_covered_by_schema_publication() {
     assert!(workflow.get("adapter_inputs").is_some());
     assert!(workflow.get("instances").is_some());
     assert!(workflow.get("attach").is_some());
+    assert!(workflow_instance_task_overlay.get("runtime").is_some());
+    assert!(workflow_instance_runtime_overlay.get("listeners").is_some());
+    assert!(workflow_instance_runtime_overlay.get("readiness").is_some());
     assert!(workflow_env.get("compose_env_file_services").is_some());
     assert!(workflow_env.get("adapter_inputs").is_some());
     assert!(workflow_env.get("compose_files").is_some());
