@@ -956,6 +956,15 @@ pub enum RunError {
         reasons: Vec<RepoExecutionConflictReason>,
         owners: Vec<RepoExecutionLockOwner>,
     },
+    #[error(
+        "workflow `{workflow}` instance `{instance}` cannot be cleaned while dependent instances are still present"
+    )]
+    WorkflowInstanceCleanupConflict {
+        workflow: String,
+        instance: String,
+        dependents: Vec<String>,
+        compose_projects: Vec<String>,
+    },
     #[error("task `{task}` could not {action} repo execution lock `{path}`: {details}")]
     RepoExecutionLockFailed {
         task: String,
@@ -1997,7 +2006,7 @@ pub fn resolve_task_env(
     Ok(overrides)
 }
 
-fn host_uid_template_value(working_dir: &Path) -> Option<String> {
+pub(crate) fn host_uid_template_value(working_dir: &Path) -> Option<String> {
     #[cfg(unix)]
     {
         fs::metadata(working_dir)
@@ -2011,7 +2020,7 @@ fn host_uid_template_value(working_dir: &Path) -> Option<String> {
     }
 }
 
-fn host_home_template_value() -> Option<String> {
+pub(crate) fn host_home_template_value() -> Option<String> {
     #[cfg(windows)]
     {
         env::var("USERPROFILE").ok().filter(|value| !value.trim().is_empty())
@@ -2022,7 +2031,7 @@ fn host_home_template_value() -> Option<String> {
     }
 }
 
-fn expand_task_env_templates(
+pub(crate) fn expand_task_env_templates(
     value: &str,
     ota_workspace: &str,
     host_workspace: &str,
@@ -4653,9 +4662,58 @@ pub fn clean_execution_report_for_workflow(
     contract_path: &Path,
     workflow_name: Option<&str>,
 ) -> Result<CleanExecutionReport, CleanExecutionError> {
+    ensure_no_workflow_instance_cleanup_dependents(contract, workflow_name)
+        .map_err(classify_clean_execution_error)?;
     let scope = persistent_cleanup_scope_for_workflow(contract, workflow_name);
     clean_execution_report_inner(contract, contract_path, Some(&scope))
         .map_err(classify_clean_execution_error)
+}
+
+fn ensure_no_workflow_instance_cleanup_dependents(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Result<(), RunError> {
+    let Some(selector) = workflow_name else {
+        return Ok(());
+    };
+    let Some(instance_name) = contract.selected_workflow_instance_name(Some(selector)) else {
+        return Ok(());
+    };
+    let Some((workflow_key, _)) = contract.selected_workflow(Some(selector)) else {
+        return Ok(());
+    };
+    let dependent_selectors = contract.selected_workflow_instance_dependent_selectors(Some(selector));
+    if dependent_selectors.is_empty() {
+        return Ok(());
+    }
+
+    let mut blocking_dependents = Vec::new();
+    let mut blocking_projects = Vec::new();
+    for dependent_selector in dependent_selectors {
+        let projects = workflow_instance_compose_projects(contract, Some(dependent_selector.as_str()));
+        if projects.is_empty() {
+            continue;
+        }
+        if workflow_instance_compose_projects_present(&projects)? {
+            blocking_dependents.push(dependent_selector);
+            for project in projects {
+                if !blocking_projects.contains(&project) {
+                    blocking_projects.push(project);
+                }
+            }
+        }
+    }
+
+    if blocking_dependents.is_empty() {
+        Ok(())
+    } else {
+        Err(RunError::WorkflowInstanceCleanupConflict {
+            workflow: workflow_key.to_string(),
+            instance: instance_name,
+            dependents: blocking_dependents,
+            compose_projects: blocking_projects,
+        })
+    }
 }
 
 fn clean_execution_report_inner(
@@ -5319,6 +5377,67 @@ fn persistent_cleanup_scope_for_workflow(
         }
     }
     scope
+}
+
+fn workflow_instance_compose_projects(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Vec<String> {
+    let selected_instance = contract.selected_workflow_instance(workflow_name);
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let mut projects = Vec::new();
+    for task_name in task_names {
+        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+            continue;
+        };
+        let override_project = selected_instance
+            .and_then(|instance| instance.tasks.get(task_name.as_str()))
+            .and_then(|overlay| overlay.adapter_inputs.effective_compose())
+            .and_then(|compose| compose.project_name);
+        let base_project = task.compose_adapter_project_name_for_backend(
+            effective_task_execution(contract, task_name.as_str(), ExecutionOverrides::default())
+                .backend,
+        );
+        if let Some(project) = override_project.or(base_project)
+            && !projects.contains(&project)
+        {
+            projects.push(project);
+        }
+    }
+    projects
+}
+
+fn workflow_instance_compose_projects_present(projects: &[String]) -> Result<bool, RunError> {
+    let engines = available_container_engines();
+    if engines.is_empty() {
+        return Ok(false);
+    }
+    for engine in engines {
+        for project in projects {
+            if compose_project_has_containers(engine.as_str(), project.as_str())? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn compose_project_has_containers(engine: &str, project: &str) -> Result<bool, RunError> {
+    let filter = format!("label=com.docker.compose.project={project}");
+    let output = container_command_output(
+        engine,
+        &["ps", "-a", "--filter", filter.as_str(), "--format", "{{.Names}}"],
+        None,
+        OTA_CLEAN_INTERNAL_TASK_NAME,
+    )?;
+    if output.exit_code != 0 {
+        return Ok(false);
+    }
+    Ok(output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .any(|line| !line.is_empty()))
 }
 
 fn host_managed_services_for_cleanup(

@@ -35,6 +35,13 @@
   splitting that runtime family into pseudo-workflows; ota now also injects `OTA_HOST_HOME` for
   truthful host-home clone/cache derivation, and Penpot can model ws0/ws1/ws2 as one governed
   workflow family instead of one flattened ws0-only contract
+- widened workflow instances with `topology.requires_instances`, so `ota up --workflow <name>@<instance>`
+  can now honor declared sibling-instance bring-up order such as `ws1+` requiring `ws0` first, and
+  validator now rejects broken or cyclic instance-topology declarations
+- widened workflow env rendering with `env.profiles.<name>.render.files[]`, so selected workflows
+  can now materialize structured `json` and `toml` artifacts from ordered merge sources with
+  instance-aware placeholder substitution and optional `merge_into_existing`; Penpot can now model
+  per-workspace MCP/client config generation as contract truth instead of a repo-local merge helper
 - hardened unreleased git installs in the official shell and PowerShell installers by defaulting
   `CARGO_NET_GIT_FETCH_WITH_CLI=true` on `--from-git` lanes, so contract-owned git revision and
   branch bootstrap paths no longer depend on Cargo's flakier libgit transport on hosted runners

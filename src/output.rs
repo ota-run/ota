@@ -2569,6 +2569,8 @@ pub struct EnvRenderedArtifactEntry {
     pub kind: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub includes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
     pub exists: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,

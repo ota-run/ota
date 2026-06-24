@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "app-instance": {
+      "type": "http",
+      "url": "http://localhost:${APP_CLIENT_PORT}/mcp"
+    }
+  }
+}

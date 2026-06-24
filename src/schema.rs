@@ -265,6 +265,57 @@ impl Contract {
         instances.items.get(instance_name.as_str())
     }
 
+    pub fn selected_workflow_instance_prerequisite_selectors(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Vec<String> {
+        let Some((workflow_key, workflow)) = self.selected_workflow(workflow_name) else {
+            return Vec::new();
+        };
+        let Some(instances) = workflow.instances.as_ref() else {
+            return Vec::new();
+        };
+        let Some(instance_name) = self.selected_workflow_instance_name(workflow_name) else {
+            return Vec::new();
+        };
+        let mut order = Vec::new();
+        let mut visited = BTreeSet::new();
+        collect_workflow_instance_prerequisites(
+            workflow_key,
+            instances,
+            instance_name.as_str(),
+            &mut visited,
+            &mut order,
+        );
+        order
+    }
+
+    pub fn selected_workflow_instance_dependent_selectors(
+        &self,
+        workflow_name: Option<&str>,
+    ) -> Vec<String> {
+        let Some((workflow_key, workflow)) = self.selected_workflow(workflow_name) else {
+            return Vec::new();
+        };
+        let Some(instances) = workflow.instances.as_ref() else {
+            return Vec::new();
+        };
+        let Some(instance_name) = self.selected_workflow_instance_name(workflow_name) else {
+            return Vec::new();
+        };
+        let mut dependents = Vec::new();
+        let mut visited = BTreeSet::new();
+        collect_workflow_instance_dependents(
+            workflow_key,
+            instances,
+            instance_name.as_str(),
+            &mut visited,
+            &mut dependents,
+        );
+        dependents.sort();
+        dependents
+    }
+
     pub fn selected_setup_task_name(&self) -> Option<&str> {
         self.selected_setup_task_name_for(None)
     }
@@ -625,12 +676,21 @@ pub struct WorkflowInstanceSpec {
     pub description: Option<String>,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topology: Option<WorkflowInstanceTopologySpec>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tasks: BTreeMap<String, WorkflowInstanceTaskOverlaySpec>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub surfaces: BTreeMap<String, WorkflowInstanceSurfaceOverlaySpec>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowInstanceTopologySpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires_instances: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -734,6 +794,66 @@ pub(crate) fn split_workflow_selector(selector: &str) -> (&str, Option<&str>) {
     match trimmed.split_once('@') {
         Some((workflow, instance)) => (workflow.trim(), Some(instance.trim())),
         None => (trimmed, None),
+    }
+}
+
+fn collect_workflow_instance_prerequisites(
+    workflow_name: &str,
+    instances: &WorkflowInstanceCatalog,
+    instance_name: &str,
+    visited: &mut BTreeSet<String>,
+    order: &mut Vec<String>,
+) {
+    let Some(instance) = instances.items.get(instance_name) else {
+        return;
+    };
+    let Some(topology) = instance.topology.as_ref() else {
+        return;
+    };
+    for required in &topology.requires_instances {
+        let required_name = required.trim();
+        if required_name.is_empty() || !visited.insert(required_name.to_string()) {
+            continue;
+        }
+        collect_workflow_instance_prerequisites(
+            workflow_name,
+            instances,
+            required_name,
+            visited,
+            order,
+        );
+        order.push(format!("{workflow_name}@{required_name}"));
+    }
+}
+
+fn collect_workflow_instance_dependents(
+    workflow_name: &str,
+    instances: &WorkflowInstanceCatalog,
+    instance_name: &str,
+    visited: &mut BTreeSet<String>,
+    dependents: &mut Vec<String>,
+) {
+    for (candidate_name, candidate) in &instances.items {
+        let requires_selected = candidate
+            .topology
+            .as_ref()
+            .is_some_and(|topology| {
+                topology
+                    .requires_instances
+                    .iter()
+                    .any(|required| required.trim() == instance_name)
+            });
+        if !requires_selected || !visited.insert(candidate_name.clone()) {
+            continue;
+        }
+        dependents.push(format!("{workflow_name}@{candidate_name}"));
+        collect_workflow_instance_dependents(
+            workflow_name,
+            instances,
+            candidate_name.as_str(),
+            visited,
+            dependents,
+        );
     }
 }
 
@@ -2704,6 +2824,8 @@ pub struct EnvProfileSpec {
 pub struct EnvProfileRenderSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dotenv: Option<EnvProfileDotenvRenderSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<EnvProfileStructuredFileRenderSpec>,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -2714,6 +2836,33 @@ pub struct EnvProfileDotenvRenderSpec {
     pub template: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EnvProfileStructuredFileRenderSpec {
+    pub path: String,
+    pub format: EnvProfileStructuredFileRenderFormat,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub merge_into_existing: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvProfileStructuredFileRenderFormat {
+    Json,
+    Toml,
+}
+
+impl fmt::Display for EnvProfileStructuredFileRenderFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Json => f.write_str("json"),
+            Self::Toml => f.write_str("toml"),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -8672,6 +8821,80 @@ workflows:
                 .and_then(|instance| instance.env.get("PENPOT_SOURCE_PATH"))
                 .map(String::as_str),
             Some("../workspaces/ws1")
+        );
+    }
+
+    #[test]
+    fn selected_workflow_instance_prerequisites_are_ordered_before_selected_instance() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-topology
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0: {}
+      ws1:
+        topology:
+          requires_instances:
+            - ws0
+      ws2:
+        topology:
+          requires_instances:
+            - ws1
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.selected_workflow_instance_prerequisite_selectors(Some("app@ws2")),
+            vec![String::from("app@ws0"), String::from("app@ws1")]
+        );
+    }
+
+    #[test]
+    fn selected_workflow_instance_dependents_are_listed_for_selected_instance() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-topology
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0: {}
+      ws1:
+        topology:
+          requires_instances:
+            - ws0
+      ws2:
+        topology:
+          requires_instances:
+            - ws1
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.selected_workflow_instance_dependent_selectors(Some("app@ws0")),
+            vec![String::from("app@ws1"), String::from("app@ws2")]
         );
     }
 

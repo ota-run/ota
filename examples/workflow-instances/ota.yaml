@@ -24,6 +24,17 @@ project:
   name: workflow-instances
   description: Canonical named workflow-instance example for one shared runtime family
   type: application
+env:
+  profiles:
+    app:
+      render:
+        files:
+          - path: .vscode/client.json
+            format: json
+            merge_into_existing: true
+            sources:
+              - config/client-shared.json
+              - config/client-instance.json
 execution:
   default_context: host
   contexts:
@@ -88,13 +99,21 @@ workflows:
   app:
     intent: packaged_runtime
     description: One shared app runtime family with named selected instances
+    env:
+      profile: app
     instances:
       default: ws0
       ws0:
         description: Bind the live repo as the default app instance
+        env:
+          APP_CLIENT_PORT: "3001"
       ws1:
         description: Bind the first cloned workspace under OTA_HOST_HOME
+        topology:
+          requires_instances:
+            - ws0
         env:
+          APP_CLIENT_PORT: "13001"
           APP_SOURCE_PATH: ${OTA_HOST_HOME}/.example/workspaces/ws1
         tasks:
           app:up:
@@ -108,6 +127,26 @@ workflows:
         surfaces:
           ui:
             port: 13000
+      ws2:
+        description: Bind the second cloned workspace under OTA_HOST_HOME after ws1
+        topology:
+          requires_instances:
+            - ws1
+        env:
+          APP_CLIENT_PORT: "23001"
+          APP_SOURCE_PATH: ${OTA_HOST_HOME}/.example/workspaces/ws2
+        tasks:
+          app:up:
+            adapter_inputs:
+              compose:
+                project_name: app-ws2
+          app:down:
+            adapter_inputs:
+              compose:
+                project_name: app-ws2
+        surfaces:
+          ui:
+            port: 23000
     run:
       task: app:up
 agent:

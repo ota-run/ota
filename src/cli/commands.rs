@@ -40,6 +40,7 @@ use serde_yaml::{Mapping, Value as YamlValue};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use time::macros::format_description;
+use toml::Value as TomlValue;
 
 use super::{
     AnnotationFormat, AnnotationMode, AssistEnvSourceKindArg, AssistHostScopeArg,
@@ -13174,6 +13175,13 @@ fn render_env_rendered_artifact_text(artifact: &EnvRenderedArtifactEntry) -> Str
             artifact.includes.join(", ")
         ));
     }
+    if !artifact.sources.is_empty() {
+        output.push_str(&format!(
+            "\n  {} {}",
+            paint_key("Sources:"),
+            artifact.sources.join(", ")
+        ));
+    }
     if !artifact.consumers.is_empty() {
         output.push_str(&format!(
             "\n  {} {}",
@@ -26190,6 +26198,18 @@ fn render_clean_failure_text(path: &str, error: &CleanExecutionError, summary: &
         CleanExecutionError::Cleanup(cleanup) => {
             render_structured_clean_failure_text(path, cleanup)
         }
+        CleanExecutionError::Other(RunError::WorkflowInstanceCleanupConflict {
+            workflow,
+            instance,
+            dependents,
+            compose_projects,
+        }) => render_structured_clean_instance_topology_conflict_text(
+            path,
+            workflow,
+            instance,
+            dependents,
+            compose_projects,
+        ),
         CleanExecutionError::Other(RunError::RepoExecutionConflict {
             path: registry_path,
             reasons,
@@ -26200,6 +26220,52 @@ fn render_clean_failure_text(path: &str, error: &CleanExecutionError, summary: &
             command_message_failure_text("CLEAN", path, summary, &error.to_string(), &[])
         }
     }
+}
+
+fn render_structured_clean_instance_topology_conflict_text(
+    path: &str,
+    workflow: &str,
+    instance: &str,
+    dependents: &[String],
+    compose_projects: &[String],
+) -> String {
+    let mut details = vec![
+        format!("workflow: `{workflow}`"),
+        format!("instance: `{instance}`"),
+    ];
+    if !dependents.is_empty() {
+        details.push(format!(
+            "dependent instances: {}",
+            dependents
+                .iter()
+                .map(|dependent| format!("`{dependent}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !compose_projects.is_empty() {
+        details.push(format!(
+            "compose projects: {}",
+            compose_projects
+                .iter()
+                .map(|project| format!("`{project}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    structured_error_text_with_details(
+        "CLEAN",
+        path,
+        "Workflow instance topology conflict",
+        &[format!(
+            "`ota clean` cannot remove prerequisite instance `{workflow}@{instance}` while dependent workflow instances are still present."
+        )],
+        &[
+            String::from("clean or stop the dependent instance(s) first"),
+            String::from("then rerun `ota clean` for the prerequisite instance"),
+        ],
+        &details,
+    )
 }
 
 fn render_structured_clean_failure_text(path: &str, failure: &CleanExecutionFailure) -> String {
@@ -26523,6 +26589,29 @@ fn clean_failure_detail_json_value(error: &CleanExecutionError) -> Option<JsonVa
                 })
                 .expect("clean execution conflict json should be an object"),
         ),
+        CleanExecutionError::Other(RunError::WorkflowInstanceCleanupConflict {
+            workflow,
+            instance,
+            dependents,
+            compose_projects,
+        }) => Some(json!({
+            "summary": "Workflow instance topology conflict",
+            "error": format!(
+                "workflow `{workflow}` instance `{instance}` cannot be cleaned while dependent instances are still present"
+            ),
+            "why": format!(
+                "`ota clean` cannot remove prerequisite instance `{workflow}@{instance}` while dependent workflow instances are still present."
+            ),
+            "next": [
+                "clean or stop the dependent instance(s) first",
+                "then rerun `ota clean` for the prerequisite instance"
+            ],
+            "reason": "workflow_instance_topology_conflict",
+            "workflow": workflow,
+            "instance": instance,
+            "dependents": dependents,
+            "compose_projects": compose_projects
+        })),
         CleanExecutionError::Other(_) => None,
     }
 }
@@ -46491,6 +46580,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use serde_json::json;
+    use tempfile::tempdir;
 
     use super::{
         DetectComparisonMode, OutputFormat, PlainModeGuard, RepoExecutionMode, RepoUpPreview,
@@ -59469,6 +59559,59 @@ workflows:
     }
 
     #[test]
+    fn up_preview_surfaces_prerequisite_workflow_instances_before_selected_instance() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: preview-up-instance-topology
+tasks:
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0: {}
+      ws1:
+        topology:
+          requires_instances:
+            - ws0
+"#,
+        )
+        .unwrap();
+        let preflight = DoctorReport {
+            ok: true,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: Vec::new(),
+        };
+
+        let preview = build_up_preview(
+            &contract,
+            Path::new("/tmp/ota.yaml"),
+            ExecutionOverrides::default(),
+            Some("app@ws1"),
+            &preflight,
+        );
+
+        assert_eq!(
+            preview.plan.actions,
+            vec![
+                String::from(
+                    "activate prerequisite workflow instance `app@ws0` before the selected instance"
+                ),
+                String::from("re-check repo readiness"),
+            ]
+        );
+    }
+
+    #[test]
     fn contract_adjusted_for_selected_workflow_env_profile_merges_profile_into_selected_tasks() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -59604,6 +59747,65 @@ workflows:
                 .and_then(|compose| compose.project_name),
             Some(String::from("penpotdev-ws1"))
         );
+    }
+
+    #[test]
+    fn execute_repo_up_runs_prerequisite_workflow_instances_before_selected_instance() {
+        let fixture = tempdir().expect("tempdir");
+        let contract_path = fixture.path().join("ota.yaml");
+        let log_path = fixture.path().join("instances.log");
+        let contents = format!(
+            r#"
+version: 1
+project:
+  name: workflow-instance-topology-up
+tasks:
+  setup:
+    env:
+      INSTANCE: base
+    command:
+      exe: sh
+      args:
+        - -c
+        - printf '%s\n' "$INSTANCE" >> instances.log
+workflows:
+  default: app
+  app:
+    setup:
+      task: setup
+    instances:
+      default: ws0
+      ws0:
+        env:
+          INSTANCE: ws0
+      ws1:
+        topology:
+          requires_instances:
+            - ws0
+        env:
+          INSTANCE: ws1
+"#,
+        );
+        fs::write(&contract_path, &contents).expect("contract should write");
+        let contract = parse_contract_str(&contract_path, &contents).expect("contract should parse");
+
+        let result = super::execute_repo_up_with_behavior(
+            &contract,
+            &contract_path,
+            ExecutionOverrides::default(),
+            Some("app@ws1"),
+            None,
+            false,
+            RepoExecutionMode::Capture,
+            super::UpRunBehaviorPreference::Auto,
+            None,
+        )
+        .expect("up should execute")
+        .ok;
+        assert!(result);
+
+        let rendered = fs::read_to_string(&log_path).expect("instance log should read");
+        assert_eq!(rendered, "ws0\nws1\n");
     }
 
     #[test]
@@ -60513,6 +60715,165 @@ workflows:
             "REDIS_HOST=redis\nDATABASE_URL=postgres://profile\nCLICKHOUSE_URL=http://clickhouse:8123\n"
         );
         assert!(!rendered.contains("STALE_ONLY=1\n"), "{rendered}");
+    }
+
+    #[test]
+    fn render_selected_workflow_env_profile_artifacts_renders_structured_json_with_instance_overlay()
+    {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: structured-json-render
+env:
+  profiles:
+    devenv:
+      render:
+        files:
+          - path: .vscode/mcp.json
+            format: json
+            merge_into_existing: true
+            sources:
+              - .devenv/shared/vscode.json
+              - .devenv/templates/vscode.json
+workflows:
+  default: devenv
+  devenv:
+    instances:
+      default: ws0
+      ws0:
+        env:
+          PENPOT_MCP_PORT: "4401"
+          SERENA_MCP_PORT: "14181"
+    env:
+      profile: devenv
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".devenv/shared")).unwrap();
+        fs::create_dir_all(fixture.path().join(".devenv/templates")).unwrap();
+        fs::create_dir_all(fixture.path().join(".vscode")).unwrap();
+        fs::write(
+            fixture.path().join(".devenv/shared/vscode.json"),
+            r#"{"servers":{"playwright":{"type":"stdio","command":"npx"}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".devenv/templates/vscode.json"),
+            r#"{"servers":{"penpot":{"type":"http","url":"http://localhost:${PENPOT_MCP_PORT}/mcp"},"serena":{"type":"http","url":"http://localhost:${SERENA_MCP_PORT}/mcp"}}}"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".vscode/mcp.json"),
+            r#"{"servers":{"existing":{"type":"stdio","command":"keep"}},"other":"preserved"}"#,
+        )
+        .unwrap();
+
+        let messages = super::render_selected_workflow_env_profile_artifacts(
+            &contract,
+            contract_path.as_path(),
+            None,
+            None,
+        )
+        .expect("structured json render should succeed");
+        assert_eq!(messages.len(), 1);
+
+        let rendered = fs::read_to_string(fixture.path().join(".vscode/mcp.json")).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(json["other"], serde_json::json!("preserved"));
+        assert_eq!(json["servers"]["existing"]["command"], serde_json::json!("keep"));
+        assert_eq!(
+            json["servers"]["penpot"]["url"],
+            serde_json::json!("http://localhost:4401/mcp")
+        );
+        assert_eq!(
+            json["servers"]["serena"]["url"],
+            serde_json::json!("http://localhost:14181/mcp")
+        );
+    }
+
+    #[test]
+    fn render_selected_workflow_env_profile_artifacts_renders_structured_toml_with_instance_overlay()
+    {
+        let fixture = TempDir::new().unwrap();
+        let contract_path = fixture.path().join("ota.yaml");
+        let contract = parse_contract_str(
+            contract_path.as_path(),
+            r#"
+version: 1
+project:
+  name: structured-toml-render
+env:
+  profiles:
+    devenv:
+      render:
+        files:
+          - path: .devenv/mcp/codex.toml
+            format: toml
+            sources:
+              - .devenv/shared/codex.toml
+              - .devenv/templates/codex.toml
+workflows:
+  default: devenv
+  devenv:
+    instances:
+      default: ws1
+      ws1:
+        env:
+          PENPOT_MCP_PORT: "14401"
+          SERENA_MCP_PORT: "24181"
+    env:
+      profile: devenv
+"#,
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.path().join(".devenv/shared")).unwrap();
+        fs::create_dir_all(fixture.path().join(".devenv/templates")).unwrap();
+        fs::create_dir_all(fixture.path().join(".devenv/mcp")).unwrap();
+        fs::write(
+            fixture.path().join(".devenv/shared/codex.toml"),
+            r#"[mcp_servers.playwright]
+command = "npx"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            fixture.path().join(".devenv/templates/codex.toml"),
+            r#"[mcp_servers.penpot]
+url = "http://localhost:${PENPOT_MCP_PORT}/mcp"
+
+[mcp_servers.serena]
+url = "http://localhost:${SERENA_MCP_PORT}/mcp"
+"#,
+        )
+        .unwrap();
+
+        let messages = super::render_selected_workflow_env_profile_artifacts(
+            &contract,
+            contract_path.as_path(),
+            None,
+            None,
+        )
+        .expect("structured toml render should succeed");
+        assert_eq!(messages.len(), 1);
+
+        let rendered = fs::read_to_string(fixture.path().join(".devenv/mcp/codex.toml")).unwrap();
+        let toml: toml::Value = toml::from_str(&rendered).unwrap();
+        assert_eq!(
+            toml["mcp_servers"]["penpot"]["url"].as_str(),
+            Some("http://localhost:14401/mcp")
+        );
+        assert_eq!(
+            toml["mcp_servers"]["serena"]["url"].as_str(),
+            Some("http://localhost:24181/mcp")
+        );
+        assert_eq!(
+            toml["mcp_servers"]["playwright"]["command"].as_str(),
+            Some("npx")
+        );
     }
 
     #[test]
@@ -92503,6 +92864,11 @@ fn append_up_preview_service_actions_for_workflow(
     workflow_name: Option<&str>,
     actions: &mut Vec<String>,
 ) {
+    for selector in selected_workflow_instance_prerequisite_selectors(contract, workflow_name) {
+        actions.push(format!(
+            "activate prerequisite workflow instance `{selector}` before the selected instance"
+        ));
+    }
     let pre_setup_services = up_pre_setup_service_closure(contract, workflow_name);
     let post_setup_services =
         remaining_up_required_service_closure(contract, workflow_name, &pre_setup_services);
@@ -93656,16 +94022,31 @@ fn selected_workflow_env_profile_render_preview_action(
     workflow_name: Option<&str>,
 ) -> Option<String> {
     let profile_name = contract.selected_workflow_env_profile_name(workflow_name)?;
-    let dotenv = contract
+    let render = contract
         .selected_workflow_env_profile(workflow_name)?
         .render
-        .as_ref()?
-        .dotenv
         .as_ref()?;
-    Some(format!(
-        "render workflow env artifact `{}` from profile `{profile_name}`",
-        dotenv.path.trim()
-    ))
+    let mut artifacts = Vec::new();
+    if let Some(dotenv) = render.dotenv.as_ref() {
+        artifacts.push(dotenv.path.trim().to_string());
+    }
+    artifacts.extend(
+        render
+            .files
+            .iter()
+            .map(|file| file.path.trim().to_string())
+            .filter(|path| !path.is_empty()),
+    );
+    match artifacts.len() {
+        0 => None,
+        1 => Some(format!(
+            "render workflow env artifact `{}` from profile `{profile_name}`",
+            artifacts[0]
+        )),
+        count => Some(format!(
+            "render {count} workflow env artifacts from profile `{profile_name}`"
+        )),
+    }
 }
 
 fn render_selected_workflow_env_profile_artifacts(
@@ -93681,98 +94062,114 @@ fn render_selected_workflow_env_profile_artifacts(
     let Some(profile) = contract.selected_workflow_env_profile(workflow_name) else {
         return Ok(Vec::new());
     };
-    let Some(dotenv) = profile
-        .render
-        .as_ref()
-        .and_then(|render| render.dotenv.as_ref())
-    else {
+    let Some(render) = profile.render.as_ref() else {
         return Ok(Vec::new());
     };
 
     let adjusted = contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name)
         .unwrap_or_else(|| contract.clone());
+    let render_env = selected_workflow_instance_render_env(
+        contract,
+        workflow_name,
+        contract_working_dir(contract_path),
+    );
+    let resolved_overrides = profile.env.clone();
     let resolved = crate::runner::resolve_task_env_details_with_policy(
         &adjusted,
         contract_path,
-        Some(&profile.env),
+        Some(&resolved_overrides),
         policy_env,
     )
     .map_err(|error| error.to_string())?;
+    let mut rendered_messages = Vec::new();
 
-    let output_path = contract_working_dir(contract_path).join(dotenv.path.trim());
-    if let Some(parent) = output_path.parent()
-        && !parent.exists()
-    {
-        fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "workflow env profile `{profile_name}` could not create parent directory for `{}`: {error}",
-                dotenv.path.trim()
-            )
-        })?;
-    }
-
-    let template_content = if let Some(template) = dotenv.template.as_deref() {
-        let template_path = contract_working_dir(contract_path).join(template.trim());
-        if !template_path.is_file() {
-            return Err(format!(
-                "workflow env profile `{profile_name}` could not render dotenv `{}` because template `{}` is not a file",
-                dotenv.path.trim(),
-                template.trim()
-            ));
+    if let Some(dotenv) = render.dotenv.as_ref() {
+        let output_path = contract_working_dir(contract_path).join(dotenv.path.trim());
+        if let Some(parent) = output_path.parent()
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "workflow env profile `{profile_name}` could not create parent directory for `{}`: {error}",
+                    dotenv.path.trim()
+                )
+            })?;
         }
-        fs::read_to_string(&template_path).map_err(|error| {
-            format!(
-                "workflow env profile `{profile_name}` could not read template `{}` for rendered dotenv `{}`: {error}",
-                template.trim(),
-                dotenv.path.trim()
-            )
-        })?
-    } else {
-        String::new()
-    };
 
-    let mut updates = Vec::new();
-    for name in &dotenv.include {
-        let value = if let Some(resolved_value) = resolved.get(name) {
-            resolved_value.value.clone()
-        } else if let Some(value) = profile.env.get(name) {
-            value.clone()
+        let template_content = if let Some(template) = dotenv.template.as_deref() {
+            let template_path = contract_working_dir(contract_path).join(template.trim());
+            if !template_path.is_file() {
+                return Err(format!(
+                    "workflow env profile `{profile_name}` could not render dotenv `{}` because template `{}` is not a file",
+                    dotenv.path.trim(),
+                    template.trim()
+                ));
+            }
+            fs::read_to_string(&template_path).map_err(|error| {
+                format!(
+                    "workflow env profile `{profile_name}` could not read template `{}` for rendered dotenv `{}`: {error}",
+                    template.trim(),
+                    dotenv.path.trim()
+                )
+            })?
         } else {
-            return Err(format!(
-                "workflow env profile `{profile_name}` could not resolve `{name}` for rendered dotenv `{}`",
-                dotenv.path.trim()
-            ));
+            String::new()
         };
-        updates.push((
-            name.clone(),
-            Some(value),
-            crate::schema::TaskEnsureEnvVarMode::Replace,
-        ));
-    }
 
-    for (name, value) in &profile.env {
-        if !dotenv.include.iter().any(|included| included == name) {
+        let mut updates = Vec::new();
+        for name in &dotenv.include {
+            let value = if let Some(resolved_value) = resolved.get(name) {
+                resolved_value.value.clone()
+            } else if let Some(value) = profile.env.get(name) {
+                value.clone()
+            } else {
+                return Err(format!(
+                    "workflow env profile `{profile_name}` could not resolve `{name}` for rendered dotenv `{}`",
+                    dotenv.path.trim()
+                ));
+            };
             updates.push((
                 name.clone(),
-                Some(value.clone()),
+                Some(value),
                 crate::schema::TaskEnsureEnvVarMode::Replace,
             ));
         }
+
+        for (name, value) in &profile.env {
+            if !dotenv.include.iter().any(|included| included == name) {
+                updates.push((
+                    name.clone(),
+                    Some(value.clone()),
+                    crate::schema::TaskEnsureEnvVarMode::Replace,
+                ));
+            }
+        }
+
+        let (next, _, _, _) =
+            crate::runner::apply_ensure_env_updates(template_content.as_str(), &updates);
+        fs::write(&output_path, next).map_err(|error| {
+            format!(
+                "workflow env profile `{profile_name}` could not render dotenv `{}`: {error}",
+                dotenv.path.trim()
+            )
+        })?;
+        rendered_messages.push(format!(
+            "rendered workflow env artifact `{}` from profile `{profile_name}`\n",
+            dotenv.path.trim()
+        ));
     }
 
-    let (next, _, _, _) =
-        crate::runner::apply_ensure_env_updates(template_content.as_str(), &updates);
-    fs::write(&output_path, next).map_err(|error| {
-        format!(
-            "workflow env profile `{profile_name}` could not render dotenv `{}`: {error}",
-            dotenv.path.trim()
-        )
-    })?;
+    for file in &render.files {
+        render_workflow_profile_structured_file(
+            profile_name.as_str(),
+            file,
+            contract_path,
+            &render_env,
+            &mut rendered_messages,
+        )?;
+    }
 
-    Ok(vec![format!(
-        "rendered workflow env artifact `{}` from profile `{profile_name}`\n",
-        dotenv.path.trim()
-    )])
+    Ok(rendered_messages)
 }
 
 fn selected_workflow_env_profile_rendered_artifact_entries(
@@ -93789,26 +94186,20 @@ fn selected_workflow_env_profile_rendered_artifact_entries(
     let Some(profile) = contract.selected_workflow_env_profile(workflow_name) else {
         return Vec::new();
     };
-    let Some(dotenv) = profile
-        .render
-        .as_ref()
-        .and_then(|render| render.dotenv.as_ref())
-    else {
+    let Some(render) = profile.render.as_ref() else {
         return Vec::new();
     };
-    let path = dotenv.path.trim().to_string();
-    let rendered_path = contract_working_dir(contract_path).join(dotenv.path.trim());
     let adjusted = contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name)
         .unwrap_or_else(|| contract.clone());
+    let dotenv_path = render.dotenv.as_ref().map(|dotenv| dotenv.path.trim().to_string());
     let mut consumers = Vec::new();
     for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
         let Some(task) = adjusted.tasks.get(task_name.as_str()) else {
             continue;
         };
-        if task
-            .env_files
-            .iter()
-            .any(|existing| existing.trim() == path)
+        if dotenv_path
+            .as_deref()
+            .is_some_and(|path| task.env_files.iter().any(|existing| existing.trim() == path))
         {
             consumers.push(format!("task:{task_name}"));
         }
@@ -93821,19 +94212,274 @@ fn selected_workflow_env_profile_rendered_artifact_entries(
             .manager
             .as_ref()
             .and_then(|manager| manager.env_file.as_deref())
-            .is_some_and(|existing| existing.trim() == path)
+            .is_some_and(|existing| {
+                dotenv_path
+                    .as_deref()
+                    .is_some_and(|path| existing.trim() == path)
+            })
         {
             consumers.push(format!("service:{service_name}"));
         }
     }
-    vec![EnvRenderedArtifactEntry {
-        path,
-        kind: String::from("dotenv"),
-        includes: dotenv.include.clone(),
-        exists: rendered_path.is_file(),
-        profile: Some(profile_name),
-        consumers,
-    }]
+    let mut entries = Vec::new();
+    if let Some(dotenv) = render.dotenv.as_ref() {
+        let path = dotenv.path.trim().to_string();
+        let rendered_path = contract_working_dir(contract_path).join(dotenv.path.trim());
+        entries.push(EnvRenderedArtifactEntry {
+            path,
+            kind: String::from("dotenv"),
+            includes: dotenv.include.clone(),
+            sources: Vec::new(),
+            exists: rendered_path.is_file(),
+            profile: Some(profile_name.clone()),
+            consumers: consumers.clone(),
+        });
+    }
+    for file in &render.files {
+        let path = file.path.trim().to_string();
+        let rendered_path = contract_working_dir(contract_path).join(file.path.trim());
+        entries.push(EnvRenderedArtifactEntry {
+            path,
+            kind: file.format.to_string(),
+            includes: Vec::new(),
+            sources: file.sources.clone(),
+            exists: rendered_path.is_file(),
+            profile: Some(profile_name.clone()),
+            consumers: Vec::new(),
+        });
+    }
+    entries
+}
+
+fn selected_workflow_instance_render_env(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+    working_dir: &Path,
+) -> BTreeMap<String, String> {
+    let mut values = BTreeMap::new();
+    let Some(instance) = contract.selected_workflow_instance(workflow_name) else {
+        return values;
+    };
+    for (name, value) in &instance.env {
+        values.insert(
+            name.clone(),
+            expand_render_template_env_value(value, working_dir),
+        );
+    }
+    values
+}
+
+fn expand_render_template_env_value(value: &str, working_dir: &Path) -> String {
+    let mut rendered = value.to_string();
+    let host_workspace = working_dir.display().to_string();
+    rendered = rendered.replace("${OTA_HOST_WORKSPACE}", host_workspace.as_str());
+    rendered = rendered.replace("$OTA_HOST_WORKSPACE", host_workspace.as_str());
+    if let Some(host_home) = env::var_os("HOME") {
+        let host_home = PathBuf::from(host_home).display().to_string();
+        rendered = rendered.replace("${OTA_HOST_HOME}", host_home.as_str());
+        rendered = rendered.replace("$OTA_HOST_HOME", host_home.as_str());
+    }
+    if let Some(host_uid) = crate::runner::host_uid_template_value(working_dir) {
+        rendered = rendered.replace("${OTA_HOST_UID}", host_uid.as_str());
+        rendered = rendered.replace("$OTA_HOST_UID", host_uid.as_str());
+    }
+    rendered
+}
+
+fn expand_structured_render_placeholders(
+    content: &str,
+    values: &BTreeMap<String, String>,
+) -> String {
+    let mut rendered = content.to_string();
+    for (name, value) in values {
+        rendered = rendered.replace(format!("${{{name}}}").as_str(), value);
+    }
+    rendered
+}
+
+fn render_workflow_profile_structured_file(
+    profile_name: &str,
+    spec: &crate::schema::EnvProfileStructuredFileRenderSpec,
+    contract_path: &Path,
+    render_env: &BTreeMap<String, String>,
+    messages: &mut Vec<String>,
+) -> Result<(), String> {
+    let output_path = contract_working_dir(contract_path).join(spec.path.trim());
+    if let Some(parent) = output_path.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "workflow env profile `{profile_name}` could not create parent directory for `{}`: {error}",
+                spec.path.trim()
+            )
+        })?;
+    }
+
+    match spec.format {
+        crate::schema::EnvProfileStructuredFileRenderFormat::Json => {
+            let merged = render_workflow_profile_json_file(
+                profile_name,
+                spec,
+                contract_path,
+                render_env,
+                output_path.as_path(),
+            )?;
+            let content = serde_json::to_string_pretty(&merged).map_err(|error| {
+                format!(
+                    "workflow env profile `{profile_name}` could not serialize rendered json `{}`: {error}",
+                    spec.path.trim()
+                )
+            })?;
+            fs::write(&output_path, format!("{content}\n")).map_err(|error| {
+                format!(
+                    "workflow env profile `{profile_name}` could not render json `{}`: {error}",
+                    spec.path.trim()
+                )
+            })?;
+        }
+        crate::schema::EnvProfileStructuredFileRenderFormat::Toml => {
+            let merged = render_workflow_profile_toml_file(
+                profile_name,
+                spec,
+                contract_path,
+                render_env,
+                output_path.as_path(),
+            )?;
+            let content = toml::to_string_pretty(&merged).map_err(|error| {
+                format!(
+                    "workflow env profile `{profile_name}` could not serialize rendered toml `{}`: {error}",
+                    spec.path.trim()
+                )
+            })?;
+            fs::write(&output_path, format!("{content}\n")).map_err(|error| {
+                format!(
+                    "workflow env profile `{profile_name}` could not render toml `{}`: {error}",
+                    spec.path.trim()
+                )
+            })?;
+        }
+    }
+
+    messages.push(format!(
+        "rendered workflow env artifact `{}` from profile `{profile_name}`\n",
+        spec.path.trim()
+    ));
+    Ok(())
+}
+
+fn render_workflow_profile_json_file(
+    profile_name: &str,
+    spec: &crate::schema::EnvProfileStructuredFileRenderSpec,
+    contract_path: &Path,
+    render_env: &BTreeMap<String, String>,
+    output_path: &Path,
+) -> Result<JsonValue, String> {
+    let mut merged = if spec.merge_into_existing && output_path.is_file() {
+        parse_render_source_json(profile_name, spec.path.trim(), output_path, render_env)?
+    } else {
+        JsonValue::Object(serde_json::Map::new())
+    };
+
+    for source in &spec.sources {
+        let source_path = contract_working_dir(contract_path).join(source.trim());
+        let parsed = parse_render_source_json(profile_name, spec.path.trim(), &source_path, render_env)?;
+        deep_merge_json_value(&mut merged, parsed);
+    }
+    Ok(merged)
+}
+
+fn render_workflow_profile_toml_file(
+    profile_name: &str,
+    spec: &crate::schema::EnvProfileStructuredFileRenderSpec,
+    contract_path: &Path,
+    render_env: &BTreeMap<String, String>,
+    output_path: &Path,
+) -> Result<TomlValue, String> {
+    let mut merged = if spec.merge_into_existing && output_path.is_file() {
+        parse_render_source_toml(profile_name, spec.path.trim(), output_path, render_env)?
+    } else {
+        TomlValue::Table(toml::map::Map::new())
+    };
+
+    for source in &spec.sources {
+        let source_path = contract_working_dir(contract_path).join(source.trim());
+        let parsed = parse_render_source_toml(profile_name, spec.path.trim(), &source_path, render_env)?;
+        deep_merge_toml_value(&mut merged, parsed);
+    }
+    Ok(merged)
+}
+
+fn parse_render_source_json(
+    profile_name: &str,
+    output_label: &str,
+    source_path: &Path,
+    render_env: &BTreeMap<String, String>,
+) -> Result<JsonValue, String> {
+    let raw = fs::read_to_string(source_path).map_err(|error| {
+        format!(
+            "workflow env profile `{profile_name}` could not read source `{}` for rendered json `{output_label}`: {error}",
+            source_path.display()
+        )
+    })?;
+    let expanded = expand_structured_render_placeholders(raw.as_str(), render_env);
+    serde_json::from_str(&expanded).map_err(|error| {
+        format!(
+            "workflow env profile `{profile_name}` could not parse source `{}` for rendered json `{output_label}`: {error}",
+            source_path.display()
+        )
+    })
+}
+
+fn parse_render_source_toml(
+    profile_name: &str,
+    output_label: &str,
+    source_path: &Path,
+    render_env: &BTreeMap<String, String>,
+) -> Result<TomlValue, String> {
+    let raw = fs::read_to_string(source_path).map_err(|error| {
+        format!(
+            "workflow env profile `{profile_name}` could not read source `{}` for rendered toml `{output_label}`: {error}",
+            source_path.display()
+        )
+    })?;
+    let expanded = expand_structured_render_placeholders(raw.as_str(), render_env);
+    toml::from_str(&expanded).map_err(|error| {
+        format!(
+            "workflow env profile `{profile_name}` could not parse source `{}` for rendered toml `{output_label}`: {error}",
+            source_path.display()
+        )
+    })
+}
+
+fn deep_merge_json_value(base: &mut JsonValue, overlay: JsonValue) {
+    match (base, overlay) {
+        (JsonValue::Object(base_map), JsonValue::Object(overlay_map)) => {
+            for (key, value) in overlay_map {
+                if let Some(existing) = base_map.get_mut(key.as_str()) {
+                    deep_merge_json_value(existing, value);
+                } else {
+                    base_map.insert(key, value);
+                }
+            }
+        }
+        (base, overlay) => *base = overlay,
+    }
+}
+
+fn deep_merge_toml_value(base: &mut TomlValue, overlay: TomlValue) {
+    match (base, overlay) {
+        (TomlValue::Table(base_map), TomlValue::Table(overlay_map)) => {
+            for (key, value) in overlay_map {
+                if let Some(existing) = base_map.get_mut(key.as_str()) {
+                    deep_merge_toml_value(existing, value);
+                } else {
+                    base_map.insert(key, value);
+                }
+            }
+        }
+        (base, overlay) => *base = overlay,
+    }
 }
 
 fn run_up_required_services_phase(
@@ -95240,6 +95886,27 @@ fn execute_repo_up_with_behavior(
             stdout,
             stderr,
         });
+    }
+
+    for prerequisite_selector in
+        selected_workflow_instance_prerequisite_selectors(contract, workflow_name)
+    {
+        let prerequisite_result = execute_repo_up_with_behavior(
+            contract,
+            resolved_path,
+            overrides,
+            Some(prerequisite_selector.as_str()),
+            policy_env,
+            false,
+            mode,
+            run_behavior_preference,
+            ready_timeout,
+        )?;
+        stdout.push_str(&prerequisite_result.stdout);
+        stderr.push_str(&prerequisite_result.stderr);
+        if !prerequisite_result.ok {
+            return Ok(prerequisite_result);
+        }
     }
 
     if let Some(prepare_task_name) = prepare_task {
@@ -98985,6 +99652,13 @@ fn selected_up_primary_task_name<'a>(
 ) -> Option<&'a str> {
     selected_up_setup_task_name(contract, workflow_name)
         .or_else(|| selected_up_run_task_name(contract, workflow_name))
+}
+
+fn selected_workflow_instance_prerequisite_selectors(
+    contract: &Contract,
+    workflow_name: Option<&str>,
+) -> Vec<String> {
+    contract.selected_workflow_instance_prerequisite_selectors(workflow_name)
 }
 
 fn selected_up_activation_task_name<'a>(

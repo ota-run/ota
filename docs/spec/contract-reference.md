@@ -1308,6 +1308,14 @@ Declared source rules:
   content before applying rendered env overlays; keep it separate from `render.dotenv.path`
 - `render.dotenv.include`: optional ordered env names ota should resolve and emit into that dotenv
   artifact
+- `render.files[]`: optional ordered structured artifact renders ota should materialize during
+  workflow execution
+- `render.files[].path`: required repo-relative output path for the rendered artifact
+- `render.files[].format`: required structured format; current shipped values are `json` and `toml`
+- `render.files[].sources`: required ordered repo-relative source chunks merged from lowest to
+  highest precedence after placeholder substitution
+- `render.files[].merge_into_existing`: optional boolean; when true, ota treats an existing output
+  file as the lowest-precedence merge layer before applying the declared source chunks
 
 Profile rules:
 
@@ -1325,6 +1333,13 @@ Profile rules:
 - when `render.dotenv.template` is declared, ota starts from that template and then replaces the
   declared profile/env keys, so workflow-owned compose interpolation no longer requires a separate
   `ensure_env_file` prepare task
+- rendered structured artifacts are also re-materialized deterministically on workflow-owned
+  execution paths, so generated JSON/TOML config truth no longer needs repo-local merge helpers
+- structured render source chunks stay immutable repo truth; ota writes only the declared
+  `render.files[].path` artifact and merges later `sources[]` entries over earlier ones
+- selected workflow-instance env overlays participate in structured render placeholder substitution,
+  so one workflow family can materialize per-instance client config without flattening that truth
+  into helper scripts
 - use profiles when one workflow/runtime shape needs a truthful env overlay without hiding that
   selection in shell glue or ad hoc setup notes
 
@@ -3300,6 +3315,7 @@ Current behavior:
 - use `workflows.<name>.instances` when one workflow is really a named family of runtime instances such as `ws0`, `ws1`, or `staging` / `prod-preview` rather than a single flat environment
 - `workflows.<name>.instances.default` selects the implicit instance for `ota up --workflow <name>` and other selected-workflow commands
 - select a non-default instance with `ota up --workflow <name>@<instance>`, `ota proof runtime --workflow <name>@<instance>`, or other workflow-selecting commands
+- use `workflows.<name>.instances.<instance>.topology.requires_instances` when one selected instance must bring up another declared instance first, such as `ws1+` depending on `ws0`
 - keep instance truth bounded and explicit: this first-class lane is for instance-specific env overrides, task adapter input overrides, and surface port/path overlays, not arbitrary free-form templating across the whole contract
 - use `workflows.<name>.instances.<instance>.env` when every task on the selected workflow path should inherit one instance-specific env value such as a cloned workspace root
 - use `workflows.<name>.instances.<instance>.tasks.<task>.adapter_inputs` when one selected task path needs instance-specific compose project naming, bake files, or other adapter-owned truth without splitting the workflow into repo-local shell variants

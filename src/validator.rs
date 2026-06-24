@@ -2242,6 +2242,57 @@ fn validate_env(env: &EnvConfig, errors: &mut Vec<ValidationError>) {
                 )));
             }
         }
+        if let Some(render) = profile.render.as_ref() {
+            let dotenv_path = render.dotenv.as_ref().map(|dotenv| dotenv.path.trim());
+            let mut seen_render_paths = BTreeSet::new();
+            if let Some(path) = dotenv_path
+                && !path.is_empty()
+            {
+                seen_render_paths.insert(path.to_string());
+            }
+            for (index, file) in render.files.iter().enumerate() {
+                let path = file.path.trim();
+                if path.is_empty() || !is_safe_repo_relative_file_path(path) {
+                    errors.push(ValidationError::new(format!(
+                        "`env.profiles.{name}.render.files[{index}].path` must be a repo-relative path that does not escape the repo"
+                    )));
+                } else if !seen_render_paths.insert(path.to_string()) {
+                    errors.push(ValidationError::new(format!(
+                        "`env.profiles.{name}.render.files[{index}].path` duplicates rendered artifact path `{path}`"
+                    )));
+                }
+                if profile.env_files.iter().any(|existing| existing.trim() == path) {
+                    errors.push(ValidationError::new(format!(
+                        "`env.profiles.{name}.render.files[{index}].path` must not be duplicated in `env.profiles.{name}.env_files`; rendered structured artifacts are injected or inspected separately"
+                    )));
+                }
+                if file.sources.is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "`env.profiles.{name}.render.files[{index}]` must declare at least one source path in `sources`"
+                    )));
+                }
+                let mut seen_sources = BTreeSet::new();
+                for (source_index, source) in file.sources.iter().enumerate() {
+                    let trimmed = source.trim();
+                    if trimmed.is_empty() || !is_safe_repo_relative_file_path(trimmed) {
+                        errors.push(ValidationError::new(format!(
+                            "`env.profiles.{name}.render.files[{index}].sources[{source_index}]` must be a repo-relative path that does not escape the repo"
+                        )));
+                        continue;
+                    }
+                    if trimmed == path {
+                        errors.push(ValidationError::new(format!(
+                            "`env.profiles.{name}.render.files[{index}].sources[{source_index}]` must not equal `render.files[{index}].path`; keep source chunks immutable and render into a separate artifact path"
+                        )));
+                    }
+                    if !seen_sources.insert(trimmed.to_string()) {
+                        errors.push(ValidationError::new(format!(
+                            "`env.profiles.{name}.render.files[{index}].sources[{source_index}]` duplicates source `{trimmed}`"
+                        )));
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -13720,6 +13771,24 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         "`workflows.{name}.instances` must not declare an empty instance name"
                     )));
                 }
+                if let Some(topology) = instance.topology.as_ref() {
+                    for required in &topology.requires_instances {
+                        let required_name = required.trim();
+                        if required_name.is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "`workflows.{name}.instances.{instance_name}.topology.requires_instances` must not include empty instance names"
+                            )));
+                        } else if required_name == instance_name {
+                            errors.push(ValidationError::new(format!(
+                                "`workflows.{name}.instances.{instance_name}.topology.requires_instances` must not reference `{instance_name}` itself"
+                            )));
+                        } else if !instances.items.contains_key(required_name) {
+                            errors.push(ValidationError::new(format!(
+                                "`workflows.{name}.instances.{instance_name}.topology.requires_instances` references unknown instance `{required_name}`"
+                            )));
+                        }
+                    }
+                }
                 for (surface_name, overlay) in &instance.surfaces {
                     if !contract.surfaces.contains_key(surface_name) {
                         errors.push(ValidationError::new(format!(
@@ -13777,6 +13846,18 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         }
                     }
                 }
+            }
+            let mut topology_visiting = BTreeSet::new();
+            let mut topology_visited = BTreeSet::new();
+            for instance_name in instances.items.keys() {
+                validate_workflow_instance_topology_cycle(
+                    name.as_str(),
+                    instance_name.as_str(),
+                    instances,
+                    &mut topology_visiting,
+                    &mut topology_visited,
+                    errors,
+                );
             }
         }
         if workflow.env.is_some() || !workflow.adapter_inputs.is_empty() {
@@ -15295,6 +15376,47 @@ fn validate_task_reference(
     }
 }
 
+fn validate_workflow_instance_topology_cycle(
+    workflow_name: &str,
+    instance_name: &str,
+    instances: &crate::schema::WorkflowInstanceCatalog,
+    visiting: &mut BTreeSet<String>,
+    visited: &mut BTreeSet<String>,
+    errors: &mut Vec<ValidationError>,
+) {
+    if visited.contains(instance_name) {
+        return;
+    }
+    if !visiting.insert(instance_name.to_string()) {
+        errors.push(ValidationError::new(format!(
+            "`workflows.{workflow_name}.instances` contains a topology cycle involving `{instance_name}`"
+        )));
+        return;
+    }
+
+    if let Some(instance) = instances.items.get(instance_name)
+        && let Some(topology) = instance.topology.as_ref()
+    {
+        for required in &topology.requires_instances {
+            let required_name = required.trim();
+            if required_name.is_empty() || !instances.items.contains_key(required_name) {
+                continue;
+            }
+            validate_workflow_instance_topology_cycle(
+                workflow_name,
+                required_name,
+                instances,
+                visiting,
+                visited,
+                errors,
+            );
+        }
+    }
+
+    visiting.remove(instance_name);
+    visited.insert(instance_name.to_string());
+}
+
 fn format_backend(backend: crate::schema::Backend) -> &'static str {
     match backend {
         crate::schema::Backend::Native => "native",
@@ -15603,6 +15725,86 @@ workflows:
     }
 
     #[test]
+    fn rejects_unknown_or_cyclic_workflow_instance_topology_references() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-topology-validation
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0:
+        topology:
+          requires_instances:
+            - ws2
+      ws1:
+        topology:
+          requires_instances:
+            - ws0
+      ws2:
+        topology:
+          requires_instances:
+            - ws1
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("invalid workflow instance topology");
+        let rendered = errors.to_string();
+        assert!(
+            rendered.contains("contains a topology cycle involving `ws0`")
+                || rendered.contains("contains a topology cycle involving `ws1`")
+                || rendered.contains("contains a topology cycle involving `ws2`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_workflow_instance_topology_dependency() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-topology-validation
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0:
+        topology:
+          requires_instances:
+            - ws9
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("invalid workflow instance topology");
+        let rendered = errors.to_string();
+        assert!(
+            rendered.contains(
+                "`workflows.app.instances.ws0.topology.requires_instances` references unknown instance `ws9`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn rejects_unknown_workflow_env_profile_reference() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -15671,6 +15873,62 @@ workflows:
         ));
         assert!(error.contains(
             "`env.profiles.docker-build.render.dotenv.include` references unknown env key `DATABASE_URL`"
+        ));
+    }
+
+    #[test]
+    fn rejects_invalid_workflow_env_profile_structured_render_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  profiles:
+    devenv:
+      env_files:
+        - .vscode/mcp.json
+      render:
+        files:
+          - path: .vscode/mcp.json
+            format: json
+            sources:
+              - .vscode/mcp.json
+              - ../templates/vscode.json
+              - ../templates/vscode.json
+          - path: .vscode/mcp.json
+            format: toml
+            sources: []
+workflows:
+  default: devenv
+  devenv:
+    env:
+      profile: devenv
+"#,
+        )
+        .unwrap();
+
+        let error = validate_contract(&contract)
+            .expect_err("invalid structured render should fail validation")
+            .to_string();
+        assert!(error.contains(
+            "`env.profiles.devenv.render.files[0].path` must not be duplicated in `env.profiles.devenv.env_files`; rendered structured artifacts are injected or inspected separately"
+        ));
+        assert!(error.contains(
+            "`env.profiles.devenv.render.files[0].sources[0]` must not equal `render.files[0].path`; keep source chunks immutable and render into a separate artifact path"
+        ));
+        assert!(error.contains(
+            "`env.profiles.devenv.render.files[0].sources[1]` must be a repo-relative path that does not escape the repo"
+        ));
+        assert!(error.contains(
+            "`env.profiles.devenv.render.files[0].sources[2]` must be a repo-relative path that does not escape the repo"
+        ));
+        assert!(error.contains(
+            "`env.profiles.devenv.render.files[1].path` duplicates rendered artifact path `.vscode/mcp.json`"
+        ));
+        assert!(error.contains(
+            "`env.profiles.devenv.render.files[1]` must declare at least one source path in `sources`"
         ));
     }
 
