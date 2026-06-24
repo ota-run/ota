@@ -47,6 +47,9 @@
   re-attach lane and `ota up --attach` now keeps the service runtime running, proves readiness, and
   then enters the declared interactive session instead of assuming the run task itself stays
   foreground
+- fixed workflow-instance cleanup topology detection so shared Compose projects such as instance
+  prerequisites or shared infra no longer count as dependent instance presence; runtime proof and
+  workflow cleanup now only block on instance-specific dependent projects that are actually present
 - hardened unreleased git installs in the official shell and PowerShell installers by defaulting
   `CARGO_NET_GIT_FETCH_WITH_CLI=true` on `--from-git` lanes, so contract-owned git revision and
   branch bootstrap paths no longer depend on Cargo's flakier libgit transport on hosted runners
