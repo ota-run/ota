@@ -15557,6 +15557,52 @@ workflows:
     }
 
     #[test]
+    fn rejects_workflow_instance_overlay_references_to_unknown_targets() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: workflow-instance-validation
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0:
+        tasks:
+          missing:
+            env:
+              FOO: bar
+        surfaces:
+          missing:
+            port: 3001
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("invalid workflow instance overlays");
+        let rendered = errors.to_string();
+        assert!(
+            rendered.contains(
+                "`workflows.app.instances.ws0.tasks` references unknown task `missing`"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "`workflows.app.instances.ws0.surfaces` references unknown surface `missing`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn rejects_unknown_workflow_env_profile_reference() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),

@@ -466,7 +466,7 @@ pub fn validate_workspace_contract(
                     }
                 }
                 if let Some(workflow_name) = repo.workflow.as_deref()
-                    && repo_contract.workflow(workflow_name).is_none()
+                    && repo_contract.selected_workflow(Some(workflow_name)).is_none()
                 {
                     errors.push(WorkspaceValidationError::new(format!(
                         "workspace repo `{}` workflow `{}` is not declared in contract `{}`",
@@ -1748,6 +1748,50 @@ repos:
                 fixture.path().join("apps/web").join("ota.yaml").display()
             )
         );
+    }
+
+    #[test]
+    fn accepts_workspace_repo_workflow_instance_selector() {
+        let fixture = TempDir::new().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("web")).unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  dev:
+    run: echo dev
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+    instances:
+      default: ws0
+      ws0: {}
+      ws1: {}
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    workflow: app@ws1
+"#,
+        )
+        .unwrap();
+
+        validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
+            .unwrap();
     }
 
     #[test]

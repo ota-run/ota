@@ -1,0 +1,120 @@
+#                █████
+#               ░░███
+#       ██████  ███████    ██████
+#      ███░░███░░░███░    ░░░░░███
+#     ░███ ░███  ░███      ███████
+#     ░███ ░███  ░███ ███ ███░░███
+#     ░░██████   ░░█████ ░░████████
+#      ░░░░░░     ░░░░░   ░░░░░░░░
+#
+#   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+#
+#   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+#
+#   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+#   You may not use this file except in compliance with that License.
+#   Unless required by applicable law or agreed to in writing, software distributed under the
+#   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+#   either express or implied. See the License for the specific language governing permissions
+#   and limitations under the License.
+#
+#   If you need additional information or have any questions, please email: os@ota.run
+version: 1
+project:
+  name: workflow-instances
+  description: Canonical named workflow-instance example for one shared runtime family
+  type: application
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+      requirements:
+        tools:
+          docker: "*"
+surfaces:
+  ui:
+    kind: http
+    port: 3000
+    path: /
+    purpose: Browser-facing app surface for the selected instance
+tasks:
+  app:up:
+    context: host
+    env:
+      APP_SOURCE_PATH: ${OTA_HOST_WORKSPACE}
+    adapter_inputs:
+      compose:
+        files:
+          - docker-compose.yml
+        project_name: app-ws0
+    runtime:
+      kind: service
+      surfaces:
+        - ui
+      readiness:
+        kind: http
+        listener: ui
+        path: /
+        interval: 3s
+        timeout: 3s
+        retries: 20
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+        - app
+    requirements:
+      tools:
+        docker: "*"
+  app:down:
+    context: host
+    env:
+      APP_SOURCE_PATH: ${OTA_HOST_WORKSPACE}
+    adapter_inputs:
+      compose:
+        files:
+          - docker-compose.yml
+        project_name: app-ws0
+    command:
+      exe: docker
+      args:
+        - compose
+        - down
+workflows:
+  default: app
+  app:
+    intent: packaged_runtime
+    description: One shared app runtime family with named selected instances
+    instances:
+      default: ws0
+      ws0:
+        description: Bind the live repo as the default app instance
+      ws1:
+        description: Bind the first cloned workspace under OTA_HOST_HOME
+        env:
+          APP_SOURCE_PATH: ${OTA_HOST_HOME}/.example/workspaces/ws1
+        tasks:
+          app:up:
+            adapter_inputs:
+              compose:
+                project_name: app-ws1
+          app:down:
+            adapter_inputs:
+              compose:
+                project_name: app-ws1
+        surfaces:
+          ui:
+            port: 13000
+    run:
+      task: app:up
+agent:
+  safe_tasks:
+    - app:down
+  protected_paths:
+    - docker-compose.yml
+metadata:
+  ota:
+    minimum_version: "1.6.22"

@@ -476,6 +476,7 @@ Current implementation:
 - the container path uses the first available configured container engine, mounts the effective contract directory at `/workspace`, overlays any declared `attachments.isolated_paths` with Ota-managed named volumes, and runs task bodies with `sh -lc`
 - ota injects `OTA_WORKSPACE` into task execution so backend-aware workspace-relative paths stay explicit without hardcoding `/workspace`
 - ota also injects `OTA_HOST_WORKSPACE` into task execution so host-launched tasks can still refer to the real repo path even when the selected backend or helper workflow path also publishes `OTA_WORKSPACE`
+- ota also injects `OTA_HOST_HOME` into task execution so selected workflow instances can derive stable host-owned clone or cache roots without shell `echo $HOME` / `%USERPROFILE%` glue
 - ota injects `OTA_HOST_UID` on Unix-like hosts so host-launched service and compose paths can pass the real host user id into deterministic env interpolation without shell `id -u` glue; on non-Unix hosts the value is absent unless the contract resolves it some other way
 - task env precedence is: resolved context env, then `tasks.<name>.env`, then selected `tasks.<name>.execution.modes.<mode>.env`
 - ota-derived cache env is fallback-only and currently covers `MAVEN_OPTS` for isolated `.m2`, `NPM_CONFIG_CACHE` for isolated `.npm`, `PNPM_STORE_DIR` for isolated `.pnpm-store`, `GRADLE_USER_HOME` for isolated `.gradle`, `PIP_CACHE_DIR` for isolated `.pip-cache`, and `POETRY_CACHE_DIR` for isolated `.pypoetry-cache`; explicit task or context env still wins
@@ -3296,6 +3297,13 @@ Do not blur these boundaries:
 Current behavior:
 
 - workflows do not replace `tasks`, `services`, or `checks`; they compose those primitives into one canonical operational path
+- use `workflows.<name>.instances` when one workflow is really a named family of runtime instances such as `ws0`, `ws1`, or `staging` / `prod-preview` rather than a single flat environment
+- `workflows.<name>.instances.default` selects the implicit instance for `ota up --workflow <name>` and other selected-workflow commands
+- select a non-default instance with `ota up --workflow <name>@<instance>`, `ota proof runtime --workflow <name>@<instance>`, or other workflow-selecting commands
+- keep instance truth bounded and explicit: this first-class lane is for instance-specific env overrides, task adapter input overrides, and surface port/path overlays, not arbitrary free-form templating across the whole contract
+- use `workflows.<name>.instances.<instance>.env` when every task on the selected workflow path should inherit one instance-specific env value such as a cloned workspace root
+- use `workflows.<name>.instances.<instance>.tasks.<task>.adapter_inputs` when one selected task path needs instance-specific compose project naming, bake files, or other adapter-owned truth without splitting the workflow into repo-local shell variants
+- use `workflows.<name>.instances.<instance>.surfaces.<surface>` when the selected instance publishes the same surface shape on different host ports or paths and Ota should keep proof, exposure, and command guidance aligned on the selected instance
 - use `prepare.task` when the workflow needs one explicit host-side finite normalization/bootstrap step before setup and that step already deserves its own reusable task identity
 - use `prepare.action` when the workflow itself honestly owns one deterministic bootstrap action or bundle and creating a synthetic helper task would only add glue
 - use `env.profile` when one workflow owns a truthful runtime env overlay or declared-source specialization

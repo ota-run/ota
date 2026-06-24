@@ -26,6 +26,14 @@
 
 ## Unreleased
 
+- added first-class workflow-instance selection with `workflow@instance`, so one declared workflow
+  can now own named instance overlays for task env, adapter inputs, and surfaced host ports without
+  splitting that runtime family into pseudo-workflows; ota now also injects `OTA_HOST_HOME` for
+  truthful host-home clone/cache derivation, and Penpot can model ws0/ws1/ws2 as one governed
+  workflow family instead of one flattened ws0-only contract
+- hardened unreleased git installs in the official shell and PowerShell installers by defaulting
+  `CARGO_NET_GIT_FETCH_WITH_CLI=true` on `--from-git` lanes, so contract-owned git revision and
+  branch bootstrap paths no longer depend on Cargo's flakier libgit transport on hosted runners
 - added first-class `tasks.<name>.compose.detach` for detached `docker|podman compose exec`
   lanes, so repos can model truthful in-service bootstrap/start commands without opaque shell
   `docker exec -d ...` glue

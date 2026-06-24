@@ -51487,6 +51487,43 @@ tasks:
     }
 
     #[test]
+    fn render_workflow_summary_text_surfaces_selected_instance_commands() {
+        let workflow = WorkflowSummary {
+            name: "devenv",
+            instance: Some(String::from("ws1")),
+            intent: Some("packaged_runtime"),
+            description: Some("Bring up one selected workspace instance"),
+            notes: None,
+            prepare_task: None,
+            prepare_action: None,
+            setup_task: None,
+            run_task: Some("devenv:up"),
+            run_task_launch: None,
+            required_services: Vec::new(),
+            readiness_checks: Vec::new(),
+            readiness_probes: Vec::new(),
+            readiness_surfaces: vec![String::from("ui")],
+            signal_readiness_checks: Vec::new(),
+            signal_readiness_probes: Vec::new(),
+            signal_readiness_surfaces: Vec::new(),
+            exposes: Vec::new(),
+            expose_surfaces: Vec::new(),
+            expose_entries: Vec::new(),
+        };
+
+        let rendered = strip_ansi_codes(&super::render_workflow_summary_text(&workflow, None));
+        assert!(rendered.contains("Instance: ws1"), "{rendered}");
+        assert!(
+            rendered.contains("Use: `ota up --workflow devenv@ws1`"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("Proof: `ota proof runtime --workflow devenv@ws1`"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn render_tasks_text_surfaces_declared_effects() {
         let env = BTreeMap::new();
         let inputs = BTreeMap::new();
@@ -93384,7 +93421,7 @@ fn contract_adjusted_for_selected_workflow_env_profile(
                     task.env.insert(name.clone(), value.clone());
                 }
                 if !task_overlay.adapter_inputs.is_empty() {
-                    bind_workflow_adapter_overlays(task, &task_overlay.adapter_inputs);
+                    apply_workflow_instance_task_adapter_inputs(task, &task_overlay.adapter_inputs);
                 }
             }
         }
@@ -93491,6 +93528,74 @@ fn contract_adjusted_for_selected_workflow_env_profile(
     }
 
     Some(adjusted)
+}
+
+fn apply_workflow_instance_task_adapter_inputs(
+    task: &mut TaskSpec,
+    overlay: &crate::schema::TaskAdapterInputsSpec,
+) {
+    for (family, family_overlay) in &overlay.overlays {
+        task.adapter_inputs
+            .overlays
+            .insert(family.clone(), family_overlay.clone());
+    }
+
+    if let Some(compose) = overlay.compose.as_ref() {
+        let task_compose = task
+            .adapter_inputs
+            .compose
+            .get_or_insert_with(crate::schema::TaskComposeAdapterInputsSpec::default);
+        if compose.cwd.is_some() {
+            task_compose.cwd = compose.cwd.clone();
+        }
+        if !compose.env_files.is_empty() {
+            task_compose.env_files = compose.env_files.clone();
+        }
+        if !compose.files.is_empty() {
+            task_compose.files = compose.files.clone();
+        }
+        if !compose.profiles.is_empty() {
+            task_compose.profiles = compose.profiles.clone();
+        }
+        if compose.project_name.is_some() {
+            task_compose.project_name = compose.project_name.clone();
+        }
+    }
+
+    if let Some(bake) = overlay.bake.as_ref() {
+        let task_bake = task
+            .adapter_inputs
+            .bake
+            .get_or_insert_with(crate::schema::TaskBakeAdapterInputsSpec::default);
+        if bake.cwd.is_some() {
+            task_bake.cwd = bake.cwd.clone();
+        }
+        if !bake.files.is_empty() {
+            task_bake.files = bake.files.clone();
+        }
+    }
+
+    if let Some(helm) = overlay.helm.as_ref() {
+        let task_helm = task
+            .adapter_inputs
+            .helm
+            .get_or_insert_with(crate::schema::TaskHelmAdapterInputsSpec::default);
+        if helm.cwd.is_some() {
+            task_helm.cwd = helm.cwd.clone();
+        }
+        if !helm.values_files.is_empty() {
+            task_helm.values_files = helm.values_files.clone();
+        }
+        if helm.chart.is_some() {
+            task_helm.chart = helm.chart.clone();
+        }
+        if helm.release_name.is_some() {
+            task_helm.release_name = helm.release_name.clone();
+        }
+        if helm.namespace.is_some() {
+            task_helm.namespace = helm.namespace.clone();
+        }
+    }
 }
 
 fn workflow_env_profile_applies_to_task(

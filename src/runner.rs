@@ -2011,10 +2011,22 @@ fn host_uid_template_value(working_dir: &Path) -> Option<String> {
     }
 }
 
+fn host_home_template_value() -> Option<String> {
+    #[cfg(windows)]
+    {
+        env::var("USERPROFILE").ok().filter(|value| !value.trim().is_empty())
+    }
+    #[cfg(not(windows))]
+    {
+        env::var("HOME").ok().filter(|value| !value.trim().is_empty())
+    }
+}
+
 fn expand_task_env_templates(
     value: &str,
     ota_workspace: &str,
     host_workspace: &str,
+    host_home: Option<&str>,
     host_uid: Option<&str>,
 ) -> String {
     let mut expanded = value
@@ -2022,6 +2034,10 @@ fn expand_task_env_templates(
         .replace("$OTA_WORKSPACE", ota_workspace)
         .replace("${OTA_HOST_WORKSPACE}", host_workspace)
         .replace("$OTA_HOST_WORKSPACE", host_workspace);
+    let host_home = host_home.unwrap_or("");
+    expanded = expanded
+        .replace("${OTA_HOST_HOME}", host_home)
+        .replace("$OTA_HOST_HOME", host_home);
     let host_uid = host_uid.unwrap_or("");
     expanded = expanded
         .replace("${OTA_HOST_UID}", host_uid)
@@ -2313,6 +2329,7 @@ fn effective_task_env_for_backend_with_resolved_env(
 ) -> BTreeMap<String, String> {
     let ota_workspace = ota_workspace_for_backend(working_dir, backend);
     let host_workspace = host_workspace_template_value(working_dir);
+    let host_home = host_home_template_value();
     let host_uid = host_uid_template_value(working_dir);
     let backend_kind = resolved_execution_backend_kind(backend);
     let engine_hint = match backend {
@@ -2336,6 +2353,7 @@ fn effective_task_env_for_backend_with_resolved_env(
                     &value,
                     ota_workspace.as_str(),
                     host_workspace.as_str(),
+                    host_home.as_deref(),
                     host_uid.as_deref(),
                 ),
             )
@@ -2352,6 +2370,9 @@ fn effective_task_env_for_backend_with_resolved_env(
     ));
     env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
     env.insert(String::from("OTA_HOST_WORKSPACE"), host_workspace);
+    if let Some(host_home) = host_home {
+        env.insert(String::from("OTA_HOST_HOME"), host_home);
+    }
     if let Some(host_uid) = host_uid {
         env.insert(String::from("OTA_HOST_UID"), host_uid);
     }
@@ -2400,6 +2421,7 @@ pub(crate) fn effective_task_env_for_selection(
         ota_workspace.as_str(),
     );
     let host_workspace = host_workspace_template_value(working_dir);
+    let host_home = host_home_template_value();
     let host_uid = host_uid_template_value(working_dir);
     env.extend(load_task_env_file_values(task, backend, working_dir));
     let engine_hint = if backend == Backend::Container {
@@ -2422,6 +2444,7 @@ pub(crate) fn effective_task_env_for_selection(
                         &value,
                         ota_workspace.as_str(),
                         host_workspace.as_str(),
+                        host_home.as_deref(),
                         host_uid.as_deref(),
                     ),
                 )
@@ -2438,6 +2461,9 @@ pub(crate) fn effective_task_env_for_selection(
     ));
     env.insert(String::from("OTA_WORKSPACE"), ota_workspace);
     env.insert(String::from("OTA_HOST_WORKSPACE"), host_workspace);
+    if let Some(host_home) = host_home {
+        env.insert(String::from("OTA_HOST_HOME"), host_home);
+    }
     if let Some(host_uid) = host_uid {
         env.insert(String::from("OTA_HOST_UID"), host_uid);
     }
@@ -28472,6 +28498,7 @@ tasks:
       NPM_CONFIG_CACHE: ${OTA_WORKSPACE}/custom-npm
       CUSTOM_ROOT: ${OTA_WORKSPACE}/cache
       HOST_ROOT: ${OTA_HOST_WORKSPACE}
+      HOST_HOME: ${OTA_HOST_HOME}
       USER_UID: ${OTA_HOST_UID}
     script: ./scripts/api/run.sh
 "#,
@@ -28516,6 +28543,22 @@ tasks:
                     .as_ref(),
             )
         );
+        let expected_home = if cfg!(windows) {
+            env::var("USERPROFILE").ok()
+        } else {
+            env::var("HOME").ok()
+        };
+        if let Some(expected_home) = expected_home.as_deref().filter(|value| !value.trim().is_empty())
+        {
+            assert_eq!(
+                env.get("HOST_HOME").map(String::as_str),
+                Some(expected_home)
+            );
+            assert_eq!(
+                env.get("OTA_HOST_HOME").map(String::as_str),
+                Some(expected_home)
+            );
+        }
         #[cfg(unix)]
         {
             let expected_uid = fs::metadata(working_dir)
