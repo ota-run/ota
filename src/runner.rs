@@ -4733,6 +4733,7 @@ fn clean_execution_report_inner(
     ensure_no_active_repo_execution_conflicts(clean_task_name, working_dir, cleanup_scope)?;
     let host_services_to_stop = host_managed_services_for_cleanup(contract, cleanup_scope);
     let cleanup_targets = persistent_cleanup_targets(contract, cleanup_scope)?;
+    let has_current_cleanup_targets = !cleanup_targets.is_empty();
     let repo_ownership_token = repo_ownership_token("clean", contract_path)?;
     let mut report = CleanExecutionReport::default();
     for service_name in host_services_to_stop {
@@ -4937,7 +4938,17 @@ fn clean_execution_report_inner(
     if let Some(error) = first_discovery_error
         && strict_discovery
     {
-        return Err(error);
+        let stale_recorded_engine_only = has_recorded_relevant_engines
+            && current_target_engines.is_empty()
+            && !has_current_cleanup_targets;
+        let metadata_only_state = repo_state_contains_only_cleanup_metadata(working_dir)?;
+        if !(stale_recorded_engine_only
+            && metadata_only_state
+            && clean_discovery_error_is_engine_unavailable(&error))
+        {
+            return Err(error);
+        }
+        engines_to_track.clear();
     }
 
     for (engine, volume_names) in current_dependency_isolation_volumes_to_remove {
@@ -4959,6 +4970,68 @@ fn clean_execution_report_inner(
     write_repo_managed_engines("clean", working_dir, &engines_to_track)?;
 
     Ok(report)
+}
+
+fn repo_state_contains_only_cleanup_metadata(working_dir: &Path) -> Result<bool, RunError> {
+    let state_dir = repo_ota_state_dir(working_dir);
+    let entries = match fs::read_dir(&state_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(source) => {
+            return Err(RunError::DependencyIsolationOwnershipFailure {
+                task: OTA_CLEAN_INTERNAL_TASK_NAME.to_string(),
+                action: String::from("read"),
+                path: state_dir.display().to_string(),
+                details: source.to_string(),
+            });
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|source| RunError::DependencyIsolationOwnershipFailure {
+            task: OTA_CLEAN_INTERNAL_TASK_NAME.to_string(),
+            action: String::from("read"),
+            path: state_dir.display().to_string(),
+            details: source.to_string(),
+        })?;
+        if entry
+            .file_type()
+            .map_err(|source| RunError::DependencyIsolationOwnershipFailure {
+                task: OTA_CLEAN_INTERNAL_TASK_NAME.to_string(),
+                action: String::from("read"),
+                path: entry.path().display().to_string(),
+                details: source.to_string(),
+            })?
+            .is_dir()
+        {
+            return Ok(false);
+        }
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            return Ok(false);
+        };
+        let is_metadata = matches!(
+            name.as_str(),
+            OTA_OWNERSHIP_ID_FILE
+                | OTA_MANAGED_ENGINES_FILE
+                | OTA_RUN_EXECUTION_LOCK_FILE
+                | OTA_ACTIVE_EXECUTIONS_FILE
+        );
+        if !is_metadata {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn clean_discovery_error_is_engine_unavailable(error: &RunError) -> bool {
+    match error {
+        RunError::MissingContainerBackendCli { .. } => true,
+        RunError::DependencyIsolationVolumeFailure { details, .. }
+        | RunError::PersistentContainerCleanupFailure { details, .. } => {
+            classify_clean_execution_failure_reason(details)
+                == CleanExecutionFailureReason::EngineUnavailable
+        }
+        _ => false,
+    }
 }
 
 pub fn clean_stale_execution(
@@ -49680,6 +49753,82 @@ tasks:
 
         assert!(report.removed_drift_dependency_isolation_volumes >= 1);
         assert!(!ota_dir.join(super::OTA_MANAGED_ENGINES_FILE).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn clean_execution_ignores_unreachable_stale_recorded_engine_when_only_metadata_state_remains()
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let podman_path = bin_dir.join("podman");
+        fs::write(
+            &podman_path,
+            r#"#!/bin/sh
+echo "Error: unable to connect to Podman socket: dial tcp 127.0.0.1:57990: connect: connection refused" >&2
+exit 125
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&podman_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&podman_path, permissions).unwrap();
+
+        let ota_dir = fixture.dir.path().join(".ota");
+        fs::create_dir_all(ota_dir.join("state")).unwrap();
+        fs::write(ota_dir.join("state").join("ownership-id"), "repo-1").unwrap();
+        fs::write(
+            ota_dir.join("state").join(super::OTA_MANAGED_ENGINES_FILE),
+            "podman\n",
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let report = clean_execution_report(&fixture.contract, fixture.file_path()).unwrap();
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(report.total_removed(), 0);
+        assert!(
+            !ota_dir
+                .join("state")
+                .join(super::OTA_MANAGED_ENGINES_FILE)
+                .exists()
+        );
     }
 
     #[cfg(unix)]
