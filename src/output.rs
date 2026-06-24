@@ -3593,6 +3593,8 @@ pub struct TaskComposeExecutionSummary<'a> {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove_volumes: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
 }
 
@@ -3610,6 +3612,8 @@ pub struct TaskComposeInvocationSummary<'a> {
     pub rm: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove_volumes: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
 }
@@ -3755,6 +3759,8 @@ pub struct WorkspaceTaskComposeInvocationSummary {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove_volumes: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
 }
 
@@ -3807,6 +3813,7 @@ fn summarize_task_compose<'a>(
         workdir: compose.invocation.workdir.as_deref(),
         rm: compose.invocation.rm,
         detach: compose.invocation.detach,
+        remove_volumes: compose.invocation.remove_volumes,
         tty: compose.invocation.tty,
     })
 }
@@ -3822,6 +3829,7 @@ fn summarize_task_compose_invocation<'a>(
         workdir: compose.workdir.as_deref(),
         rm: compose.rm,
         detach: compose.detach,
+        remove_volumes: compose.remove_volumes,
         tty: compose.tty,
     })
 }
@@ -3837,6 +3845,7 @@ fn summarize_task_compose_invocation_owned(
         workdir: compose.workdir.clone(),
         rm: compose.rm,
         detach: compose.detach,
+        remove_volumes: compose.remove_volumes,
         tty: compose.tty,
     })
 }
@@ -4877,6 +4886,36 @@ tasks:
         assert_eq!(compose.service, None);
         assert_eq!(compose.services, vec!["web", "worker"]);
         assert_eq!(compose.exe, None);
+    }
+
+    #[test]
+    fn summarize_task_compose_down_can_remove_volumes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:clean:
+    compose:
+      kind: down
+      remove_volumes: true
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "stack:clean",
+            contract.tasks.get("stack:clean").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.kind, "compose_down");
+        let compose = summary.compose.expect("compose summary should exist");
+        assert_eq!(compose.kind, "down");
+        assert!(compose.remove_volumes);
     }
 
     #[test]

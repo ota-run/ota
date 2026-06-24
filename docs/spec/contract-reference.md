@@ -1931,6 +1931,7 @@ Task-effect rules:
 - `compose.exe`: required executable to run inside the selected service for `kind: exec`, `run`, or `attach`
 - `compose.args`: optional argument list passed to `compose.exe` for `kind: exec`, `run`, or `attach`
 - `compose.rm`: optional `compose run --rm`; valid only with `kind: run`
+- `compose.remove_volumes`: optional `compose down -v`; valid only with `kind: down`
 - `compose.tty`: optional TTY preservation for `exec` and `run`; omitted means ota adds `-T` for deterministic non-interactive execution. `kind: attach` is always interactive and preserves TTY by definition.
 
 `compose` rules:
@@ -1945,6 +1946,7 @@ Task-effect rules:
 - `compose.kind: down` is project-scoped and must not declare `compose.service` or `compose.services`
 - `compose.workdir`, `compose.exe`, and `compose.args` only apply to `compose.kind: exec`, `run`, or `attach`
 - `compose.rm` is only valid with `compose.kind: run`
+- `compose.remove_volumes` is only valid with `compose.kind: down`
 - `compose.detach` is only valid with `compose.kind: exec` or `compose.kind: up`
 - `compose.kind: attach` must not declare `compose.rm` or `compose.detach`
 

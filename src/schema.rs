@@ -5245,6 +5245,8 @@ pub struct TaskComposeInvocationSpec {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub remove_volumes: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
 }
 
@@ -5278,6 +5280,9 @@ impl TaskComposeInvocationSpec {
         );
         if self.detach {
             preview.push_str(" -d");
+        }
+        if self.remove_volumes {
+            preview.push_str(" -v");
         }
         if !self.tty
             && matches!(
@@ -8037,6 +8042,7 @@ tasks:
                             workdir: Some(String::from("/workspace")),
                             rm: true,
                             detach: false,
+                            remove_volumes: false,
                             tty: false,
                         }),
                     },

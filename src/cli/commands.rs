@@ -39191,6 +39191,9 @@ fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary
     if compose.detach {
         preview.push_str(" -d");
     }
+    if compose.remove_volumes {
+        preview.push_str(" -v");
+    }
     if !compose.tty && matches!(compose.kind, "exec" | "run") {
         preview.push_str(" -T");
     }
@@ -52138,6 +52141,7 @@ tasks:
                 workdir: Some("/workspace"),
                 rm: false,
                 detach: false,
+                remove_volumes: false,
                 tty: false,
             }),
             launch: None,

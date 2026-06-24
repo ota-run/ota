@@ -2627,6 +2627,9 @@ fn projected_compose_invocation_command_for_task(
     if compose.detach {
         projected_args.push(String::from("-d"));
     }
+    if compose.remove_volumes {
+        projected_args.push(String::from("-v"));
+    }
     if !compose.tty
         && matches!(
             compose.kind,
@@ -57385,6 +57388,45 @@ tasks:
                 String::from("build"),
                 String::from("web"),
                 String::from("worker"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_compose_down_can_remove_volumes() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:clean:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    compose:
+      kind: down
+      remove_volumes: true
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("stack:clean").unwrap();
+        let projected = super::projected_compose_command_for_task(
+            task,
+            Backend::Native,
+            task.compose.as_ref().unwrap(),
+        );
+
+        assert_eq!(projected.exe, "docker");
+        assert_eq!(projected.cwd.as_deref(), Some("infra"));
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("compose"),
+                String::from("down"),
+                String::from("-v"),
             ]
         );
     }

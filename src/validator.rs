@@ -3653,6 +3653,12 @@ fn validate_task_compose_invocation(
                     "task `{task_name}` {scope} must only declare `{field_path}.detach: true` with `kind: exec`"
                 )));
             }
+            if compose.remove_volumes {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: {}`",
+                    compose.kind.label()
+                )));
+            }
             if compose.kind == crate::schema::TaskComposeExecutionKind::Attach {
                 if compose.rm {
                     errors.push(ValidationError::new(format!(
@@ -3685,6 +3691,11 @@ fn validate_task_compose_invocation(
             if compose.tty {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: up`"
+                )));
+            }
+            if compose.remove_volumes {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: up`"
                 )));
             }
         }
@@ -3739,6 +3750,11 @@ fn validate_task_compose_invocation(
             if compose.tty {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: build`"
+                )));
+            }
+            if compose.remove_volumes {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: build`"
                 )));
             }
         }
@@ -23217,6 +23233,36 @@ tasks:
         )));
         assert!(messages.contains(&String::from(
             "task `image:build` task must not declare `compose.args` with `kind: build`"
+        )));
+    }
+
+    #[test]
+    fn rejects_compose_remove_volumes_outside_down() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  staged:up:
+    compose:
+      kind: up
+      remove_volumes: true
+      services:
+        - web
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(messages.contains(&String::from(
+            "task `staged:up` task must not declare `compose.remove_volumes: true` with `kind: up`"
         )));
     }
 

@@ -134,6 +134,7 @@ tasks:
             - app
     compose:
       kind: down
+      remove_volumes: true
     requirements:
       tools:
         docker: "*"
