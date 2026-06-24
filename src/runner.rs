@@ -2613,6 +2613,34 @@ fn projected_compose_command_for_task(
     )
 }
 
+fn projected_compose_launch_command_for_task(
+    task: &TaskSpec,
+    backend: Backend,
+    launch: &crate::schema::TaskComposeLaunchSpec,
+) -> crate::schema::TaskCommandSpec {
+    let mut projected_args = vec![
+        String::from("compose"),
+        String::from(launch.action.label()),
+    ];
+    if launch.detach {
+        projected_args.push(String::from("-d"));
+    }
+    projected_args.extend(
+        launch
+            .services
+            .iter()
+            .map(|service| service.trim())
+            .filter(|service| !service.is_empty())
+            .map(str::to_string),
+    );
+
+    crate::schema::TaskCommandSpec {
+        exe: launch.engine.as_str().to_string(),
+        args: projected_args,
+        cwd: task.compose_adapter_cwd_for_backend(backend),
+    }
+}
+
 fn projected_compose_invocation_command_for_task(
     task: &TaskSpec,
     backend: Backend,
@@ -7748,6 +7776,9 @@ fn execute_task_with_hooks(
         Some(crate::schema::TaskLaunchSpec::Command(command)) => Some(
             projected_structured_command_for_task(task, backend_kind, command),
         ),
+        Some(crate::schema::TaskLaunchSpec::Compose(compose)) => Some(
+            projected_compose_launch_command_for_task(task, backend_kind, compose),
+        ),
         _ => None,
     };
     let mut shell_command = match execution.launch() {
@@ -7802,7 +7833,25 @@ fn execute_task_with_hooks(
                 &command.args,
             ))
         }
+        Some(crate::schema::TaskLaunchSpec::Compose(_))
+            if !matches!(backend, ResolvedExecutionBackend::Native { .. })
+                || matches!(mode, TaskExecutionMode::CaptureActivation)
+                || !backend_fulfillment_preparation
+                    .source_managed_actions
+                    .is_empty()
+                || path_export.is_some() =>
+        {
+            let command = projected_launch_command
+                .as_ref()
+                .expect("compose launch should project to a structured command");
+            Some(shell_quote_command_argv(
+                &backend,
+                command.exe.as_str(),
+                &command.args,
+            ))
+        }
         Some(crate::schema::TaskLaunchSpec::Command(_)) => None,
+        Some(crate::schema::TaskLaunchSpec::Compose(_)) => None,
         Some(crate::schema::TaskLaunchSpec::Container(_)) => None,
         None => execution.shell_body().map(str::to_string),
     };
@@ -7878,6 +7927,24 @@ fn execute_task_with_hooks(
         match execution.launch() {
             Some(crate::schema::TaskLaunchSpec::Command(command)) => {
                 let command = projected_launch_command.as_ref().unwrap_or(command);
+                let command_cwd = command.cwd.clone();
+                if let Some(shell_command) = shell_command {
+                    PreparedTaskExecution::Shell {
+                        command: shell_command,
+                        cwd: command_cwd,
+                    }
+                } else {
+                    PreparedTaskExecution::NativeCommand {
+                        exe: command.exe.clone(),
+                        args: command.args.clone(),
+                        cwd: command.cwd.clone(),
+                    }
+                }
+            }
+            Some(crate::schema::TaskLaunchSpec::Compose(_)) => {
+                let command = projected_launch_command.as_ref().unwrap_or_else(|| {
+                    unreachable!("compose launch should always project to a structured command")
+                });
                 let command_cwd = command.cwd.clone();
                 if let Some(shell_command) = shell_command {
                     PreparedTaskExecution::Shell {
@@ -14395,6 +14462,13 @@ fn task_owns_native_host_service_workload(task: &TaskSpec) -> bool {
     if let Some(crate::schema::TaskLaunchSpec::Command(command)) = task.launch.as_ref()
         && adapter_owned_compose(command.exe.as_str(), &command.args)
     {
+        return false;
+    }
+
+    if matches!(
+        task.launch.as_ref(),
+        Some(crate::schema::TaskLaunchSpec::Compose(_))
+    ) {
         return false;
     }
 
@@ -57427,6 +57501,53 @@ tasks:
                 String::from("compose"),
                 String::from("down"),
                 String::from("-v"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_compose_launch_up_uses_service_groups() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  selfhost:
+    adapter_inputs:
+      compose:
+        cwd: deploy
+    launch:
+      kind: compose
+      engine: podman
+      action: up
+      detach: true
+      services:
+        - api
+        - worker
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("selfhost").unwrap();
+        let launch = match task.launch.as_ref().unwrap() {
+            crate::schema::TaskLaunchSpec::Compose(launch) => launch,
+            other => panic!("expected compose launch, got {other:?}"),
+        };
+        let projected =
+            super::projected_compose_launch_command_for_task(task, Backend::Native, launch);
+
+        assert_eq!(projected.exe, "podman");
+        assert_eq!(projected.cwd.as_deref(), Some("deploy"));
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("compose"),
+                String::from("up"),
+                String::from("-d"),
+                String::from("api"),
+                String::from("worker"),
             ]
         );
     }

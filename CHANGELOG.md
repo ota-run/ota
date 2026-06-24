@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added first-class `launch.kind: compose` for long-running `docker|podman compose up` runtime
+  starts, so repos can model persistent Compose-owned runtime launch truth under `launch` instead
+  of forcing packaged stack startup through `launch.kind: command`; the same pass teaches opaque
+  service-start governance to prefer `launch.kind: compose` when the shell lane is really
+  `docker|podman compose up`
 - widened `tasks.<name>.compose` with first-class `compose.kind: up`, `compose.kind: down`,
   `compose.kind: build`, and `compose.remove_volumes: true` for `compose down -v`, so repos can
   model staged `docker|podman compose up [-d] <services...>`, project-scoped `compose down`,

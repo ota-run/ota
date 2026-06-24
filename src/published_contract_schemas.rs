@@ -490,11 +490,26 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "include": { "$ref": "#/$defs/stringArray" }
       }
     },
+    "envProfileStructuredFileRender": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "format"],
+      "properties": {
+        "path": { "type": "string" },
+        "format": { "enum": ["json", "toml"] },
+        "sources": { "$ref": "#/$defs/stringArray" },
+        "merge_into_existing": { "type": "boolean" }
+      }
+    },
     "envProfileRender": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "dotenv": { "$ref": "#/$defs/envProfileDotenvRender" }
+        "dotenv": { "$ref": "#/$defs/envProfileDotenvRender" },
+        "files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/envProfileStructuredFileRender" }
+        }
       }
     },
     "envProfile": {
@@ -714,6 +729,55 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "task": { "type": "string" }
       }
     },
+    "workflowInstanceTopology": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requires_instances": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "workflowInstanceTaskOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "env": { "$ref": "#/$defs/stringMap" },
+        "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" }
+      }
+    },
+    "workflowInstanceSurfaceOverlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "path": { "type": "string" }
+      }
+    },
+    "workflowInstance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string" },
+        "notes": { "type": "string" },
+        "topology": { "$ref": "#/$defs/workflowInstanceTopology" },
+        "env": { "$ref": "#/$defs/stringMap" },
+        "tasks": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/workflowInstanceTaskOverlay" }
+        },
+        "surfaces": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/workflowInstanceSurfaceOverlay" }
+        }
+      }
+    },
+    "workflowInstances": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/workflowInstance" },
+      "properties": {
+        "default": { "type": "string" }
+      },
+      "required": ["default"]
+    },
     "workflowEnv": {
       "type": "object",
       "additionalProperties": false,
@@ -772,10 +836,12 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "description": { "type": "string" },
         "notes": { "type": "string" },
         "adapter_inputs": { "$ref": "#/$defs/taskAdapterInputs" },
+        "instances": { "$ref": "#/$defs/workflowInstances" },
         "env": { "$ref": "#/$defs/workflowEnv" },
         "prepare": { "$ref": "#/$defs/workflowTaskRef" },
         "setup": { "$ref": "#/$defs/workflowTaskRef" },
         "run": { "$ref": "#/$defs/workflowTaskRef" },
+        "attach": { "$ref": "#/$defs/workflowTaskRef" },
         "services": { "$ref": "#/$defs/workflowServices" },
         "readiness": { "$ref": "#/$defs/workflowReadiness" },
         "exposes": {
@@ -987,6 +1053,24 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "args": { "$ref": "#/$defs/stringArray" }
       }
     },
+    "taskCompose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["exec", "run", "attach", "up", "down", "build"] },
+        "engine": { "enum": ["docker", "podman"] },
+        "service": { "type": "string" },
+        "services": { "$ref": "#/$defs/stringArray" },
+        "workdir": { "type": "string" },
+        "rm": { "type": "boolean" },
+        "detach": { "type": "boolean" },
+        "remove_volumes": { "type": "boolean" },
+        "tty": { "type": "boolean" },
+        "exe": { "type": "string" },
+        "args": { "$ref": "#/$defs/stringArray" }
+      }
+    },
     "taskLaunch": {
       "oneOf": [
         {
@@ -997,6 +1081,18 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "kind": { "const": "command" },
             "exe": { "type": "string" },
             "args": { "$ref": "#/$defs/stringArray" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "action"],
+          "properties": {
+            "kind": { "const": "compose" },
+            "engine": { "enum": ["docker", "podman"] },
+            "action": { "const": "up" },
+            "services": { "$ref": "#/$defs/stringArray" },
+            "detach": { "type": "boolean" }
           }
         },
         {
@@ -1496,6 +1592,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "run": { "type": "string" },
         "script": { "type": "string" },
         "command": { "$ref": "#/$defs/taskCommand" },
+        "compose": { "$ref": "#/$defs/taskCompose" },
         "prepare": { "$ref": "#/$defs/taskPrepare" },
         "launch": { "$ref": "#/$defs/taskLaunch" },
         "runtime": { "$ref": "#/$defs/taskRuntime" }
@@ -1560,6 +1657,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "run": { "type": "string" },
         "script": { "type": "string" },
         "command": { "$ref": "#/$defs/taskCommand" },
+        "compose": { "$ref": "#/$defs/taskCompose" },
         "prepare": { "$ref": "#/$defs/taskPrepare" },
         "launch": { "$ref": "#/$defs/taskLaunch" },
         "action": { "$ref": "#/$defs/taskAction" },

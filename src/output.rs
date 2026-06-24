@@ -1461,6 +1461,12 @@ pub struct WorkspaceTaskLaunchSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub detach: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove: bool,
@@ -3663,6 +3669,12 @@ pub struct TaskLaunchSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engine: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<&'a str>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub detach: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<&'a str>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove: bool,
@@ -3860,6 +3872,22 @@ fn summarize_task_launch<'a>(
             args: command.args.iter().map(String::as_str).collect(),
             image: None,
             engine: None,
+            action: None,
+            services: Vec::new(),
+            detach: false,
+            name: None,
+            remove: false,
+            volumes: Vec::new(),
+        }),
+        crate::schema::TaskLaunchSpec::Compose(compose) => Some(TaskLaunchSummary {
+            kind: "compose",
+            exe: None,
+            args: Vec::new(),
+            image: None,
+            engine: Some(compose.engine.as_str()),
+            action: Some(compose.action.label()),
+            services: compose.services.iter().map(String::as_str).collect(),
+            detach: compose.detach,
             name: None,
             remove: false,
             volumes: Vec::new(),
@@ -3870,6 +3898,9 @@ fn summarize_task_launch<'a>(
             args: container.args.iter().map(String::as_str).collect(),
             image: Some(container.image.as_str()),
             engine: container.engine.as_deref(),
+            action: None,
+            services: Vec::new(),
+            detach: false,
             name: container.name.as_deref(),
             remove: container.remove,
             volumes: container
@@ -3939,6 +3970,22 @@ pub fn summarize_task_launch_owned(
             args: command.args.clone(),
             image: None,
             engine: None,
+            action: None,
+            services: Vec::new(),
+            detach: false,
+            name: None,
+            remove: false,
+            volumes: Vec::new(),
+        }),
+        crate::schema::TaskLaunchSpec::Compose(compose) => Some(WorkspaceTaskLaunchSummary {
+            kind: "compose",
+            exe: None,
+            args: Vec::new(),
+            image: None,
+            engine: Some(compose.engine.as_str().to_string()),
+            action: Some(compose.action.label()),
+            services: compose.services.clone(),
+            detach: compose.detach,
             name: None,
             remove: false,
             volumes: Vec::new(),
@@ -3949,6 +3996,9 @@ pub fn summarize_task_launch_owned(
             args: container.args.clone(),
             image: Some(container.image.clone()),
             engine: container.engine.clone(),
+            action: None,
+            services: Vec::new(),
+            detach: false,
             name: container.name.clone(),
             remove: container.remove,
             volumes: container
@@ -4916,6 +4966,43 @@ tasks:
         let compose = summary.compose.expect("compose summary should exist");
         assert_eq!(compose.kind, "down");
         assert!(compose.remove_volumes);
+    }
+
+    #[test]
+    fn summarize_task_launch_compose_up_uses_service_groups() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  selfhost:
+    launch:
+      kind: compose
+      engine: podman
+      action: up
+      detach: true
+      services:
+        - api
+        - worker
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "selfhost",
+            contract.tasks.get("selfhost").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        let launch = summary.launch.expect("launch summary should exist");
+        assert_eq!(launch.kind, "compose");
+        assert_eq!(launch.engine, Some("podman"));
+        assert_eq!(launch.action, Some("up"));
+        assert_eq!(launch.services, vec!["api", "worker"]);
+        assert!(launch.detach);
     }
 
     #[test]

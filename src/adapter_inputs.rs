@@ -1042,6 +1042,7 @@ impl AdapterInputFamily {
     pub(crate) fn uses_launch(self, launch: Option<&TaskLaunchSpec>) -> bool {
         match launch {
             Some(TaskLaunchSpec::Command(command)) => self.uses_command(command),
+            Some(TaskLaunchSpec::Compose(_)) => matches!(self, Self::Compose),
             Some(TaskLaunchSpec::Container(_)) | None => false,
         }
     }

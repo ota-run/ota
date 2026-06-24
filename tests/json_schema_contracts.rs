@@ -1863,9 +1863,23 @@ fn full_contract_schema_is_published_and_covered_by_schema_publication() {
         schema.get("$schema").and_then(|value| value.as_str()),
         Some("https://json-schema.org/draft/2020-12/schema")
     );
+    let task_spec = &schema["$defs"]["taskSpec"]["properties"];
+    let task_mode_branch = &schema["$defs"]["taskModeBranch"]["properties"];
+    let task_launch_variants = schema["$defs"]["taskLaunch"]["oneOf"]
+        .as_array()
+        .expect("taskLaunch oneOf");
+    let env_profile_render = &schema["$defs"]["envProfileRender"]["properties"];
     let workflow = &schema["$defs"]["workflowSpec"]["properties"];
     let workflow_env = &schema["$defs"]["workflowEnv"]["properties"];
+    assert!(task_spec.get("compose").is_some());
+    assert!(task_mode_branch.get("compose").is_some());
+    assert!(task_launch_variants.iter().any(|variant| {
+        variant["properties"]["kind"] == json!({ "const": "compose" })
+    }));
+    assert!(env_profile_render.get("files").is_some());
     assert!(workflow.get("adapter_inputs").is_some());
+    assert!(workflow.get("instances").is_some());
+    assert!(workflow.get("attach").is_some());
     assert!(workflow_env.get("compose_env_file_services").is_some());
     assert!(workflow_env.get("adapter_inputs").is_some());
     assert!(workflow_env.get("compose_files").is_some());

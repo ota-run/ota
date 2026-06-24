@@ -4812,6 +4812,9 @@ impl TaskSpec {
                 names.insert(exe.to_string());
             }
         }
+        if let Some(TaskLaunchSpec::Compose(compose)) = self.launch.as_ref() {
+            names.insert(compose.engine.as_str().to_string());
+        }
         if let Some(execution) = self.execution.as_ref() {
             for (_, branch) in execution.modes.iter() {
                 if let Some(command) = branch.command.as_ref() {
@@ -4825,6 +4828,9 @@ impl TaskSpec {
                     if !exe.is_empty() {
                         names.insert(exe.to_string());
                     }
+                }
+                if let Some(TaskLaunchSpec::Compose(compose)) = branch.launch.as_ref() {
+                    names.insert(compose.engine.as_str().to_string());
                 }
             }
         }
@@ -4845,14 +4851,19 @@ impl TaskSpec {
             return Some(exe.to_string());
         }
         if let Some(launch) = execution.launch() {
-            let TaskLaunchSpec::Command(command) = launch else {
-                return None;
-            };
-            let exe = command.exe.trim();
-            if exe.is_empty() {
-                return None;
+            match launch {
+                TaskLaunchSpec::Command(command) => {
+                    let exe = command.exe.trim();
+                    if exe.is_empty() {
+                        return None;
+                    }
+                    return Some(exe.to_string());
+                }
+                TaskLaunchSpec::Compose(compose) => {
+                    return Some(compose.engine.as_str().to_string());
+                }
+                TaskLaunchSpec::Container(_) => return None,
             }
-            return Some(exe.to_string());
         }
         execution
             .shell_body()
@@ -4900,14 +4911,17 @@ fn task_command_executable(command: &TaskCommandSpec) -> Option<String> {
 }
 
 fn command_launch_executable(launch: &TaskLaunchSpec) -> Option<String> {
-    let TaskLaunchSpec::Command(command) = launch else {
-        return None;
-    };
-    let exe = command.exe.trim();
-    if exe.is_empty() {
-        return None;
+    match launch {
+        TaskLaunchSpec::Command(command) => {
+            let exe = command.exe.trim();
+            if exe.is_empty() {
+                return None;
+            }
+            Some(exe.to_string())
+        }
+        TaskLaunchSpec::Compose(compose) => Some(compose.engine.as_str().to_string()),
+        TaskLaunchSpec::Container(_) => None,
     }
-    Some(exe.to_string())
 }
 
 fn inferred_shell_command_executable(body: &str) -> Option<String> {
@@ -5174,6 +5188,7 @@ impl TaskAggregateSpec {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskLaunchSpec {
     Command(TaskCommandLaunchSpec),
+    Compose(TaskComposeLaunchSpec),
     Container(TaskContainerLaunchSpec),
 }
 
@@ -5183,6 +5198,7 @@ impl TaskLaunchSpec {
     pub const fn kind_str(&self) -> &'static str {
         match self {
             Self::Command(_) => "command",
+            Self::Compose(_) => "compose",
             Self::Container(_) => "container",
         }
     }
@@ -5197,6 +5213,7 @@ impl TaskLaunchSpec {
                 }
                 preview
             }
+            Self::Compose(compose) => compose.preview(),
             Self::Container(container) => container.image.clone(),
         }
     }
@@ -5225,6 +5242,49 @@ impl TaskCommandSpec {
             preview.push('`');
         }
         preview
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskComposeLaunchSpec {
+    #[serde(default, skip_serializing_if = "is_default_compose_cli_engine")]
+    pub engine: ComposeCliEngine,
+    pub action: TaskComposeLaunchAction,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub detach: bool,
+}
+
+impl TaskComposeLaunchSpec {
+    pub fn preview(&self) -> String {
+        let mut preview = format!("{} compose {}", self.engine.as_str(), self.action.label());
+        if self.detach {
+            preview.push_str(" -d");
+        }
+        for service in &self.services {
+            let service = service.trim();
+            if !service.is_empty() {
+                preview.push(' ');
+                preview.push_str(service);
+            }
+        }
+        preview
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskComposeLaunchAction {
+    Up,
+}
+
+impl TaskComposeLaunchAction {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Up => "up",
+        }
     }
 }
 

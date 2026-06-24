@@ -16459,6 +16459,12 @@ fn run_preview_task_execution_action(
                     .join(" ")
             );
         }
+        if launch.kind == "compose" {
+            return format!(
+                "would launch `{}`{backend_detail}",
+                render_task_launch_preview(launch)
+            );
+        }
         if let Some(image) = launch.image {
             return format!("would launch container workload `{image}`{backend_detail}");
         }
@@ -39167,6 +39173,23 @@ fn render_task_launch_preview(launch: &crate::output::TaskLaunchSummary<'_>) -> 
             }
             preview
         }
+        "compose" => {
+            let mut preview = format!(
+                "{} compose {}",
+                launch.engine.unwrap_or("docker"),
+                launch.action.unwrap_or("up")
+            );
+            if launch.detach {
+                preview.push_str(" -d");
+            }
+            for service in &launch.services {
+                if !service.trim().is_empty() {
+                    preview.push(' ');
+                    preview.push_str(service);
+                }
+            }
+            preview
+        }
         "container" => launch.image.unwrap_or("-").to_string(),
         _ => String::from("-"),
     }
@@ -39333,6 +39356,7 @@ fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
 fn render_task_launch_text(launch: &crate::output::TaskLaunchSummary<'_>) -> String {
     match launch.kind {
         "command" => render_task_launch_preview(launch),
+        "compose" => render_task_launch_preview(launch),
         "container" => {
             let mut parts = vec![launch.image.unwrap_or("-").to_string()];
             if let Some(name) = launch.name {
@@ -39440,6 +39464,23 @@ fn render_workspace_task_launch_text(launch: &WorkspaceTaskLaunchSummary) -> Str
             if !launch.args.is_empty() {
                 preview.push(' ');
                 preview.push_str(&launch.args.join(" "));
+            }
+            preview
+        }
+        "compose" => {
+            let mut preview = format!(
+                "{} compose {}",
+                launch.engine.as_deref().unwrap_or("docker"),
+                launch.action.unwrap_or("up")
+            );
+            if launch.detach {
+                preview.push_str(" -d");
+            }
+            for service in &launch.services {
+                if !service.trim().is_empty() {
+                    preview.push(' ');
+                    preview.push_str(service);
+                }
             }
             preview
         }
@@ -52564,6 +52605,9 @@ workflows:
                     args: vec!["n8n"],
                     image: None,
                     engine: None,
+                    action: None,
+                    services: Vec::new(),
+                    detach: false,
                     name: None,
                     remove: false,
                     volumes: Vec::new(),
@@ -52622,6 +52666,94 @@ workflows:
     }
 
     #[test]
+    fn render_execution_topology_text_includes_compose_launch() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = crate::output::ExecutionTopologyTaskSummary {
+            task: TaskSummary {
+                name: "selfhost",
+                context: Some("host"),
+                default_mode: None,
+                effective_default_mode: "native",
+                description: Some("Start packaged compose stack"),
+                notes: None,
+                category: None,
+                env: &env,
+                env_files: Vec::new(),
+                adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+                inputs: &inputs,
+                kind: "compose",
+                run: None,
+                script: None,
+                command: None,
+                compose: None,
+                launch: Some(crate::output::TaskLaunchSummary {
+                    kind: "compose",
+                    exe: None,
+                    args: Vec::new(),
+                    image: None,
+                    engine: Some("docker"),
+                    action: Some("up"),
+                    services: vec!["api", "worker"],
+                    detach: true,
+                    name: None,
+                    remove: false,
+                    volumes: Vec::new(),
+                }),
+                action: None,
+                prepare: None,
+                aggregate: None,
+                effects: crate::output::TaskEffectsSummary::default(),
+                selected_variant_os: None,
+                depends_on: Vec::new(),
+                requires_services: Vec::new(),
+                when_checks: Vec::new(),
+                after_success: Vec::new(),
+                after_failure: Vec::new(),
+                after_always: Vec::new(),
+                safe_for_agent: true,
+                internal: false,
+                variants: Vec::new(),
+                modes: Vec::new(),
+                supports_native_mode_override: false,
+            },
+            runtime: None,
+            targets: Vec::new(),
+        };
+
+        let rendered = strip_ansi_codes(&super::render_execution_topology_text(
+            ".",
+            &ContractIdentity {
+                version: 1,
+                project: crate::output::ContractIdentityProject {
+                    name: String::from("topology-demo"),
+                    project_type: Some(String::from("application")),
+                },
+                metadata: crate::output::ContractIdentityMetadata::default(),
+                execution: crate::output::ContractIdentityExecution::default(),
+                counts: crate::output::ContractIdentityCounts {
+                    runtimes: 0,
+                    tools: 0,
+                    env: 0,
+                    services: 0,
+                    checks: 0,
+                    tasks: 1,
+                    repos: None,
+                    policies: None,
+                },
+            },
+            None,
+            &[],
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &[],
+            &[task],
+        ));
+
+        assert!(rendered.contains("Launch: docker compose up -d api worker"), "{rendered}");
+    }
+
+    #[test]
     fn render_workspace_tasks_text_includes_launch() {
         let output = super::render_workspace_tasks_text(
             ".",
@@ -52645,6 +52777,9 @@ workflows:
                         args: vec![String::from("n8n")],
                         image: None,
                         engine: None,
+                        action: None,
+                        services: Vec::new(),
+                        detach: false,
                         name: None,
                         remove: false,
                         volumes: Vec::new(),
@@ -65543,6 +65678,7 @@ tasks:
                 body_location: String::from("tasks.dev.run"),
                 runtime_location: String::from("tasks.dev.runtime"),
                 launch_location: String::from("tasks.dev.launch"),
+                suggested_launch_kind: String::from("command"),
             },
         )];
         let rendered = strip_ansi_codes(&render_validate_success_output(
@@ -79602,6 +79738,9 @@ fn task_declared_container_engine_cli(task: &TaskSpec) -> Option<&str> {
         if exe.eq_ignore_ascii_case("docker") || exe.eq_ignore_ascii_case("podman") {
             return Some(exe);
         }
+    }
+    if let Some(crate::schema::TaskLaunchSpec::Compose(compose)) = task.launch.as_ref() {
+        return Some(compose.engine.as_str());
     }
     None
 }

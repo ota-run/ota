@@ -105,7 +105,16 @@ fn assert_matches_published_contract_schema(source: &Path, contents: &str, compi
     });
 
     if let Err(errors) = compiled.validate(&instance) {
-        let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+        let messages = errors
+            .map(|error| {
+                format!(
+                    "{} | instance: {} | schema: {}",
+                    error,
+                    error.instance_path,
+                    error.schema_path
+                )
+            })
+            .collect::<Vec<_>>();
         panic!(
             "contract example `{}` did not match published contract schema:\n{}",
             source.display(),
@@ -127,7 +136,16 @@ fn assert_matches_published_workspace_contract_schema(
     });
 
     if let Err(errors) = compiled.validate(&instance) {
-        let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+        let messages = errors
+            .map(|error| {
+                format!(
+                    "{} | instance: {} | schema: {}",
+                    error,
+                    error.instance_path,
+                    error.schema_path
+                )
+            })
+            .collect::<Vec<_>>();
         panic!(
             "workspace contract example `{}` did not match published workspace contract schema:\n{}",
             source.display(),
@@ -138,7 +156,16 @@ fn assert_matches_published_workspace_contract_schema(
 
 fn assert_serialized_value_matches_schema(source: &Path, value: &Value, compiled: &JSONSchema) {
     if let Err(errors) = compiled.validate(value) {
-        let messages = errors.map(|error| error.to_string()).collect::<Vec<_>>();
+        let messages = errors
+            .map(|error| {
+                format!(
+                    "{} | instance: {} | schema: {}",
+                    error,
+                    error.instance_path,
+                    error.schema_path
+                )
+            })
+            .collect::<Vec<_>>();
         panic!(
             "serialized contract value `{}` did not match published schema:\n{}",
             source.display(),
@@ -600,8 +627,8 @@ fn canonical_contract_reference_keeps_structured_command_and_aggregate_guidance(
             "- `launch.kind: command`",
             "- for long-running service processes, prefer `launch.kind: command` over opaque shell `run` or",
             "- `aggregate.tasks`: required non-empty ordered list of task names ota should execute as the aggregate body",
-            "- `aggregate` is a task body, so it is mutually exclusive with `run`, `script`, `command`, `prepare`, `launch`, and `action`",
-            "- tasks must declare exactly one task body: `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`, unless the task intentionally resolves through variants or execution-mode inheritance",
+            "- `aggregate` is a task body, so it is mutually exclusive with `run`, `script`, `command`, `compose`, `prepare`, `launch`, and `action`",
+            "- tasks must declare exactly one task body: `run`, `script`, `command`, `compose`, `prepare`, `launch`, `action`, or `aggregate`, unless the task intentionally resolves through variants or execution-mode inheritance",
             "- variant entries must declare exactly one of `run`, `script`, or `command`",
         ],
     );

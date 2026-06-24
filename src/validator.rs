@@ -3877,6 +3877,41 @@ fn validate_task_launch(
                 )));
             }
         }
+        crate::schema::TaskLaunchSpec::Compose(compose) => {
+            if backend != Backend::Native {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `launch.kind: compose`, which is only supported for native execution in this slice"
+                )));
+            }
+            if compose
+                .services
+                .iter()
+                .any(|service| service.trim().is_empty())
+            {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` must not declare empty `launch.services[]` entries"
+                )));
+            }
+            let Some(runtime) = runtime else {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `launch.kind: compose`, but does not declare `runtime`"
+                )));
+                return;
+            };
+            if runtime.kind != TaskRuntimeKind::Service {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `launch.kind: compose`, but runtime kind `{}` is not supported",
+                    match runtime.kind {
+                        TaskRuntimeKind::Service => "service",
+                    }
+                )));
+            }
+            if runtime.surfaces.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `launch.kind: compose`, but `runtime.surfaces` is empty"
+                )));
+            }
+        }
         crate::schema::TaskLaunchSpec::Container(container) => {
             if container.image.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
@@ -8017,6 +8052,7 @@ pub struct ServiceUsesOpaqueShellStartAdvisory {
     pub body_location: String,
     pub runtime_location: String,
     pub launch_location: String,
+    pub suggested_launch_kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -8551,11 +8587,12 @@ impl ContractAdvisory {
                 advisory.service_name, advisory.location
             ),
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
-                "task `{}` declares `runtime.kind: service` at `{}`, but starts that long-running workload through opaque shell `{}` at `{}`; this hides launch semantics from Ota and weakens governance around startup, interruption, and service ownership compared with `launch.kind: command`",
+                "task `{}` declares `runtime.kind: service` at `{}`, but starts that long-running workload through opaque shell `{}` at `{}`; this hides launch semantics from Ota and weakens governance around startup, interruption, and service ownership compared with `launch.kind: {}`",
                 advisory.task_name,
                 advisory.runtime_location,
                 advisory.body_kind,
-                advisory.body_location
+                advisory.body_location,
+                advisory.suggested_launch_kind
             ),
             ContractAdvisory::ReplaceableFiniteShellCommand(advisory) => format!(
                 "task `{}` keeps a finite argv-shaped command in shell `{}` at `{}` (`{}`), which is less governable and less inspectable than the first-class `command` surface",
@@ -8850,8 +8887,11 @@ impl ContractAdvisory {
                 advisory.location, advisory.service_name
             ),
             ContractAdvisory::ServiceUsesOpaqueShellStart(advisory) => format!(
-                "replace `{}` with `{}` modeled as `kind: command`; keep service exposure and readiness under `{}` and reserve `run`/`script` for shell-oriented finite tasks",
-                advisory.body_location, advisory.launch_location, advisory.runtime_location
+                "replace `{}` with `{}` modeled as `kind: {}`; keep service exposure and readiness under `{}` and reserve `run`/`script` for shell-oriented finite tasks",
+                advisory.body_location,
+                advisory.launch_location,
+                advisory.suggested_launch_kind,
+                advisory.runtime_location
             ),
             ContractAdvisory::ReplaceableFiniteShellCommand(advisory) => format!(
                 "replace `{}` with `tasks.{}.command` using `exe: {}` and `args: [{}]`; reserve `run`/`script` for shell behavior that cannot be modeled structurally",
@@ -9307,6 +9347,12 @@ fn collect_service_uses_opaque_shell_start_advisories(
             let top_level_shell =
                 opaque_shell_task_body(task.run.as_deref(), task.script.as_deref());
             if let Some((body_kind, body_location)) = top_level_shell {
+                let body_command = opaque_shell_body_command(
+                    task.run.as_deref(),
+                    task.script.as_deref(),
+                    body_kind,
+                )
+                .unwrap_or_default();
                 advisories.push(ContractAdvisory::ServiceUsesOpaqueShellStart(
                     ServiceUsesOpaqueShellStartAdvisory {
                         task_name: task_name.clone(),
@@ -9314,6 +9360,8 @@ fn collect_service_uses_opaque_shell_start_advisories(
                         body_location: format!("tasks.{task_name}.{body_location}"),
                         runtime_location: format!("tasks.{task_name}.runtime"),
                         launch_location: format!("tasks.{task_name}.launch"),
+                        suggested_launch_kind: suggested_launch_kind_for_shell(body_command)
+                            .to_string(),
                     },
                 ));
             }
@@ -9340,6 +9388,15 @@ fn collect_service_uses_opaque_shell_start_advisories(
             let Some((body_kind, body_location)) = opaque_shell_branch_body(task, branch) else {
                 continue;
             };
+            let body_command = match body_location {
+                OpaqueShellBodyLocation::Task("run") => task.run.as_deref(),
+                OpaqueShellBodyLocation::Task("script") => task.script.as_deref(),
+                OpaqueShellBodyLocation::Mode("run") => branch.run.as_deref(),
+                OpaqueShellBodyLocation::Mode("script") => branch.script.as_deref(),
+                _ => None,
+            }
+            .map(str::trim)
+            .unwrap_or_default();
 
             let Some(runtime) = branch.runtime.as_ref().or(task.runtime.as_ref()) else {
                 continue;
@@ -9373,6 +9430,8 @@ fn collect_service_uses_opaque_shell_start_advisories(
                     launch_location: format!(
                         "tasks.{task_name}.execution.modes.{backend_name}.launch"
                     ),
+                    suggested_launch_kind: suggested_launch_kind_for_shell(body_command)
+                        .to_string(),
                 },
             ));
         }
@@ -9398,6 +9457,59 @@ fn opaque_shell_task_body<'a>(
     } else {
         None
     }
+}
+
+fn opaque_shell_body_command<'a>(
+    run: Option<&'a str>,
+    script: Option<&'a str>,
+    body_kind: &str,
+) -> Option<&'a str> {
+    match body_kind {
+        "run" => run.map(str::trim).filter(|value| !value.is_empty()),
+        "script" => script.map(str::trim).filter(|value| !value.is_empty()),
+        _ => None,
+    }
+}
+
+fn suggested_launch_kind_for_shell(command: &str) -> &'static str {
+    if obvious_compose_launch_shell(command) {
+        "compose"
+    } else {
+        "command"
+    }
+}
+
+fn obvious_compose_launch_shell(command: &str) -> bool {
+    let Some(argv) = obvious_replaceable_finite_shell_argv(command) else {
+        return false;
+    };
+    obvious_compose_launch_argv(argv.as_slice())
+}
+
+fn obvious_compose_launch_argv(argv: &[String]) -> bool {
+    if argv.len() < 3 {
+        return false;
+    }
+    if !matches!(argv[0].as_str(), "docker" | "podman") {
+        return false;
+    }
+    if argv[1] != "compose" || argv[2] != "up" {
+        return false;
+    }
+    let mut detach_seen = false;
+    for value in argv.iter().skip(3) {
+        match value.as_str() {
+            "-d" => {
+                if detach_seen {
+                    return false;
+                }
+                detach_seen = true;
+            }
+            candidate if candidate.starts_with('-') => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 fn opaque_shell_branch_body(
@@ -12151,6 +12263,7 @@ fn launch_invokes_yarn(launch: &crate::schema::TaskLaunchSpec) -> bool {
                     || command_body_invokes_yarn(normalized.as_str())
             })
         }
+        crate::schema::TaskLaunchSpec::Compose(_) => false,
         crate::schema::TaskLaunchSpec::Container(_) => false,
     }
 }
@@ -23342,6 +23455,74 @@ workflows:
         .unwrap();
 
         validate_contract(&contract).expect("workflow prepare should accept compose up");
+    }
+
+    #[test]
+    fn allows_compose_launch_for_native_service_runtime() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  web:
+    kind: http
+    port: 3000
+    path: /
+tasks:
+  selfhost:
+    launch:
+      kind: compose
+      action: up
+      detach: true
+      services:
+        - api
+    requirements:
+      tools:
+        docker: "*"
+    runtime:
+      kind: service
+      surfaces:
+        - web
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("compose launch should validate");
+    }
+
+    #[test]
+    fn service_shell_start_advisory_prefers_compose_launch_for_compose_up() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+surfaces:
+  web:
+    kind: http
+    port: 3000
+    path: /
+tasks:
+  selfhost:
+    run: docker compose up -d api worker
+    runtime:
+      kind: service
+      surfaces:
+        - web
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::ServiceUsesOpaqueShellStart(value)
+                if value.task_name == "selfhost"
+                    && value.suggested_launch_kind == "compose"
+        )));
     }
 
     #[test]

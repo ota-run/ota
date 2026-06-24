@@ -51,6 +51,11 @@ env:
           template: .env.example
           include:
             - DATABASE_URL
+surfaces:
+  api:
+    kind: http
+    port: 3000
+    path: /
 services:
   api:
     manager:
@@ -111,11 +116,12 @@ tasks:
           env_files:
             - docker/.env.task
     launch:
-      kind: command
-      exe: docker
-      args:
-        - compose
-        - up
+      kind: compose
+      action: up
+    runtime:
+      kind: service
+      surfaces:
+        - api
     requirements:
       tools:
         docker: "*"
@@ -153,11 +159,12 @@ tasks:
             - debug
           project_name: compose-adapter-inputs-debug
     launch:
-      kind: command
-      exe: docker
-      args:
-        - compose
-        - up
+      kind: compose
+      action: up
+    runtime:
+      kind: service
+      surfaces:
+        - api
     requirements:
       tools:
         docker: "*"
@@ -206,11 +213,12 @@ tasks:
     context: host
     description: Start the compose stack with workflow-owned adapter root and overlays
     launch:
-      kind: command
-      exe: docker
-      args:
-        - compose
-        - up
+      kind: compose
+      action: up
+    runtime:
+      kind: service
+      surfaces:
+        - api
     requirements:
       tools:
         docker: "*"

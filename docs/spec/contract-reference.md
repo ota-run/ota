@@ -2170,13 +2170,18 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 
 `launch` fields:
 
-- `launch.kind`: required `command` or `container`
+- `launch.kind`: required `command`, `compose`, or `container`
 - `launch.kind: command`
   - `launch.exe`: required executable name or path
   - `launch.args`: optional argument list
   - `launch.cwd`: optional repo-relative working directory for that structured long-running process
     start; use it when the service launch truth is subdirectory-rooted but still one executable
     plus stable argv
+- `launch.kind: compose`
+  - `launch.engine`: optional compose CLI engine; `docker` by default, `podman` also supported
+  - `launch.action`: required compose launch action; currently `up`
+  - `launch.services`: optional ordered service list for scoped `compose up`
+  - `launch.detach`: optional detached startup flag for `compose up -d`
 - `launch.kind: container`
   - `launch.image`: required packaged runtime image
   - `launch.engine`: optional engine override; defaults to `docker`
@@ -2350,8 +2355,8 @@ reporting inside the contract surface.
 - `script` stays the multiline shell escape hatch
 - `command` is for finite argv-owned execution that Ota should model structurally without shell
   parsing
-- `launch` is for structured, inspectable starts that Ota should render and reason about without
-  hiding everything inside one shell string
+- `launch` is for structured, inspectable long-running starts that Ota should render and reason
+  about without hiding everything inside one shell string
 - `action` is for small built-in setup mutations that should stay deterministic and
   cross-platform instead of becoming shell-specific snippets
 - prefer `command` for finite task bodies such as `uv run pytest`, `poetry run pytest`,
@@ -2361,18 +2366,26 @@ reporting inside the contract surface.
 - for long-running service processes, prefer `launch.kind: command` over opaque shell `run` or
   `script`; if the service start is rooted in a repo subdirectory, prefer `launch.cwd` over fake
   shell `cd ... && ...`
+- for long-running Compose stack startup, prefer `launch.kind: compose` over raw shell or
+  `launch.kind: command` carrying `docker compose up ...` argv
 - pair `launch.kind: command` with `runtime.kind: service` plus `runtime.surfaces` or
   `runtime.listeners`; `launch` starts the process, while `runtime` declares what becomes reachable
   and how readiness is proved
+- pair `launch.kind: compose` with `runtime.kind: service`; `launch` owns the persistent
+  `compose up` start, while `runtime` still declares what becomes reachable and how readiness is
+  proved
 - `ota validate` and `ota doctor` warn when a task path resolves to shell `run` or `script`
-  together with `runtime.kind: service`; migrate that path to `launch.kind: command` unless the
-  task is truly a shell-oriented finite escape hatch
+  together with `runtime.kind: service`; migrate that path to `launch.kind: command` or
+  `launch.kind: compose` unless the task is truly a shell-oriented finite escape hatch
 - reserve `run` for finite shell tasks, pipelines, or real escape-hatch cases where a structured
   executable shape would be misleading or unavailable
 - reserve `script` for multiline finite shell escape hatches, not long-running service ownership
 - `command` reuses existing task env, input, receipt, dependency, and agent-safety behavior
 - `launch.kind: command` reuses existing task env, input, receipt, dependency, and agent-safety
   behavior
+- `launch.kind: compose` keeps host-side Compose cwd, env-file, file-stack, profile, and
+  project-name truth under `adapter_inputs.overlays.compose.*`, and keeps only persistent
+  `compose up` launch truth under `launch`
 - `launch.kind: container` is a task launch source, not an execution context
 - service tasks that use `launch.kind: container` still treat `runtime.surfaces` as the canonical
   public endpoint truth; launch must not create a competing published-port contract
@@ -2411,6 +2424,23 @@ tasks:
       kind: service
       surfaces:
         - backend
+
+  selfhost:
+    adapter_inputs:
+      overlays:
+        compose:
+          env_files:
+            - .env.selfhost
+    launch:
+      kind: compose
+      engine: docker
+      action: up
+      detach: true
+      services: [langfuse, langfuse-worker]
+    runtime:
+      kind: service
+      surfaces:
+        - web
 
   packaged:
     launch:
@@ -3002,7 +3032,7 @@ tasks:
 Rules:
 
 - task names must not be empty
-- tasks must declare exactly one task body: `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`, unless the task intentionally resolves through variants or execution-mode inheritance
+- tasks must declare exactly one task body: `run`, `script`, `command`, `compose`, `prepare`, `launch`, `action`, or `aggregate`, unless the task intentionally resolves through variants or execution-mode inheritance
 - input names must use lowercase snake_case
 - input defaults must not be empty
 - input allowed values must not be empty
