@@ -467,6 +467,9 @@ function Install-FromGit {
     }
 
     Write-OtaInfo "installing ota from $gitUrl..."
+    if (-not $env:CARGO_NET_GIT_FETCH_WITH_CLI) {
+        $env:CARGO_NET_GIT_FETCH_WITH_CLI = "true"
+    }
     if ($tag) {
         & cargo install --git $gitUrl --tag $tag ota --locked --force
     } elseif ($branch) {

@@ -545,6 +545,7 @@ install_from_cargo() {
     fi
 
     ota_info "installing ota from ${git_url}..."
+    export CARGO_NET_GIT_FETCH_WITH_CLI="${CARGO_NET_GIT_FETCH_WITH_CLI:-true}"
     if [ -n "${tag}" ]; then
       cargo install --git "${git_url}" --tag "${tag}" ota --locked --force
     elif [ -n "${branch}" ]; then
