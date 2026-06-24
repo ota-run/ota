@@ -1846,7 +1846,7 @@ Fields:
 - `run`: optional string for a single shell-compatible command
 - `script`: optional string for an inline multiline shell script
 - `command`: optional structured finite command body
-- `compose`: optional structured Compose execution body for `docker|podman compose exec/run`
+- `compose`: optional structured Compose execution body for `docker|podman compose exec/run/attach`
 - `prepare`: optional first-class finite preparation body for machine-readable setup or dependency hydration
 - `launch`: optional structured launch source for inspectable command or packaged container starts
 - `action`: optional first-class native setup action for small cross-platform repo-file mutations
