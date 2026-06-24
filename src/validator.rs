@@ -2606,6 +2606,7 @@ fn validate_tasks(
         let has_base_fields = task.run.is_some()
             || task.script.is_some()
             || task.command.is_some()
+            || task.compose.is_some()
             || task.prepare.is_some()
             || task.launch.is_some()
             || task.action.is_some()
@@ -2618,17 +2619,31 @@ fn validate_tasks(
             task.run.as_deref(),
             task.script.as_deref(),
             task.command.as_ref(),
+            task.compose.as_ref(),
         ) {
-            (Some(run), _, _) if run.trim().is_empty() => errors.push(ValidationError::new(
+            (Some(run), _, _, _) if run.trim().is_empty() => errors.push(ValidationError::new(
                 format!("task `{name}` must declare a non-empty `run` command"),
             )),
-            (_, Some(script), _) if script.trim().is_empty() => errors.push(ValidationError::new(
-                format!("task `{name}` must declare a non-empty `script` body"),
-            )),
-            (_, _, Some(command)) if command.exe.trim().is_empty() => {
+            (_, Some(script), _, _) if script.trim().is_empty() => {
+                errors.push(ValidationError::new(format!(
+                    "task `{name}` must declare a non-empty `script` body"
+                )))
+            }
+            (_, _, Some(command), _) if command.exe.trim().is_empty() => {
                 errors.push(ValidationError::new(format!(
                     "task `{name}` must declare a non-empty `command.exe`"
                 )))
+            }
+            (_, _, _, Some(compose)) => {
+                validate_task_compose_execution(name, "task", "compose", compose, errors);
+                validate_task_compose_execution_requirements(
+                    name,
+                    "task",
+                    "compose",
+                    compose,
+                    &task.requirements,
+                    errors,
+                );
             }
             _ => {}
         }
@@ -2636,6 +2651,7 @@ fn validate_tasks(
             task.run.is_some(),
             task.script.is_some(),
             task.command.is_some(),
+            task.compose.is_some(),
             task.prepare.is_some(),
             task.launch.is_some(),
             task.action.is_some(),
@@ -2646,13 +2662,13 @@ fn validate_tasks(
         .count();
         if execution_field_count > 1 {
             errors.push(ValidationError::new(format!(
-                "task `{name}` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
+                "task `{name}` must declare exactly one of `run`, `script`, `command`, `compose`, `prepare`, `launch`, `action`, or `aggregate`"
             )));
         }
 
         if !has_base_fields && task.variants.is_empty() && !has_mode_branches {
             errors.push(ValidationError::new(format!(
-                "task `{name}` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
+                "task `{name}` must declare exactly one of `run`, `script`, `command`, `compose`, `prepare`, `launch`, `action`, or `aggregate`"
             )));
         }
         if let Some(launch) = task.launch.as_ref() {
@@ -2805,32 +2821,57 @@ fn validate_tasks(
                 variant.run.as_deref(),
                 variant.script.as_deref(),
                 variant.command.as_ref(),
+                variant.compose.as_ref(),
             ) {
-                (Some(run), None, None) if run.trim().is_empty() => {
+                (Some(run), None, None, None) if run.trim().is_empty() => {
                     errors.push(ValidationError::new(format!(
                         "task `{name}` variant #{index} must declare a non-empty `run` command"
                     )))
                 }
-                (None, Some(script), None) if script.trim().is_empty() => {
+                (None, Some(script), None, None) if script.trim().is_empty() => {
                     errors.push(ValidationError::new(format!(
                         "task `{name}` variant #{index} must declare a non-empty `script` body"
                     )))
                 }
-                (None, None, Some(command)) if command.exe.trim().is_empty() => {
+                (None, None, Some(command), None) if command.exe.trim().is_empty() => {
                     errors.push(ValidationError::new(format!(
                         "task `{name}` variant #{index} must declare a non-empty `command.exe`"
                     )))
                 }
-                (Some(_), Some(_), None)
-                | (Some(_), None, Some(_))
-                | (None, Some(_), Some(_))
-                | (Some(_), Some(_), Some(_)) => errors.push(ValidationError::new(format!(
-                    "task `{name}` variant #{index} must not declare more than one of `run`, `script`, or `command`"
+                (None, None, None, Some(compose)) => validate_task_compose_execution(
+                    name,
+                    &format!("variant #{index}"),
+                    "compose",
+                    compose,
+                    errors,
+                ),
+                (Some(_), Some(_), None, None)
+                | (Some(_), None, Some(_), None)
+                | (Some(_), None, None, Some(_))
+                | (None, Some(_), Some(_), None)
+                | (None, Some(_), None, Some(_))
+                | (None, None, Some(_), Some(_))
+                | (Some(_), Some(_), Some(_), None)
+                | (Some(_), Some(_), None, Some(_))
+                | (Some(_), None, Some(_), Some(_))
+                | (None, Some(_), Some(_), Some(_))
+                | (Some(_), Some(_), Some(_), Some(_)) => errors.push(ValidationError::new(format!(
+                    "task `{name}` variant #{index} must not declare more than one of `run`, `script`, `command`, or `compose`"
                 ))),
-                (None, None, None) => errors.push(ValidationError::new(format!(
-                    "task `{name}` variant #{index} must declare exactly one of `run`, `script`, or `command`"
+                (None, None, None, None) => errors.push(ValidationError::new(format!(
+                    "task `{name}` variant #{index} must declare exactly one of `run`, `script`, `command`, or `compose`"
                 ))),
                 _ => {}
+            }
+            if let Some(compose) = variant.compose.as_ref() {
+                validate_task_compose_execution_requirements(
+                    name,
+                    &format!("variant #{index}"),
+                    "compose",
+                    compose,
+                    &task.requirements,
+                    errors,
+                );
             }
         }
 
@@ -3217,6 +3258,7 @@ fn validate_task_mode_execution(
             task.run.is_some(),
             task.script.is_some(),
             task.command.is_some(),
+            task.compose.is_some(),
             task.prepare.is_some(),
             task.launch.is_some(),
             task.action.is_some(),
@@ -3260,56 +3302,105 @@ fn validate_task_mode_execution(
             branch.run.as_deref(),
             branch.script.as_deref(),
             branch.command.as_ref(),
+            branch.compose.as_ref(),
             branch.prepare.as_ref(),
             branch.launch.as_ref(),
         ) {
-            (Some(run), None, None, None, None) if run.trim().is_empty() => errors.push(ValidationError::new(
+            (Some(run), None, None, None, None, None) if run.trim().is_empty() => errors.push(ValidationError::new(
                 format!(
                     "task `{task_name}` mode `{mode_name}` must declare a non-empty `run` command"
                 ),
             )),
-            (None, Some(script), None, None, None) if script.trim().is_empty() => {
+            (None, Some(script), None, None, None, None) if script.trim().is_empty() => {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` mode `{mode_name}` must declare a non-empty `script` body"
                 )))
             }
-            (None, None, Some(command), None, None) if command.exe.trim().is_empty() => {
+            (None, None, Some(command), None, None, None) if command.exe.trim().is_empty() => {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` mode `{mode_name}` must declare a non-empty `command.exe`"
                 )))
             }
-            (Some(_), Some(_), None, None, None)
-            | (Some(_), None, Some(_), None, None)
-            | (Some(_), None, None, Some(_), None)
-            | (Some(_), None, None, None, Some(_))
-            | (None, Some(_), Some(_), None, None)
-            | (None, Some(_), None, Some(_), None)
-            | (None, Some(_), None, None, Some(_))
-            | (None, None, Some(_), Some(_), None)
-            | (None, None, Some(_), None, Some(_))
-            | (None, None, None, Some(_), Some(_))
-            | (Some(_), Some(_), Some(_), None, None)
-            | (Some(_), Some(_), None, Some(_), None)
-            | (Some(_), Some(_), None, None, Some(_))
-            | (Some(_), None, Some(_), Some(_), None)
-            | (Some(_), None, Some(_), None, Some(_))
-            | (Some(_), None, None, Some(_), Some(_))
-            | (None, Some(_), Some(_), Some(_), None)
-            | (None, Some(_), Some(_), None, Some(_))
-            | (None, Some(_), None, Some(_), Some(_))
-            | (None, None, Some(_), Some(_), Some(_))
-            | (Some(_), Some(_), Some(_), Some(_), None)
-            | (Some(_), Some(_), Some(_), None, Some(_))
-            | (Some(_), Some(_), None, Some(_), Some(_))
-            | (Some(_), None, Some(_), Some(_), Some(_))
-            | (None, Some(_), Some(_), Some(_), Some(_))
-            | (Some(_), Some(_), Some(_), Some(_), Some(_)) => errors.push(ValidationError::new(format!(
-                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run`, `script`, `command`, `prepare`, or `launch`"
+            (None, None, None, Some(compose), None, None) => validate_task_compose_execution(
+                task_name,
+                &format!("mode `{mode_name}`"),
+                "compose",
+                compose,
+                errors,
+            ),
+            (Some(_), Some(_), None, None, None, None)
+            | (Some(_), None, Some(_), None, None, None)
+            | (Some(_), None, None, Some(_), None, None)
+            | (Some(_), None, None, None, Some(_), None)
+            | (Some(_), None, None, None, None, Some(_))
+            | (None, Some(_), Some(_), None, None, None)
+            | (None, Some(_), None, Some(_), None, None)
+            | (None, Some(_), None, None, Some(_), None)
+            | (None, Some(_), None, None, None, Some(_))
+            | (None, None, Some(_), Some(_), None, None)
+            | (None, None, Some(_), None, Some(_), None)
+            | (None, None, Some(_), None, None, Some(_))
+            | (None, None, None, Some(_), Some(_), None)
+            | (None, None, None, Some(_), None, Some(_))
+            | (None, None, None, None, Some(_), Some(_))
+            | (Some(_), Some(_), Some(_), None, None, None)
+            | (Some(_), Some(_), None, Some(_), None, None)
+            | (Some(_), Some(_), None, None, Some(_), None)
+            | (Some(_), Some(_), None, None, None, Some(_))
+            | (Some(_), None, Some(_), Some(_), None, None)
+            | (Some(_), None, Some(_), None, Some(_), None)
+            | (Some(_), None, Some(_), None, None, Some(_))
+            | (Some(_), None, None, Some(_), Some(_), None)
+            | (Some(_), None, None, Some(_), None, Some(_))
+            | (Some(_), None, None, None, Some(_), Some(_))
+            | (None, Some(_), Some(_), Some(_), None, None)
+            | (None, Some(_), Some(_), None, Some(_), None)
+            | (None, Some(_), Some(_), None, None, Some(_))
+            | (None, Some(_), None, Some(_), Some(_), None)
+            | (None, Some(_), None, Some(_), None, Some(_))
+            | (None, Some(_), None, None, Some(_), Some(_))
+            | (None, None, Some(_), Some(_), Some(_), None)
+            | (None, None, Some(_), Some(_), None, Some(_))
+            | (None, None, Some(_), None, Some(_), Some(_))
+            | (None, None, None, Some(_), Some(_), Some(_))
+            | (Some(_), Some(_), Some(_), Some(_), None, None)
+            | (Some(_), Some(_), Some(_), None, Some(_), None)
+            | (Some(_), Some(_), Some(_), None, None, Some(_))
+            | (Some(_), Some(_), None, Some(_), Some(_), None)
+            | (Some(_), Some(_), None, Some(_), None, Some(_))
+            | (Some(_), Some(_), None, None, Some(_), Some(_))
+            | (Some(_), None, Some(_), Some(_), Some(_), None)
+            | (Some(_), None, Some(_), Some(_), None, Some(_))
+            | (Some(_), None, Some(_), None, Some(_), Some(_))
+            | (Some(_), None, None, Some(_), Some(_), Some(_))
+            | (None, Some(_), Some(_), Some(_), Some(_), None)
+            | (None, Some(_), Some(_), Some(_), None, Some(_))
+            | (None, Some(_), Some(_), None, Some(_), Some(_))
+            | (None, Some(_), None, Some(_), Some(_), Some(_))
+            | (None, None, Some(_), Some(_), Some(_), Some(_))
+            | (Some(_), Some(_), Some(_), Some(_), Some(_), None)
+            | (Some(_), Some(_), Some(_), Some(_), None, Some(_))
+            | (Some(_), Some(_), Some(_), None, Some(_), Some(_))
+            | (Some(_), Some(_), None, Some(_), Some(_), Some(_))
+            | (Some(_), None, Some(_), Some(_), Some(_), Some(_))
+            | (None, Some(_), Some(_), Some(_), Some(_), Some(_))
+            | (Some(_), Some(_), Some(_), Some(_), Some(_), Some(_)) => errors.push(ValidationError::new(format!(
+                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run`, `script`, `command`, `compose`, `prepare`, or `launch`"
             ))),
-            (None, None, None, None, None) if !has_fallback_execution => errors.push(ValidationError::new(format!(
-                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run`, `script`, `command`, `prepare`, or `launch` because the task has no base execution to inherit"
+            (None, None, None, None, None, None) if !has_fallback_execution => errors.push(ValidationError::new(format!(
+                "task `{task_name}` mode `{mode_name}` must declare exactly one of `run`, `script`, `command`, `compose`, `prepare`, or `launch` because the task has no base execution to inherit"
             ))),
             _ => {}
+        }
+        if let Some(compose) = branch.compose.as_ref() {
+            validate_task_compose_execution_requirements(
+                task_name,
+                &format!("mode `{mode_name}`"),
+                "compose",
+                compose,
+                &task.requirements,
+                errors,
+            );
         }
         if let Some(orchestrator) = branch.orchestrator.as_ref() {
             validate_task_execution_orchestrator(
@@ -3322,6 +3413,8 @@ fn validate_task_mode_execution(
                     || (!has_mode_execution_body(branch) && task.script.is_some()),
                 branch.command.is_some()
                     || (!has_mode_execution_body(branch) && task.command.is_some()),
+                branch.compose.is_some()
+                    || (!has_mode_execution_body(branch) && task.compose.is_some()),
                 branch.prepare.is_some()
                     || (!has_mode_execution_body(branch) && task.prepare.is_some()),
                 branch.launch.is_some()
@@ -3364,6 +3457,7 @@ fn has_mode_execution_body(branch: &crate::schema::TaskModeBranchSpec) -> bool {
     branch.run.is_some()
         || branch.script.is_some()
         || branch.command.is_some()
+        || branch.compose.is_some()
         || branch.prepare.is_some()
         || branch.launch.is_some()
 }
@@ -3376,6 +3470,7 @@ fn validate_task_execution_orchestrator(
     has_run: bool,
     has_script: bool,
     has_command: bool,
+    has_compose: bool,
     has_prepare: bool,
     has_launch: bool,
     has_action: bool,
@@ -3399,6 +3494,7 @@ fn validate_task_execution_orchestrator(
     if !(has_run
         || has_script
         || has_command
+        || has_compose
         || has_prepare
         || has_launch
         || has_action
@@ -3427,6 +3523,11 @@ fn validate_task_execution_orchestrator(
                     "{scope} `{task_name}` uses `execution.orchestrator.mode: task`, but `command` tasks do not provide an orchestrator task name"
                 )));
             }
+            if has_compose {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: task`, but `compose` execution does not provide an orchestrator task name"
+                )));
+            }
             if has_launch {
                 errors.push(ValidationError::new(format!(
                     "{scope} `{task_name}` uses `execution.orchestrator.mode: task`, but `launch` execution does not provide an orchestrator task name"
@@ -3445,6 +3546,99 @@ fn validate_task_execution_orchestrator(
                 )));
             }
         }
+    }
+}
+
+fn validate_task_compose_invocation(
+    task_name: &str,
+    scope: &str,
+    field_path: &str,
+    compose: &crate::schema::TaskComposeInvocationSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    if compose.service.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` {scope} must declare a non-empty `{field_path}.service`"
+        )));
+    }
+    if let Some(workdir) = compose.workdir.as_deref()
+        && workdir.trim().is_empty()
+    {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` {scope} must not declare an empty `{field_path}.workdir`"
+        )));
+    }
+    if compose.rm && compose.kind != crate::schema::TaskComposeExecutionKind::Run {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` {scope} must only declare `{field_path}.rm: true` with `kind: run`"
+        )));
+    }
+    if compose.detach && compose.kind != crate::schema::TaskComposeExecutionKind::Exec {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` {scope} must only declare `{field_path}.detach: true` with `kind: exec`"
+        )));
+    }
+}
+
+fn compose_cli_requirement_name(engine: crate::schema::ComposeCliEngine) -> &'static str {
+    match engine {
+        crate::schema::ComposeCliEngine::Docker => "docker",
+        crate::schema::ComposeCliEngine::Podman => "podman",
+    }
+}
+
+fn compose_wrapped_dependency_hydration_requires_host_tooling(
+    source: &crate::schema::TaskDependencyHydrationSourceSpec,
+) -> bool {
+    source.compose_invocation().is_none()
+}
+
+fn validate_compose_wrapped_dependency_hydration_requirements(
+    task_name: &str,
+    source: &crate::schema::TaskDependencyHydrationSourceSpec,
+    requirements: &crate::schema::TaskRequirementsSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(compose) = source.compose_invocation() else {
+        return;
+    };
+
+    let tool_name = compose_cli_requirement_name(compose.engine);
+    if !requirements.tools.contains_key(tool_name) {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` prepare `dependency_hydration` with `prepare.source.compose.engine: {tool_name}` must declare `requirements.tools.{tool_name}`"
+        )));
+    }
+}
+
+fn validate_task_compose_execution(
+    task_name: &str,
+    scope: &str,
+    field_path: &str,
+    compose: &crate::schema::TaskComposeExecutionSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    validate_task_compose_invocation(task_name, scope, field_path, &compose.invocation, errors);
+    if compose.exe.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` {scope} must declare a non-empty `{field_path}.exe`"
+        )));
+    }
+}
+
+fn validate_task_compose_execution_requirements(
+    task_name: &str,
+    scope: &str,
+    field_path: &str,
+    compose: &crate::schema::TaskComposeExecutionSpec,
+    requirements: &crate::schema::TaskRequirementsSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let tool_name = compose_cli_requirement_name(compose.invocation.engine);
+    if !requirements.tools.contains_key(tool_name) {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` {scope} with `{field_path}.engine: {tool_name}` must declare `requirements.tools.{tool_name}`"
+        )));
     }
 }
 
@@ -4389,10 +4583,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements
-                        .toolchains
-                        .iter()
-                        .any(|toolchain| toolchain == "node")
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements
+                            .toolchains
+                            .iter()
+                            .any(|toolchain| toolchain == "node")
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: node_package_manager` must declare `requirements.toolchains: [node]`"
@@ -4537,10 +4732,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements
-                        .toolchains
-                        .iter()
-                        .any(|toolchain| toolchain == "ruby")
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements
+                            .toolchains
+                            .iter()
+                            .any(|toolchain| toolchain == "ruby")
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: bundler` must declare `requirements.toolchains: [ruby]`"
@@ -4589,10 +4785,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements
-                        .toolchains
-                        .iter()
-                        .any(|toolchain| toolchain == "python")
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements
+                            .toolchains
+                            .iter()
+                            .any(|toolchain| toolchain == "python")
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: uv` must declare `requirements.toolchains: [python]`"
@@ -4641,10 +4838,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements
-                        .toolchains
-                        .iter()
-                        .any(|toolchain| toolchain == "python")
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements
+                            .toolchains
+                            .iter()
+                            .any(|toolchain| toolchain == "python")
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: poetry` must declare `requirements.toolchains: [python]`"
@@ -4700,10 +4898,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements
-                        .toolchains
-                        .iter()
-                        .any(|toolchain| toolchain == "go")
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements
+                            .toolchains
+                            .iter()
+                            .any(|toolchain| toolchain == "go")
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: go_modules` must declare `requirements.toolchains: [go]`"
@@ -4747,7 +4946,9 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements.tools.contains_key("helm") {
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements.tools.contains_key("helm")
+                    {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: helm` must declare `requirements.tools.helm`"
                         )));
@@ -4795,16 +4996,20 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements
-                        .toolchains
-                        .iter()
-                        .any(|toolchain| toolchain == "java")
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements
+                            .toolchains
+                            .iter()
+                            .any(|toolchain| toolchain == "java")
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: maven` must declare `requirements.toolchains: [java]`"
                         )));
                     }
-                    if !source.wrapper && !requirements.tools.contains_key("maven") {
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !source.wrapper
+                        && !requirements.tools.contains_key("maven")
+                    {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: maven` and `prepare.source.wrapper: false` must declare `requirements.tools.maven`"
                         )));
@@ -4847,16 +5052,20 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements
-                        .toolchains
-                        .iter()
-                        .any(|toolchain| toolchain == "java")
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements
+                            .toolchains
+                            .iter()
+                            .any(|toolchain| toolchain == "java")
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: gradle` must declare `requirements.toolchains: [java]`"
                         )));
                     }
-                    if !source.wrapper && !requirements.tools.contains_key("gradle") {
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !source.wrapper
+                        && !requirements.tools.contains_key("gradle")
+                    {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: gradle` and `prepare.source.wrapper: false` must declare `requirements.tools.gradle`"
                         )));
@@ -4899,10 +5108,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements
-                        .toolchains
-                        .iter()
-                        .any(|toolchain| toolchain == "rust")
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements
+                            .toolchains
+                            .iter()
+                            .any(|toolchain| toolchain == "rust")
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: cargo` must declare `requirements.toolchains: [rust]`"
@@ -4946,10 +5156,11 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if !requirements
-                        .toolchains
-                        .iter()
-                        .any(|toolchain| toolchain == "dotnet")
+                    if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
+                        && !requirements
+                            .toolchains
+                            .iter()
+                            .any(|toolchain| toolchain == "dotnet")
                     {
                         errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `dependency_hydration` with `source.kind: dotnet_restore` must declare `requirements.toolchains: [dotnet]`"
@@ -4968,6 +5179,21 @@ fn validate_task_prepare(
                         )));
                     }
                 }
+            }
+            if let Some(compose) = spec.source.compose_invocation() {
+                validate_compose_wrapped_dependency_hydration_requirements(
+                    task_name,
+                    &spec.source,
+                    requirements,
+                    errors,
+                );
+                validate_task_compose_invocation(
+                    task_name,
+                    "prepare `dependency_hydration`",
+                    "prepare.source.compose",
+                    compose,
+                    errors,
+                );
             }
         }
     }
@@ -5161,7 +5387,12 @@ fn validate_task_ensure_bundle_step(
                     "task `{task_name}` action `ensure_bundle` step `{index}` (`reset_compose_service_volume`) `{prefix}.volume` must not contain newline characters"
                 )));
             }
-            validate_compose_adapter_inputs(Some(task_name), prefix.as_str(), &spec.compose, errors);
+            validate_compose_adapter_inputs(
+                Some(task_name),
+                prefix.as_str(),
+                &spec.compose,
+                errors,
+            );
         }
     }
 }
@@ -8642,9 +8873,7 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_replaceable_container_network_ownership_advisories(
         contract,
     ));
-    advisories.extend(collect_replaceable_compose_volume_reset_ownership_advisories(
-        contract,
-    ));
+    advisories.extend(collect_replaceable_compose_volume_reset_ownership_advisories(contract));
     advisories.extend(collect_replaceable_compose_env_file_ownership_advisories(
         contract,
     ));
@@ -17537,8 +17766,7 @@ tasks:
         )
         .unwrap();
 
-        validate_contract(&contract)
-            .expect("reset_compose_service_volume action should validate");
+        validate_contract(&contract).expect("reset_compose_service_volume action should validate");
     }
 
     #[test]
@@ -22269,7 +22497,148 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
+            "task `dev` must declare exactly one of `run`, `script`, `command`, `compose`, `prepare`, `launch`, `action`, or `aggregate`"
+        );
+    }
+
+    #[test]
+    fn rejects_compose_exec_with_rm() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    compose:
+      kind: exec
+      rm: true
+      service: api
+      exe: bundle
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` task must only declare `compose.rm: true` with `kind: run`"
+        );
+    }
+
+    #[test]
+    fn rejects_compose_task_without_engine_tool_requirement() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    compose:
+      kind: exec
+      service: api
+      exe: bundle
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` task with `compose.engine: docker` must declare `requirements.tools.docker`"
+        );
+    }
+
+    #[test]
+    fn rejects_compose_variant_without_engine_tool_requirement() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    variants:
+      - when:
+          os: macos
+        compose:
+          engine: podman
+          kind: exec
+          service: api
+          exe: bundle
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` variant #0 with `compose.engine: podman` must declare `requirements.tools.podman`"
+        );
+    }
+
+    #[test]
+    fn rejects_compose_mode_without_engine_tool_requirement() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    execution:
+      default_mode: native
+      modes:
+        native:
+          compose:
+            kind: exec
+            service: api
+            exe: bundle
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors
+            .to_string()
+            .contains("task `dev` mode `native` with `compose.engine: docker` must declare `requirements.tools.docker`"));
+    }
+
+    #[test]
+    fn rejects_compose_run_with_detach() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    compose:
+      kind: run
+      detach: true
+      service: api
+      exe: bundle
+    requirements:
+      tools:
+        docker: "*"
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert_eq!(errors.errors().len(), 1);
+        assert_eq!(
+            errors.errors()[0].to_string(),
+            "task `dev` task must only declare `compose.detach: true` with `kind: exec`"
         );
     }
 
@@ -22292,7 +22661,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
+            "task `dev` must declare exactly one of `run`, `script`, `command`, `compose`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -22319,7 +22688,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
+            "task `dev` must declare exactly one of `run`, `script`, `command`, `compose`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -22346,7 +22715,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
+            "task `dev` must declare exactly one of `run`, `script`, `command`, `compose`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -22369,7 +22738,7 @@ tasks:
         assert_eq!(errors.errors().len(), 1);
         assert_eq!(
             errors.errors()[0].to_string(),
-            "task `dev` must declare exactly one of `run`, `script`, `command`, `prepare`, `launch`, `action`, or `aggregate`"
+            "task `dev` must declare exactly one of `run`, `script`, `command`, `compose`, `prepare`, `launch`, `action`, or `aggregate`"
         );
     }
 
@@ -23372,6 +23741,84 @@ tasks:
     }
 
     #[test]
+    fn accepts_compose_wrapped_node_package_manager_prepare_without_host_node_toolchain() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: app
+        manager: npm
+        mode: ci
+        compose:
+          kind: run
+          service: api
+          workdir: /workspace
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      writes:
+        - app/node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("compose-wrapped node hydration should not require host node toolchain");
+    }
+
+    #[test]
+    fn rejects_compose_wrapped_node_package_manager_prepare_without_compose_engine_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: app
+        manager: npm
+        mode: ci
+        compose:
+          kind: run
+          service: api
+          workdir: /workspace
+    effects:
+      writes:
+        - app/node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract)
+            .expect_err("compose-wrapped node hydration should require docker tool");
+        assert!(
+            errors
+                .to_string()
+                .contains("must declare `requirements.tools.docker`")
+        );
+    }
+
+    #[test]
     fn rejects_dependency_hydration_when_medium_and_source_kind_disagree() {
         let docker_contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -23803,6 +24250,79 @@ tasks:
         assert!(
             rendered.contains("must declare at least one durable repo write in `effects.writes`")
         );
+    }
+
+    #[test]
+    fn accepts_compose_wrapped_bundler_prepare_without_host_ruby_toolchain() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+        compose:
+          kind: exec
+          service: api
+          workdir: /workspace
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      writes:
+        - .bundle
+        - vendor/bundle
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("compose-wrapped bundler hydration should not require host ruby toolchain");
+    }
+
+    #[test]
+    fn accepts_compose_wrapped_maven_prepare_without_host_maven_tool() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: maven
+        cwd: .
+        wrapper: false
+        compose:
+          kind: exec
+          service: api
+          workdir: /workspace
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("compose-wrapped maven hydration should not require host maven tool");
     }
 
     #[test]

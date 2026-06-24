@@ -9950,6 +9950,7 @@ fn build_assist_add_task_proposal(
         run: None,
         script: None,
         command: None,
+        compose: None,
         prepare: None,
         launch: None,
         action: None,
@@ -39040,6 +39041,32 @@ fn render_task_command_text(command: &crate::output::TaskCommandSummary<'_>) -> 
     preview
 }
 
+fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary<'_>) -> String {
+    let mut preview = format!("{} compose {}", compose.engine, compose.kind);
+    if compose.detach {
+        preview.push_str(" -d");
+    }
+    if !compose.tty {
+        preview.push_str(" -T");
+    }
+    if compose.rm {
+        preview.push_str(" --rm");
+    }
+    if let Some(workdir) = compose.workdir.filter(|workdir| !workdir.trim().is_empty()) {
+        preview.push_str(" -w ");
+        preview.push_str(workdir);
+    }
+    preview.push(' ');
+    preview.push_str(compose.service);
+    preview.push(' ');
+    preview.push_str(compose.exe);
+    if !compose.args.is_empty() {
+        preview.push(' ');
+        preview.push_str(&compose.args.join(" "));
+    }
+    preview
+}
+
 fn render_task_default_mode(task: &TaskSummary<'_>) -> &'static str {
     task.default_mode.unwrap_or(task.effective_default_mode)
 }
@@ -39052,6 +39079,7 @@ fn render_task_command_preview(task: &TaskSummary<'_>) -> String {
                 .map(|script| script.lines().next().unwrap_or(script).trim().to_string())
         })
         .or_else(|| task.command.as_ref().map(render_task_command_text))
+        .or_else(|| task.compose.as_ref().map(render_task_compose_text))
         .or_else(|| task.launch.as_ref().map(render_task_launch_preview))
         .or_else(|| task.action.as_ref().map(render_task_action_text))
         .or_else(|| task.prepare.as_ref().map(render_task_prepare_text))
@@ -39231,6 +39259,17 @@ fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> 
             prepare.no_root,
             prepare.skip_tests,
             &prepare.targets,
+            prepare.compose.as_ref().map(|compose| {
+                (
+                    compose.engine,
+                    compose.kind,
+                    compose.service,
+                    compose.workdir,
+                    compose.rm,
+                    compose.detach,
+                    compose.tty,
+                )
+            }),
         ),
         _ => String::from("-"),
     }
@@ -39288,6 +39327,17 @@ fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> 
             prepare.no_root,
             prepare.skip_tests,
             &prepare.targets,
+            prepare.compose.as_ref().map(|compose| {
+                (
+                    compose.engine,
+                    compose.kind,
+                    compose.service.as_str(),
+                    compose.workdir.as_deref(),
+                    compose.rm,
+                    compose.detach,
+                    compose.tty,
+                )
+            }),
         ),
         _ => String::from("-"),
     }
@@ -39308,9 +39358,10 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
     no_root: bool,
     skip_tests: bool,
     targets: &[T],
+    compose: Option<(&str, &str, &str, Option<&str>, bool, bool, bool)>,
 ) -> String {
     let medium = medium.unwrap_or("dependencies").replace('_', " ");
-    match source_kind {
+    let base = match source_kind {
         Some("docker_compose") => {
             let source = match (cwd, file) {
                 (Some(cwd), Some(file)) => format!("docker compose `{cwd}/{file}`"),
@@ -39407,6 +39458,28 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
         }
         Some(other) => format!("hydrate {medium} from {}", other.replace('_', " ")),
         None => format!("hydrate {medium} from declared source"),
+    };
+
+    if let Some((engine, kind, service, workdir, rm, detach, tty)) = compose {
+        let mut suffix = format!(" via {engine} compose {kind}");
+        if detach {
+            suffix.push_str(" -d");
+        }
+        if !tty {
+            suffix.push_str(" -T");
+        }
+        if rm {
+            suffix.push_str(" --rm");
+        }
+        if let Some(workdir) = workdir.filter(|workdir| !workdir.trim().is_empty()) {
+            suffix.push_str(" -w ");
+            suffix.push_str(workdir);
+        }
+        suffix.push(' ');
+        suffix.push_str(service);
+        format!("{base}{suffix}")
+    } else {
+        base
     }
 }
 
@@ -51123,6 +51196,7 @@ tasks:
             run: None,
             script: Some("./scripts/api/run-api-tests.sh"),
             command: None,
+            compose: None,
             launch: None,
             action: None,
             prepare: None,
@@ -51198,6 +51272,7 @@ tasks:
             run: None,
             script: Some("./scripts/api/run-api-tests.sh"),
             command: None,
+            compose: None,
             launch: None,
             action: None,
             prepare: None,
@@ -51254,6 +51329,7 @@ tasks:
             run: None,
             script: None,
             command: None,
+            compose: None,
             launch: None,
             action: None,
             prepare: None,
@@ -51323,6 +51399,7 @@ tasks:
             run: Some("pnpm dev"),
             script: None,
             command: None,
+            compose: None,
             launch: None,
             action: None,
             prepare: None,
@@ -51401,6 +51478,7 @@ tasks:
             run: None,
             script: Some("pnpm install"),
             command: None,
+            compose: None,
             launch: None,
             action: None,
             prepare: None,
@@ -51455,6 +51533,7 @@ tasks:
             run: None,
             script: None,
             command: None,
+            compose: None,
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
@@ -51477,6 +51556,7 @@ tasks:
                         no_root: false,
                         skip_tests: false,
                         targets: Vec::new(),
+                        compose: None,
                     },
                     crate::output::TaskPrepareSummary {
                         kind: "dependency_hydration",
@@ -51495,6 +51575,7 @@ tasks:
                         no_root: false,
                         skip_tests: false,
                         targets: Vec::new(),
+                        compose: None,
                     },
                 ],
                 medium: None,
@@ -51511,6 +51592,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                compose: None,
             }),
             aggregate: None,
             effects: crate::output::TaskEffectsSummary {
@@ -51563,6 +51645,7 @@ tasks:
             run: None,
             script: None,
             command: None,
+            compose: None,
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
@@ -51582,6 +51665,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                compose: None,
             }),
             aggregate: None,
             effects: crate::output::TaskEffectsSummary::default(),
@@ -51614,6 +51698,7 @@ tasks:
             run: None,
             script: None,
             command: None,
+            compose: None,
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
@@ -51633,6 +51718,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                compose: None,
             }),
             aggregate: None,
             effects: crate::output::TaskEffectsSummary::default(),
@@ -51687,6 +51773,7 @@ tasks:
             run: None,
             script: None,
             command: None,
+            compose: None,
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
@@ -51706,6 +51793,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                compose: None,
             }),
             aggregate: None,
             effects: crate::output::TaskEffectsSummary::default(),
@@ -51753,6 +51841,7 @@ tasks:
             run: None,
             script: None,
             command: None,
+            compose: None,
             launch: None,
             action: None,
             prepare: Some(crate::output::TaskPrepareSummary {
@@ -51772,6 +51861,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                compose: None,
             }),
             aggregate: None,
             effects: crate::output::TaskEffectsSummary::default(),
@@ -51794,6 +51884,66 @@ tasks:
         assert!(
             rendered.contains(
                 "Prepare: hydrate package dependencies with `npm install --force` in `.`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_tasks_text_previews_compose_execution_body() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "db:migrate",
+            context: Some("host"),
+            default_mode: None,
+            effective_default_mode: "native",
+            description: Some("Run database migrations"),
+            notes: None,
+            category: None,
+            env: &env,
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs: &inputs,
+            kind: "compose_exec",
+            run: None,
+            script: None,
+            command: None,
+            compose: Some(crate::output::TaskComposeExecutionSummary {
+                kind: "exec",
+                engine: "docker",
+                service: "api",
+                exe: "bundle",
+                args: vec!["exec", "rails", "db:migrate"],
+                workdir: Some("/workspace"),
+                rm: false,
+                detach: false,
+                tty: false,
+            }),
+            launch: None,
+            action: None,
+            prepare: None,
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+
+        assert!(
+            rendered.contains(
+                "Command Preview: docker compose exec -T -w /workspace api bundle exec rails db:migrate"
             ),
             "{rendered}"
         );
@@ -52105,6 +52255,7 @@ workflows:
                 run: None,
                 script: None,
                 command: None,
+                compose: None,
                 launch: Some(crate::output::TaskLaunchSummary {
                     kind: "command",
                     exe: Some("npx"),

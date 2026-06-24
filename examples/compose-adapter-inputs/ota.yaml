@@ -127,6 +127,47 @@ tasks:
     requirements:
       tools:
         docker: "*"
+  compose:exec:command:
+    context: host
+    description: Run a direct argv command inside the api service through first-class compose execution
+    adapter_inputs:
+      overlays:
+        compose:
+          cwd: docker
+          files:
+            - docker/docker-compose.yml
+    compose:
+      kind: exec
+      service: api
+      workdir: /workspace
+      exe: npm
+      args:
+        - run
+        - lint
+    requirements:
+      tools:
+        docker: "*"
+  compose:exec:detached:
+    context: host
+    description: Start a detached in-service bootstrap command through first-class compose execution
+    adapter_inputs:
+      overlays:
+        compose:
+          cwd: docker
+          files:
+            - docker/docker-compose.yml
+    compose:
+      kind: exec
+      detach: true
+      service: api
+      workdir: /workspace
+      exe: sh
+      args:
+        - -lc
+        - ./scripts/start-background-worker.sh
+    requirements:
+      tools:
+        docker: "*"
   compose:workflow:up:
     context: host
     description: Start the compose stack with workflow-owned adapter root and overlays

@@ -3775,6 +3775,8 @@ pub struct TaskSpec {
     #[serde(default)]
     pub command: Option<TaskCommandSpec>,
     #[serde(default)]
+    pub compose: Option<TaskComposeExecutionSpec>,
+    #[serde(default)]
     pub prepare: Option<TaskPrepareSpec>,
     #[serde(default)]
     pub launch: Option<TaskLaunchSpec>,
@@ -3926,18 +3928,20 @@ impl TaskSpec {
             self.run.as_ref(),
             self.script.as_ref(),
             self.command.as_ref(),
+            self.compose.as_ref(),
             self.prepare.as_ref(),
             self.launch.as_ref(),
             self.action.as_ref(),
             self.aggregate.as_ref(),
         ) {
-            (Some(_), None, None, None, None, None, None) => Some("run"),
-            (None, Some(_), None, None, None, None, None) => Some("script"),
-            (None, None, Some(_), None, None, None, None) => Some("command"),
-            (None, None, None, Some(prepare), None, None, None) => Some(prepare.kind_str()),
-            (None, None, None, None, Some(launch), None, None) => Some(launch.kind_str()),
-            (None, None, None, None, None, Some(action), None) => Some(action.kind_str()),
-            (None, None, None, None, None, None, Some(_)) => Some("aggregate"),
+            (Some(_), None, None, None, None, None, None, None) => Some("run"),
+            (None, Some(_), None, None, None, None, None, None) => Some("script"),
+            (None, None, Some(_), None, None, None, None, None) => Some("command"),
+            (None, None, None, Some(compose), None, None, None, None) => Some(compose.kind_str()),
+            (None, None, None, None, Some(prepare), None, None, None) => Some(prepare.kind_str()),
+            (None, None, None, None, None, Some(launch), None, None) => Some(launch.kind_str()),
+            (None, None, None, None, None, None, Some(action), None) => Some(action.kind_str()),
+            (None, None, None, None, None, None, None, Some(_)) => Some("aggregate"),
             _ => None,
         }
     }
@@ -3947,13 +3951,14 @@ impl TaskSpec {
             self.run.as_deref(),
             self.script.as_deref(),
             self.command.as_ref(),
+            self.compose.as_ref(),
             self.prepare.as_ref(),
             self.launch.as_ref(),
             self.action.as_ref(),
             self.aggregate.as_ref(),
         ) {
-            (Some(run), None, None, None, None, None, None) => Some(run),
-            (None, Some(script), None, None, None, None, None) => Some(script),
+            (Some(run), None, None, None, None, None, None, None) => Some(run),
+            (None, Some(script), None, None, None, None, None, None) => Some(script),
             _ => None,
         }
     }
@@ -3968,6 +3973,7 @@ impl TaskSpec {
                     kind: self.default_execution_kind()?,
                     body: self.default_execution_body(),
                     command: self.command.as_ref(),
+                    compose: self.compose.as_ref(),
                     launch: self.launch.as_ref(),
                     action: self.action.as_ref(),
                     prepare: self.prepare.as_ref(),
@@ -4847,6 +4853,8 @@ pub struct TaskModeBranchSpec {
     #[serde(default)]
     pub command: Option<TaskCommandSpec>,
     #[serde(default)]
+    pub compose: Option<TaskComposeExecutionSpec>,
+    #[serde(default)]
     pub prepare: Option<TaskPrepareSpec>,
     #[serde(default)]
     pub launch: Option<TaskLaunchSpec>,
@@ -4860,14 +4868,16 @@ impl TaskModeBranchSpec {
             self.run.as_ref(),
             self.script.as_ref(),
             self.command.as_ref(),
+            self.compose.as_ref(),
             self.prepare.as_ref(),
             self.launch.as_ref(),
         ) {
-            (Some(_), None, None, None, None) => Some("run"),
-            (None, Some(_), None, None, None) => Some("script"),
-            (None, None, Some(_), None, None) => Some("command"),
-            (None, None, None, Some(prepare), None) => Some(prepare.kind_str()),
-            (None, None, None, None, Some(launch)) => Some(launch.kind_str()),
+            (Some(_), None, None, None, None, None) => Some("run"),
+            (None, Some(_), None, None, None, None) => Some("script"),
+            (None, None, Some(_), None, None, None) => Some("command"),
+            (None, None, None, Some(compose), None, None) => Some(compose.kind_str()),
+            (None, None, None, None, Some(prepare), None) => Some(prepare.kind_str()),
+            (None, None, None, None, None, Some(launch)) => Some(launch.kind_str()),
             _ => None,
         }
     }
@@ -4877,11 +4887,12 @@ impl TaskModeBranchSpec {
             self.run.as_deref(),
             self.script.as_deref(),
             self.command.as_ref(),
+            self.compose.as_ref(),
             self.prepare.as_ref(),
             self.launch.as_ref(),
         ) {
-            (Some(run), None, None, None, None) => Some(run),
-            (None, Some(script), None, None, None) => Some(script),
+            (Some(run), None, None, None, None, None) => Some(run),
+            (None, Some(script), None, None, None, None) => Some(script),
             _ => None,
         }
     }
@@ -4891,6 +4902,7 @@ impl TaskModeBranchSpec {
             kind: self.execution_kind()?,
             body: self.execution_body(),
             command: self.command.as_ref(),
+            compose: self.compose.as_ref(),
             launch: self.launch.as_ref(),
             action: None,
             prepare: self.prepare.as_ref(),
@@ -4967,6 +4979,105 @@ impl TaskCommandSpec {
             preview.push('`');
         }
         preview
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskComposeInvocationSpec {
+    pub kind: TaskComposeExecutionKind,
+    #[serde(default, skip_serializing_if = "is_default_compose_cli_engine")]
+    pub engine: ComposeCliEngine,
+    pub service: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workdir: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rm: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub detach: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tty: bool,
+}
+
+impl TaskComposeInvocationSpec {
+    pub const fn kind_str(&self) -> &'static str {
+        match self.kind {
+            TaskComposeExecutionKind::Exec => "compose_exec",
+            TaskComposeExecutionKind::Run => "compose_run",
+        }
+    }
+
+    pub fn preview_prefix(&self) -> String {
+        let mut preview = format!("{} compose {}", self.engine.as_str(), self.kind.label());
+        if self.detach {
+            preview.push_str(" -d");
+        }
+        if !self.tty {
+            preview.push_str(" -T");
+        }
+        if self.rm {
+            preview.push_str(" --rm");
+        }
+        if let Some(workdir) = self
+            .workdir
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            preview.push_str(" -w ");
+            preview.push_str(workdir);
+        }
+        preview.push(' ');
+        preview.push_str(self.service.as_str());
+        preview
+    }
+
+    pub fn preview_with_command(&self, exe: &str, args: &[String]) -> String {
+        let mut preview = self.preview_prefix();
+        preview.push(' ');
+        preview.push_str(exe);
+        for arg in args {
+            preview.push(' ');
+            preview.push_str(arg);
+        }
+        preview
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskComposeExecutionSpec {
+    #[serde(flatten)]
+    pub invocation: TaskComposeInvocationSpec,
+    pub exe: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+}
+
+impl TaskComposeExecutionSpec {
+    pub const fn kind_str(&self) -> &'static str {
+        self.invocation.kind_str()
+    }
+
+    pub fn preview(&self) -> String {
+        self.invocation
+            .preview_with_command(self.exe.as_str(), self.args.as_slice())
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskComposeExecutionKind {
+    Exec,
+    #[default]
+    Run,
+}
+
+impl TaskComposeExecutionKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Exec => "exec",
+            Self::Run => "run",
+        }
     }
 }
 
@@ -5124,66 +5235,136 @@ impl TaskPrepareSpec {
                         targets
                     )
                 }
-                TaskDependencyHydrationSourceSpec::NodePackageManager(source) => format!(
-                    "hydrate {} with {} in `{}`",
-                    spec.medium.label(),
-                    source.command_preview(),
-                    source.cwd.trim()
-                ),
-                TaskDependencyHydrationSourceSpec::Bundler(source) => format!(
-                    "hydrate {} with bundler install in `{}` using `{}`",
-                    spec.medium.label(),
-                    source.cwd.trim(),
-                    source.path.trim()
-                ),
-                TaskDependencyHydrationSourceSpec::Uv(source) => format!(
-                    "hydrate {} with {} in `{}`",
-                    spec.medium.label(),
-                    source.command_preview(),
-                    source.cwd.trim()
-                ),
-                TaskDependencyHydrationSourceSpec::Poetry(source) => format!(
-                    "hydrate {} with {} in `{}`",
-                    spec.medium.label(),
-                    source.command_preview(),
-                    source.cwd.trim()
-                ),
-                TaskDependencyHydrationSourceSpec::GoModules(source) => format!(
-                    "hydrate {} with {} in `{}`",
-                    spec.medium.label(),
-                    source.command_preview(),
-                    source.cwd.trim()
-                ),
-                TaskDependencyHydrationSourceSpec::Helm(source) => format!(
-                    "hydrate {} with {} in `{}`",
-                    spec.medium.label(),
-                    source.command_preview(),
-                    source.cwd.trim()
-                ),
-                TaskDependencyHydrationSourceSpec::Maven(source) => format!(
-                    "hydrate {} with {} in `{}`",
-                    spec.medium.label(),
-                    source.command_preview(),
-                    source.cwd.trim()
-                ),
-                TaskDependencyHydrationSourceSpec::Gradle(source) => format!(
-                    "hydrate {} with {} in `{}`",
-                    spec.medium.label(),
-                    source.command_preview(),
-                    source.cwd.trim()
-                ),
-                TaskDependencyHydrationSourceSpec::Cargo(source) => format!(
-                    "hydrate {} with {} in `{}`",
-                    spec.medium.label(),
-                    source.command_preview(),
-                    source.cwd.trim()
-                ),
-                TaskDependencyHydrationSourceSpec::DotnetRestore(source) => format!(
-                    "hydrate {} with {} in `{}`",
-                    spec.medium.label(),
-                    source.command_preview(),
-                    source.cwd.trim()
-                ),
+                TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
+                TaskDependencyHydrationSourceSpec::Bundler(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with bundler install in `{}` using `{}`",
+                        spec.medium.label(),
+                        source.cwd.trim(),
+                        source.path.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
+                TaskDependencyHydrationSourceSpec::Uv(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
+                TaskDependencyHydrationSourceSpec::Poetry(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
+                TaskDependencyHydrationSourceSpec::GoModules(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
+                TaskDependencyHydrationSourceSpec::Helm(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
+                TaskDependencyHydrationSourceSpec::Maven(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
+                TaskDependencyHydrationSourceSpec::Gradle(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
+                TaskDependencyHydrationSourceSpec::Cargo(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
+                TaskDependencyHydrationSourceSpec::DotnetRestore(source) => {
+                    let mut preview = format!(
+                        "hydrate {} with {} in `{}`",
+                        spec.medium.label(),
+                        source.command_preview(),
+                        source.cwd.trim()
+                    );
+                    if let Some(compose) = source.compose.as_ref() {
+                        preview.push_str(" via ");
+                        preview.push_str(compose.preview_prefix().as_str());
+                    }
+                    preview
+                }
             },
             Self::ToolBootstrap(spec) => match &spec.source {
                 TaskToolBootstrapSourceSpec::Pip(source) => format!(
@@ -5294,6 +5475,24 @@ pub enum TaskDependencyHydrationSourceSpec {
     DotnetRestore(TaskDotnetRestoreHydrationSourceSpec),
 }
 
+impl TaskDependencyHydrationSourceSpec {
+    pub fn compose_invocation(&self) -> Option<&TaskComposeInvocationSpec> {
+        match self {
+            Self::DockerCompose(_) => None,
+            Self::NodePackageManager(source) => source.compose.as_ref(),
+            Self::Bundler(source) => source.compose.as_ref(),
+            Self::Uv(source) => source.compose.as_ref(),
+            Self::Poetry(source) => source.compose.as_ref(),
+            Self::GoModules(source) => source.compose.as_ref(),
+            Self::Helm(source) => source.compose.as_ref(),
+            Self::Maven(source) => source.compose.as_ref(),
+            Self::Gradle(source) => source.compose.as_ref(),
+            Self::Cargo(source) => source.compose.as_ref(),
+            Self::DotnetRestore(source) => source.compose.as_ref(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskDockerComposeHydrationSourceSpec {
@@ -5327,6 +5526,8 @@ pub struct TaskNodePackageManagerHydrationSourceSpec {
     pub inline_builds: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub force: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskNodePackageManagerHydrationSourceSpec {
@@ -5381,12 +5582,16 @@ impl TaskNodePackageManagerHydrationSourceSpec {
 pub struct TaskBundlerHydrationSourceSpec {
     pub cwd: String,
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskUvHydrationSourceSpec {
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskUvHydrationSourceSpec {
@@ -5405,6 +5610,8 @@ pub struct TaskPoetryHydrationSourceSpec {
     pub group_mode: TaskPoetryHydrationGroupMode,
     #[serde(default, skip_serializing_if = "is_false")]
     pub no_root: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskPoetryHydrationSourceSpec {
@@ -5425,6 +5632,8 @@ impl TaskPoetryHydrationSourceSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskGoModulesHydrationSourceSpec {
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskGoModulesHydrationSourceSpec {
@@ -5437,6 +5646,8 @@ impl TaskGoModulesHydrationSourceSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskHelmHydrationSourceSpec {
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskHelmHydrationSourceSpec {
@@ -5455,6 +5666,8 @@ pub struct TaskMavenHydrationSourceSpec {
     pub mode: TaskMavenHydrationMode,
     #[serde(default, skip_serializing_if = "is_false")]
     pub skip_tests: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskMavenHydrationSourceSpec {
@@ -5479,6 +5692,8 @@ pub struct TaskGradleHydrationSourceSpec {
     pub cwd: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub wrapper: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskGradleHydrationSourceSpec {
@@ -5495,6 +5710,8 @@ impl TaskGradleHydrationSourceSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskCargoHydrationSourceSpec {
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskCargoHydrationSourceSpec {
@@ -5507,6 +5724,8 @@ impl TaskCargoHydrationSourceSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskDotnetRestoreHydrationSourceSpec {
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSpec>,
 }
 
 impl TaskDotnetRestoreHydrationSourceSpec {
@@ -6509,6 +6728,8 @@ pub struct TaskVariantSpec {
     pub script: Option<String>,
     #[serde(default)]
     pub command: Option<TaskCommandSpec>,
+    #[serde(default)]
+    pub compose: Option<TaskComposeExecutionSpec>,
 }
 
 impl TaskVariantSpec {
@@ -6517,10 +6738,12 @@ impl TaskVariantSpec {
             self.run.as_ref(),
             self.script.as_ref(),
             self.command.as_ref(),
+            self.compose.as_ref(),
         ) {
-            (Some(_), None, None) => Some("run"),
-            (None, Some(_), None) => Some("script"),
-            (None, None, Some(_)) => Some("command"),
+            (Some(_), None, None, None) => Some("run"),
+            (None, Some(_), None, None) => Some("script"),
+            (None, None, Some(_), None) => Some("command"),
+            (None, None, None, Some(compose)) => Some(compose.kind_str()),
             _ => None,
         }
     }
@@ -6530,9 +6753,10 @@ impl TaskVariantSpec {
             self.run.as_deref(),
             self.script.as_deref(),
             self.command.as_ref(),
+            self.compose.as_ref(),
         ) {
-            (Some(run), None, None) => Some(run),
-            (None, Some(script), None) => Some(script),
+            (Some(run), None, None, None) => Some(run),
+            (None, Some(script), None, None) => Some(script),
             _ => None,
         }
     }
@@ -6542,6 +6766,7 @@ impl TaskVariantSpec {
             kind: self.execution_kind()?,
             body: self.execution_body(),
             command: self.command.as_ref(),
+            compose: self.compose.as_ref(),
             launch: None,
             action: None,
             prepare: None,
@@ -6580,6 +6805,7 @@ pub struct TaskExecution<'a> {
     pub kind: &'static str,
     pub body: Option<&'a str>,
     pub command: Option<&'a TaskCommandSpec>,
+    pub compose: Option<&'a TaskComposeExecutionSpec>,
     pub launch: Option<&'a TaskLaunchSpec>,
     pub action: Option<&'a TaskActionSpec>,
     pub prepare: Option<&'a TaskPrepareSpec>,
@@ -6594,6 +6820,10 @@ impl<'a> TaskExecution<'a> {
 
     pub fn command(&self) -> Option<&'a TaskCommandSpec> {
         self.command
+    }
+
+    pub fn compose(&self) -> Option<&'a TaskComposeExecutionSpec> {
+        self.compose
     }
 
     pub fn launch(&self) -> Option<&'a TaskLaunchSpec> {
@@ -6616,6 +6846,7 @@ impl<'a> TaskExecution<'a> {
         self.body
             .map(ToOwned::to_owned)
             .or_else(|| self.command.map(TaskCommandSpec::preview))
+            .or_else(|| self.compose.map(TaskComposeExecutionSpec::preview))
             .or_else(|| self.launch.map(TaskLaunchSpec::preview))
             .or_else(|| self.action.map(TaskActionSpec::preview))
             .or_else(|| self.prepare.map(TaskPrepareSpec::preview))
@@ -6634,6 +6865,8 @@ pub struct TaskVariantView<'a> {
     pub script: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<crate::output::TaskCommandSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compose: Option<crate::output::TaskComposeExecutionSummary<'a>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -7390,6 +7623,7 @@ tasks:
             frozen_lockfile: true,
             inline_builds: false,
             force: false,
+            compose: None,
         };
         assert_eq!(pnpm.lockfile_flag(), Some("--frozen-lockfile"));
         assert_eq!(pnpm.command_preview(), "pnpm install --frozen-lockfile");
@@ -7401,6 +7635,7 @@ tasks:
             frozen_lockfile: true,
             inline_builds: true,
             force: false,
+            compose: None,
         };
         assert_eq!(yarn.lockfile_flag(), Some("--immutable"));
         assert_eq!(yarn.inline_builds_flag(), Some("--inline-builds"));
@@ -7416,6 +7651,7 @@ tasks:
             frozen_lockfile: true,
             inline_builds: false,
             force: true,
+            compose: None,
         };
         assert_eq!(npm.lockfile_flag(), None);
         assert_eq!(npm.force_flag(), Some("--force"));
@@ -7428,6 +7664,7 @@ tasks:
             frozen_lockfile: false,
             inline_builds: false,
             force: true,
+            compose: None,
         };
         assert_eq!(npm_ci.force_flag(), Some("--force"));
         assert_eq!(npm_ci.command_preview(), "npm ci --force");
@@ -7439,6 +7676,7 @@ tasks:
             frozen_lockfile: true,
             inline_builds: false,
             force: false,
+            compose: None,
         };
         assert_eq!(bun.lockfile_flag(), Some("--frozen-lockfile"));
         assert_eq!(bun.command_preview(), "bun install --frozen-lockfile");
@@ -7448,6 +7686,7 @@ tasks:
     fn uv_prepare_preview_uses_structural_sync_command() {
         let uv = super::TaskUvHydrationSourceSpec {
             cwd: String::from("."),
+            compose: None,
         };
         assert_eq!(uv.command_preview(), "uv sync");
     }
@@ -7456,6 +7695,7 @@ tasks:
     fn helm_prepare_preview_uses_structural_dependency_build_command() {
         let helm = super::TaskHelmHydrationSourceSpec {
             cwd: String::from("deploy/helm"),
+            compose: None,
         };
         assert_eq!(helm.command_preview(), "helm dependency build .");
     }
@@ -7481,6 +7721,40 @@ tasks:
     }
 
     #[test]
+    fn dependency_hydration_preview_mentions_compose_wrapper() {
+        let prepare = super::TaskPrepareSpec::DependencyHydration(
+            super::TaskDependencyHydrationPrepareSpec {
+                medium: super::TaskDependencyHydrationMedium::PackageDependencies,
+                source: super::TaskDependencyHydrationSourceSpec::NodePackageManager(
+                    super::TaskNodePackageManagerHydrationSourceSpec {
+                        cwd: String::from("app"),
+                        manager: super::TaskNodePackageManagerKind::Npm,
+                        mode: super::TaskNodePackageManagerHydrationMode::Ci,
+                        frozen_lockfile: false,
+                        inline_builds: false,
+                        force: false,
+                        compose: Some(super::TaskComposeInvocationSpec {
+                            kind: super::TaskComposeExecutionKind::Run,
+                            engine: super::ComposeCliEngine::Docker,
+                            service: String::from("app"),
+                            workdir: Some(String::from("/workspace")),
+                            rm: true,
+                            detach: false,
+                            tty: false,
+                        }),
+                    },
+                ),
+                targets: Vec::new(),
+            },
+        );
+
+        assert_eq!(
+            prepare.preview(),
+            "hydrate package dependencies with npm ci in `app` via docker compose run -T --rm -w /workspace app"
+        );
+    }
+
+    #[test]
     fn prepare_sequence_preview_joins_structural_steps() {
         let prepare = super::TaskPrepareSpec::Sequence(super::TaskPrepareSequenceSpec {
             steps: vec![
@@ -7495,6 +7769,7 @@ tasks:
                                 frozen_lockfile: true,
                                 inline_builds: false,
                                 force: false,
+                                compose: None,
                             },
                         ),
                         targets: Vec::new(),
@@ -7506,6 +7781,7 @@ tasks:
                         source: super::TaskDependencyHydrationSourceSpec::Uv(
                             super::TaskUvHydrationSourceSpec {
                                 cwd: String::from("api"),
+                                compose: None,
                             },
                         ),
                         targets: Vec::new(),

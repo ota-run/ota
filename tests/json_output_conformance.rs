@@ -427,7 +427,10 @@ tasks:
     assert_matches_schema("tasks.json", &json);
     assert_eq!(json["tasks"][0]["name"], "postgres:reset");
     assert_eq!(json["tasks"][0]["kind"], "reset_compose_service_volume");
-    assert_eq!(json["tasks"][0]["action"]["kind"], "reset_compose_service_volume");
+    assert_eq!(
+        json["tasks"][0]["action"]["kind"],
+        "reset_compose_service_volume"
+    );
     assert_eq!(json["tasks"][0]["action"]["from"], "postgres");
     assert_eq!(json["tasks"][0]["action"]["to"], "app_postgres-data");
 }
@@ -1171,7 +1174,10 @@ tasks:
         fixture.path(),
     );
     assert_matches_schema("run-preview.json", &json);
-    assert_eq!(json["requested_task"]["kind"], "reset_compose_service_volume");
+    assert_eq!(
+        json["requested_task"]["kind"],
+        "reset_compose_service_volume"
+    );
     assert_eq!(
         json["requested_task"]["action"]["kind"],
         "reset_compose_service_volume"

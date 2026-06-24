@@ -3231,6 +3231,8 @@ pub struct TaskSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<TaskCommandSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeExecutionSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub launch: Option<TaskLaunchSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action: Option<TaskActionSummary<'a>>,
@@ -3401,6 +3403,7 @@ impl<'a> TaskSummary<'a> {
                 .then(|| resolved_execution.shell_body())
                 .flatten(),
             command: summarize_task_command(resolved_execution.command()),
+            compose: summarize_task_compose(resolved_execution.compose()),
             launch: summarize_task_launch(resolved_execution.launch()),
             action: summarize_task_action(resolved_execution.action()),
             prepare: summarize_task_prepare(resolved_execution.prepare()),
@@ -3433,6 +3436,7 @@ impl<'a> TaskSummary<'a> {
                         .command
                         .as_ref()
                         .and_then(|command| summarize_task_command(Some(command))),
+                    compose: summarize_task_compose(variant.compose.as_ref()),
                 })
                 .collect(),
             modes: task
@@ -3471,6 +3475,7 @@ impl<'a> TaskSummary<'a> {
                                 run: branch.run.as_deref(),
                                 script: branch.script.as_deref(),
                                 command: summarize_task_command(branch.command.as_ref()),
+                                compose: summarize_task_compose(branch.compose.as_ref()),
                                 launch: branch
                                     .launch
                                     .as_ref()
@@ -3538,6 +3543,8 @@ pub struct TaskModeView<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<TaskCommandSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeExecutionSummary<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub launch: Option<TaskLaunchSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepare: Option<TaskPrepareSummary<'a>>,
@@ -3551,6 +3558,39 @@ pub struct TaskCommandSummary<'a> {
     pub args: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<&'a str>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TaskComposeExecutionSummary<'a> {
+    pub kind: &'static str,
+    pub engine: &'static str,
+    pub service: &'a str,
+    pub exe: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workdir: Option<&'a str>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rm: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub detach: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tty: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct TaskComposeInvocationSummary<'a> {
+    pub kind: &'static str,
+    pub engine: &'static str,
+    pub service: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workdir: Option<&'a str>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rm: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub detach: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tty: bool,
 }
 
 pub fn summarize_task_adapter_inputs(
@@ -3638,6 +3678,8 @@ pub struct TaskPrepareSummary<'a> {
     pub skip_tests: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskComposeInvocationSummary<'a>>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -3673,6 +3715,23 @@ pub struct WorkspaceTaskPrepareSummary {
     pub skip_tests: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compose: Option<WorkspaceTaskComposeInvocationSummary>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct WorkspaceTaskComposeInvocationSummary {
+    pub kind: &'static str,
+    pub engine: &'static str,
+    pub service: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workdir: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rm: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub detach: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tty: bool,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -3702,6 +3761,50 @@ fn summarize_task_command<'a>(
         exe: command.exe.as_str(),
         args: command.args.iter().map(String::as_str).collect(),
         cwd: command.cwd.as_deref(),
+    })
+}
+
+fn summarize_task_compose<'a>(
+    compose: Option<&'a crate::schema::TaskComposeExecutionSpec>,
+) -> Option<TaskComposeExecutionSummary<'a>> {
+    compose.map(|compose| TaskComposeExecutionSummary {
+        kind: compose.invocation.kind.label(),
+        engine: compose.invocation.engine.as_str(),
+        service: compose.invocation.service.as_str(),
+        exe: compose.exe.as_str(),
+        args: compose.args.iter().map(String::as_str).collect(),
+        workdir: compose.invocation.workdir.as_deref(),
+        rm: compose.invocation.rm,
+        detach: compose.invocation.detach,
+        tty: compose.invocation.tty,
+    })
+}
+
+fn summarize_task_compose_invocation<'a>(
+    compose: Option<&'a crate::schema::TaskComposeInvocationSpec>,
+) -> Option<TaskComposeInvocationSummary<'a>> {
+    compose.map(|compose| TaskComposeInvocationSummary {
+        kind: compose.kind.label(),
+        engine: compose.engine.as_str(),
+        service: compose.service.as_str(),
+        workdir: compose.workdir.as_deref(),
+        rm: compose.rm,
+        detach: compose.detach,
+        tty: compose.tty,
+    })
+}
+
+fn summarize_task_compose_invocation_owned(
+    compose: Option<&crate::schema::TaskComposeInvocationSpec>,
+) -> Option<WorkspaceTaskComposeInvocationSummary> {
+    compose.map(|compose| WorkspaceTaskComposeInvocationSummary {
+        kind: compose.kind.label(),
+        engine: compose.engine.as_str(),
+        service: compose.service.clone(),
+        workdir: compose.workdir.clone(),
+        rm: compose.rm,
+        detach: compose.detach,
+        tty: compose.tty,
     })
 }
 
@@ -3892,6 +3995,7 @@ pub fn summarize_task_prepare(
             no_root: false,
             skip_tests: false,
             targets: Vec::new(),
+            compose: None,
         }),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
             let (source_kind, mode) = match &spec.source {
@@ -3916,6 +4020,7 @@ pub fn summarize_task_prepare(
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                compose: None,
             })
         }
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
@@ -3932,6 +4037,7 @@ pub fn summarize_task_prepare(
                 force,
                 no_root,
                 skip_tests,
+                compose,
             ) = match &spec.source {
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
                     "docker_compose",
@@ -3946,6 +4052,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    None,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => (
                     "node_package_manager",
@@ -3968,6 +4075,7 @@ pub fn summarize_task_prepare(
                     source.force,
                     false,
                     false,
+                    summarize_task_compose_invocation(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
                     "bundler",
@@ -3982,6 +4090,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
                     "uv",
@@ -3996,6 +4105,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => (
                     "poetry",
@@ -4013,6 +4123,7 @@ pub fn summarize_task_prepare(
                     false,
                     source.no_root,
                     false,
+                    summarize_task_compose_invocation(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
                     "go_modules",
@@ -4027,6 +4138,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => (
                     "helm",
@@ -4041,6 +4153,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => (
                     "maven",
@@ -4055,6 +4168,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     source.skip_tests,
+                    summarize_task_compose_invocation(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => (
                     "gradle",
@@ -4073,6 +4187,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => (
                     "cargo",
@@ -4087,6 +4202,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => (
                     "dotnet_restore",
@@ -4101,6 +4217,7 @@ pub fn summarize_task_prepare(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation(source.compose.as_ref()),
                 ),
             };
             Some(TaskPrepareSummary {
@@ -4127,6 +4244,7 @@ pub fn summarize_task_prepare(
                 no_root,
                 skip_tests,
                 targets: spec.targets.iter().map(String::as_str).collect(),
+                compose,
             })
         }
     }
@@ -4157,6 +4275,7 @@ pub fn summarize_task_prepare_owned(
             no_root: false,
             skip_tests: false,
             targets: Vec::new(),
+            compose: None,
         }),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
             let (source_kind, mode) = match &spec.source {
@@ -4181,6 +4300,7 @@ pub fn summarize_task_prepare_owned(
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                compose: None,
             })
         }
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
@@ -4197,6 +4317,7 @@ pub fn summarize_task_prepare_owned(
                 force,
                 no_root,
                 skip_tests,
+                compose,
             ) = match &spec.source {
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
                     "docker_compose",
@@ -4211,6 +4332,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    None,
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => (
                     "node_package_manager",
@@ -4233,6 +4355,7 @@ pub fn summarize_task_prepare_owned(
                     source.force,
                     false,
                     false,
+                    summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
                     "bundler",
@@ -4247,6 +4370,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
                     "uv",
@@ -4261,6 +4385,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => (
                     "poetry",
@@ -4278,6 +4403,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     source.no_root,
                     false,
+                    summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
                     "go_modules",
@@ -4292,6 +4418,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => (
                     "helm",
@@ -4306,6 +4433,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => (
                     "maven",
@@ -4320,6 +4448,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     source.skip_tests,
+                    summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => (
                     "gradle",
@@ -4338,6 +4467,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => (
                     "cargo",
@@ -4352,6 +4482,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
                 crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => (
                     "dotnet_restore",
@@ -4366,6 +4497,7 @@ pub fn summarize_task_prepare_owned(
                     false,
                     false,
                     false,
+                    summarize_task_compose_invocation_owned(source.compose.as_ref()),
                 ),
             };
             Some(WorkspaceTaskPrepareSummary {
@@ -4392,6 +4524,7 @@ pub fn summarize_task_prepare_owned(
                 no_root,
                 skip_tests,
                 targets: spec.targets.clone(),
+                compose,
             })
         }
     }
@@ -4597,5 +4730,89 @@ impl ServiceManagerSummary {
             profiles: manager.profiles.clone(),
             service: manager.service.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use crate::parser::parse_contract_str;
+
+    #[test]
+    fn summarize_task_compose_uses_contract_kind_label() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  db:migrate:
+    compose:
+      kind: exec
+      detach: true
+      service: api
+      exe: bundle
+      args:
+        - exec
+        - rails
+        - db:migrate
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "db:migrate",
+            contract.tasks.get("db:migrate").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.kind, "compose_exec");
+        let compose = summary.compose.expect("compose summary should exist");
+        assert_eq!(compose.kind, "exec");
+        assert!(compose.detach);
+    }
+
+    #[test]
+    fn summarize_dependency_hydration_prepare_includes_compose_wrapper() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: app
+        manager: npm
+        mode: ci
+        compose:
+          kind: run
+          service: app
+          workdir: /workspace
+          rm: true
+"#,
+        )
+        .expect("contract should parse");
+
+        let task = contract.tasks.get("setup").expect("task should exist");
+        let prepare = super::summarize_task_prepare(task.prepare.as_ref())
+            .expect("prepare summary should exist");
+        let compose = prepare
+            .compose
+            .expect("compose wrapper should be summarized");
+
+        assert_eq!(compose.kind, "run");
+        assert_eq!(compose.engine, "docker");
+        assert_eq!(compose.service, "app");
+        assert_eq!(compose.workdir, Some("/workspace"));
+        assert!(compose.rm);
     }
 }

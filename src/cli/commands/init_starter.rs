@@ -809,6 +809,7 @@ fn normalize_detected_node_starter(contract: &mut DetectContract, root: &Path) {
                         frozen_lockfile: false,
                         inline_builds: false,
                         force: false,
+                        compose: None,
                     },
                 ),
                 "node",
@@ -866,6 +867,7 @@ fn normalize_detected_ruby_starter(contract: &mut DetectContract, root: &Path) {
                 TaskDependencyHydrationSourceSpec::Bundler(TaskBundlerHydrationSourceSpec {
                     cwd: String::from("."),
                     path: String::from("vendor/bundle"),
+                    compose: None,
                 }),
                 "ruby",
                 vec![String::from("vendor/bundle")],
@@ -916,6 +918,7 @@ fn normalize_detected_java_starter(contract: &mut DetectContract, root: &Path) {
                 TaskDependencyHydrationSourceSpec::Gradle(TaskGradleHydrationSourceSpec {
                     cwd: String::from("."),
                     wrapper,
+                    compose: None,
                 }),
                 "java",
                 vec![String::from(".gradle")],
@@ -1005,6 +1008,7 @@ fn detect_prepare_from_run(
                 medium: TaskDependencyHydrationMedium::PackageDependencies,
                 source: TaskDependencyHydrationSourceSpec::Uv(TaskUvHydrationSourceSpec {
                     cwd: String::from("."),
+                    compose: None,
                 }),
                 targets: Vec::new(),
             }),
@@ -1018,6 +1022,7 @@ fn detect_prepare_from_run(
                 source: TaskDependencyHydrationSourceSpec::GoModules(
                     TaskGoModulesHydrationSourceSpec {
                         cwd: String::from("."),
+                        compose: None,
                     },
                 ),
                 targets: Vec::new(),
@@ -1031,6 +1036,7 @@ fn detect_prepare_from_run(
                 medium: TaskDependencyHydrationMedium::PackageDependencies,
                 source: TaskDependencyHydrationSourceSpec::Cargo(TaskCargoHydrationSourceSpec {
                     cwd: String::from("."),
+                    compose: None,
                 }),
                 targets: Vec::new(),
             }),
@@ -1044,6 +1050,7 @@ fn detect_prepare_from_run(
                 source: TaskDependencyHydrationSourceSpec::DotnetRestore(
                     TaskDotnetRestoreHydrationSourceSpec {
                         cwd: String::from("."),
+                        compose: None,
                     },
                 ),
                 targets: Vec::new(),
@@ -1060,6 +1067,7 @@ fn detect_prepare_from_run(
                     wrapper: true,
                     mode: TaskMavenHydrationMode::GoOffline,
                     skip_tests: true,
+                    compose: None,
                 }),
                 targets: Vec::new(),
             }),
@@ -1075,6 +1083,7 @@ fn detect_prepare_from_run(
                     wrapper: false,
                     mode: TaskMavenHydrationMode::GoOffline,
                     skip_tests: true,
+                    compose: None,
                 }),
                 targets: Vec::new(),
             }),
@@ -1091,6 +1100,7 @@ fn detect_prepare_from_run(
                 source: TaskDependencyHydrationSourceSpec::Gradle(TaskGradleHydrationSourceSpec {
                     cwd: String::from("."),
                     wrapper: false,
+                    compose: None,
                 }),
                 targets: Vec::new(),
             }),
@@ -1107,6 +1117,7 @@ fn detect_prepare_from_run(
                 source: TaskDependencyHydrationSourceSpec::Gradle(TaskGradleHydrationSourceSpec {
                     cwd: String::from("."),
                     wrapper: true,
+                    compose: None,
                 }),
                 targets: Vec::new(),
             }),
@@ -1173,6 +1184,7 @@ fn node_hydration_shape(
                     frozen_lockfile: false,
                     inline_builds: false,
                     force,
+                    compose: None,
                 },
             ),
             targets: Vec::new(),
@@ -2699,6 +2711,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                             frozen_lockfile: false,
                             inline_builds: false,
                             force: false,
+                            compose: None,
                         },
                     ),
                     "node",
@@ -2716,6 +2729,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                             frozen_lockfile: false,
                             inline_builds: false,
                             force: false,
+                            compose: None,
                         },
                     ),
                     "node",
@@ -2733,6 +2747,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                             frozen_lockfile: false,
                             inline_builds: false,
                             force: false,
+                            compose: None,
                         },
                     ),
                     "node",
@@ -2750,6 +2765,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                             frozen_lockfile: false,
                             inline_builds: false,
                             force: false,
+                            compose: None,
                         },
                     ),
                     "node",
@@ -2804,6 +2820,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     "Hydrate Python dependencies through uv.",
                     TaskDependencyHydrationSourceSpec::Uv(TaskUvHydrationSourceSpec {
                         cwd: String::from("."),
+                        compose: None,
                     }),
                     "python",
                     vec![String::from(".venv")],
@@ -2846,6 +2863,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     TaskDependencyHydrationSourceSpec::Bundler(TaskBundlerHydrationSourceSpec {
                         cwd: String::from("."),
                         path: String::from("vendor/bundle"),
+                        compose: None,
                     }),
                     "ruby",
                     vec![String::from("vendor/bundle")],
@@ -2879,6 +2897,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     TaskDependencyHydrationSourceSpec::GoModules(
                         TaskGoModulesHydrationSourceSpec {
                             cwd: String::from("."),
+                            compose: None,
                         },
                     ),
                     "go",
@@ -2920,6 +2939,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     "Hydrate Cargo dependencies for the repo.",
                     TaskDependencyHydrationSourceSpec::Cargo(TaskCargoHydrationSourceSpec {
                         cwd: String::from("."),
+                        compose: None,
                     }),
                     "rust",
                     Vec::new(),
@@ -2961,6 +2981,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     TaskDependencyHydrationSourceSpec::DotnetRestore(
                         TaskDotnetRestoreHydrationSourceSpec {
                             cwd: String::from("."),
+                            compose: None,
                         },
                     ),
                     "dotnet",
@@ -3061,6 +3082,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                         wrapper: uses_wrapper,
                         mode: Default::default(),
                         skip_tests: false,
+                        compose: None,
                     }),
                     "java",
                     Vec::new(),
@@ -3131,6 +3153,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     TaskDependencyHydrationSourceSpec::Gradle(TaskGradleHydrationSourceSpec {
                         cwd: String::from("."),
                         wrapper: uses_wrapper,
+                        compose: None,
                     }),
                     "java",
                     vec![String::from(".gradle")],

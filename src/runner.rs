@@ -2312,7 +2312,7 @@ fn effective_task_env_for_backend_with_resolved_env(
     password_env_values: Option<&BTreeMap<String, ResolvedEnvValue>>,
 ) -> BTreeMap<String, String> {
     let ota_workspace = ota_workspace_for_backend(working_dir, backend);
-    let host_workspace = working_dir.display().to_string();
+    let host_workspace = host_workspace_template_value(working_dir);
     let host_uid = host_uid_template_value(working_dir);
     let backend_kind = resolved_execution_backend_kind(backend);
     let engine_hint = match backend {
@@ -2399,7 +2399,7 @@ pub(crate) fn effective_task_env_for_selection(
         &dependency_isolation_paths,
         ota_workspace.as_str(),
     );
-    let host_workspace = working_dir.display().to_string();
+    let host_workspace = host_workspace_template_value(working_dir);
     let host_uid = host_uid_template_value(working_dir);
     env.extend(load_task_env_file_values(task, backend, working_dir));
     let engine_hint = if backend == Backend::Container {
@@ -2562,6 +2562,232 @@ fn projected_structured_command_for_task(
         return command.clone();
     }
     project_helm_adapter_inputs(task, backend, command)
+}
+
+fn projected_compose_command_for_task(
+    task: &TaskSpec,
+    backend: Backend,
+    compose: &crate::schema::TaskComposeExecutionSpec,
+) -> crate::schema::TaskCommandSpec {
+    projected_compose_invocation_command_for_task(
+        task,
+        backend,
+        &compose.invocation,
+        compose.exe.as_str(),
+        compose.args.as_slice(),
+    )
+}
+
+fn projected_compose_invocation_command_for_task(
+    task: &TaskSpec,
+    backend: Backend,
+    compose: &crate::schema::TaskComposeInvocationSpec,
+    exe: &str,
+    args: &[String],
+) -> crate::schema::TaskCommandSpec {
+    let mut projected_args = vec![String::from("compose"), String::from(compose.kind.label())];
+    if compose.detach {
+        projected_args.push(String::from("-d"));
+    }
+    if !compose.tty {
+        projected_args.push(String::from("-T"));
+    }
+    if compose.rm {
+        projected_args.push(String::from("--rm"));
+    }
+    if let Some(workdir) = compose
+        .workdir
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        projected_args.push(String::from("-w"));
+        projected_args.push(workdir.to_string());
+    }
+    projected_args.push(compose.service.trim().to_string());
+    projected_args.push(exe.trim().to_string());
+    projected_args.extend(args.iter().cloned());
+    crate::schema::TaskCommandSpec {
+        exe: compose.engine.as_str().to_string(),
+        args: projected_args,
+        cwd: task.compose_adapter_cwd_for_backend(backend),
+    }
+}
+
+fn compose_wrapped_hydration_workdir(
+    compose: &crate::schema::TaskComposeInvocationSpec,
+    source_cwd: &str,
+) -> Option<String> {
+    let source_cwd = source_cwd.trim();
+    let source_cwd = if source_cwd.is_empty() {
+        "."
+    } else {
+        source_cwd
+    };
+    let base = compose.workdir.as_deref().map(str::trim).unwrap_or("");
+
+    match (base.is_empty(), source_cwd == ".") {
+        (true, true) => None,
+        (true, false) => Some(source_cwd.to_string()),
+        (false, true) => Some(base.to_string()),
+        (false, false) => Some(format!(
+            "{}/{}",
+            base.trim_end_matches('/'),
+            source_cwd.trim_start_matches("./").trim_start_matches('/')
+        )),
+    }
+}
+
+fn dependency_hydration_command_specs(
+    source: &crate::schema::TaskDependencyHydrationSourceSpec,
+) -> Vec<crate::schema::TaskCommandSpec> {
+    match source {
+        crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
+            vec![crate::schema::TaskCommandSpec {
+                exe: source.engine.as_str().to_string(),
+                args: Vec::new(),
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
+            let mut args = vec![source.mode.label().to_string()];
+            if let Some(flag) = source.lockfile_flag() {
+                args.push(String::from(flag));
+            }
+            if let Some(flag) = source.inline_builds_flag() {
+                args.push(String::from(flag));
+            }
+            if let Some(flag) = source.force_flag() {
+                args.push(String::from(flag));
+            }
+            vec![crate::schema::TaskCommandSpec {
+                exe: source.manager.label().to_string(),
+                args,
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => vec![
+            crate::schema::TaskCommandSpec {
+                exe: String::from("bundle"),
+                args: vec![
+                    String::from("config"),
+                    String::from("set"),
+                    String::from("path"),
+                    source.path.clone(),
+                ],
+                cwd: Some(source.cwd.clone()),
+            },
+            crate::schema::TaskCommandSpec {
+                exe: String::from("bundle"),
+                args: vec![String::from("install")],
+                cwd: Some(source.cwd.clone()),
+            },
+        ],
+        crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
+            vec![crate::schema::TaskCommandSpec {
+                exe: String::from("uv"),
+                args: vec![String::from("sync")],
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => {
+            let mut args = vec![String::from("install")];
+            if !source.groups.is_empty() {
+                args.push(source.group_mode.flag().to_string());
+                args.push(source.groups.join(","));
+            }
+            if source.no_root {
+                args.push(String::from("--no-root"));
+            }
+            vec![crate::schema::TaskCommandSpec {
+                exe: String::from("poetry"),
+                args,
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => {
+            vec![crate::schema::TaskCommandSpec {
+                exe: String::from("go"),
+                args: vec![String::from("mod"), String::from("download")],
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => {
+            vec![crate::schema::TaskCommandSpec {
+                exe: String::from("helm"),
+                args: vec![
+                    String::from("dependency"),
+                    String::from("build"),
+                    String::from("."),
+                ],
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => {
+            let mut args = vec![String::from("-q")];
+            if source.skip_tests {
+                args.push(String::from("-DskipTests"));
+            }
+            args.push(source.mode.goal().to_string());
+            vec![crate::schema::TaskCommandSpec {
+                exe: if source.wrapper {
+                    String::from("./mvnw")
+                } else {
+                    String::from("mvn")
+                },
+                args,
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => {
+            vec![crate::schema::TaskCommandSpec {
+                exe: if source.wrapper {
+                    String::from("./gradlew")
+                } else {
+                    String::from("gradle")
+                },
+                args: vec![String::from("dependencies")],
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => {
+            vec![crate::schema::TaskCommandSpec {
+                exe: String::from("cargo"),
+                args: vec![String::from("fetch")],
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
+        crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => {
+            vec![crate::schema::TaskCommandSpec {
+                exe: String::from("dotnet"),
+                args: vec![String::from("restore")],
+                cwd: Some(source.cwd.clone()),
+            }]
+        }
+    }
+}
+
+fn compose_wrapped_dependency_hydration_commands(
+    task: &TaskSpec,
+    backend: Backend,
+    source: &crate::schema::TaskDependencyHydrationSourceSpec,
+    compose: &crate::schema::TaskComposeInvocationSpec,
+) -> Vec<crate::schema::TaskCommandSpec> {
+    dependency_hydration_command_specs(source)
+        .into_iter()
+        .map(|base| {
+            let mut compose_invocation = compose.clone();
+            compose_invocation.workdir =
+                compose_wrapped_hydration_workdir(compose, base.cwd.as_deref().unwrap_or("."));
+            projected_compose_invocation_command_for_task(
+                task,
+                backend,
+                &compose_invocation,
+                base.exe.as_str(),
+                base.args.as_slice(),
+            )
+        })
+        .collect()
 }
 
 fn project_helm_adapter_inputs(
@@ -7251,6 +7477,9 @@ fn execute_task_with_hooks(
     let projected_command = execution
         .command()
         .map(|command| projected_structured_command_for_task(task, backend_kind, command));
+    let projected_compose_command = execution
+        .compose()
+        .map(|compose| projected_compose_command_for_task(task, backend_kind, compose));
     let projected_launch_command = match execution.launch() {
         Some(crate::schema::TaskLaunchSpec::Command(command)) => Some(
             projected_structured_command_for_task(task, backend_kind, command),
@@ -7275,7 +7504,25 @@ fn execute_task_with_hooks(
                 &command.args,
             ))
         }
+        _ if execution.compose().is_some()
+            && (!matches!(backend, ResolvedExecutionBackend::Native { .. })
+                || matches!(mode, TaskExecutionMode::CaptureActivation)
+                || !backend_fulfillment_preparation
+                    .source_managed_actions
+                    .is_empty()
+                || path_export.is_some()) =>
+        {
+            let command = projected_compose_command
+                .as_ref()
+                .expect("checked compose execution");
+            Some(shell_quote_command_argv(
+                &backend,
+                command.exe.as_str(),
+                &command.args,
+            ))
+        }
         _ if execution.command().is_some() => None,
+        _ if execution.compose().is_some() => None,
         Some(crate::schema::TaskLaunchSpec::Command(command))
             if !matches!(backend, ResolvedExecutionBackend::Native { .. })
                 || matches!(mode, TaskExecutionMode::CaptureActivation)
@@ -7339,6 +7586,24 @@ fn execute_task_with_hooks(
                 cwd: command_cwd,
             }
         } else {
+            PreparedTaskExecution::NativeCommand {
+                exe: command.exe.clone(),
+                args: command.args.clone(),
+                cwd: command.cwd.clone(),
+            }
+        }
+    } else if let Some(compose) = execution.compose() {
+        let command = projected_compose_command.as_ref().unwrap_or_else(|| {
+            unreachable!("compose execution should always project to a structured command")
+        });
+        let command_cwd = command.cwd.clone();
+        if let Some(shell_command) = shell_command {
+            PreparedTaskExecution::Shell {
+                command: shell_command,
+                cwd: command_cwd,
+            }
+        } else {
+            let _ = compose;
             PreparedTaskExecution::NativeCommand {
                 exe: command.exe.clone(),
                 args: command.args.clone(),
@@ -8548,7 +8813,51 @@ fn execute_prepare_task(
         );
     }
 
-    let command = prepare_task_shell_command(task_name, prepare, backend)?;
+    if let crate::schema::TaskPrepareSpec::DependencyHydration(spec) = prepare
+        && let Some(compose) = spec.source.compose_invocation()
+    {
+        let task = task.expect("compose-backed dependency hydration requires task context");
+        let mut stdout = String::new();
+        let mut stderr = String::new();
+        let mut last_exit_code = 0;
+        for command in compose_wrapped_dependency_hydration_commands(
+            task,
+            resolved_execution_backend_kind(backend),
+            &spec.source,
+            compose,
+        ) {
+            let step_output = execute_task_command(
+                contract,
+                Some(task),
+                task_name,
+                runtime,
+                &prepared_structured_command_spec_for_backend(backend, &command),
+                working_dir,
+                env_overrides,
+                path_export,
+                secret_env_names,
+                backend,
+                deferred_backend_fulfillment,
+                host_port_override,
+                mode.clone(),
+            )?;
+            stdout.push_str(&step_output.stdout);
+            stderr.push_str(&step_output.stderr);
+            last_exit_code = step_output.exit_code;
+        }
+        return Ok(TaskCommandOutput {
+            exit_code: last_exit_code,
+            stdout,
+            stderr,
+            target: None,
+            runtime: None,
+            service_termination: None,
+            execution_note: None,
+            interrupted: false,
+        });
+    }
+
+    let command = prepare_task_shell_command(task_name, task, prepare, backend)?;
     execute_task_command(
         contract,
         task,
@@ -8816,8 +9125,54 @@ fn prepared_structured_command_for_backend(
     }
 }
 
+fn prepared_structured_command_spec_for_backend(
+    backend: &ResolvedExecutionBackend,
+    command: &crate::schema::TaskCommandSpec,
+) -> PreparedTaskExecution {
+    match backend {
+        ResolvedExecutionBackend::Native { .. } => PreparedTaskExecution::NativeCommand {
+            exe: command.exe.clone(),
+            args: command.args.clone(),
+            cwd: command.cwd.clone(),
+        },
+        _ => PreparedTaskExecution::Shell {
+            command: shell_quote_command_argv(backend, command.exe.as_str(), &command.args),
+            cwd: command.cwd.clone(),
+        },
+    }
+}
+
+fn shell_command_for_structured_command(
+    command: &crate::schema::TaskCommandSpec,
+    quote_style: ShellQuoteStyle,
+) -> String {
+    let invocation = std::iter::once(shell_quote_command_word(command.exe.as_str(), quote_style))
+        .chain(
+            command
+                .args
+                .iter()
+                .map(|arg| shell_quote_command_word(arg.as_str(), quote_style)),
+        )
+        .collect::<Vec<_>>()
+        .join(" ");
+    command
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|cwd| !cwd.is_empty())
+        .map(|cwd| {
+            format!(
+                "cd {} && {}",
+                shell_quote_command_word(cwd, quote_style),
+                invocation
+            )
+        })
+        .unwrap_or(invocation)
+}
+
 fn prepare_task_shell_command(
     _task_name: &str,
+    task: Option<&TaskSpec>,
     prepare: &crate::schema::TaskPrepareSpec,
     backend: &ResolvedExecutionBackend,
 ) -> Result<String, RunError> {
@@ -8826,7 +9181,7 @@ fn prepare_task_shell_command(
         crate::schema::TaskPrepareSpec::Sequence(spec) => Ok(spec
             .steps
             .iter()
-            .map(|step| prepare_task_shell_command(_task_name, step, backend))
+            .map(|step| prepare_task_shell_command(_task_name, task, step, backend))
             .collect::<Result<Vec<_>, _>>()?
             .join(" && ")),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => match &spec.source {
@@ -8836,132 +9191,151 @@ fn prepare_task_shell_command(
                 shell_quote_command_word(spec.tool.label(), quote_style)
             )),
         },
-        crate::schema::TaskPrepareSpec::DependencyHydration(spec) => match &spec.source {
-            crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
-                let cwd = source.cwd.trim();
-                let file = source.file.trim();
-                let engine = source.engine.as_str();
-                let targets = spec
-                    .targets
+        crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
+            if let Some(compose) = spec.source.compose_invocation() {
+                let task = task.expect("compose-backed dependency hydration requires task context");
+                let commands = compose_wrapped_dependency_hydration_commands(
+                    task,
+                    resolved_execution_backend_kind(backend),
+                    &spec.source,
+                    compose,
+                );
+                return Ok(commands
                     .iter()
-                    .map(|target| shell_quote_command_word(target.trim(), quote_style))
+                    .map(|command| shell_command_for_structured_command(command, quote_style))
                     .collect::<Vec<_>>()
-                    .join(" ");
-                Ok(format!(
-                    "cd {} && {} compose -f {} pull {}",
-                    shell_quote_command_word(cwd, quote_style),
-                    shell_quote_command_word(engine, quote_style),
-                    shell_quote_command_word(file, quote_style),
-                    targets
-                ))
+                    .join(" && "));
             }
-            crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
-                let cwd = source.cwd.trim();
-                let manager = match source.manager {
-                    crate::schema::TaskNodePackageManagerKind::Npm => "npm",
-                    crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
-                    crate::schema::TaskNodePackageManagerKind::Yarn => "yarn",
-                    crate::schema::TaskNodePackageManagerKind::Bun => "bun",
-                };
-                let mode = match source.mode {
-                    crate::schema::TaskNodePackageManagerHydrationMode::Install => "install",
-                    crate::schema::TaskNodePackageManagerHydrationMode::Ci => "ci",
-                };
-                let mut command = format!(
-                    "cd {} && {} {}",
-                    shell_quote_command_word(cwd, quote_style),
-                    shell_quote_command_word(manager, quote_style),
-                    shell_quote_command_word(mode, quote_style)
-                );
-                if let Some(flag) = source.lockfile_flag() {
-                    command.push(' ');
-                    command.push_str(&shell_quote_command_word(flag, quote_style));
+            let base_command = match &spec.source {
+                crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
+                    let cwd = source.cwd.trim();
+                    let file = source.file.trim();
+                    let engine = source.engine.as_str();
+                    let targets = spec
+                        .targets
+                        .iter()
+                        .map(|target| shell_quote_command_word(target.trim(), quote_style))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    Ok(format!(
+                        "cd {} && {} compose -f {} pull {}",
+                        shell_quote_command_word(cwd, quote_style),
+                        shell_quote_command_word(engine, quote_style),
+                        shell_quote_command_word(file, quote_style),
+                        targets
+                    ))
                 }
-                if let Some(flag) = source.inline_builds_flag() {
-                    command.push(' ');
-                    command.push_str(&shell_quote_command_word(flag, quote_style));
+                crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
+                    let cwd = source.cwd.trim();
+                    let manager = match source.manager {
+                        crate::schema::TaskNodePackageManagerKind::Npm => "npm",
+                        crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
+                        crate::schema::TaskNodePackageManagerKind::Yarn => "yarn",
+                        crate::schema::TaskNodePackageManagerKind::Bun => "bun",
+                    };
+                    let mode = match source.mode {
+                        crate::schema::TaskNodePackageManagerHydrationMode::Install => "install",
+                        crate::schema::TaskNodePackageManagerHydrationMode::Ci => "ci",
+                    };
+                    let mut command = format!(
+                        "cd {} && {} {}",
+                        shell_quote_command_word(cwd, quote_style),
+                        shell_quote_command_word(manager, quote_style),
+                        shell_quote_command_word(mode, quote_style)
+                    );
+                    if let Some(flag) = source.lockfile_flag() {
+                        command.push(' ');
+                        command.push_str(&shell_quote_command_word(flag, quote_style));
+                    }
+                    if let Some(flag) = source.inline_builds_flag() {
+                        command.push(' ');
+                        command.push_str(&shell_quote_command_word(flag, quote_style));
+                    }
+                    if let Some(flag) = source.force_flag() {
+                        command.push(' ');
+                        command.push_str(&shell_quote_command_word(flag, quote_style));
+                    }
+                    Ok(command)
                 }
-                if let Some(flag) = source.force_flag() {
-                    command.push(' ');
-                    command.push_str(&shell_quote_command_word(flag, quote_style));
-                }
-                Ok(command)
-            }
-            crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => Ok(format!(
-                "cd {} && bundle config set path {} && bundle install",
-                shell_quote_command_word(source.cwd.trim(), quote_style),
-                shell_quote_command_word(source.path.trim(), quote_style)
-            )),
-            crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => Ok(format!(
-                "cd {} && uv sync",
-                shell_quote_command_word(source.cwd.trim(), quote_style)
-            )),
-            crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => {
-                let mut command = format!(
-                    "cd {} && poetry install",
+                crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => Ok(format!(
+                    "cd {} && bundle config set path {} && bundle install",
+                    shell_quote_command_word(source.cwd.trim(), quote_style),
+                    shell_quote_command_word(source.path.trim(), quote_style)
+                )),
+                crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => Ok(format!(
+                    "cd {} && uv sync",
                     shell_quote_command_word(source.cwd.trim(), quote_style)
-                );
-                if !source.groups.is_empty() {
-                    command.push(' ');
-                    command.push_str(&shell_quote_command_word(
-                        source.group_mode.flag(),
-                        quote_style,
-                    ));
-                    command.push(' ');
-                    command.push_str(&shell_quote_command_word(
-                        &source.groups.join(","),
-                        quote_style,
-                    ));
+                )),
+                crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => {
+                    let mut command = format!(
+                        "cd {} && poetry install",
+                        shell_quote_command_word(source.cwd.trim(), quote_style)
+                    );
+                    if !source.groups.is_empty() {
+                        command.push(' ');
+                        command.push_str(&shell_quote_command_word(
+                            source.group_mode.flag(),
+                            quote_style,
+                        ));
+                        command.push(' ');
+                        command.push_str(&shell_quote_command_word(
+                            &source.groups.join(","),
+                            quote_style,
+                        ));
+                    }
+                    if source.no_root {
+                        command.push(' ');
+                        command.push_str(&shell_quote_command_word("--no-root", quote_style));
+                    }
+                    Ok(command)
                 }
-                if source.no_root {
-                    command.push(' ');
-                    command.push_str(&shell_quote_command_word("--no-root", quote_style));
-                }
-                Ok(command)
-            }
-            crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => Ok(format!(
-                "cd {} && go mod download",
-                shell_quote_command_word(source.cwd.trim(), quote_style)
-            )),
-            crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => Ok(format!(
-                "cd {} && helm dependency build .",
-                shell_quote_command_word(source.cwd.trim(), quote_style)
-            )),
-            crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => Ok(format!(
-                "cd {} && {} -q{} {}",
-                shell_quote_command_word(source.cwd.trim(), quote_style),
-                shell_quote_command_word(
-                    if source.wrapper { "./mvnw" } else { "mvn" },
-                    quote_style
-                ),
-                if source.skip_tests {
-                    " -DskipTests"
-                } else {
-                    ""
-                },
-                source.mode.goal()
-            )),
-            crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => Ok(format!(
-                "cd {} && {} dependencies",
-                shell_quote_command_word(source.cwd.trim(), quote_style),
-                shell_quote_command_word(
-                    if source.wrapper {
-                        "./gradlew"
+                crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => Ok(format!(
+                    "cd {} && go mod download",
+                    shell_quote_command_word(source.cwd.trim(), quote_style)
+                )),
+                crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => Ok(format!(
+                    "cd {} && helm dependency build .",
+                    shell_quote_command_word(source.cwd.trim(), quote_style)
+                )),
+                crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => Ok(format!(
+                    "cd {} && {} -q{} {}",
+                    shell_quote_command_word(source.cwd.trim(), quote_style),
+                    shell_quote_command_word(
+                        if source.wrapper { "./mvnw" } else { "mvn" },
+                        quote_style
+                    ),
+                    if source.skip_tests {
+                        " -DskipTests"
                     } else {
-                        "gradle"
+                        ""
                     },
-                    quote_style
-                )
-            )),
-            crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => Ok(format!(
-                "cd {} && cargo fetch",
-                shell_quote_command_word(source.cwd.trim(), quote_style)
-            )),
-            crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => Ok(format!(
-                "cd {} && dotnet restore",
-                shell_quote_command_word(source.cwd.trim(), quote_style)
-            )),
-        },
+                    source.mode.goal()
+                )),
+                crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => Ok(format!(
+                    "cd {} && {} dependencies",
+                    shell_quote_command_word(source.cwd.trim(), quote_style),
+                    shell_quote_command_word(
+                        if source.wrapper {
+                            "./gradlew"
+                        } else {
+                            "gradle"
+                        },
+                        quote_style
+                    )
+                )),
+                crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => Ok(format!(
+                    "cd {} && cargo fetch",
+                    shell_quote_command_word(source.cwd.trim(), quote_style)
+                )),
+                crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => {
+                    Ok(format!(
+                        "cd {} && dotnet restore",
+                        shell_quote_command_word(source.cwd.trim(), quote_style)
+                    ))
+                }
+            }?;
+            Ok(base_command)
+        }
     }
 }
 
@@ -9612,8 +9986,7 @@ fn execute_reset_compose_service_volume_action(
     )? {
         stdout.push_str(message.as_str());
     }
-    if let Some(message) =
-        remove_remaining_volume_attached_containers(task_name, provider, volume)?
+    if let Some(message) = remove_remaining_volume_attached_containers(task_name, provider, volume)?
     {
         stdout.push_str(message.as_str());
     }
@@ -9656,9 +10029,7 @@ fn execute_reset_compose_service_volume_action(
         .output()
         .map_err(|source| RunError::FileActionFailed {
             task: task_name.to_string(),
-            message: format!(
-                "could not restart {provider} compose service `{service}`: {source}"
-            ),
+            message: format!("could not restart {provider} compose service `{service}`: {source}"),
         })?;
     if !up_output.status.success() {
         return Err(RunError::FileActionFailed {
@@ -9876,7 +10247,10 @@ fn compose_action_env_bindings(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        env.insert(String::from("COMPOSE_PROJECT_NAME"), project_name.to_string());
+        env.insert(
+            String::from("COMPOSE_PROJECT_NAME"),
+            project_name.to_string(),
+        );
     }
     env
 }
@@ -25219,6 +25593,12 @@ fn contract_working_dir(contract_path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
+fn host_workspace_template_value(working_dir: &Path) -> String {
+    container_workspace_mount_source(working_dir)
+        .display()
+        .to_string()
+}
+
 fn container_workspace_mount_source(working_dir: &Path) -> PathBuf {
     fs::canonicalize(working_dir).unwrap_or_else(|_| {
         if working_dir.is_absolute() {
@@ -28129,7 +28509,12 @@ tasks:
         );
         assert_eq!(
             env.get("HOST_ROOT").map(String::as_str),
-            Some(working_dir.to_string_lossy().as_ref())
+            Some(
+                fs::canonicalize(working_dir)
+                    .expect("working dir should canonicalize")
+                    .to_string_lossy()
+                    .as_ref(),
+            )
         );
         #[cfg(unix)]
         {
@@ -28142,6 +28527,73 @@ tasks:
                 Some(expected_uid.as_str())
             );
         }
+    }
+
+    #[test]
+    fn effective_task_env_for_backend_uses_absolute_host_workspace_for_relative_working_dir() {
+        let _cwd_guard = cwd_mutex_lock();
+        let _env_guard = env_mutex_lock();
+        let root = TempDir::new().expect("tempdir should create");
+        let repo_dir = root.path().join("repo");
+        fs::create_dir_all(&repo_dir).expect("repo dir should create");
+        let original_cwd = env::current_dir().expect("current dir should resolve");
+        env::set_current_dir(&repo_dir).expect("current dir should update");
+
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: tooling
+  contexts:
+    tooling:
+      backend: container
+      lifecycle: ephemeral
+      container:
+        image: node:24-bookworm
+tasks:
+  api:
+    context: tooling
+    env:
+      HOST_ROOT: ${OTA_HOST_WORKSPACE}
+    script: ./scripts/api/run.sh
+"#,
+        )
+        .unwrap();
+
+        let env = effective_task_env_for_backend(
+            &contract,
+            contract.tasks.get("api").unwrap(),
+            &ResolvedExecutionBackend::Container {
+                context_name: Some(String::from("tooling")),
+                shared_local_backend: None,
+                image: String::from("node:24-bookworm"),
+                engine: String::from("docker"),
+                lifecycle: Lifecycle::Ephemeral,
+                memory_bytes: None,
+                compose_networks: Vec::new(),
+                publications: Vec::new(),
+                dependency_isolation_paths: Vec::new(),
+            },
+            Path::new("."),
+        );
+
+        env::set_current_dir(original_cwd).expect("current dir should restore");
+
+        let expected = fs::canonicalize(&repo_dir)
+            .expect("repo dir should canonicalize")
+            .display()
+            .to_string();
+        assert_eq!(
+            env.get("OTA_HOST_WORKSPACE").map(String::as_str),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            env.get("HOST_ROOT").map(String::as_str),
+            Some(expected.as_str())
+        );
     }
 
     #[test]
@@ -53657,12 +54109,16 @@ exit 1
             first.stdout
         );
         assert!(
-            first.stdout.contains("removed docker volume `app_postgres-data`"),
+            first
+                .stdout
+                .contains("removed docker volume `app_postgres-data`"),
             "{}",
             first.stdout
         );
         assert!(
-            first.stdout.contains("restarted docker compose service `postgres`"),
+            first
+                .stdout
+                .contains("restarted docker compose service `postgres`"),
             "{}",
             first.stdout
         );
@@ -53671,14 +54127,17 @@ exit 1
         assert!(!state_dir.join("volume.app_postgres-data").exists());
         assert_eq!(second.exit_code, 0);
         assert!(
-            second.stdout.contains("docker volume `app_postgres-data` was absent; no volume remove needed"),
+            second
+                .stdout
+                .contains("docker volume `app_postgres-data` was absent; no volume remove needed"),
             "{}",
             second.stdout
         );
     }
 
     #[test]
-    fn reset_compose_service_volume_action_removes_leftover_service_container_before_volume_reset() {
+    fn reset_compose_service_volume_action_removes_leftover_service_container_before_volume_reset()
+    {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
             r#"
@@ -53781,8 +54240,9 @@ exit 1
             env::set_var("PATH", &joined_path);
         }
 
-        let result = run_task(&fixture.contract, fixture.file_path(), "postgres:reset")
-            .expect("reset_compose_service_volume should remove leftover containers before volume reset");
+        let result = run_task(&fixture.contract, fixture.file_path(), "postgres:reset").expect(
+            "reset_compose_service_volume should remove leftover containers before volume reset",
+        );
 
         match original_path {
             Some(path) => unsafe {
@@ -53911,8 +54371,9 @@ exit 1
             env::set_var("PATH", &joined_path);
         }
 
-        let result = run_task(&fixture.contract, fixture.file_path(), "postgres:reset")
-            .expect("reset_compose_service_volume should remove any remaining volume-attached containers");
+        let result = run_task(&fixture.contract, fixture.file_path(), "postgres:reset").expect(
+            "reset_compose_service_volume should remove any remaining volume-attached containers",
+        );
 
         match original_path {
             Some(path) => unsafe {
@@ -55947,7 +56408,8 @@ tasks:
         );
 
         let command =
-            super::prepare_task_shell_command("setup:docker:images", &prepare, &backend).unwrap();
+            super::prepare_task_shell_command("setup:docker:images", None, &prepare, &backend)
+                .unwrap();
 
         assert_eq!(
             command,
@@ -55973,7 +56435,7 @@ tasks:
         );
 
         let command =
-            super::prepare_task_shell_command("setup:tooling", &prepare, &backend).unwrap();
+            super::prepare_task_shell_command("setup:tooling", None, &prepare, &backend).unwrap();
 
         assert_eq!(
             command,
@@ -56002,7 +56464,8 @@ tasks:
         );
 
         let command =
-            super::prepare_task_shell_command("setup:docker:images", &prepare, &backend).unwrap();
+            super::prepare_task_shell_command("setup:docker:images", None, &prepare, &backend)
+                .unwrap();
 
         assert_eq!(
             command,
@@ -56106,6 +56569,147 @@ tasks:
                 String::from("-f"),
                 String::from("values.dev.yaml"),
             ]
+        );
+    }
+
+    #[test]
+    fn projected_compose_execution_uses_adapter_owned_cwd_and_flags() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    compose:
+      kind: exec
+      detach: true
+      service: api
+      workdir: /workspace/app
+      exe: bundle
+      args:
+        - exec
+        - rails
+        - server
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("dev").unwrap();
+        let projected = super::projected_compose_command_for_task(
+            task,
+            Backend::Native,
+            task.compose.as_ref().unwrap(),
+        );
+
+        assert_eq!(projected.exe, "docker");
+        assert_eq!(projected.cwd.as_deref(), Some("infra"));
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("compose"),
+                String::from("exec"),
+                String::from("-d"),
+                String::from("-T"),
+                String::from("-w"),
+                String::from("/workspace/app"),
+                String::from("api"),
+                String::from("bundle"),
+                String::from("exec"),
+                String::from("rails"),
+                String::from("server"),
+            ]
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn dependency_hydration_prepare_can_wrap_typed_command_through_compose() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: app
+        manager: npm
+        mode: ci
+        compose:
+          kind: run
+          service: app
+          workdir: /workspace
+"#,
+        )
+        .unwrap();
+        let task = contract.tasks.get("setup").unwrap();
+        let prepare = task.prepare.as_ref().unwrap();
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+
+        let command =
+            super::prepare_task_shell_command("setup", Some(task), prepare, &backend).unwrap();
+
+        assert_eq!(
+            command,
+            "cd 'infra' && 'docker' 'compose' 'run' '-T' '-w' '/workspace/app' 'app' 'npm' 'ci'"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn bundler_hydration_prepare_can_wrap_structural_steps_through_compose() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: api
+        path: vendor/bundle
+        compose:
+          kind: exec
+          service: api
+          workdir: /workspace
+"#,
+        )
+        .unwrap();
+        let task = contract.tasks.get("setup").unwrap();
+        let prepare = task.prepare.as_ref().unwrap();
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+
+        let command =
+            super::prepare_task_shell_command("setup", Some(task), prepare, &backend).unwrap();
+
+        assert_eq!(
+            command,
+            "cd 'infra' && 'docker' 'compose' 'exec' '-T' '-w' '/workspace/api' 'api' 'bundle' 'config' 'set' 'path' 'vendor/bundle' && cd 'infra' && 'docker' 'compose' 'exec' '-T' '-w' '/workspace/api' 'api' 'bundle' 'install'"
         );
     }
 

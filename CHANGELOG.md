@@ -26,6 +26,11 @@
 
 ## Unreleased
 
+- added first-class `tasks.<name>.compose.detach` for detached `docker|podman compose exec`
+  lanes, so repos can model truthful in-service bootstrap/start commands without opaque shell
+  `docker exec -d ...` glue
+- added first-class `tasks.<name>.compose` execution bodies for structured `docker|podman compose exec/run` lanes, so repos can model finite service-side commands without falling back to opaque shell argv
+- widened `prepare.kind: dependency_hydration` with optional `prepare.source.compose` invocation wrappers, so typed package hydration lanes such as npm, Bundler, uv, Poetry, Maven, Gradle, Cargo, and dotnet restore can execute through declared Compose service truth instead of shell glue
 - fixed V10 receipt-diff correlation fallback so `ota receipt --baseline latest` now marks
   resolved blockers as likely related when contract drift clearly explains a resolved finding and
   no new material blockers were introduced; semantic snapshot diffs no longer collapse to
