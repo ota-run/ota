@@ -52112,6 +52112,84 @@ tasks:
     }
 
     #[test]
+    fn render_tasks_text_reports_compose_wrapped_dependency_hydration() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "setup",
+            context: Some("host"),
+            default_mode: None,
+            effective_default_mode: "native",
+            description: Some("Hydrate dependencies through compose"),
+            notes: None,
+            category: None,
+            env: &env,
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs: &inputs,
+            kind: "prepare",
+            run: None,
+            script: None,
+            command: None,
+            compose: None,
+            launch: None,
+            action: None,
+            prepare: Some(crate::output::TaskPrepareSummary {
+                kind: "dependency_hydration",
+                steps: Vec::new(),
+                medium: Some("package_dependencies"),
+                source_kind: Some("node_package_manager"),
+                cwd: Some("app"),
+                file: None,
+                manager: Some("npm"),
+                mode: Some("ci"),
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: false,
+                inline_builds: false,
+                force: false,
+                no_root: false,
+                skip_tests: false,
+                targets: Vec::new(),
+                compose: Some(crate::output::TaskComposeInvocationSummary {
+                    kind: "run",
+                    engine: "docker",
+                    service: Some("app"),
+                    services: Vec::new(),
+                    workdir: Some("/workspace/app"),
+                    rm: false,
+                    detach: false,
+                    remove_volumes: false,
+                    tty: false,
+                }),
+            }),
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+
+        assert!(
+            rendered.contains(
+                "Prepare: hydrate package dependencies with `npm ci` in `app` via docker compose run -T -w /workspace/app app"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn render_tasks_text_previews_compose_execution_body() {
         let env = BTreeMap::new();
         let inputs = BTreeMap::new();

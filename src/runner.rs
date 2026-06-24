@@ -57475,6 +57475,81 @@ tasks:
         );
     }
 
+    #[test]
+    fn compose_wrapped_dependency_hydration_projects_direct_argv_execution() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: api
+        path: vendor/bundle
+        compose:
+          kind: exec
+          service: api
+          workdir: /workspace
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("setup").unwrap();
+        let prepare = task.prepare.as_ref().unwrap();
+        let crate::schema::TaskPrepareSpec::DependencyHydration(spec) = prepare else {
+            panic!("expected dependency hydration prepare");
+        };
+
+        let commands = super::compose_wrapped_dependency_hydration_commands(
+            task,
+            Backend::Native,
+            &spec.source,
+            spec.source.compose_invocation().unwrap(),
+        );
+
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0].exe, "docker");
+        assert_eq!(
+            commands[0].args,
+            vec![
+                String::from("compose"),
+                String::from("exec"),
+                String::from("-T"),
+                String::from("-w"),
+                String::from("/workspace/api"),
+                String::from("api"),
+                String::from("bundle"),
+                String::from("config"),
+                String::from("set"),
+                String::from("path"),
+                String::from("vendor/bundle"),
+            ]
+        );
+        assert_eq!(commands[1].exe, "docker");
+        assert_eq!(
+            commands[1].args,
+            vec![
+                String::from("compose"),
+                String::from("exec"),
+                String::from("-T"),
+                String::from("-w"),
+                String::from("/workspace/api"),
+                String::from("api"),
+                String::from("bundle"),
+                String::from("install"),
+            ]
+        );
+    }
+
     #[cfg(not(windows))]
     #[test]
     fn bundler_hydration_prepare_can_wrap_structural_steps_through_compose() {
