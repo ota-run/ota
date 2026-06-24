@@ -4693,7 +4693,11 @@ fn ensure_no_workflow_instance_cleanup_dependents(
     let mut blocking_dependents = Vec::new();
     let mut blocking_projects = Vec::new();
     for dependent_selector in dependent_selectors {
-        let projects = workflow_instance_compose_projects(contract, Some(dependent_selector.as_str()));
+        let projects = workflow_instance_dependent_compose_projects(
+            contract,
+            Some(selector),
+            dependent_selector.as_str(),
+        );
         if projects.is_empty() {
             continue;
         }
@@ -5382,29 +5386,47 @@ fn persistent_cleanup_scope_for_workflow(
     scope
 }
 
-fn workflow_instance_compose_projects(
+fn workflow_instance_compose_project_for_task(
     contract: &Contract,
     workflow_name: Option<&str>,
+    task_name: &str,
+) -> Option<String> {
+    let task = contract.tasks.get(task_name)?;
+    let override_project = contract
+        .selected_workflow_instance(workflow_name)
+        .and_then(|instance| instance.tasks.get(task_name))
+        .and_then(|overlay| overlay.adapter_inputs.effective_compose())
+        .and_then(|compose| compose.project_name);
+    let base_project = task.compose_adapter_project_name_for_backend(
+        effective_task_execution(contract, task_name, ExecutionOverrides::default()).backend,
+    );
+    override_project.or(base_project)
+}
+
+fn workflow_instance_dependent_compose_projects(
+    contract: &Contract,
+    prerequisite_selector: Option<&str>,
+    dependent_selector: &str,
 ) -> Vec<String> {
-    let selected_instance = contract.selected_workflow_instance(workflow_name);
-    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
     let mut projects = Vec::new();
-    for task_name in task_names {
-        let Some(task) = contract.tasks.get(task_name.as_str()) else {
+    for task_name in contract.selected_workflow_task_closure_names(Some(dependent_selector)) {
+        let Some(dependent_project) = workflow_instance_compose_project_for_task(
+            contract,
+            Some(dependent_selector),
+            task_name.as_str(),
+        ) else {
             continue;
         };
-        let override_project = selected_instance
-            .and_then(|instance| instance.tasks.get(task_name.as_str()))
-            .and_then(|overlay| overlay.adapter_inputs.effective_compose())
-            .and_then(|compose| compose.project_name);
-        let base_project = task.compose_adapter_project_name_for_backend(
-            effective_task_execution(contract, task_name.as_str(), ExecutionOverrides::default())
-                .backend,
+        let prerequisite_project = workflow_instance_compose_project_for_task(
+            contract,
+            prerequisite_selector,
+            task_name.as_str(),
         );
-        if let Some(project) = override_project.or(base_project)
-            && !projects.contains(&project)
-        {
-            projects.push(project);
+        if prerequisite_project.as_deref() == Some(dependent_project.as_str()) {
+            continue;
+        }
+        if !projects.contains(&dependent_project) {
+            projects.push(dependent_project);
         }
     }
     projects
@@ -13066,7 +13088,11 @@ fn source_managed_tool_path_export_required(actions: &[ProvisioningAction]) -> b
 fn source_managed_actions(actions: &[ProvisioningAction]) -> Vec<ProvisioningAction> {
     actions
         .iter()
-        .filter(|action| action.source == "mise" || action.source == "release-asset")
+        .filter(|action| {
+            action.source == "mise"
+                || action.source == "release-asset"
+                || action.source == "corepack"
+        })
         .cloned()
         .collect()
 }
@@ -13153,7 +13179,9 @@ fn source_managed_remaining_gap_covered(
     actions: &[ProvisioningAction],
 ) -> bool {
     actions.iter().any(|action| {
-        (action.source == "mise" || action.source == "release-asset")
+        (action.source == "mise"
+            || action.source == "release-asset"
+            || action.source == "corepack")
             && action.name == gap.name
             && matches!(
                 (&gap.kind, action.target_kind),
@@ -50374,6 +50402,66 @@ workflows:
         assert!(app_scope.context_names.contains("app"));
     }
 
+    #[test]
+    fn workflow_instance_dependent_compose_projects_excludes_shared_projects() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: penpot
+tasks:
+  infra:up:
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+    adapter_inputs:
+      compose:
+        project_name: penpotdev-infra
+  devenv:start:
+    command:
+      exe: docker
+      args:
+        - compose
+        - up
+        - -d
+        - main
+    adapter_inputs:
+      compose:
+        project_name: penpotdev-ws0
+workflows:
+  default: devenv
+  devenv:
+    instances:
+      default: ws0
+      ws0: {}
+      ws1:
+        topology:
+          requires_instances:
+            - ws0
+        tasks:
+          devenv:start:
+            adapter_inputs:
+              compose:
+                project_name: penpotdev-ws1
+    prepare:
+      task: infra:up
+    run:
+      task: devenv:start
+"#,
+        );
+
+        let projects = super::workflow_instance_dependent_compose_projects(
+            &fixture.contract,
+            Some("devenv@ws0"),
+            "devenv@ws1",
+        );
+
+        assert_eq!(projects, vec![String::from("penpotdev-ws1")]);
+    }
+
     #[cfg(unix)]
     #[test]
     fn clean_execution_stops_host_managed_services() {
@@ -52464,7 +52552,7 @@ tasks:
     }
 
     #[test]
-    fn source_managed_actions_retains_only_mise_actions() {
+    fn source_managed_actions_retains_supported_sources() {
         let actions = vec![
             ProvisioningAction {
                 kind: ProvisioningActionKind::Install,
@@ -52492,12 +52580,54 @@ tasks:
                 source_config: None,
                 policy_match: None,
             },
+            ProvisioningAction {
+                kind: ProvisioningActionKind::SelectSource,
+                target_kind: ProvisioningTargetKind::Tool,
+                name: String::from("pnpm"),
+                requested_version: String::from("10.24.0"),
+                normalized_requirement: None,
+                resolved_version: None,
+                package: Some(String::from("pnpm")),
+                source: String::from("corepack"),
+                approved_version: Some(String::from("10.24.0")),
+                source_config: None,
+                policy_match: None,
+            },
         ];
 
         let retained = super::source_managed_actions(&actions);
-        assert_eq!(retained.len(), 1);
+        assert_eq!(retained.len(), 2);
         assert_eq!(retained[0].source, "mise");
         assert_eq!(retained[0].name, "bun");
+        assert_eq!(retained[1].source, "corepack");
+        assert_eq!(retained[1].name, "pnpm");
+    }
+
+    #[test]
+    fn source_managed_remaining_gap_covered_accepts_corepack_tools() {
+        let actions = vec![ProvisioningAction {
+            kind: ProvisioningActionKind::SelectSource,
+            target_kind: ProvisioningTargetKind::Tool,
+            name: String::from("pnpm"),
+            requested_version: String::from("10.24.0"),
+            normalized_requirement: None,
+            resolved_version: None,
+            package: Some(String::from("pnpm")),
+            source: String::from("corepack"),
+            approved_version: Some(String::from("10.24.0")),
+            source_config: None,
+            policy_match: None,
+        }];
+
+        assert!(super::source_managed_remaining_gap_covered(
+            &BackendRequirementGap {
+                kind: ProvisioningTargetKind::Tool,
+                name: String::from("pnpm"),
+                required_version: String::from("10.24.0"),
+                details: String::from("tool `pnpm` missing"),
+            },
+            &actions
+        ));
     }
 
     #[test]
