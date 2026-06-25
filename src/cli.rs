@@ -550,6 +550,9 @@ enum Commands {
         /// Shorthand for `--lifecycle ephemeral`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
+        /// Override the selected projected host listener publication for this proof run.
+        #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
+        host_port: Option<u16>,
         /// Include the execution receipt in text output.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with = "dry_run")]
         receipt: bool,
@@ -849,6 +852,9 @@ enum ProofCommands {
         /// Shorthand for `--lifecycle ephemeral`.
         #[arg(long, action = ArgAction::SetTrue, conflicts_with_all = ["lifecycle", "persistent"])]
         ephemeral: bool,
+        /// Override the selected projected host listener publication for this proof run.
+        #[arg(long = "host-port", value_parser = clap::value_parser!(u16).range(1..))]
+        host_port: Option<u16>,
         /// Inspect one merged monorepo member contract declared by the root contract.
         #[arg(long, add = ArgValueCompleter::new(complete_repo_member_candidates))]
         member: Option<String>,
@@ -4706,6 +4712,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                     lifecycle,
                     persistent,
                     ephemeral,
+                    host_port,
                     member,
                     workflow,
                     path,
@@ -4719,7 +4726,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
-                host_port: None,
+                host_port,
                 memory: None,
                 skip_deps: false,
             },
@@ -5125,6 +5132,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             lifecycle,
             persistent,
             ephemeral,
+            host_port,
             receipt,
             effect_override,
             member,
@@ -5136,7 +5144,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             ExecutionOverrides {
                 backend: resolve_run_backend_override(backend, native, container, remote),
                 lifecycle: resolve_run_lifecycle_override(lifecycle, persistent, ephemeral),
-                host_port: None,
+                host_port,
                 memory: None,
                 skip_deps: false,
             },
@@ -18309,6 +18317,7 @@ tasks:
             lifecycle: None,
             persistent: false,
             ephemeral: false,
+            host_port: None,
             receipt: false,
             member: Vec::new(),
             effect_override: Vec::new(),
@@ -18333,6 +18342,7 @@ tasks:
             lifecycle: None,
             persistent: false,
             ephemeral: false,
+            host_port: None,
             receipt: false,
             member: Vec::new(),
             effect_override: Vec::new(),
@@ -18353,6 +18363,7 @@ tasks:
                 lifecycle: None,
                 persistent: false,
                 ephemeral: false,
+                host_port: None,
                 member: None,
                 workflow: None,
                 path: None,
@@ -18386,6 +18397,7 @@ tasks:
                 lifecycle: None,
                 persistent: false,
                 ephemeral: false,
+                host_port: None,
                 receipt: false,
                 member: Vec::new(),
                 effect_override: Vec::new(),
@@ -18416,6 +18428,7 @@ tasks:
                 lifecycle: None,
                 persistent: false,
                 ephemeral: false,
+                host_port: None,
                 receipt: false,
                 member: Vec::new(),
                 effect_override: Vec::new(),
@@ -18456,6 +18469,7 @@ tasks:
                     lifecycle: None,
                     persistent: false,
                     ephemeral: false,
+                    host_port: None,
                     member: None,
                     workflow: None,
                     path: None,
@@ -18605,6 +18619,7 @@ tasks:
                         lifecycle: None,
                         persistent: false,
                         ephemeral: false,
+                        host_port: None,
                         member: None,
                         workflow: None,
                         path: None,
@@ -18862,6 +18877,7 @@ tasks:
                     lifecycle: None,
                     persistent: false,
                     ephemeral: false,
+                    host_port: None,
                     receipt: false,
                     member: Vec::new(),
                     effect_override: Vec::new(),
@@ -23246,6 +23262,8 @@ policies:
             "app",
             "--container",
             "--persistent",
+            "--host-port",
+            "43000",
             "--ready-timeout",
             "5m",
             "./ota.yaml",
@@ -23266,6 +23284,7 @@ policies:
                         lifecycle,
                         persistent,
                         ephemeral,
+                        host_port,
                         member,
                         workflow,
                         path,
@@ -23279,6 +23298,7 @@ policies:
                 assert!(lifecycle.is_none());
                 assert!(*persistent);
                 assert!(!ephemeral);
+                assert_eq!(*host_port, Some(43000));
                 assert!(member.is_none());
                 assert_eq!(workflow.as_deref(), Some("app"));
                 assert_eq!(path.as_deref(), Some(Path::new("./ota.yaml")));
@@ -26299,7 +26319,7 @@ policies:
         assert!(preview_stdout.contains("- init:contract_file_default"));
         assert!(preview_stdout.contains("Agent boundary"));
         assert!(preview_stdout.contains("Inferred"));
-        assert!(preview_stdout.contains("safe_tasks: `setup`, `test`"));
+        assert!(preview_stdout.contains("safe_tasks: `test`"));
         assert!(!preview_stdout.contains("writable_paths:"));
         assert!(!preview_stdout.contains("\n  - .\n"));
 
@@ -28193,8 +28213,7 @@ requires-python = ">=3.12"
         let json: Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(json["config"]["agent"]["entrypoint"], "setup");
         assert_eq!(json["config"]["agent"]["default_task"], "test");
-        assert_eq!(json["config"]["agent"]["safe_tasks"][0], "setup");
-        assert_eq!(json["config"]["agent"]["safe_tasks"][1], "test");
+        assert_eq!(json["config"]["agent"]["safe_tasks"][0], "test");
         assert_eq!(json["config"]["agent"]["verify_after_changes"][0], "test");
         let ota_version = format!("v{}", env!("CARGO_PKG_VERSION"));
         assert_eq!(
@@ -28204,6 +28223,47 @@ requires-python = ">=3.12"
         assert_eq!(
             json["config"]["agent"]["bootstrap"]["ota"]["source"]["version"],
             ota_version
+        );
+    }
+
+    #[test]
+    fn init_json_dry_run_does_not_mark_dependency_hydration_setup_safe() {
+        let fixture = ContractFixture::new_dir();
+        fixture.write(
+            "package.json",
+            r#"{
+  "name": "workspace-app",
+  "private": true,
+  "workspaces": ["reference", "dc-api-types"],
+  "scripts": {
+    "test": "npm test"
+  }
+}"#,
+        );
+        fixture.write("package-lock.json", "{\n  \"name\": \"workspace-app\"\n}\n");
+        fixture.write(
+            "reference/package.json",
+            "{\n  \"name\": \"reference\"\n}\n",
+        );
+        fixture.write(
+            "dc-api-types/package.json",
+            "{\n  \"name\": \"dc-api-types\"\n}\n",
+        );
+
+        let output = run_with(["ota", "init", "--json", "--dry-run", fixture.path()]);
+
+        assert_eq!(output.exit_code, 0);
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["config"]["agent"]["entrypoint"], "setup");
+        assert_eq!(json["config"]["agent"]["default_task"], "test");
+        assert_eq!(json["config"]["agent"]["safe_tasks"], json!(["test"]));
+        assert_eq!(
+            json["config"]["agent"]["verify_after_changes"],
+            json!(["test"])
+        );
+        assert_eq!(
+            json["config"]["tasks"]["setup"]["prepare"]["kind"],
+            "dependency_hydration"
         );
     }
 

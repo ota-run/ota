@@ -26,11 +26,26 @@
 
 ## Unreleased
 
+- fixed persistent runtime ownership regeneration so recreated `.ota/state/ownership-id` files no
+  longer mint a fresh repo identity and strand Ota-managed containers or dependency-isolation
+  assets outside repo-scoped cleanup; repo ownership now regenerates deterministically from the
+  working directory when state metadata is rebuilt
+- fixed starter agent-boundary inference so `ota init` and `ota detect` no longer implicitly mark
+  dependency-hydration `setup` lanes as `agent.safe_tasks`; setup can still remain the truthful
+  agent entrypoint, but only genuinely safe verification tasks are inferred into the starter
+  safe-task surface by default
 - added first-class `launch.kind: compose` for long-running `docker|podman compose up` runtime
   starts, so repos can model persistent Compose-owned runtime launch truth under `launch` instead
   of forcing packaged stack startup through `launch.kind: command`; the same pass teaches opaque
   service-start governance to prefer `launch.kind: compose` when the shell lane is really
   `docker|podman compose up`
+- fixed native structured Compose execution so adapter-owned compose working directories stay owned
+  by the task adapter surface instead of being duplicated onto projected command `cwd`; native
+  `compose` task bodies and `launch.kind: compose` no longer double-join adapter roots like
+  `docker/docker` during spawn
+- widened `ota proof runtime` with `--host-port`, so runtime proof can now consume the same
+  projected host-listener override surface as `ota run` and `ota up` when concurrent pressure or
+  host-port conflict isolation needs a remapped publication
 - widened `tasks.<name>.compose` with first-class `compose.kind: up`, `compose.kind: down`,
   `compose.kind: build`, and `compose.remove_volumes: true` for `compose down -v`, so repos can
   model staged `docker|podman compose up [-d] <services...>`, project-scoped `compose down`,

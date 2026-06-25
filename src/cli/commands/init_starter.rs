@@ -1403,7 +1403,7 @@ fn starter_agent_from_detected_candidate(
 
 fn starter_agent_safe_tasks(contract: &DetectContract) -> Vec<String> {
     let mut safe_tasks = Vec::new();
-    for task_name in ["setup", "test"] {
+    for task_name in ["test"] {
         if contract.tasks.contains_key(task_name) {
             safe_tasks.push(task_name.to_string());
         }

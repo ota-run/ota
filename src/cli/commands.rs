@@ -2245,7 +2245,9 @@ fn render_execution_topology_output(
     let tasks = contract
         .tasks
         .iter()
-        .map(|(name, task)| build_execution_topology_task_summary(name, task, current_os(), contract))
+        .map(|(name, task)| {
+            build_execution_topology_task_summary(name, task, current_os(), contract)
+        })
         .collect::<Vec<_>>();
 
     match format {
@@ -2384,6 +2386,43 @@ pub fn proof_runtime(
                     Ok(summary) => summary,
                     Err(error) => return CommandOutput::failure_with_code(error, 2),
                 };
+                if let Some(run_task) = workflow_summary
+                    .as_ref()
+                    .and_then(|workflow| workflow.run_task)
+                    && overrides.host_port.is_some()
+                {
+                    let backend = match resolve_execution_backend_with_contract_path(
+                        contract,
+                        run_task,
+                        overrides,
+                        Some(&target.contract_path),
+                    ) {
+                        Ok(backend) => backend,
+                        Err(error) => {
+                            return CommandOutput::failure(render_up_run_error(
+                                &target.contract_path,
+                                overrides,
+                                error,
+                            ));
+                        }
+                    };
+                    if !matches!(backend, ResolvedExecutionBackend::Container { .. }) {
+                        let backend = match backend {
+                            ResolvedExecutionBackend::Native { .. } => "native",
+                            ResolvedExecutionBackend::Container { .. } => "container",
+                            ResolvedExecutionBackend::Remote { .. } => "remote",
+                            ResolvedExecutionBackend::BackendProvider { .. } => "backend-provider",
+                        };
+                        return CommandOutput::failure(render_up_run_error(
+                            &target.contract_path,
+                            overrides,
+                            RunError::HostPortOverrideUnsupportedBackend {
+                                task: run_task.to_string(),
+                                backend,
+                            },
+                        ));
+                    }
+                }
                 let effective_workflow_selector = workflow_summary
                     .as_ref()
                     .map(workflow_selector_from_summary)
@@ -46694,10 +46733,9 @@ mod tests {
 
     use super::{
         DetectComparisonMode, OutputFormat, PlainModeGuard, RepoExecutionMode, RepoUpPreview,
-        RepoUpResult, RequirementActivationAction,
-        adapter_bootstrap_request_for_missing_backend, bootstrap_failure_findings, build_env_report,
-        build_env_report_with_overrides, build_up_preview,
-        collect_validate_warnings, compact_contract_file_path_relative_to,
+        RepoUpResult, RequirementActivationAction, adapter_bootstrap_request_for_missing_backend,
+        bootstrap_failure_findings, build_env_report, build_env_report_with_overrides,
+        build_up_preview, collect_validate_warnings, compact_contract_file_path_relative_to,
         compact_path_relative_to, compact_policy_path_relative_to_contract,
         contractless_signal_summary_parts, doctor as doctor_command,
         doctor_mode_execution_overrides, env as env_command, execute_repo_up,
@@ -52755,7 +52793,10 @@ workflows:
             &[task],
         ));
 
-        assert!(rendered.contains("Launch: docker compose up -d api worker"), "{rendered}");
+        assert!(
+            rendered.contains("Launch: docker compose up -d api worker"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -60025,10 +60066,7 @@ workflows:
         )
         .expect("workflow instance should adjust contract");
         assert_eq!(
-            adjusted
-                .surfaces
-                .get("ui")
-                .map(|surface| surface.port),
+            adjusted.surfaces.get("ui").map(|surface| surface.port),
             Some(13000)
         );
         let task = adjusted.tasks.get("dev").expect("task should exist");
@@ -60116,7 +60154,10 @@ workflows:
             Some("devenv@ci"),
         )
         .expect("workflow instance should adjust contract");
-        let task = adjusted.tasks.get("devenv:start").expect("task should exist");
+        let task = adjusted
+            .tasks
+            .get("devenv:start")
+            .expect("task should exist");
         let runtime = task.runtime.as_ref().expect("runtime should exist");
         let listener = runtime
             .listeners
@@ -60134,7 +60175,8 @@ workflows:
     }
 
     #[test]
-    fn contract_adjusted_for_selected_workflow_env_profile_preserves_port_values_on_mode_only_runtime_overlay() {
+    fn contract_adjusted_for_selected_workflow_env_profile_preserves_port_values_on_mode_only_runtime_overlay()
+     {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -60203,7 +60245,10 @@ workflows:
             Some("devenv@ci"),
         )
         .expect("workflow instance should adjust contract");
-        let task = adjusted.tasks.get("devenv:start").expect("task should exist");
+        let task = adjusted
+            .tasks
+            .get("devenv:start")
+            .expect("task should exist");
         let runtime = task.runtime.as_ref().expect("runtime should exist");
         let listener = runtime
             .listeners
@@ -60219,10 +60264,7 @@ workflows:
             .host
             .as_ref()
             .expect("project host should exist");
-        assert_eq!(
-            host.port.mode,
-            crate::schema::TaskRuntimeHostPortMode::Auto
-        );
+        assert_eq!(host.port.mode, crate::schema::TaskRuntimeHostPortMode::Auto);
         assert_eq!(host.port.value, Some(3000));
     }
 
@@ -60395,7 +60437,8 @@ workflows:
 "#,
         );
         fs::write(&contract_path, &contents).expect("contract should write");
-        let contract = parse_contract_str(&contract_path, &contents).expect("contract should parse");
+        let contract =
+            parse_contract_str(&contract_path, &contents).expect("contract should parse");
 
         let result = super::execute_repo_up_with_behavior(
             &contract,
@@ -61327,7 +61370,7 @@ workflows:
 
     #[test]
     fn render_selected_workflow_env_profile_artifacts_renders_structured_json_with_instance_overlay()
-    {
+     {
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
         let contract = parse_contract_str(
@@ -61392,7 +61435,10 @@ workflows:
         let rendered = fs::read_to_string(fixture.path().join(".vscode/mcp.json")).unwrap();
         let json: serde_json::Value = serde_json::from_str(&rendered).unwrap();
         assert_eq!(json["other"], serde_json::json!("preserved"));
-        assert_eq!(json["servers"]["existing"]["command"], serde_json::json!("keep"));
+        assert_eq!(
+            json["servers"]["existing"]["command"],
+            serde_json::json!("keep")
+        );
         assert_eq!(
             json["servers"]["penpot"]["url"],
             serde_json::json!("http://localhost:4401/mcp")
@@ -61405,7 +61451,7 @@ workflows:
 
     #[test]
     fn render_selected_workflow_env_profile_artifacts_renders_structured_toml_with_instance_overlay()
-    {
+     {
         let fixture = TempDir::new().unwrap();
         let contract_path = fixture.path().join("ota.yaml");
         let contract = parse_contract_str(
@@ -76954,6 +77000,84 @@ workflows:
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("proof runtime json");
         assert_eq!(json["ok"], true, "{}", output.stdout);
+    }
+
+    #[test]
+    fn proof_runtime_rejects_host_port_override_for_native_run_task() {
+        let fixture = TempDir::new().unwrap();
+        fs::write(
+            fixture.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: proof-runtime-native-host-port
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  dev:
+    context: host
+    launch:
+      kind: command
+      exe: node
+      args:
+        - --version
+    runtime:
+      kind: service
+      listeners:
+        api:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+workflows:
+  default: app
+  app:
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        let output = super::proof_runtime(
+            Some(fixture.path()),
+            None,
+            None,
+            Some("app"),
+            None,
+            ExecutionOverrides {
+                backend: Some(Backend::Native),
+                lifecycle: None,
+                host_port: Some(43000),
+                memory: None,
+                skip_deps: false,
+            },
+            OutputFormat::Text,
+            false,
+        );
+
+        assert_ne!(output.exit_code, 0, "{}", output.stdout);
+        let rendered = format!(
+            "{}\n{}",
+            output.stdout,
+            output.stderr.as_deref().unwrap_or_default()
+        );
+        assert!(
+            strip_ansi_codes(&rendered)
+                .contains("cannot apply `--host-port` when execution resolves to `native`"),
+            "{}",
+            rendered
+        );
     }
 
     #[test]
@@ -92806,16 +92930,16 @@ fn selected_up_activation_actions(
             DoctorMode::Remote => Backend::Remote,
         },
     )
-        .into_iter()
-        .filter(|action| {
-            !policy_provisioned_tools.contains(action.tool_name.as_str())
-                && (preflight
-                    .findings
-                    .iter()
-                    .any(|finding| finding_targets_activation_action(finding, action))
-                    || activation_action_needs_local_bootstrap(action))
-        })
-        .collect()
+    .into_iter()
+    .filter(|action| {
+        !policy_provisioned_tools.contains(action.tool_name.as_str())
+            && (preflight
+                .findings
+                .iter()
+                .any(|finding| finding_targets_activation_action(finding, action))
+                || activation_action_needs_local_bootstrap(action))
+    })
+    .collect()
 }
 
 fn activation_action_needs_local_bootstrap(action: &RequirementActivationAction) -> bool {
@@ -93646,18 +93770,9 @@ fn append_up_preview_service_actions_for_workflow(
     );
 
     if let Some(run_task) = activation_task {
-        let requested_task = contract
-            .tasks
-            .get(run_task)
-            .map(|task| {
-                TaskSummary::from_spec_with_overrides(
-                    run_task,
-                    task,
-                    current_os(),
-                    contract,
-                    overrides,
-                )
-            });
+        let requested_task = contract.tasks.get(run_task).map(|task| {
+            TaskSummary::from_spec_with_overrides(run_task, task, current_os(), contract, overrides)
+        });
         let execution_plan =
             resolve_execution_plan_for_task(contract, contract_path, run_task, overrides).ok();
         if let (Some(requested_task), Some(execution_plan)) = (requested_task, execution_plan) {
@@ -93696,8 +93811,10 @@ fn append_up_preview_service_actions_for_workflow(
                     "skip declared depends_on before requested task `{run_task}`"
                 ));
             }
-            plan.actions
-                .push(run_preview_task_execution_action(&requested_task, &execution_plan));
+            plan.actions.push(run_preview_task_execution_action(
+                &requested_task,
+                &execution_plan,
+            ));
             if matches!(effective_execution.lifecycle, Some(Lifecycle::Persistent)) {
                 plan.actions.push(String::from(
                     "would persist durable task logs under `.ota/state/logs/`",
@@ -94920,10 +95037,8 @@ fn merge_runtime_listener_overlay(
     if let Some(project_overlay) = overlay.project.as_ref()
         && let Some(host_overlay) = project_overlay.host.as_ref()
     {
-        let host = target
-            .project
-            .host
-            .get_or_insert_with(|| crate::schema::TaskRuntimeHostProjectionSpec {
+        let host = target.project.host.get_or_insert_with(|| {
+            crate::schema::TaskRuntimeHostProjectionSpec {
                 address: String::from("127.0.0.1"),
                 port: crate::schema::TaskRuntimeHostPortSpec {
                     mode: crate::schema::TaskRuntimeHostPortMode::Fixed,
@@ -94931,7 +95046,8 @@ fn merge_runtime_listener_overlay(
                 },
                 primary: false,
                 path: None,
-            });
+            }
+        });
         if let Some(address) = host_overlay.address.as_ref() {
             host.address = address.clone();
         }
@@ -95179,16 +95295,20 @@ fn selected_workflow_env_profile_rendered_artifact_entries(
     };
     let adjusted = contract_adjusted_for_selected_workflow_env_profile(contract, workflow_name)
         .unwrap_or_else(|| contract.clone());
-    let dotenv_path = render.dotenv.as_ref().map(|dotenv| dotenv.path.trim().to_string());
+    let dotenv_path = render
+        .dotenv
+        .as_ref()
+        .map(|dotenv| dotenv.path.trim().to_string());
     let mut consumers = Vec::new();
     for task_name in contract.selected_workflow_task_closure_names(workflow_name) {
         let Some(task) = adjusted.tasks.get(task_name.as_str()) else {
             continue;
         };
-        if dotenv_path
-            .as_deref()
-            .is_some_and(|path| task.env_files.iter().any(|existing| existing.trim() == path))
-        {
+        if dotenv_path.as_deref().is_some_and(|path| {
+            task.env_files
+                .iter()
+                .any(|existing| existing.trim() == path)
+        }) {
             consumers.push(format!("task:{task_name}"));
         }
     }
@@ -95371,7 +95491,8 @@ fn render_workflow_profile_json_file(
 
     for source in &spec.sources {
         let source_path = contract_working_dir(contract_path).join(source.trim());
-        let parsed = parse_render_source_json(profile_name, spec.path.trim(), &source_path, render_env)?;
+        let parsed =
+            parse_render_source_json(profile_name, spec.path.trim(), &source_path, render_env)?;
         deep_merge_json_value(&mut merged, parsed);
     }
     Ok(merged)
@@ -95392,7 +95513,8 @@ fn render_workflow_profile_toml_file(
 
     for source in &spec.sources {
         let source_path = contract_working_dir(contract_path).join(source.trim());
-        let parsed = parse_render_source_toml(profile_name, spec.path.trim(), &source_path, render_env)?;
+        let parsed =
+            parse_render_source_toml(profile_name, spec.path.trim(), &source_path, render_env)?;
         deep_merge_toml_value(&mut merged, parsed);
     }
     Ok(merged)

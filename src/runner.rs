@@ -2023,11 +2023,15 @@ pub(crate) fn host_uid_template_value(working_dir: &Path) -> Option<String> {
 pub(crate) fn host_home_template_value() -> Option<String> {
     #[cfg(windows)]
     {
-        env::var("USERPROFILE").ok().filter(|value| !value.trim().is_empty())
+        env::var("USERPROFILE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
     }
     #[cfg(not(windows))]
     {
-        env::var("HOME").ok().filter(|value| !value.trim().is_empty())
+        env::var("HOME")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
     }
 }
 
@@ -2600,13 +2604,13 @@ fn projected_structured_command_for_task(
 }
 
 fn projected_compose_command_for_task(
-    task: &TaskSpec,
-    backend: Backend,
+    _task: &TaskSpec,
+    _backend: Backend,
     compose: &crate::schema::TaskComposeExecutionSpec,
 ) -> crate::schema::TaskCommandSpec {
     projected_compose_invocation_command_for_task(
-        task,
-        backend,
+        _task,
+        _backend,
         &compose.invocation,
         compose.exe.as_str(),
         compose.args.as_slice(),
@@ -2614,14 +2618,11 @@ fn projected_compose_command_for_task(
 }
 
 fn projected_compose_launch_command_for_task(
-    task: &TaskSpec,
-    backend: Backend,
+    _task: &TaskSpec,
+    _backend: Backend,
     launch: &crate::schema::TaskComposeLaunchSpec,
 ) -> crate::schema::TaskCommandSpec {
-    let mut projected_args = vec![
-        String::from("compose"),
-        String::from(launch.action.label()),
-    ];
+    let mut projected_args = vec![String::from("compose"), String::from(launch.action.label())];
     if launch.detach {
         projected_args.push(String::from("-d"));
     }
@@ -2637,13 +2638,13 @@ fn projected_compose_launch_command_for_task(
     crate::schema::TaskCommandSpec {
         exe: launch.engine.as_str().to_string(),
         args: projected_args,
-        cwd: task.compose_adapter_cwd_for_backend(backend),
+        cwd: None,
     }
 }
 
 fn projected_compose_invocation_command_for_task(
-    task: &TaskSpec,
-    backend: Backend,
+    _task: &TaskSpec,
+    _backend: Backend,
     compose: &crate::schema::TaskComposeInvocationSpec,
     exe: &str,
     args: &[String],
@@ -2697,7 +2698,7 @@ fn projected_compose_invocation_command_for_task(
     crate::schema::TaskCommandSpec {
         exe: compose.engine.as_str().to_string(),
         args: projected_args,
-        cwd: task.compose_adapter_cwd_for_backend(backend),
+        cwd: None,
     }
 }
 
@@ -4734,7 +4735,8 @@ fn ensure_no_workflow_instance_cleanup_dependents(
     let Some((workflow_key, _)) = contract.selected_workflow(Some(selector)) else {
         return Ok(());
     };
-    let dependent_selectors = contract.selected_workflow_instance_dependent_selectors(Some(selector));
+    let dependent_selectors =
+        contract.selected_workflow_instance_dependent_selectors(Some(selector));
     if dependent_selectors.is_empty() {
         return Ok(());
     }
@@ -5573,7 +5575,14 @@ fn compose_project_has_containers(engine: &str, project: &str) -> Result<bool, R
     let filter = format!("label=com.docker.compose.project={project}");
     let output = container_command_output(
         engine,
-        &["ps", "-a", "--filter", filter.as_str(), "--format", "{{.Names}}"],
+        &[
+            "ps",
+            "-a",
+            "--filter",
+            filter.as_str(),
+            "--format",
+            "{{.Names}}",
+        ],
         None,
         OTA_CLEAN_INTERNAL_TASK_NAME,
     )?;
@@ -11664,11 +11673,7 @@ fn wrap_container_command_for_corepack_activation(
             .map(|(name, _)| name);
     let mut command_parts = Vec::new();
     for toolchain_name in contract
-        .task_toolchain_names_for_execution(
-            task,
-            Backend::Container,
-            selected_container_context,
-        )
+        .task_toolchain_names_for_execution(task, Backend::Container, selected_container_context)
         .into_iter()
     {
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
@@ -12201,7 +12206,8 @@ fn source_managed_tool_names_for_execution(
         let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
             continue;
         };
-        if toolchain.fulfillment_source() != Some(crate::schema::ToolchainFulfillmentSource::Corepack)
+        if toolchain.fulfillment_source()
+            != Some(crate::schema::ToolchainFulfillmentSource::Corepack)
         {
             continue;
         }
@@ -13343,9 +13349,7 @@ fn source_managed_remaining_gap_covered(
     actions: &[ProvisioningAction],
 ) -> bool {
     actions.iter().any(|action| {
-        (action.source == "mise"
-            || action.source == "release-asset"
-            || action.source == "corepack")
+        (action.source == "mise" || action.source == "release-asset" || action.source == "corepack")
             && action.name == gap.name
             && matches!(
                 (&gap.kind, action.target_kind),
@@ -26468,15 +26472,7 @@ fn repo_ownership_token_for_working_dir(
         }
     })?;
 
-    let mut hasher = DefaultHasher::new();
-    working_dir.display().to_string().hash(&mut hasher);
-    std::process::id().hash(&mut hasher);
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .hash(&mut hasher);
-    let token = format!("{:016x}", hasher.finish());
+    let token = stable_repo_ownership_token(working_dir);
 
     fs::write(&token_path, &token).map_err(|source| {
         RunError::DependencyIsolationOwnershipFailure {
@@ -26489,6 +26485,15 @@ fn repo_ownership_token_for_working_dir(
     let _ = fs::remove_file(&legacy_token_path);
 
     Ok(token)
+}
+
+fn stable_repo_ownership_token(working_dir: &Path) -> String {
+    let mut hasher = DefaultHasher::new();
+    let canonical = working_dir
+        .canonicalize()
+        .unwrap_or_else(|_| working_dir.to_path_buf());
+    canonical.display().to_string().hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 #[derive(Debug, Clone)]
@@ -28917,7 +28922,9 @@ tasks:
         } else {
             env::var("HOME").ok()
         };
-        if let Some(expected_home) = expected_home.as_deref().filter(|value| !value.trim().is_empty())
+        if let Some(expected_home) = expected_home
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
         {
             assert_eq!(
                 env.get("HOST_HOME").map(String::as_str),
@@ -51022,6 +51029,35 @@ tasks:
     }
 
     #[test]
+    fn repo_ownership_token_for_working_dir_regenerates_stable_identity_when_state_is_recreated() {
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+tasks:
+  build:
+    run: printf ready >> prepared.txt
+"#,
+        );
+
+        let working_dir = fixture.dir.path();
+        let token_path = working_dir.join(".ota").join("state").join("ownership-id");
+
+        let first = super::repo_ownership_token_for_working_dir("test", working_dir).unwrap();
+        fs::remove_file(&token_path).unwrap();
+
+        let second = super::repo_ownership_token_for_working_dir("test", working_dir).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(fs::read_to_string(token_path).unwrap(), second);
+    }
+
+    #[test]
     fn repo_managed_engines_uses_state_dir_and_migrates_legacy_state() {
         let fixture = ContractFixture::new(
             r#"
@@ -57361,7 +57397,7 @@ tasks:
         );
 
         assert_eq!(projected.exe, "docker");
-        assert_eq!(projected.cwd.as_deref(), Some("infra"));
+        assert_eq!(projected.cwd, None);
         assert_eq!(
             projected.args,
             vec![
@@ -57539,7 +57575,7 @@ tasks:
             super::projected_compose_launch_command_for_task(task, Backend::Native, launch);
 
         assert_eq!(projected.exe, "podman");
-        assert_eq!(projected.cwd.as_deref(), Some("deploy"));
+        assert_eq!(projected.cwd, None);
         assert_eq!(
             projected.args,
             vec![
