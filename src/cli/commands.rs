@@ -71415,6 +71415,67 @@ tasks:
     }
 
     #[test]
+    fn run_structured_error_text_explains_native_compose_bind_conflict_boundary() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    compose:
+      kind: up
+      detach: true
+      services:
+        - web
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 5000
+"#,
+        )
+        .expect("contract should parse");
+
+        let rendered = strip_ansi_codes(&super::render_run_structured_error_text(
+            &contract,
+            Path::new("./ota.yaml"),
+            "dev",
+            None,
+            ExecutionOverrides::default(),
+            &[],
+            &RunError::NativeListenerBindConflict {
+                task: String::from("dev"),
+                listener: String::from("web:http"),
+                address: String::from("0.0.0.0"),
+                port: 5000,
+            },
+            "RUN SUMMARY\nStatus:      failed",
+            None,
+        ));
+
+        assert!(rendered.contains("Listener bind conflict"), "{rendered}");
+        assert!(
+            rendered.contains("publishes this listener through native `docker` compose"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("cannot apply `--host-port` on native Compose publication today"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("change the underlying Compose publication truth for this service"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
     fn run_structured_error_text_explains_toolchain_fulfillment_precisely() {
         let contract = parse_contract_str(
             Path::new("./ota.yaml"),
@@ -71896,6 +71957,63 @@ tasks:
             !rendered.contains(
                 "check toolchain `rust` via `rustup` (owns runtime `rust`, version `1.94.0`)"
             ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn up_run_error_explains_native_compose_bind_conflict_boundary() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let contract_path = temp_dir.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    compose:
+      kind: up
+      detach: true
+      services:
+        - web
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: 5000
+"#,
+        )
+        .expect("write contract");
+
+        let rendered = strip_ansi_codes(&super::render_up_run_error(
+            &contract_path,
+            ExecutionOverrides::default(),
+            RunError::NativeListenerBindConflict {
+                task: String::from("dev"),
+                listener: String::from("web:http"),
+                address: String::from("0.0.0.0"),
+                port: 5000,
+            },
+        ));
+
+        assert!(rendered.contains("Listener bind conflict"), "{rendered}");
+        assert!(
+            rendered.contains("publishes this listener through native `docker` compose"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("`--host-port` is not available for native Compose publication today"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("change the underlying Compose publication truth for this service"),
             "{rendered}"
         );
     }
@@ -81449,6 +81567,37 @@ fn repo_run_command(task_name: &str, member: Option<&str>) -> String {
     }
 }
 
+fn native_structured_compose_engine_for_task(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<crate::schema::ComposeCliEngine> {
+    let backend = effective_task_execution(
+        contract,
+        task_name,
+        ExecutionOverrides {
+            backend: overrides.backend,
+            lifecycle: None,
+            host_port: None,
+            memory: overrides.memory,
+            skip_deps: false,
+        },
+    )
+    .backend;
+    if backend != Backend::Native {
+        return None;
+    }
+    let task = contract.tasks.get(task_name)?;
+    let resolved = task.resolved_execution_for_backend(backend, std::env::consts::OS)?;
+    resolved
+        .compose
+        .map(|compose| compose.invocation.engine)
+        .or_else(|| match resolved.launch {
+            Some(crate::schema::TaskLaunchSpec::Compose(launch)) => Some(launch.engine),
+            _ => None,
+        })
+}
+
 fn repo_run_preview_command(task_name: &str, member: Option<&str>) -> String {
     format!("{} --dry-run", repo_run_command(task_name, member))
 }
@@ -82348,23 +82497,43 @@ fn render_run_structured_error_text(
             listener,
             address,
             port,
-        } => (
-            String::from("Listener bind conflict"),
-            vec![
+        } => {
+            let compose_engine = native_structured_compose_engine_for_task(contract, task, overrides);
+            let mut why_lines = vec![
                 format!("task `{task}` listener `{listener}` needs `{address}:{port}`"),
                 format!("port `{port}` is already in use on the host"),
-                String::from("this usually means another local workload is still running"),
-            ],
-            vec![
-                format!("stop the process already using `{address}:{port}`"),
-                format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
-                format!(
-                    "rerun `{}`",
-                    repo_run_stream_command_with_overrides(task.as_str(), member, overrides, &[])
-                ),
-                task_use_details_step(Some(contract_path), member),
-            ],
-        ),
+            ];
+            let mut next_steps = vec![format!("stop the process already using `{address}:{port}`")];
+            if let Some(engine) = compose_engine {
+                why_lines.push(format!(
+                    "task `{task}` publishes this listener through native `{}` compose",
+                    engine.as_str()
+                ));
+                why_lines.push(String::from(
+                    "ota cannot apply `--host-port` on native Compose publication today",
+                ));
+                next_steps.push(String::from(
+                    "or change the underlying Compose publication truth for this service to use a different host port",
+                ));
+            } else {
+                why_lines.push(String::from(
+                    "this usually means another local workload is still running",
+                ));
+                next_steps.push(format!(
+                    "or change `tasks.{task}.runtime.listeners.{listener}.bind.port`",
+                ));
+            }
+            next_steps.push(format!(
+                "rerun `{}`",
+                repo_run_stream_command_with_overrides(task.as_str(), member, overrides, &[])
+            ));
+            next_steps.push(task_use_details_step(Some(contract_path), member));
+            (
+                String::from("Listener bind conflict"),
+                why_lines,
+                next_steps,
+            )
+        }
         RunError::PersistentContainerListenerBindConflict {
             task,
             listener,
@@ -101641,21 +101810,40 @@ fn render_up_run_error(
             port,
         } => {
             let where_value = display_contract_target(&compact_contract_path(contract_path), None);
+            let compose_engine = load_contract(contract_path).ok().and_then(|contract| {
+                native_structured_compose_engine_for_task(&contract, task.as_str(), overrides)
+            });
+            let mut why_lines = vec![
+                format!("task `{task}` listener `{listener}` needs `{address}:{port}`"),
+                format!("port `{port}` is already in use on the host"),
+            ];
+            let mut next_steps = vec![format!("stop the process already using `{address}:{port}`")];
+            if let Some(engine) = compose_engine {
+                why_lines.push(format!(
+                    "task `{task}` publishes this listener through native `{}` compose",
+                    engine.as_str()
+                ));
+                why_lines.push(String::from(
+                    "`--host-port` is not available for native Compose publication today",
+                ));
+                next_steps.push(String::from(
+                    "or change the underlying Compose publication truth for this service to use a different host port",
+                ));
+            } else {
+                why_lines.push(String::from(
+                    "this usually means another local workload is still running",
+                ));
+                next_steps.push(format!(
+                    "or change `tasks.{task}.runtime.listeners.{listener}.bind.port`",
+                ));
+            }
             render_field_error_with_tail(
                 "UP",
                 &where_value,
                 &format!("tasks.{task}.runtime.listeners.{listener}.bind.port"),
                 "Listener bind conflict",
-                &[
-                    format!("task `{task}` listener `{listener}` needs `{address}:{port}`"),
-                    format!("port `{port}` is already in use on the host"),
-                    String::from("this usually means another local workload is still running"),
-                ],
-                &[
-                    format!("stop the process already using `{address}:{port}`"),
-                    format!("or change `tasks.{task}.runtime.listeners.{listener}.bind.port`"),
-                    String::from("rerun `ota up`"),
-                ],
+                &why_lines,
+                &[next_steps, vec![String::from("rerun `ota up`")]].concat(),
                 None,
                 None,
             )

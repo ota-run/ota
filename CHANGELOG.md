@@ -46,6 +46,10 @@
 - widened `ota proof runtime` with `--host-port`, so runtime proof can now consume the same
   projected host-listener override surface as `ota run` and `ota up` when concurrent pressure or
   host-port conflict isolation needs a remapped publication
+- tightened native Compose bind-conflict guidance so `ota up` and run/proof failure surfaces now
+  state explicitly when a listener is being published through native `docker|podman compose` and
+  why `--host-port` is not available on that lane today, instead of implying the conflict should
+  be solved through the generic projected-listener override path
 - widened `tasks.<name>.compose` with first-class `compose.kind: up`, `compose.kind: down`,
   `compose.kind: build`, and `compose.remove_volumes: true` for `compose down -v`, so repos can
   model staged `docker|podman compose up [-d] <services...>`, project-scoped `compose down`,
