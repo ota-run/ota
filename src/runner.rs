@@ -77,7 +77,7 @@ use crate::schema::{
     ExtensionKind, FileCheckExpectation, Lifecycle, NativePrerequisiteActivationKind,
     NativePrerequisiteActivationShell, NativePrerequisiteActivationSpec, ReadinessProbeTargetKind,
     RemoteBackend, RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode,
-    TaskRuntimeKind, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind,
+    TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind,
     TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskServiceEnvBindingFormat,
     TaskServiceEnvBindingSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
     TaskTargetSpec, ToolAcquisitionProvider, ToolRequirement, ToolchainFulfillmentMode,
@@ -859,11 +859,30 @@ pub enum RunError {
     )]
     HostPortOverrideRequiresFixedProjectedPort { task: String, listener: String },
     #[error(
+        "task `{task}` cannot apply `--host-port` to listener `{listener}` because `bind.port.mode` is not `fixed`"
+    )]
+    HostPortOverrideRequiresFixedBindPort { task: String, listener: String },
+    #[error(
         "task `{task}` cannot apply `--host-port` because projected listeners are ambiguous: {listeners}"
     )]
     HostPortOverrideAmbiguousProjectedListener { task: String, listeners: String },
     #[error("task `{task}` cannot apply `--host-port` when execution resolves to `{backend}`")]
     HostPortOverrideUnsupportedBackend { task: String, backend: &'static str },
+    #[error(
+        "task `{task}` cannot apply `--host-port` on native compose because engine `{engine}` is not yet supported"
+    )]
+    HostPortOverrideUnsupportedComposeEngine { task: String, engine: &'static str },
+    #[error(
+        "task `{task}` cannot apply `--host-port` to listener `{listener}` because `project.publication.compose.service` is missing"
+    )]
+    HostPortOverrideNativeComposeServiceMissing { task: String, listener: String },
+    #[error(
+        "task `{task}` cannot apply `--host-port` because no compose file was declared or discovered from `{working_dir}`"
+    )]
+    HostPortOverrideNativeComposeFileMissing {
+        task: String,
+        working_dir: String,
+    },
     #[error("task `{task}` cannot apply `--memory` when execution resolves to `{backend}`")]
     MemoryOverrideUnsupportedBackend { task: String, backend: &'static str },
     #[error(
@@ -1764,6 +1783,8 @@ pub struct RepoExecutionLockOwner {
     pub env_materialization_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub service_task: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_pid: Option<u32>,
     pub pid: u32,
     pub started_at: String,
 }
@@ -1865,9 +1886,16 @@ fn repo_execution_lock_owner_for_backend(
             .get(task_name)
             .and_then(|task| task.service_runtime_for_backend(backend_kind))
             .is_some(),
+        parent_pid: active_execution_parent_pid_from_env(),
         pid: std::process::id(),
         started_at: format_repo_execution_lock_timestamp(OffsetDateTime::now_utc()),
     }
+}
+
+fn active_execution_parent_pid_from_env() -> Option<u32> {
+    env::var("OTA_ACTIVE_EXECUTION_PARENT_PID")
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
 }
 
 fn persistent_backend_family_ownership(
@@ -6389,7 +6417,8 @@ fn run_task_internal(
             }
         }
     }
-    if let Some(task) = contract.tasks.get(task_name)
+    if matches!(backend, ResolvedExecutionBackend::Container { .. })
+        && let Some(task) = contract.tasks.get(task_name)
         && let Err(error) = preflight_host_port_override(
             task_name,
             task.service_runtime_for_backend(resolved_execution_backend_kind(&backend)),
@@ -7772,9 +7801,6 @@ fn execute_task_with_hooks(
     combined_env.extend(env_overrides);
     combined_env.extend(input_resolution.env_overrides.clone());
     let runtime = task.service_runtime_for_backend(backend_kind);
-    if matches!(backend, ResolvedExecutionBackend::Native { .. }) {
-        preflight_native_runtime_listener_binds(task_name, runtime)?;
-    }
     let projected_command = execution
         .command()
         .map(|command| projected_structured_command_for_task(task, backend_kind, command));
@@ -8863,7 +8889,6 @@ fn execute_task_command(
     host_port_override: Option<u16>,
     mode: TaskExecutionMode,
 ) -> Result<TaskCommandOutput, RunError> {
-    preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
     let backend_kind = resolved_execution_backend_kind(backend);
     let base_working_dir = task
         .map(|task| effective_task_execution_working_dir(task, backend_kind, working_dir))
@@ -8881,18 +8906,55 @@ fn execute_task_command(
             ResolvedExecutionBackend::Native { .. },
             PreparedTaskExecution::NativeCommand { exe, args, .. },
         ) => {
+            let native_compose_override = task
+                .zip(contract)
+                .map(|(task, _)| {
+                    selected_native_compose_host_port_override(
+                        task_name,
+                        task,
+                        runtime,
+                        env_overrides,
+                        exe.as_str(),
+                        args.as_slice(),
+                        working_dir,
+                        effective_working_dir.as_path(),
+                        host_port_override,
+                    )
+                })
+                .transpose()?
+                .flatten();
+            let effective_runtime = native_compose_override
+                .as_ref()
+                .map(|override_spec| &override_spec.runtime)
+                .or(runtime);
             let mut resolved_env = env_overrides.clone();
-            extend_missing_env(&mut resolved_env, runtime_bind_env_for_native(runtime));
-            execute_native_launch_command(
+            if let Some(override_spec) = native_compose_override.as_ref() {
+                resolved_env.insert(
+                    String::from("COMPOSE_FILE"),
+                    override_spec.compose_file_value.clone(),
+                );
+            } else {
+                preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
+            }
+            preflight_native_runtime_listener_binds(task_name, effective_runtime)?;
+            extend_missing_env(
+                &mut resolved_env,
+                runtime_bind_env_for_native(effective_runtime),
+            );
+            let result = execute_native_launch_command(
                 task_name,
-                runtime,
+                effective_runtime,
                 exe,
                 args,
                 effective_working_dir.as_path(),
                 &resolved_env,
                 mode,
                 backend,
-            )
+            );
+            if let Some(override_spec) = native_compose_override {
+                let _ = fs::remove_file(override_spec.override_file);
+            }
+            result
         }
         (
             ResolvedExecutionBackend::Native { .. },
@@ -8928,6 +8990,8 @@ fn execute_task_command(
         ),
         (_, PreparedTaskExecution::Shell { command, .. }) => match backend {
             ResolvedExecutionBackend::Native { .. } => {
+                preflight_host_port_override(task_name, runtime, backend, host_port_override)?;
+                preflight_native_runtime_listener_binds(task_name, runtime)?;
                 let mut resolved_env = env_overrides.clone();
                 extend_missing_env(&mut resolved_env, runtime_bind_env_for_native(runtime));
                 execute_native_task_command(
@@ -16673,6 +16737,226 @@ fn task_runtime_listener_publications(
         .collect()
 }
 
+#[derive(Debug, Clone)]
+struct NativeComposeHostPortOverride {
+    runtime: TaskRuntimeSpec,
+    override_file: PathBuf,
+    compose_file_value: String,
+}
+
+fn selected_native_compose_host_port_override(
+    task_name: &str,
+    task: &TaskSpec,
+    runtime: Option<&TaskRuntimeSpec>,
+    env_overrides: &BTreeMap<String, String>,
+    exe: &str,
+    args: &[String],
+    repo_working_dir: &Path,
+    effective_working_dir: &Path,
+    host_port_override: Option<u16>,
+) -> Result<Option<NativeComposeHostPortOverride>, RunError> {
+    let Some(host_port) = host_port_override else {
+        return Ok(None);
+    };
+    let Some(runtime) = runtime else {
+        return Err(RunError::HostPortOverrideNoProjectedListener {
+            task: task_name.to_string(),
+        });
+    };
+    let engine = if exe.trim().eq_ignore_ascii_case("docker")
+        && args.first().map(String::as_str) == Some("compose")
+        && args.get(1).map(String::as_str) == Some("up")
+    {
+        crate::schema::ComposeCliEngine::Docker
+    } else if exe.trim().eq_ignore_ascii_case("podman")
+        && args.first().map(String::as_str) == Some("compose")
+        && args.get(1).map(String::as_str) == Some("up")
+    {
+        crate::schema::ComposeCliEngine::Podman
+    } else {
+        return Err(RunError::HostPortOverrideUnsupportedBackend {
+            task: task_name.to_string(),
+            backend: "native",
+        });
+    };
+    if engine != crate::schema::ComposeCliEngine::Docker {
+        return Err(RunError::HostPortOverrideUnsupportedComposeEngine {
+            task: task_name.to_string(),
+            engine: engine.as_str(),
+        });
+    }
+
+    let listener_name = selected_host_port_override_listener(task_name, runtime)?;
+    let listener = runtime
+        .listeners
+        .get(listener_name.as_str())
+        .expect("selected native compose listener should exist");
+    let host_projection = listener.project.host.as_ref().ok_or_else(|| {
+        RunError::HostPortOverrideNoProjectedListener {
+            task: task_name.to_string(),
+        }
+    })?;
+    if host_projection.port.mode != TaskRuntimeHostPortMode::Fixed {
+        return Err(RunError::HostPortOverrideRequiresFixedProjectedPort {
+            task: task_name.to_string(),
+            listener: listener_name.clone(),
+        });
+    }
+    if listener.bind.port.mode != TaskRuntimePortMode::Fixed {
+        return Err(RunError::HostPortOverrideRequiresFixedBindPort {
+            task: task_name.to_string(),
+            listener: listener_name,
+        });
+    }
+    let bind_port = listener
+        .bind
+        .port
+        .value
+        .expect("validated fixed native listener should include a bind port");
+    let service = listener
+        .project
+        .publication
+        .compose
+        .as_ref()
+        .map(|publication| publication.service.trim())
+        .filter(|service| !service.is_empty())
+        .ok_or_else(|| RunError::HostPortOverrideNativeComposeServiceMissing {
+            task: task_name.to_string(),
+            listener: listener_name.clone(),
+        })?;
+
+    let compose_stack = effective_native_compose_file_stack(
+        task_name,
+        task,
+        env_overrides,
+        effective_working_dir,
+    )?;
+    let override_file = write_native_compose_host_port_override_file(
+        task_name,
+        repo_working_dir,
+        service,
+        host_port,
+        bind_port,
+    )?;
+
+    let mut effective_runtime = runtime.clone();
+    if let Some(listener) = effective_runtime.listeners.get_mut(listener_name.as_str())
+        && let Some(host) = listener.project.host.as_mut()
+    {
+        host.port.mode = TaskRuntimeHostPortMode::Fixed;
+        host.port.value = Some(host_port);
+    }
+
+    let mut compose_files = compose_stack;
+    compose_files.push(override_file.display().to_string());
+    let compose_file_value = render_file_env_stack(&compose_files);
+
+    if compose_file_value.trim().is_empty() {
+        return Err(RunError::HostPortOverrideNativeComposeFileMissing {
+            task: task_name.to_string(),
+            working_dir: effective_working_dir.display().to_string(),
+        });
+    }
+
+    Ok(Some(NativeComposeHostPortOverride {
+        runtime: effective_runtime,
+        override_file,
+        compose_file_value,
+    }))
+}
+
+fn effective_native_compose_file_stack(
+    task_name: &str,
+    task: &TaskSpec,
+    env_overrides: &BTreeMap<String, String>,
+    effective_working_dir: &Path,
+) -> Result<Vec<String>, RunError> {
+    if let Some(existing) = env_overrides
+        .get("COMPOSE_FILE")
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        let files = existing
+            .split(separator)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        if !files.is_empty() {
+            return Ok(files);
+        }
+    }
+
+    let declared = task.compose_adapter_files_for_backend(Backend::Native);
+    if !declared.is_empty() {
+        return Ok(declared);
+    }
+
+    for candidate in [
+        "compose.yaml",
+        "compose.yml",
+        "docker-compose.yaml",
+        "docker-compose.yml",
+    ] {
+        if effective_working_dir.join(candidate).is_file() {
+            return Ok(vec![String::from(candidate)]);
+        }
+    }
+
+    Err(RunError::HostPortOverrideNativeComposeFileMissing {
+        task: task_name.to_string(),
+        working_dir: effective_working_dir.display().to_string(),
+    })
+}
+
+fn yaml_single_quote(input: &str) -> String {
+    format!("'{}'", input.replace('\'', "''"))
+}
+
+fn write_native_compose_host_port_override_file(
+    task_name: &str,
+    working_dir: &Path,
+    service: &str,
+    host_port: u16,
+    bind_port: u16,
+) -> Result<PathBuf, RunError> {
+    let state_dir = working_dir.join(".ota").join("state").join("compose-overrides");
+    fs::create_dir_all(&state_dir).map_err(|source| RunError::DependencyIsolationOwnershipFailure {
+        task: task_name.to_string(),
+        action: String::from("create native compose override state directory"),
+        path: state_dir.display().to_string(),
+        details: source.to_string(),
+    })?;
+    let file_path = state_dir.join(format!(
+        "{}-{}-{}.yaml",
+        task_name.replace(':', "-"),
+        std::process::id(),
+        host_port
+    ));
+    let contents = format!(
+        "services:\n  {}:\n    ports: !override\n      - \"{}:{}\"\n",
+        yaml_single_quote(service),
+        host_port,
+        bind_port
+    );
+    fs::write(&file_path, contents).map_err(|source| RunError::DependencyIsolationOwnershipFailure {
+        task: task_name.to_string(),
+        action: String::from("write native compose override file"),
+        path: file_path.display().to_string(),
+        details: source.to_string(),
+    })?;
+    Ok(file_path)
+}
+
+fn render_file_env_stack(paths: &[String]) -> String {
+    if cfg!(windows) {
+        paths.join(";")
+    } else {
+        paths.join(":")
+    }
+}
+
 fn selected_host_port_override_listener(
     task_name: &str,
     runtime: &TaskRuntimeSpec,
@@ -17444,20 +17728,34 @@ pub(crate) fn preflight_native_runtime_listener_binds(
     };
 
     for (listener_name, listener) in &runtime.listeners {
-        if listener.bind.port.mode != crate::schema::TaskRuntimePortMode::Fixed {
-            continue;
-        }
-        let Some(port) = listener.bind.port.value else {
-            continue;
+        let (address, port) = if listener.project.publication.compose.is_some() {
+            let Some(host) = listener.project.host.as_ref() else {
+                continue;
+            };
+            if host.port.mode != TaskRuntimeHostPortMode::Fixed {
+                continue;
+            }
+            let Some(port) = host.port.value else {
+                continue;
+            };
+            (host.address.as_str(), port)
+        } else {
+            if listener.bind.port.mode != crate::schema::TaskRuntimePortMode::Fixed {
+                continue;
+            }
+            let Some(port) = listener.bind.port.value else {
+                continue;
+            };
+            (listener.bind.address.as_str(), port)
         };
 
-        match TcpListener::bind((listener.bind.address.as_str(), port)) {
+        match TcpListener::bind((address, port)) {
             Ok(bound) => drop(bound),
             Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
                 return Err(RunError::NativeListenerBindConflict {
                     task: task_name.to_string(),
                     listener: listener_name.clone(),
-                    address: listener.bind.address.clone(),
+                    address: address.to_string(),
                     port,
                 });
             }
@@ -19694,10 +19992,19 @@ fn resolve_native_task_runtime(
             .map(|host| ResolvedTaskRuntimeResolution {
                 host: Some(ResolvedTaskRuntimeHost {
                     address: host.address.trim().to_string(),
-                    port: bind_port,
+                    port: if listener.project.publication.compose.is_some() {
+                        host.port.value.unwrap_or(bind_port)
+                    } else {
+                        bind_port
+                    },
                     url: listener.protocol.url_scheme().map(|scheme| {
+                        let projected_port = if listener.project.publication.compose.is_some() {
+                            host.port.value.unwrap_or(bind_port)
+                        } else {
+                            bind_port
+                        };
                         format!(
-                            "{scheme}://{}:{bind_port}{}",
+                            "{scheme}://{}:{projected_port}{}",
                             host.address.trim(),
                             normalized_runtime_path(host.path.as_deref())
                         )
@@ -26129,6 +26436,9 @@ fn execution_conflict_reasons_with_active_owner(
     candidate: &RepoExecutionLockOwner,
     active: &RepoExecutionLockOwner,
 ) -> Vec<RepoExecutionConflictReason> {
+    if active_execution_is_direct_parent_child_pair(candidate, active) {
+        return Vec::new();
+    }
     let mut reasons = Vec::new();
     if candidate
         .host_services
@@ -26162,6 +26472,13 @@ fn execution_conflict_reasons_with_active_owner(
         reasons.push(RepoExecutionConflictReason::ServiceTask);
     }
     reasons
+}
+
+fn active_execution_is_direct_parent_child_pair(
+    candidate: &RepoExecutionLockOwner,
+    active: &RepoExecutionLockOwner,
+) -> bool {
+    candidate.parent_pid == Some(active.pid) || active.parent_pid == Some(candidate.pid)
 }
 
 fn execution_conflicts_with_active_owner(
@@ -27406,6 +27723,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             service_task: true,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
         };
@@ -27451,6 +27769,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             service_task: true,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
         };
@@ -27464,6 +27783,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             service_task: false,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:04Z"),
         };
@@ -27472,6 +27792,44 @@ mod tests {
             .expect("service registration should succeed");
         let _finite_guard = register_active_repo_execution("test", fixture.path(), &finite_owner)
             .expect("finite execution should coexist with active service");
+    }
+
+    #[test]
+    fn active_repo_execution_allows_direct_child_of_active_owner() {
+        let fixture = tempdir().expect("tempdir");
+        let parent_owner = super::RepoExecutionLockOwner {
+            task: String::from("up"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![String::from("redis")],
+            compose_projects: vec![String::from("app-local")],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            service_task: true,
+            parent_pid: None,
+            pid: 42000,
+            started_at: String::from("2026-06-05T22:14:03Z"),
+        };
+        let child_owner = super::RepoExecutionLockOwner {
+            task: String::from("app:up"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![String::from("redis")],
+            compose_projects: vec![String::from("app-local")],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            service_task: true,
+            parent_pid: Some(parent_owner.pid),
+            pid: 42001,
+            started_at: String::from("2026-06-05T22:14:04Z"),
+        };
+
+        let _parent_guard = register_active_repo_execution("up", fixture.path(), &parent_owner)
+            .expect("parent owner should register");
+        let _child_guard = register_active_repo_execution("app:up", fixture.path(), &child_owner)
+            .expect("direct child owner should register");
     }
 
     #[test]
@@ -27487,6 +27845,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             service_task: false,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
         };
@@ -27500,6 +27859,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             service_task: false,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:04Z"),
         };
@@ -27538,6 +27898,7 @@ mod tests {
             persistent_backend_families: vec![family.clone()],
             env_materialization_paths: vec![],
             service_task: false,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
         };
@@ -27551,6 +27912,7 @@ mod tests {
             persistent_backend_families: vec![family],
             env_materialization_paths: vec![],
             service_task: false,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:04Z"),
         };
@@ -27590,6 +27952,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             service_task: false,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
         };
@@ -27603,6 +27966,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             service_task: false,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:04Z"),
         };
@@ -27640,6 +28004,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![String::from(".env.local")],
             service_task: false,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
         };
@@ -27653,6 +28018,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![String::from(".env.local")],
             service_task: false,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:04Z"),
         };
@@ -27697,6 +28063,7 @@ mod tests {
                     persistent_backend_families: vec![],
                     env_materialization_paths: vec![],
                     service_task: true,
+                    parent_pid: None,
                     pid: u32::MAX,
                     started_at: String::from("2026-06-05T22:14:03Z"),
                 },
@@ -27714,6 +28081,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             service_task: true,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:04Z"),
         };
@@ -27735,6 +28103,7 @@ mod tests {
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
             service_task: true,
+            parent_pid: None,
             pid: std::process::id(),
             started_at: String::from("2026-06-05T22:14:03Z"),
         };
@@ -37727,6 +38096,7 @@ tasks:
                             primary: true,
                             path: Some(String::from("/")),
                         }),
+                        ..TaskRuntimeProjectionSpec::default()
                     },
                 },
             )]),
@@ -39433,6 +39803,140 @@ tasks:
                 if task == "dev" && backend == "native"
         ));
         assert!(!fixture.dir.path().join("service.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_task_captured_applies_host_port_override_to_native_docker_compose_publication() {
+        let _guard = env_mutex_lock();
+        let occupied = TcpListener::bind(("127.0.0.1", 0)).expect("should reserve original port");
+        let original_port = occupied
+            .local_addr()
+            .expect("reserved socket should expose local address")
+            .port();
+        let reserved_override =
+            TcpListener::bind(("127.0.0.1", 0)).expect("should reserve override port");
+        let override_port = reserved_override
+            .local_addr()
+            .expect("reserved socket should expose local address")
+            .port();
+        drop(reserved_override);
+
+        let fixture = ContractFixture::new(&format!(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    adapter_inputs:
+      compose:
+        files:
+          - docker-compose.yml
+    compose:
+      kind: up
+      detach: true
+      services:
+        - web
+    runtime:
+      kind: service
+      listeners:
+        web:http:
+          protocol: http
+          bind:
+            address: 0.0.0.0
+            port:
+              mode: fixed
+              value: {original_port}
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: {original_port}
+              primary: true
+              path: /
+            publication:
+              compose:
+                service: web
+"#
+        ));
+        fs::write(fixture.dir.path().join("docker-compose.yml"), "services:\n  web:\n    image: nginx:alpine\n").unwrap();
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("docker-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let docker_path = bin_dir.join("docker");
+        fs::write(
+            &docker_path,
+            format!(
+                r#"#!/bin/sh
+state_dir="{state_dir}"
+if [ "$1" = "compose" ] && [ "$2" = "up" ] && [ "$3" = "-d" ] && [ "$4" = "web" ]; then
+  printf '%s\n' "$COMPOSE_FILE" > "$state_dir/compose-file.txt"
+  override_file="${{COMPOSE_FILE##*:}}"
+  cat "$override_file" > "$state_dir/override.yml"
+  exit 0
+fi
+echo "unexpected args: $@" >&2
+exit 1
+"#,
+                state_dir = state_dir.display()
+            ),
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&docker_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&docker_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = super::run_task_captured_with_overrides(
+            &fixture.contract,
+            fixture.file_path(),
+            "dev",
+            ExecutionOverrides {
+                host_port: Some(override_port),
+                ..ExecutionOverrides::default()
+            },
+        )
+        .expect("native compose host-port override should succeed");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{}", outcome.stderr);
+        let compose_file = fs::read_to_string(state_dir.join("compose-file.txt")).unwrap();
+        assert!(compose_file.contains("docker-compose.yml"), "{compose_file}");
+        let override_file = fs::read_to_string(state_dir.join("override.yml")).unwrap();
+        assert!(
+            override_file.contains(&format!(r#""{}:{}""#, override_port, original_port)),
+            "{override_file}"
+        );
+        let runtime = outcome.runtime.expect("runtime should resolve");
+        assert_eq!(runtime.primary_listener.as_deref(), Some("web:http"));
+        assert_eq!(
+            runtime
+                .primary_endpoint
+                .as_ref()
+                .map(|endpoint| endpoint.host.port),
+            Some(override_port)
+        );
     }
 
     #[test]
@@ -51350,6 +51854,7 @@ tasks:
                             primary: false,
                             path: None,
                         }),
+                        ..TaskRuntimeProjectionSpec::default()
                     },
                 },
             )]),
@@ -51424,6 +51929,7 @@ tasks:
                             primary: false,
                             path: None,
                         }),
+                        ..TaskRuntimeProjectionSpec::default()
                     },
                 },
             )]),
@@ -51488,6 +51994,7 @@ tasks:
                             primary: false,
                             path: Some(String::from("/")),
                         }),
+                        ..TaskRuntimeProjectionSpec::default()
                     },
                 },
             )]),
@@ -51567,6 +52074,7 @@ tasks:
                             primary: false,
                             path: None,
                         }),
+                        ..TaskRuntimeProjectionSpec::default()
                     },
                 },
             )]),
@@ -51616,7 +52124,10 @@ tasks:
                             value: Some(3000),
                         },
                     },
-                    project: TaskRuntimeProjectionSpec { host: None },
+                    project: TaskRuntimeProjectionSpec {
+                        host: None,
+                        ..TaskRuntimeProjectionSpec::default()
+                    },
                 },
             )]),
         };
@@ -51667,6 +52178,7 @@ tasks:
                                 primary: false,
                                 path: None,
                             }),
+                            ..TaskRuntimeProjectionSpec::default()
                         },
                     },
                 ),
@@ -51691,6 +52203,7 @@ tasks:
                                 primary: false,
                                 path: None,
                             }),
+                            ..TaskRuntimeProjectionSpec::default()
                         },
                     },
                 ),

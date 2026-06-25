@@ -1330,8 +1330,8 @@ ota run build --skip-deps
 - when multiple listeners are projected, exactly one projected listener must set `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and summary endpoint rendering
 - for container listeners with `project.host.port.mode: auto`, `execution.lifecycle: ephemeral` pre-reserves a host port before spawn and retries bounded host-port conflicts; `execution.lifecycle: persistent` resolves the reconciled container's published host mapping before exec
 - `--host-port <port>` overrides one run's projected host/public port on the selected primary projected listener without changing the internal bind port; ota updates runtime env, summary output, and receipts to the overridden public URL
-- `--host-port` is valid only when the selected task resolves to container execution and that selected primary listener uses `project.host.port.mode: fixed`
-- `--host-port` is rejected for `project.host.port.mode: auto`, tasks without projected host listeners, and ambiguous multi-listener projections without one primary listener
+- `--host-port` is valid when the selected primary listener uses `project.host.port.mode: fixed` and the execution path is either container execution or native structured `docker compose up` with explicit `project.publication.compose.service` ownership
+- `--host-port` is rejected for `project.host.port.mode: auto`, tasks without projected host listeners, ambiguous multi-listener projections without one primary listener, native compose publications without `project.publication.compose.service`, and native compose engines other than `docker`
 - stream-mode endpoint banners such as `External:` and `Internal:` are printed only after ota
   itself confirms the projected endpoint; workload logs like `ready` or framework-local URLs are
   not treated as authoritative host-reachability proof

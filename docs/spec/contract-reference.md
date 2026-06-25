@@ -2485,6 +2485,7 @@ tasks:
 - `listeners.<name>.project.host.port.value`: required when host port `mode: fixed`
 - `listeners.<name>.project.host.primary`: optional boolean; mark exactly one projected listener as primary when multiple listeners are projected
 - `listeners.<name>.project.host.path`: optional URL path for `http` and `https`
+- `listeners.<name>.project.publication.compose.service`: optional explicit service owner for a native `docker compose up` publication when ota should remap that host-visible port through `--host-port`
 
 Listener shorthand rules:
 
@@ -2544,6 +2545,7 @@ Surface attachment rules:
 - `project.host.port.mode: fixed`: ota uses one explicit host port and the contract should treat that URL as stable
 - `project.host.port.mode: auto`: ota injects runtime URL env values before command execution and reports the resolved URL in receipts and JSON output; ephemeral container runs pre-reserve a host port, while persistent container runs reconcile the named container and then resolve the current published host mapping
 - `ota run <task> --host-port <port>` can override one run's published host/public port on the selected primary projected listener when that listener uses `project.host.port.mode: fixed`; the workload bind port stays unchanged
+- for native structured `docker compose up` lanes, `--host-port` also requires explicit publication ownership through `project.publication.compose.service`; ota uses that declared compose service to render a temporary override stack instead of guessing service publication truth
 - `ota run <task> --memory <size>` can override one run's requested container memory for container execution while preserving contract/task intent
 - with multiple projected listeners, mark one listener as `project.host.primary: true`; ota uses that listener for `OTA_PUBLIC_URL` and primary endpoint rendering
 
@@ -2556,7 +2558,7 @@ Current execution rules:
 - remote execution contexts do not support `runtime.kind: service` host projection yet
 - loopback-only container binds such as `127.0.0.1` or `localhost` must not be projected to `host`
 - for container tasks with `project.host.port.mode: auto`, ota verifies resolved host publication; ephemeral runs retry bounded times on host-port conflict before failing, and persistent runs recreate mismatched containers when reconciliation cannot safely reuse the existing publication shape
-- `--host-port` rejects invalid shapes before task spawn: non-container execution, listeners with `project.host.port.mode: auto`, no projected host listeners, or ambiguous multi-listener projection without one primary listener
+- `--host-port` rejects invalid shapes before task spawn: listeners with `project.host.port.mode: auto`, no projected host listeners, ambiguous multi-listener projection without one primary listener, or native compose publications that omit `project.publication.compose.service`
 - container memory precedence is: `--memory` override, then `execution.contexts.<name>.container.resources.memory.default`, then `execution.contexts.<name>.container.resources.memory.minimum`, then engine default
 - when `execution.contexts.<name>.container.resources.memory.minimum` is declared, ota rejects `--memory` values below the minimum before task spawn
 

@@ -2386,43 +2386,6 @@ pub fn proof_runtime(
                     Ok(summary) => summary,
                     Err(error) => return CommandOutput::failure_with_code(error, 2),
                 };
-                if let Some(run_task) = workflow_summary
-                    .as_ref()
-                    .and_then(|workflow| workflow.run_task)
-                    && overrides.host_port.is_some()
-                {
-                    let backend = match resolve_execution_backend_with_contract_path(
-                        contract,
-                        run_task,
-                        overrides,
-                        Some(&target.contract_path),
-                    ) {
-                        Ok(backend) => backend,
-                        Err(error) => {
-                            return CommandOutput::failure(render_up_run_error(
-                                &target.contract_path,
-                                overrides,
-                                error,
-                            ));
-                        }
-                    };
-                    if !matches!(backend, ResolvedExecutionBackend::Container { .. }) {
-                        let backend = match backend {
-                            ResolvedExecutionBackend::Native { .. } => "native",
-                            ResolvedExecutionBackend::Container { .. } => "container",
-                            ResolvedExecutionBackend::Remote { .. } => "remote",
-                            ResolvedExecutionBackend::BackendProvider { .. } => "backend-provider",
-                        };
-                        return CommandOutput::failure(render_up_run_error(
-                            &target.contract_path,
-                            overrides,
-                            RunError::HostPortOverrideUnsupportedBackend {
-                                task: run_task.to_string(),
-                                backend,
-                            },
-                        ));
-                    }
-                }
                 let effective_workflow_selector = workflow_summary
                     .as_ref()
                     .map(workflow_selector_from_summary)
@@ -2598,13 +2561,6 @@ pub fn proof_runtime(
                     proof_phase,
                     &up_log_artifact_path,
                 );
-                let status = proof_runtime_status_word(
-                    proof_summary.verdict,
-                    refined_proof_phase.as_str(),
-                    timed_out,
-                    interrupted,
-                    cleanup_error.is_some(),
-                );
                 let json_phase = if cleanup_error.is_some() {
                     "cleanup"
                 } else if interrupted {
@@ -2624,6 +2580,18 @@ pub fn proof_runtime(
                     proof_runtime_phase_label(refined_proof_phase.as_str())
                 };
                 let ok = proof_runtime_ok(&proof_summary_for_output, proof_error.as_deref());
+                let raw_status = proof_runtime_status_word(
+                    proof_summary_for_output.verdict,
+                    refined_proof_phase.as_str(),
+                    timed_out,
+                    interrupted,
+                    cleanup_error.is_some(),
+                );
+                let status = if !ok && raw_status == "READY" {
+                    "FAILED"
+                } else {
+                    raw_status
+                };
                 let proof_failure_class = proof_runtime_failure_class(
                     &proof_summary_for_output,
                     refined_proof_phase.as_str(),
@@ -10064,6 +10032,7 @@ fn build_assist_add_task_proposal(
                         primary: true,
                         path: None,
                     }),
+                    ..TaskRuntimeProjectionSpec::default()
                 },
             },
         );
@@ -56754,6 +56723,7 @@ tasks:
                     persistent_backend_families: vec![],
                     env_materialization_paths: vec![],
                     service_task: true,
+                    parent_pid: None,
                     pid: 48211,
                     started_at: String::from("2026-06-16T10:40:03Z"),
                 }],
@@ -56809,6 +56779,7 @@ tasks:
                     persistent_backend_families: vec![],
                     env_materialization_paths: vec![],
                     service_task: true,
+                    parent_pid: None,
                     pid: 48211,
                     started_at: String::from("2026-06-16T10:40:03Z"),
                 }],
@@ -71064,6 +71035,7 @@ tasks:
                     persistent_backend_families: vec![String::from("family-a")],
                     env_materialization_paths: vec![String::from(".env.local")],
                     service_task: true,
+                    parent_pid: None,
                     pid: 48211,
                     started_at: String::from("2026-06-05T22:14:03Z"),
                 }],
@@ -71466,11 +71438,15 @@ tasks:
             "{rendered}"
         );
         assert!(
-            rendered.contains("cannot apply `--host-port` on native Compose publication today"),
+            rendered.contains(
+                "native compose host-port remap requires `project.publication.compose.service`"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("change the underlying Compose publication truth for this service"),
+            rendered.contains(
+                "set `tasks.dev.runtime.listeners.web:http.project.publication.compose.service`"
+            ),
             "{rendered}"
         );
     }
@@ -72009,11 +71985,15 @@ tasks:
             "{rendered}"
         );
         assert!(
-            rendered.contains("`--host-port` is not available for native Compose publication today"),
+            rendered.contains(
+                "native compose host-port remap requires `project.publication.compose.service`"
+            ),
             "{rendered}"
         );
         assert!(
-            rendered.contains("change the underlying Compose publication truth for this service"),
+            rendered.contains(
+                "set `tasks.dev.runtime.listeners.web:http.project.publication.compose.service`"
+            ),
             "{rendered}"
         );
     }
@@ -77121,84 +77101,6 @@ workflows:
     }
 
     #[test]
-    fn proof_runtime_rejects_host_port_override_for_native_run_task() {
-        let fixture = TempDir::new().unwrap();
-        fs::write(
-            fixture.path().join("ota.yaml"),
-            r#"
-version: 1
-project:
-  name: proof-runtime-native-host-port
-execution:
-  default_context: host
-  contexts:
-    host:
-      backend: native
-tasks:
-  dev:
-    context: host
-    launch:
-      kind: command
-      exe: node
-      args:
-        - --version
-    runtime:
-      kind: service
-      listeners:
-        api:
-          protocol: http
-          bind:
-            address: 127.0.0.1
-            port:
-              mode: fixed
-              value: 3000
-          project:
-            host:
-              address: 127.0.0.1
-              port:
-                mode: fixed
-                value: 3000
-workflows:
-  default: app
-  app:
-    run:
-      task: dev
-"#,
-        )
-        .unwrap();
-
-        let output = super::proof_runtime(
-            Some(fixture.path()),
-            None,
-            None,
-            Some("app"),
-            None,
-            ExecutionOverrides {
-                backend: Some(Backend::Native),
-                lifecycle: None,
-                host_port: Some(43000),
-                memory: None,
-                skip_deps: false,
-            },
-            OutputFormat::Text,
-            false,
-        );
-
-        assert_ne!(output.exit_code, 0, "{}", output.stdout);
-        let rendered = format!(
-            "{}\n{}",
-            output.stdout,
-            output.stderr.as_deref().unwrap_or_default()
-        );
-        assert!(
-            strip_ansi_codes(&rendered)
-                .contains("cannot apply `--host-port` when execution resolves to `native`"),
-            "{}",
-            rendered
-        );
-    }
-
-    #[test]
     fn up_blocks_remote_setup_contexts_before_running_setup() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -81598,6 +81500,22 @@ fn native_structured_compose_engine_for_task(
         })
 }
 
+fn native_compose_publication_owner_for_listener(
+    contract: &Contract,
+    task_name: &str,
+    listener_name: &str,
+) -> Option<String> {
+    contract
+        .tasks
+        .get(task_name)
+        .and_then(|task| task.service_runtime_for_backend(Backend::Native))
+        .and_then(|runtime| runtime.listeners.get(listener_name))
+        .and_then(|listener| listener.project.publication.compose.as_ref())
+        .map(|publication| publication.service.trim())
+        .filter(|service| !service.is_empty())
+        .map(String::from)
+}
+
 fn repo_run_preview_command(task_name: &str, member: Option<&str>) -> String {
     format!("{} --dry-run", repo_run_command(task_name, member))
 }
@@ -82509,12 +82427,35 @@ fn render_run_structured_error_text(
                     "task `{task}` publishes this listener through native `{}` compose",
                     engine.as_str()
                 ));
-                why_lines.push(String::from(
-                    "ota cannot apply `--host-port` on native Compose publication today",
-                ));
-                next_steps.push(String::from(
-                    "or change the underlying Compose publication truth for this service to use a different host port",
-                ));
+                match (
+                    engine,
+                    native_compose_publication_owner_for_listener(contract, task, listener),
+                ) {
+                    (crate::schema::ComposeCliEngine::Docker, Some(service)) => {
+                        why_lines.push(format!(
+                            "listener `{listener}` declares native compose publication ownership through service `{service}`"
+                        ));
+                        next_steps.push(String::from(
+                            "or rerun with `--host-port <free-port>` to remap this native compose publication",
+                        ));
+                    }
+                    (crate::schema::ComposeCliEngine::Docker, None) => {
+                        why_lines.push(String::from(
+                            "native compose host-port remap requires `project.publication.compose.service`",
+                        ));
+                        next_steps.push(format!(
+                            "or set `tasks.{task}.runtime.listeners.{listener}.project.publication.compose.service` to the owning compose service name",
+                        ));
+                    }
+                    _ => {
+                        why_lines.push(String::from(
+                            "native compose host-port remap currently supports `docker compose` only",
+                        ));
+                        next_steps.push(String::from(
+                            "or change the underlying Compose publication truth for this service to use a different host port",
+                        ));
+                    }
+                }
             } else {
                 why_lines.push(String::from(
                     "this usually means another local workload is still running",
@@ -82586,6 +82527,18 @@ fn render_run_structured_error_text(
                 ),
             ],
         ),
+        RunError::HostPortOverrideRequiresFixedBindPort { task, listener } => (
+            String::from("Host port override requires fixed bind port mode"),
+            vec![format!(
+                "task `{task}` listener `{listener}` does not declare `bind.port.mode: fixed`, so ota cannot derive a deterministic native compose publication remap"
+            )],
+            vec![
+                format!(
+                    "set `tasks.{task}.runtime.listeners.{listener}.bind.port.mode` to `fixed` when you need native compose `--host-port` remap"
+                ),
+                String::from("or rerun without `--host-port`"),
+            ],
+        ),
         RunError::HostPortOverrideAmbiguousProjectedListener { task, listeners } => (
             String::from("Host port override is ambiguous for multiple listeners"),
             vec![format!(
@@ -82611,6 +82564,42 @@ fn render_run_structured_error_text(
                             format!("ota run --member {member} {task} --mode container"),
                         None => format!("ota run {task} --mode container"),
                     })
+                ),
+                String::from("or rerun without `--host-port`"),
+            ],
+        ),
+        RunError::HostPortOverrideUnsupportedComposeEngine { task, engine } => (
+            String::from("Host port override does not support this native compose engine"),
+            vec![format!(
+                "task `{task}` resolves to native compose engine `{engine}`, but publication remap currently supports `docker compose` only"
+            )],
+            vec![
+                String::from(
+                    "use native docker compose for this lane, or rerun without `--host-port`",
+                ),
+                task_use_details_step(Some(contract_path), member),
+            ],
+        ),
+        RunError::HostPortOverrideNativeComposeServiceMissing { task, listener } => (
+            String::from("Host port override needs compose publication ownership"),
+            vec![format!(
+                "task `{task}` listener `{listener}` does not declare which compose service owns its native host publication"
+            )],
+            vec![
+                format!(
+                    "set `tasks.{task}.runtime.listeners.{listener}.project.publication.compose.service` to the owning compose service name"
+                ),
+                String::from("or rerun without `--host-port`"),
+            ],
+        ),
+        RunError::HostPortOverrideNativeComposeFileMissing { task, working_dir } => (
+            String::from("Host port override could not resolve compose files"),
+            vec![format!(
+                "task `{task}` uses native compose publication remap, but ota could not find a compose file stack from `{working_dir}`"
+            )],
+            vec![
+                String::from(
+                    "declare `adapter_inputs.compose.files` for this task, or keep the compose file under a default discovered name",
                 ),
                 String::from("or rerun without `--host-port`"),
             ],
@@ -82929,11 +82918,53 @@ fn render_run_structured_error_text(
             append_post_summary_next_block(&mut output, &next_steps);
             return output;
         }
+        RunError::HostPortOverrideRequiresFixedBindPort { task, listener } => {
+            let mut output = structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &format!("tasks.{task}.runtime.listeners.{listener}.bind.port.mode"),
+                &summary,
+                &why_lines,
+                &next_steps,
+            );
+            if let Some(receipt_text) = receipt_text
+                && !receipt_text.trim().is_empty()
+            {
+                output.push('\n');
+                output.push_str(receipt_text);
+            }
+            output.push('\n');
+            output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
+            return output;
+        }
         RunError::HostPortOverrideAmbiguousProjectedListener { task, .. } => {
             let mut output = structured_field_error_text(
                 "RUN",
                 &text_path_display,
                 &format!("tasks.{task}.runtime.listeners"),
+                &summary,
+                &why_lines,
+                &next_steps,
+            );
+            if let Some(receipt_text) = receipt_text
+                && !receipt_text.trim().is_empty()
+            {
+                output.push('\n');
+                output.push_str(receipt_text);
+            }
+            output.push('\n');
+            output.push_str(summary_block);
+            append_post_summary_next_block(&mut output, &next_steps);
+            return output;
+        }
+        RunError::HostPortOverrideNativeComposeServiceMissing { task, listener } => {
+            let mut output = structured_field_error_text(
+                "RUN",
+                &text_path_display,
+                &format!(
+                    "tasks.{task}.runtime.listeners.{listener}.project.publication.compose.service"
+                ),
                 &summary,
                 &why_lines,
                 &next_steps,
@@ -85695,6 +85726,10 @@ fn spawn_up_detached_run_process(
     command
         .current_dir(working_dir)
         .env("OTA_FILE", contract_path)
+        .env(
+            "OTA_ACTIVE_EXECUTION_PARENT_PID",
+            std::process::id().to_string(),
+        )
         .arg("run")
         .arg(task_name)
         .arg("--stream");
@@ -97662,8 +97697,12 @@ fn execute_repo_up_with_behavior(
                 let native_preflight = if effective_execution.backend == Backend::Native
                     && let Some(task) = contract.tasks.get(run_task_name)
                 {
-                    let runtime = task.service_runtime_for_backend(Backend::Native);
-                    preflight_native_runtime_listener_binds(run_task_name, runtime)
+                    if task_execution_overrides.host_port.is_some() {
+                        Ok(())
+                    } else {
+                        let runtime = task.service_runtime_for_backend(Backend::Native);
+                        preflight_native_runtime_listener_binds(run_task_name, runtime)
+                    }
                 } else {
                     Ok(())
                 };
@@ -101810,8 +101849,9 @@ fn render_up_run_error(
             port,
         } => {
             let where_value = display_contract_target(&compact_contract_path(contract_path), None);
-            let compose_engine = load_contract(contract_path).ok().and_then(|contract| {
-                native_structured_compose_engine_for_task(&contract, task.as_str(), overrides)
+            let loaded_contract = load_contract(contract_path).ok();
+            let compose_engine = loaded_contract.as_ref().and_then(|contract| {
+                native_structured_compose_engine_for_task(contract, task.as_str(), overrides)
             });
             let mut why_lines = vec![
                 format!("task `{task}` listener `{listener}` needs `{address}:{port}`"),
@@ -101823,12 +101863,41 @@ fn render_up_run_error(
                     "task `{task}` publishes this listener through native `{}` compose",
                     engine.as_str()
                 ));
-                why_lines.push(String::from(
-                    "`--host-port` is not available for native Compose publication today",
-                ));
-                next_steps.push(String::from(
-                    "or change the underlying Compose publication truth for this service to use a different host port",
-                ));
+                match (
+                    engine,
+                    loaded_contract.as_ref().and_then(|contract| {
+                        native_compose_publication_owner_for_listener(
+                            contract,
+                            task.as_str(),
+                            listener.as_str(),
+                        )
+                    }),
+                ) {
+                    (crate::schema::ComposeCliEngine::Docker, Some(service)) => {
+                        why_lines.push(format!(
+                            "listener `{listener}` declares native compose publication ownership through service `{service}`"
+                        ));
+                        next_steps.push(String::from(
+                            "or rerun with `--host-port <free-port>` to remap this native compose publication",
+                        ));
+                    }
+                    (crate::schema::ComposeCliEngine::Docker, None) => {
+                        why_lines.push(String::from(
+                            "native compose host-port remap requires `project.publication.compose.service`",
+                        ));
+                        next_steps.push(format!(
+                            "or set `tasks.{task}.runtime.listeners.{listener}.project.publication.compose.service` to the owning compose service name",
+                        ));
+                    }
+                    _ => {
+                        why_lines.push(String::from(
+                            "native compose host-port remap currently supports `docker compose` only",
+                        ));
+                        next_steps.push(String::from(
+                            "or change the underlying Compose publication truth for this service to use a different host port",
+                        ));
+                    }
+                }
             } else {
                 why_lines.push(String::from(
                     "this usually means another local workload is still running",

@@ -3058,6 +3058,7 @@ impl SurfaceSpec {
                     primary: false,
                     path: self.effective_path(),
                 }),
+                ..TaskRuntimeProjectionSpec::default()
             },
         };
 
@@ -6717,8 +6718,28 @@ fn normalize_listener_shorthand(
                     TaskRuntimeProtocol::Tcp => None,
                 },
             }),
+            ..TaskRuntimeProjectionSpec::default()
         },
     })
+}
+
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeProjectionPublicationSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<TaskRuntimeComposePublicationSpec>,
+}
+
+impl TaskRuntimeProjectionPublicationSpec {
+    pub fn is_empty(&self) -> bool {
+        self.compose.is_none()
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRuntimeComposePublicationSpec {
+    pub service: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -6771,6 +6792,8 @@ pub enum TaskRuntimePortMode {
 pub struct TaskRuntimeProjectionSpec {
     #[serde(default)]
     pub host: Option<TaskRuntimeHostProjectionSpec>,
+    #[serde(default, skip_serializing_if = "TaskRuntimeProjectionPublicationSpec::is_empty")]
+    pub publication: TaskRuntimeProjectionPublicationSpec,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]

@@ -46,6 +46,12 @@
 - widened `ota proof runtime` with `--host-port`, so runtime proof can now consume the same
   projected host-listener override surface as `ota run` and `ota up` when concurrent pressure or
   host-port conflict isolation needs a remapped publication
+- widened native structured Docker Compose host-port remap from generic container publication
+  only to explicit native Compose publication ownership, so `ota run`, `ota up`, and
+  `ota proof runtime` can now remap `docker compose up` listener publications through
+  `tasks.<name>.runtime.listeners.<listener>.project.publication.compose.service` instead of
+  failing early on native bind conflicts; validator now requires that publication owner truth to
+  stay explicit and governed
 - tightened native Compose bind-conflict guidance so `ota up` and run/proof failure surfaces now
   state explicitly when a listener is being published through native `docker|podman compose` and
   why `--host-port` is not available on that lane today, instead of implying the conflict should

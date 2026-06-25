@@ -6646,6 +6646,15 @@ fn validate_task_runtime(
     backend: Backend,
     errors: &mut Vec<ValidationError>,
 ) {
+    let native_compose_execution = if backend == Backend::Native {
+        contract
+            .tasks
+            .get(task_name)
+            .and_then(|task| task.resolved_execution_for_backend(backend, std::env::consts::OS))
+    } else {
+        None
+    };
+
     if runtime.kind != TaskRuntimeKind::Service {
         errors.push(ValidationError::new(format!(
             "task `{task_name}` runtime kind is not supported"
@@ -6830,6 +6839,60 @@ fn validate_task_runtime(
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` listener `{listener_name}` on a remote execution context currently requires `bind.port.value`"
                 )));
+            }
+        }
+
+        if let Some(compose_publication) = listener.project.publication.compose.as_ref() {
+            let service = compose_publication.service.trim();
+            if service.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` listener `{listener_name}` `project.publication.compose.service` must not be empty"
+                )));
+            }
+            if listener.project.host.is_none() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` listener `{listener_name}` `project.publication.compose.service` requires `project.host`"
+                )));
+            }
+            if backend == Backend::Native {
+                match native_compose_execution {
+                    Some(execution) => {
+                        let declared_services = execution
+                            .compose()
+                            .and_then(|compose| {
+                                matches!(
+                                    compose.invocation.kind,
+                                    crate::schema::TaskComposeExecutionKind::Up
+                                )
+                                    .then_some(compose.invocation.services.as_slice())
+                            })
+                            .or_else(|| {
+                                execution.launch().and_then(|launch| match launch {
+                                    crate::schema::TaskLaunchSpec::Compose(launch) => {
+                                        Some(launch.services.as_slice())
+                                    }
+                                    _ => None,
+                                })
+                            });
+                        if declared_services.is_none() {
+                            errors.push(ValidationError::new(format!(
+                                "task `{task_name}` listener `{listener_name}` `project.publication.compose.service` requires native structured compose `up` execution"
+                            )));
+                        } else if let Some(declared_services) = declared_services
+                            && !declared_services.is_empty()
+                            && !declared_services.iter().any(|declared| declared.trim() == service)
+                        {
+                            errors.push(ValidationError::new(format!(
+                                "task `{task_name}` listener `{listener_name}` `project.publication.compose.service: {service}` is not included in the selected compose service set"
+                            )));
+                        }
+                    }
+                    None => {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` listener `{listener_name}` `project.publication.compose.service` requires native structured compose `up` execution"
+                        )));
+                    }
+                }
             }
         }
     }
@@ -21003,6 +21066,48 @@ tasks:
         assert!(errors.errors().iter().any(|error| {
             error.to_string().contains(
                 "declares multiple projected listeners (`http`, `metrics`) but none sets `project.host.primary: true`",
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_compose_publication_binding_without_native_structured_compose_up() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    run: echo hi
+    runtime:
+      kind: service
+      listeners:
+        http:
+          protocol: http
+          bind:
+            address: 127.0.0.1
+            port:
+              mode: fixed
+              value: 3000
+          project:
+            host:
+              address: 127.0.0.1
+              port:
+                mode: fixed
+                value: 3000
+            publication:
+              compose:
+                service: web
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "`project.publication.compose.service` requires native structured compose `up` execution",
             )
         }));
     }
