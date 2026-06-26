@@ -39348,6 +39348,11 @@ fn render_workflow_prepare_action_preview(action: &crate::output::TaskActionSumm
         "ensure_env_file" => format!("ensure_env_file {}", action.to.unwrap_or("?")),
         "ensure_file" => format!("ensure_file {}", action.to.unwrap_or("?")),
         "ensure_directory" => format!("ensure_directory {}", action.to.unwrap_or("?")),
+        "ensure_git_checkout" => format!(
+            "ensure_git_checkout {} -> {}",
+            action.from.unwrap_or("?"),
+            action.to.unwrap_or("?")
+        ),
         "ensure_container_network" => {
             format!("ensure_container_network {}", action.to.unwrap_or("?"))
         }
@@ -39453,6 +39458,12 @@ fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> Str
         "ensure_directory" => match action.to {
             Some(path) => format!("ensure directory `{path}`"),
             None => String::from("ensure directory"),
+        },
+        "ensure_git_checkout" => match (action.from, action.to) {
+            (Some(source), Some(path)) => {
+                format!("ensure git checkout `{path}` from `{source}`")
+            }
+            _ => String::from("ensure git checkout"),
         },
         "ensure_container_network" => match (action.from, action.to) {
             (Some(provider), Some(name)) => {

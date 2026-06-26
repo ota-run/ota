@@ -2228,7 +2228,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
 `action` fields:
 
 - `action.kind`: required action kind; currently `copy_if_missing`, `ensure_env_file`, or
-  `ensure_file`, `ensure_directory`, `ensure_container_network`,
+  `ensure_file`, `ensure_directory`, `ensure_git_checkout`, `ensure_container_network`,
   `reset_compose_service_volume`, or `ensure_bundle`
 - `action` is the first-class host file-preparation surface for deterministic repo mutations; in
   the current shipped slice it is native-only because it mutates the host working tree directly
@@ -2259,6 +2259,10 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
   - `action.random.encoding`: optional `hex` or `base64` (default `hex`)
 - `action.kind: ensure_directory`
   - `action.path`: required repo-relative directory path to create when missing
+- `action.kind: ensure_git_checkout`
+  - `action.path`: required repo-relative checkout path to create when missing
+  - `action.source.git`: required Git remote URL or clone source
+  - `action.source.ref`: optional Git ref Ota should check out after clone
 - `action.kind: ensure_container_network`
   - `action.provider`: optional container runtime provider; currently `docker` (default `docker`)
   - `action.name`: required container network name to inspect/create
@@ -2278,6 +2282,7 @@ Ota does not maintain an allowlist for `command.exe`. The examples above are ill
     - `kind: ensure_env_file`
     - `kind: ensure_file`
     - `kind: ensure_directory`
+    - `kind: ensure_git_checkout`
     - `kind: ensure_container_network`
     - `kind: reset_compose_service_volume`
   - each step uses the same fields and validation rules as the corresponding top-level action kind
@@ -2308,6 +2313,14 @@ secret token file) without shell glue. It creates `action.path` once from one ex
 Use `action.kind: ensure_directory` when setup needs a deterministic repo-local directory without
 shell glue. It creates `action.path` when missing, no-ops when it already exists as a directory,
 and fails if the path already exists as a non-directory.
+
+Use `action.kind: ensure_git_checkout` when setup truthfully owns deterministic materialization of
+one sibling checkout, vendored dependency repo, or other Git-backed working tree without shell
+bootstrap glue. Ota clones `action.source.git` into `action.path` only when that path is missing,
+optionally checks out `action.source.ref`, and then leaves existing directories untouched on repeat
+runs. This is intentionally a materialization surface, not an update/reset surface: use it when
+bootstrap needs “make sure this checkout exists”, not when setup should implicitly pull, fetch, or
+rewrite a repo that is already present.
 
 Use `action.kind: ensure_container_network` when setup needs one deterministic external container
 network without shell glue. It inspects the named provider-owned network, creates it only when

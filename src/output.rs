@@ -3996,6 +3996,11 @@ fn summarize_task_action<'a>(
             from: None,
             to: Some(spec.path.as_str()),
         }),
+        crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => Some(TaskActionSummary {
+            kind: "ensure_git_checkout",
+            from: Some(spec.source.git.as_str()),
+            to: Some(spec.path.as_str()),
+        }),
         crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => Some(TaskActionSummary {
             kind: "ensure_container_network",
             from: Some(spec.provider.label()),
@@ -4094,6 +4099,13 @@ pub fn summarize_task_action_owned(
             from: None,
             to: Some(spec.path.clone()),
         }),
+        crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
+            Some(WorkspaceTaskActionSummary {
+                kind: "ensure_git_checkout",
+                from: Some(spec.source.git.clone()),
+                to: Some(spec.path.clone()),
+            })
+        }
         crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => {
             Some(WorkspaceTaskActionSummary {
                 kind: "ensure_container_network",

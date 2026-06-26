@@ -4167,6 +4167,9 @@ fn validate_task_action(
                 errors,
             );
         }
+        crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
+            validate_task_ensure_git_checkout_action(task_name, "action", spec, errors);
+        }
         crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => {
             if spec.name.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
@@ -5679,6 +5682,9 @@ fn validate_task_ensure_bundle_step(
                 errors,
             );
         }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckout(spec) => {
+            validate_task_ensure_git_checkout_action(task_name, prefix.as_str(), spec, errors);
+        }
         crate::schema::TaskEnsureBundleStepSpec::EnsureContainerNetwork(spec) => {
             if spec.name.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
@@ -5718,6 +5724,42 @@ fn validate_task_ensure_bundle_step(
                 &spec.compose,
                 errors,
             );
+        }
+    }
+}
+
+fn validate_task_ensure_git_checkout_action(
+    task_name: &str,
+    prefix: &str,
+    spec: &crate::schema::TaskEnsureGitCheckoutActionSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    validate_repo_relative_file_action_path(
+        task_name,
+        format!("{prefix}.path").as_str(),
+        spec.path.as_str(),
+        errors,
+    );
+    if spec.source.git.trim().is_empty() {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` action `ensure_git_checkout` must declare a non-empty `{prefix}.source.git`"
+        )));
+    }
+    if spec.source.git.contains('\n') || spec.source.git.contains('\r') {
+        errors.push(ValidationError::new(format!(
+            "task `{task_name}` action `ensure_git_checkout` `{prefix}.source.git` must not contain newline characters"
+        )));
+    }
+    if let Some(git_ref) = spec.source.git_ref.as_deref() {
+        if git_ref.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` action `ensure_git_checkout` must not declare an empty `{prefix}.source.ref`"
+            )));
+        }
+        if git_ref.contains('\n') || git_ref.contains('\r') {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` action `ensure_git_checkout` `{prefix}.source.ref` must not contain newline characters"
+            )));
         }
     }
 }
@@ -19148,6 +19190,29 @@ tasks:
     }
 
     #[test]
+    fn validates_ensure_git_checkout_action_shape() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkout
+      path: vendor/wagtail
+      source:
+        git: https://github.com/wagtail/wagtail.git
+        ref: main
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("ensure_git_checkout action should validate");
+    }
+
+    #[test]
     fn validates_ensure_container_network_action_shape() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -19249,6 +19314,34 @@ tasks:
 
         validate_contract(&contract)
             .expect("ensure_bundle action with container network step should validate");
+    }
+
+    #[test]
+    fn validates_ensure_bundle_action_shape_with_git_checkout_step() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:bootstrap:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_directory
+          path: vendor
+        - kind: ensure_git_checkout
+          path: vendor/wagtail
+          source:
+            git: https://github.com/wagtail/wagtail.git
+            ref: main
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("ensure_bundle action with git checkout step should validate");
     }
 
     #[test]

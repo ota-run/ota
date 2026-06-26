@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added first-class `action.kind: ensure_git_checkout`, so deterministic repo bootstrap can now
+  materialize sibling or vendored Git checkouts under the same native setup/action surface as
+  `ensure_file`, `ensure_env_file`, and `ensure_bundle`; Ota clones a declared Git source only
+  when the repo-relative checkout path is missing, optionally checks out a declared ref, and
+  intentionally leaves existing directories untouched instead of smuggling fetch/reset/update
+  semantics into bootstrap
 - added first-class `tasks.<name>.effects.adapter_state` for durable adapter-owned task state such
   as Compose volumes, and widened typed dependency hydration so `prepare.kind: dependency_hydration`
   can declare durable state through `effects.writes` or `effects.adapter_state` instead of being

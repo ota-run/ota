@@ -207,6 +207,10 @@ Current shape:
       "introduced_in": "1.6.16"
     },
     {
+      "id": "tasks.action.ensure_git_checkout",
+      "introduced_in": "1.6.22"
+    },
+    {
       "id": "tasks.action.ensure_container_network",
       "introduced_in": "1.6.21"
     },

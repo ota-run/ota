@@ -1046,6 +1046,24 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         {
           "type": "object",
           "additionalProperties": false,
+          "required": ["kind", "path", "source"],
+          "properties": {
+            "kind": { "const": "ensure_git_checkout" },
+            "path": { "type": "string" },
+            "source": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["git"],
+              "properties": {
+                "git": { "type": "string" },
+                "ref": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
           "required": ["kind", "name"],
           "properties": {
             "kind": { "const": "ensure_container_network" },

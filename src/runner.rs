@@ -9926,6 +9926,9 @@ fn execute_native_file_action_task(
         crate::schema::TaskActionSpec::EnsureDirectory(spec) => {
             execute_ensure_directory_action(task_name, spec, working_dir)
         }
+        crate::schema::TaskActionSpec::EnsureGitCheckout(spec) => {
+            execute_ensure_git_checkout_action(task_name, spec, working_dir)
+        }
         crate::schema::TaskActionSpec::EnsureContainerNetwork(spec) => {
             execute_ensure_container_network_action(task_name, spec)
         }
@@ -10039,6 +10042,9 @@ fn execute_ensure_bundle_step(
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureDirectory(spec) => {
             execute_ensure_directory_action(task_name, spec, working_dir)
+        }
+        crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckout(spec) => {
+            execute_ensure_git_checkout_action(task_name, spec, working_dir)
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureContainerNetwork(spec) => {
             execute_ensure_container_network_action(task_name, spec)
@@ -10326,6 +10332,109 @@ fn execute_ensure_directory_action(
         "ensured directory `{}`\n",
         spec.path.trim()
     )))
+}
+
+fn execute_ensure_git_checkout_action(
+    task_name: &str,
+    spec: &crate::schema::TaskEnsureGitCheckoutActionSpec,
+    working_dir: &Path,
+) -> Result<TaskCommandOutput, RunError> {
+    let path_text = spec.path.trim();
+    let checkout_path = working_dir.join(path_text);
+    if checkout_path.exists() {
+        if checkout_path.is_dir() {
+            return Ok(file_action_output(format!(
+                "git checkout `{}` already exists; no clone needed\n",
+                path_text
+            )));
+        }
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not ensure git checkout `{}` because a non-directory entry already exists at that path",
+                path_text
+            ),
+        });
+    }
+
+    if let Some(parent) = checkout_path.parent()
+        && !parent.exists()
+    {
+        std::fs::create_dir_all(parent).map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not create parent directory for `{}`: {source}",
+                path_text
+            ),
+        })?;
+    }
+
+    let source_url = spec.source.git.trim();
+    let clone_output = run_git_file_action_command(
+        task_name,
+        ["clone", "--", source_url, path_text],
+        None,
+        working_dir,
+        format!("clone git checkout `{path_text}` from `{source_url}`"),
+    )?;
+
+    let mut stdout = clone_output;
+    if let Some(git_ref) = spec.source.git_ref.as_deref().map(str::trim) {
+        let checkout_output = run_git_file_action_command(
+            task_name,
+            ["checkout", git_ref],
+            Some(&checkout_path),
+            working_dir,
+            format!("checkout `{git_ref}` for git checkout `{path_text}`"),
+        )?;
+        stdout.push_str(checkout_output.as_str());
+    }
+
+    Ok(file_action_output(stdout))
+}
+
+fn run_git_file_action_command<const N: usize>(
+    task_name: &str,
+    args: [&str; N],
+    cwd: Option<&Path>,
+    working_dir: &Path,
+    operation: String,
+) -> Result<String, RunError> {
+    let mut command = Command::new("git");
+    command.args(args);
+    command.current_dir(cwd.unwrap_or(working_dir));
+    let output = command
+        .output()
+        .map_err(|source| RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!("could not start git command to {operation}: {source}"),
+        })?;
+    if !output.status.success() {
+        return Err(RunError::FileActionFailed {
+            task: task_name.to_string(),
+            message: format!(
+                "could not {operation}: {}",
+                rendered_process_failure(&output)
+            ),
+        });
+    }
+
+    let mut text = String::new();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stdout.is_empty() {
+        text.push_str(stdout.as_str());
+        text.push('\n');
+    }
+    if !stderr.is_empty() {
+        text.push_str(stderr.as_str());
+        text.push('\n');
+    }
+    if text.is_empty() {
+        text.push_str(operation.as_str());
+        text.push('\n');
+    }
+    Ok(text)
 }
 
 fn execute_ensure_container_network_action(
@@ -55497,6 +55606,93 @@ tasks:
     }
 
     #[test]
+    fn ensure_git_checkout_action_clones_once_and_checks_out_declared_ref() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:deps:
+    action:
+      kind: ensure_git_checkout
+      path: vendor/wagtail
+      source:
+        git: https://github.com/wagtail/wagtail.git
+        ref: main
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("git-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let log_path = fixture.dir.path().join("git.log");
+        let git_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nsetlocal enabledelayedexpansion\r\n>> \"%OTA_GIT_LOG%\" echo %CD%^|%*\r\nif \"%1\"==\"clone\" (\r\n  mkdir \"%4\" >nul 2>nul\r\n  > \"%4\\.git\" type nul\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"checkout\" (\r\n  > \"{state}\\checkout-%2\" type nul\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n",
+                state = state_dir.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_GIT_LOG\"\nif [ \"$1\" = \"clone\" ]; then\n  mkdir -p \"$4\"\n  : > \"$4/.git\"\n  exit 0\nfi\nif [ \"$1\" = \"checkout\" ]; then\n  : > \"{state}/checkout-$2\"\n  exit 0\nfi\nexit 1\n",
+                state = state_dir.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "git", &git_body);
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_GIT_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_GIT_LOG", &log_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:deps")
+            .expect("ensure_git_checkout action should run");
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:deps")
+            .expect("ensure_git_checkout action should stay idempotent");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_GIT_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_GIT_LOG");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert!(fixture.dir.path().join("vendor/wagtail/.git").exists());
+        assert!(state_dir.join("checkout-main").exists());
+        let git_log = fs::read_to_string(&log_path).unwrap();
+        assert!(git_log.contains("clone -- https://github.com/wagtail/wagtail.git vendor/wagtail"));
+        assert!(git_log.contains("vendor/wagtail|checkout main"));
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second
+                .stdout
+                .contains("git checkout `vendor/wagtail` already exists; no clone needed"),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
     fn ensure_container_network_action_creates_network_once() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -56276,6 +56472,94 @@ exit 1
             second.stdout.contains(
                 "docker container network `penpot_shared` already exists; no create needed"
             ),
+            "{}",
+            second.stdout
+        );
+    }
+
+    #[test]
+    fn ensure_bundle_action_runs_git_checkout_step_idempotently() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:bootstrap:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_directory
+          path: vendor
+        - kind: ensure_git_checkout
+          path: vendor/wagtail
+          source:
+            git: https://github.com/wagtail/wagtail.git
+            ref: main
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let state_dir = fixture.dir.path().join("git-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        let log_path = fixture.dir.path().join("git.log");
+        let git_body = if cfg!(windows) {
+            format!(
+                "@echo off\r\nsetlocal enabledelayedexpansion\r\n>> \"%OTA_GIT_LOG%\" echo %CD%^|%*\r\nif \"%1\"==\"clone\" (\r\n  mkdir \"%4\" >nul 2>nul\r\n  > \"%4\\.git\" type nul\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"checkout\" (\r\n  > \"{state}\\checkout-%2\" type nul\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n",
+                state = state_dir.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_GIT_LOG\"\nif [ \"$1\" = \"clone\" ]; then\n  mkdir -p \"$4\"\n  : > \"$4/.git\"\n  exit 0\nfi\nif [ \"$1\" = \"checkout\" ]; then\n  : > \"{state}/checkout-$2\"\n  exit 0\nfi\nexit 1\n",
+                state = state_dir.display()
+            )
+        };
+        write_fake_bin(&bin_dir, "git", &git_body);
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_GIT_LOG");
+        let mut path_entries = vec![bin_dir.clone()];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+            env::set_var("OTA_GIT_LOG", &log_path);
+        }
+
+        let first = run_task(&fixture.contract, fixture.file_path(), "setup:bootstrap")
+            .expect("ensure_bundle with git checkout step should run");
+        let second = run_task(&fixture.contract, fixture.file_path(), "setup:bootstrap")
+            .expect("ensure_bundle with git checkout step should stay idempotent");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+        match original_log {
+            Some(value) => unsafe {
+                env::set_var("OTA_GIT_LOG", value);
+            },
+            None => unsafe {
+                env::remove_var("OTA_GIT_LOG");
+            },
+        }
+
+        assert_eq!(first.exit_code, 0);
+        assert!(fixture.dir.path().join("vendor").is_dir());
+        assert!(fixture.dir.path().join("vendor/wagtail/.git").exists());
+        assert_eq!(second.exit_code, 0);
+        assert!(
+            second
+                .stdout
+                .contains("git checkout `vendor/wagtail` already exists; no clone needed"),
             "{}",
             second.stdout
         );
