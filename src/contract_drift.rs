@@ -775,6 +775,18 @@ fn existing_service_field_values(name: &str, service: &ServiceSpec) -> BTreeMap<
         if let Some(file) = manager.file.as_ref() {
             fields.insert(format!("services.{name}.manager.file"), file.clone());
         }
+        for (index, file) in manager.files.iter().enumerate() {
+            fields.insert(format!("services.{name}.manager.files.{index}"), file.clone());
+        }
+        if let Some(env_file) = manager.env_file.as_ref() {
+            fields.insert(format!("services.{name}.manager.env_file"), env_file.clone());
+        }
+        for (index, env_file) in manager.env_files.iter().enumerate() {
+            fields.insert(
+                format!("services.{name}.manager.env_files.{index}"),
+                env_file.clone(),
+            );
+        }
         if let Some(service_name) = manager.service.as_ref() {
             fields.insert(
                 format!("services.{name}.manager.service"),
@@ -846,6 +858,18 @@ fn detect_service_field_values(name: &str, service: &DetectService) -> Vec<(Stri
         }
         if let Some(file) = manager.file.as_ref() {
             fields.push((format!("services.{name}.manager.file"), file.clone()));
+        }
+        for (index, file) in manager.files.iter().enumerate() {
+            fields.push((format!("services.{name}.manager.files.{index}"), file.clone()));
+        }
+        if let Some(env_file) = manager.env_file.as_ref() {
+            fields.push((format!("services.{name}.manager.env_file"), env_file.clone()));
+        }
+        for (index, env_file) in manager.env_files.iter().enumerate() {
+            fields.push((
+                format!("services.{name}.manager.env_files.{index}"),
+                env_file.clone(),
+            ));
         }
         if let Some(service_name) = manager.service.as_ref() {
             fields.push((
@@ -1259,7 +1283,9 @@ execution:
                         engine: crate::schema::ComposeCliEngine::Docker,
                         name: Some(String::from("ota")),
                         file: Some(String::from("docker-compose.yml")),
+                        files: vec![String::from("docker-compose.yml")],
                         env_file: None,
+                        env_files: Vec::new(),
                         profiles: Vec::new(),
                         service: Some(String::from("web")),
                         start: None,

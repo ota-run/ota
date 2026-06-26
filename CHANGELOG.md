@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- widened `services.<name>.manager.kind: compose` with ordered `manager.files` and
+  `manager.env_files`, while keeping `manager.file` and `manager.env_file` as compatibility
+  aliases; compose-managed services can now own the same multi-file and multi-env-file overlay
+  stacks that task/workflow adapter inputs already support, which closes the split-brain between
+  overlay-aware compose tasks and single-file-only service ownership on repo contracts such as
+  Open WebUI's Playwright sidecar runtime
 - added first-class `action.kind: ensure_git_checkout`, so deterministic repo bootstrap can now
   materialize sibling or vendored Git checkouts under the same native setup/action surface as
   `ensure_file`, `ensure_env_file`, and `ensure_bundle`; Ota clones a declared Git source only

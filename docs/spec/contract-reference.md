@@ -3320,7 +3320,9 @@ Service manager fields:
 - `services.<name>.manager.engine`: optional compose CLI engine for `kind: compose`; `docker` by default, `podman` also supported. Keep task `command.exe` / `launch.exe` aligned to the same engine when the task body directly executes the compose CLI.
 - `services.<name>.manager.name`: optional manager/project name; required today for `kind: compose`
 - `services.<name>.manager.file`: optional compose file path for `kind: compose`
+- `services.<name>.manager.files`: optional ordered compose file stack for `kind: compose`
 - `services.<name>.manager.env_file`: optional repo-relative compose env-file path for `kind: compose`
+- `services.<name>.manager.env_files`: optional ordered repo-relative compose env-file stack for `kind: compose`
 - `services.<name>.manager.profiles`: optional compose profile list for `kind: compose`
 - `services.<name>.manager.service`: optional compose service name override; required today for `kind: compose`
 - `services.<name>.manager.host`: optional typed host-manager owner for `kind: host`
@@ -3350,6 +3352,10 @@ Workflow env adapter rules:
 - use `<name>.adapter_inputs.overlays.helm.*` when one workflow owns the base Helm adapter root, values-file stack, chart selection, release naming, or namespace for selected Helm task paths and task-local adapter inputs should only carry narrower additions
 - this keeps compose adapter input ownership on the workflow surface instead of duplicating
   the same `manager.env_file` path across services
+- use `services.<name>.manager.files` / `.env_files` when the managed compose service identity
+  itself depends on an ordered overlay stack, such as a sidecar service declared only through an
+  additional compose file; keep task or workflow `adapter_inputs.overlays.compose.*` for selected
+  runnable-path ownership
 - when the selected workflow run path includes a compose-running task, ota also projects that
   rendered dotenv artifact into `tasks.<name>.adapter_inputs.overlays.compose.env_files` instead of
   misrouting it through process `env_files`
@@ -3395,6 +3401,9 @@ Compatibility:
 - `<name>.env.adapter_inputs.*` remains accepted as a compatibility lane for older contracts
 - `<name>.env.compose_files` and `<name>.env.compose_project_name` remain accepted as compatibility
   aliases for existing contracts
+- `services.<name>.manager.file` and `services.<name>.manager.env_file` remain accepted as
+  single-entry compatibility aliases; use `manager.files` and `manager.env_files` when a compose
+  service owns an ordered overlay stack
 - new and updated contracts should use `<name>.adapter_inputs.overlays.*` for workflow-owned adapter truth
 - do not declare the compatibility aliases together with the canonical
   `adapter_inputs.overlays.compose.files` / `.project_name` fields

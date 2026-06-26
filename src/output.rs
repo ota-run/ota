@@ -4894,8 +4894,12 @@ pub struct ServiceManagerSummary {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4911,7 +4915,9 @@ impl ServiceManagerSummary {
             },
             name: manager.name.clone(),
             file: manager.file.clone(),
+            files: manager.files.clone(),
             env_file: manager.env_file.clone(),
+            env_files: manager.env_files.clone(),
             profiles: manager.profiles.clone(),
             service: manager.service.clone(),
         }

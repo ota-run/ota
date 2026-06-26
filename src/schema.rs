@@ -3806,8 +3806,12 @@ pub struct ServiceManagerSpec {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3821,6 +3825,37 @@ pub struct ServiceManagerSpec {
 }
 
 impl ServiceManagerSpec {
+    fn effective_compose_files(&self) -> Vec<&str> {
+        let mut files = Vec::new();
+        if let Some(file) = self.file.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            files.push(file);
+        }
+        for file in self.files.iter().map(String::as_str).map(str::trim) {
+            if !file.is_empty() && !files.contains(&file) {
+                files.push(file);
+            }
+        }
+        files
+    }
+
+    fn effective_compose_env_files(&self) -> Vec<&str> {
+        let mut files = Vec::new();
+        if let Some(file) = self
+            .env_file
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            files.push(file);
+        }
+        for file in self.env_files.iter().map(String::as_str).map(str::trim) {
+            if !file.is_empty() && !files.contains(&file) {
+                files.push(file);
+            }
+        }
+        files
+    }
+
     pub fn display_label(&self) -> String {
         match self.kind {
             ServiceManagerKind::Compose => match self.name.as_deref() {
@@ -3916,19 +3951,11 @@ health=$({inspect_engine} inspect --format '{{{{if .State.Health}}}}{{{{.State.H
             return None;
         }
         let mut args = vec![String::from("compose")];
-        if let Some(file) = self
-            .file
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
+        for file in self.effective_compose_files() {
             args.push(String::from("-f"));
             args.push(file.to_string());
         }
-        if let Some(env_file) = self
-            .env_file
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
+        for env_file in self.effective_compose_env_files() {
             args.push(String::from("--env-file"));
             args.push(env_file.to_string());
         }
@@ -3965,15 +3992,11 @@ health=$({inspect_engine} inspect --format '{{{{if .State.Health}}}}{{{{.State.H
 
     fn compose_command_prefix(&self) -> String {
         let mut command = format!("{} compose", self.engine.as_str());
-        if let Some(file) = self.file.as_deref().filter(|file| !file.trim().is_empty()) {
+        for file in self.effective_compose_files() {
             command.push_str(" -f ");
             command.push_str(&shell_single_quote(file));
         }
-        if let Some(env_file) = self
-            .env_file
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-        {
+        for env_file in self.effective_compose_env_files() {
             command.push_str(" --env-file ");
             command.push_str(&shell_single_quote(env_file));
         }
@@ -8381,7 +8404,7 @@ tasks:
     }
 
     #[test]
-    fn compose_service_manager_commands_include_env_file() {
+    fn compose_service_manager_commands_include_file_and_env_file_stacks() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
             r#"
@@ -8394,7 +8417,11 @@ services:
       kind: compose
       name: local
       file: compose.yaml
+      files:
+        - compose.playwright.yaml
       env_file: .env.compose
+      env_files:
+        - .env.overlay
       profiles:
         - web
         - worker
@@ -8408,7 +8435,7 @@ services:
         assert_eq!(
             manager.start_command("redis").as_deref(),
             Some(
-                "docker compose -f 'compose.yaml' --env-file '.env.compose' --profile 'web' --profile 'worker' -p 'local' up -d 'redis'"
+                "docker compose -f 'compose.yaml' -f 'compose.playwright.yaml' --env-file '.env.compose' --env-file '.env.overlay' --profile 'web' --profile 'worker' -p 'local' up -d 'redis'"
             )
         );
         assert_eq!(
@@ -8417,8 +8444,12 @@ services:
                 String::from("compose"),
                 String::from("-f"),
                 String::from("compose.yaml"),
+                String::from("-f"),
+                String::from("compose.playwright.yaml"),
                 String::from("--env-file"),
                 String::from(".env.compose"),
+                String::from("--env-file"),
+                String::from(".env.overlay"),
                 String::from("--profile"),
                 String::from("web"),
                 String::from("--profile"),
@@ -8447,7 +8478,11 @@ services:
       engine: podman
       name: local
       file: compose.yaml
+      files:
+        - compose.playwright.yaml
       env_file: .env.compose
+      env_files:
+        - .env.overlay
       service: redis
     healthcheck: redis-cli ping
 "#,
@@ -8458,14 +8493,14 @@ services:
         assert_eq!(
             manager.start_command("redis").as_deref(),
             Some(
-                "podman compose -f 'compose.yaml' --env-file '.env.compose' -p 'local' up -d 'redis'"
+                "podman compose -f 'compose.yaml' -f 'compose.playwright.yaml' --env-file '.env.compose' --env-file '.env.overlay' -p 'local' up -d 'redis'"
             )
         );
         assert_eq!(manager.compose_cli_exe(), Some("podman"));
         assert_eq!(
             manager.compose_health_status_command("redis").as_deref(),
             Some(
-                "cid=$(podman compose -f 'compose.yaml' --env-file '.env.compose' -p 'local' ps -q 'redis' 2>/dev/null | head -n 1); \
+                "cid=$(podman compose -f 'compose.yaml' -f 'compose.playwright.yaml' --env-file '.env.compose' --env-file '.env.overlay' -p 'local' ps -q 'redis' 2>/dev/null | head -n 1); \
 [ -n \"$cid\" ] || exit 1; \
 health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \"$cid\" 2>/dev/null || true); \
 [ \"$health\" = healthy ]"
@@ -8481,7 +8516,9 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
                 engine: ComposeCliEngine::Docker,
                 name: Some(String::from("local-postgres")),
                 file: None,
+                files: Vec::new(),
                 env_file: None,
+                env_files: Vec::new(),
                 profiles: Vec::new(),
                 service: None,
                 host: None,
@@ -8539,7 +8576,9 @@ health=$(podman inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{
                 engine: ComposeCliEngine::Docker,
                 name: None,
                 file: None,
+                files: Vec::new(),
                 env_file: None,
+                env_files: Vec::new(),
                 profiles: Vec::new(),
                 service: None,
                 host: Some(HostServiceManagerSpec {

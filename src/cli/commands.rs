@@ -11223,7 +11223,9 @@ fn build_assist_service_proposal(
         engine: crate::schema::ComposeCliEngine::Docker,
         name: manager_name_value.clone(),
         file: compose_file_value.clone(),
+        files: Vec::new(),
         env_file: None,
+        env_files: Vec::new(),
         profiles: Vec::new(),
         service: compose_service_value.clone(),
         host: host_unit_value
@@ -57730,7 +57732,9 @@ tasks:
                 kind: String::from("compose"),
                 name: None,
                 file: None,
+                files: Vec::new(),
                 env_file: None,
+                env_files: Vec::new(),
                 profiles: Vec::new(),
                 service: None,
             }),
@@ -60695,6 +60699,15 @@ workflows:
                 .and_then(|service| service.manager.as_ref())
                 .and_then(|manager| manager.env_file.as_deref()),
             Some(".env.compose")
+        );
+        assert_eq!(
+            adjusted
+                .services
+                .get("api")
+                .and_then(|service| service.manager.as_ref())
+                .map(|manager| manager.env_files.clone())
+                .unwrap_or_default(),
+            vec![String::from(".env.compose")]
         );
         assert_eq!(
             adjusted
@@ -95288,6 +95301,9 @@ fn contract_adjusted_for_selected_workflow_env_profile(
             };
             if manager.kind == crate::schema::ServiceManagerKind::Compose {
                 manager.env_file = Some(path.clone());
+                if !manager.env_files.iter().any(|existing| existing == path) {
+                    manager.env_files.insert(0, path.clone());
+                }
             }
         }
     }

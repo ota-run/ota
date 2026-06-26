@@ -303,8 +303,12 @@ pub struct DetectServiceManagerSpec {
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -322,7 +326,9 @@ impl Default for DetectServiceManagerSpec {
             engine: crate::schema::ComposeCliEngine::Docker,
             name: None,
             file: None,
+            files: Vec::new(),
             env_file: None,
+            env_files: Vec::new(),
             profiles: Vec::new(),
             service: None,
             start: None,
@@ -4660,6 +4666,7 @@ impl DetectBuilder {
                 .manager
                 .get_or_insert_with(DetectServiceManagerSpec::default);
             manager.file = Some(value.clone());
+            manager.files = vec![value.clone()];
             self.record(field, value, source, confidence);
         }
     }

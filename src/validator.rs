@@ -13627,14 +13627,21 @@ fn validate_services(
                             "service `{name}` compose manager must declare a non-empty `manager.service`"
                         )));
                     }
-                    if manager
-                        .file
-                        .as_deref()
-                        .is_some_and(|value| value.trim().is_empty())
-                    {
+                    if manager.file.as_deref().is_some_and(|value| value.trim().is_empty()) {
                         errors.push(ValidationError::new(format!(
                             "service `{name}` manager field `file` must not be empty"
                         )));
+                    }
+                    for (index, file) in manager.files.iter().enumerate() {
+                        if file.trim().is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` manager field `files[{index}]` must not be empty"
+                            )));
+                        } else if !is_safe_repo_relative_file_path(file.trim()) {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` manager field `files[{index}]` must be a repo-relative path that does not escape the repo"
+                            )));
+                        }
                     }
                     if let Some(env_file) = manager.env_file.as_deref() {
                         if env_file.trim().is_empty() {
@@ -13644,6 +13651,17 @@ fn validate_services(
                         } else if !is_safe_repo_relative_file_path(env_file.trim()) {
                             errors.push(ValidationError::new(format!(
                                 "service `{name}` manager field `env_file` must be a repo-relative path that does not escape the repo"
+                            )));
+                        }
+                    }
+                    for (index, env_file) in manager.env_files.iter().enumerate() {
+                        if env_file.trim().is_empty() {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` manager field `env_files[{index}]` must not be empty"
+                            )));
+                        } else if !is_safe_repo_relative_file_path(env_file.trim()) {
+                            errors.push(ValidationError::new(format!(
+                                "service `{name}` manager field `env_files[{index}]` must be a repo-relative path that does not escape the repo"
                             )));
                         }
                     }
@@ -13685,9 +13703,19 @@ fn validate_services(
                             "service `{name}` host manager must not declare `manager.file`"
                         )));
                     }
+                    if !manager.files.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` host manager must not declare `manager.files`"
+                        )));
+                    }
                     if manager.env_file.is_some() {
                         errors.push(ValidationError::new(format!(
                             "service `{name}` host manager must not declare `manager.env_file`"
+                        )));
+                    }
+                    if !manager.env_files.is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "service `{name}` host manager must not declare `manager.env_files`"
                         )));
                     }
                     if !manager.profiles.is_empty() {
@@ -15078,13 +15106,23 @@ fn validate_workflows(contract: &Contract, errors: &mut Vec<ValidationError>) {
                         "`workflows.{name}.env.compose_env_file_services` requires service `{service_name}` to declare `manager.kind: compose`"
                     )));
                 }
-                if let (Some(rendered_path), Some(env_file)) =
-                    (rendered_path, manager.env_file.as_deref().map(str::trim))
-                    && env_file != rendered_path
-                {
-                    errors.push(ValidationError::new(format!(
-                        "`services.{service_name}.manager.env_file` must match `env.profiles.{profile_name}.render.dotenv.path` when `workflows.{name}.env.compose_env_file_services` owns that adapter input"
-                    )));
+                if let Some(rendered_path) = rendered_path {
+                    let env_file_matches = manager
+                        .env_file
+                        .as_deref()
+                        .map(str::trim)
+                        .is_some_and(|env_file| env_file == rendered_path);
+                    let env_files_match = manager
+                        .env_files
+                        .iter()
+                        .map(String::as_str)
+                        .map(str::trim)
+                        .any(|env_file| env_file == rendered_path);
+                    if !env_file_matches && !env_files_match {
+                        errors.push(ValidationError::new(format!(
+                            "`services.{service_name}.manager.env_file` or `services.{service_name}.manager.env_files` must include `env.profiles.{profile_name}.render.dotenv.path` when `workflows.{name}.env.compose_env_file_services` owns that adapter input"
+                        )));
+                    }
                 }
             }
         }
@@ -17404,6 +17442,51 @@ services:
     manager:
       kind: compose
       name: local
+      env_files:
+        - .env.compose
+      service: api
+tasks:
+  dev:
+    run: npm run dev
+workflows:
+  default: app
+  app:
+    env:
+      profile: compose
+      compose_env_file_services:
+        - api
+    run:
+      task: dev
+"#,
+        )
+        .unwrap();
+
+        assert!(validate_contract(&contract).is_ok());
+    }
+
+    #[test]
+    fn validates_workflow_compose_env_file_service_binding_through_env_file_stack() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+env:
+  profiles:
+    compose:
+      env:
+        REDIS_HOST: redis
+      render:
+        dotenv:
+          path: .env.compose
+services:
+  api:
+    manager:
+      kind: compose
+      name: local
+      env_files:
+        - .env.compose
       service: api
 tasks:
   dev:
