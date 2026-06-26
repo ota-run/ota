@@ -39254,7 +39254,11 @@ fn render_task_command_text(command: &crate::output::TaskCommandSummary<'_>) -> 
 }
 
 fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary<'_>) -> String {
-    let mut preview = format!("{} compose {}", compose.engine, compose.kind);
+    let mut preview = format!(
+        "{} compose {}",
+        compose.engine,
+        render_compose_cli_subcommand(compose.kind)
+    );
     if compose.detach {
         preview.push_str(" -d");
     }
@@ -39290,6 +39294,13 @@ fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary
         preview.push_str(&compose.args.join(" "));
     }
     preview
+}
+
+fn render_compose_cli_subcommand(kind: &str) -> &str {
+    match kind {
+        "attach" => "exec",
+        other => other,
+    }
 }
 
 fn render_task_default_mode(task: &TaskSummary<'_>) -> &'static str {
@@ -54905,6 +54916,26 @@ tasks:
         assert_eq!(dependency_steps[0]["backend"], "native");
         assert_eq!(dependency_steps[0]["backend_selection_source"], "default");
         assert_eq!(dependency_steps[2]["task"], "lint");
+    }
+
+    #[test]
+    fn render_task_compose_text_projects_attach_as_interactive_exec() {
+        let rendered =
+            super::render_task_compose_text(&crate::output::TaskComposeExecutionSummary {
+                kind: "attach",
+                engine: "docker",
+                service: Some("web"),
+                services: Vec::new(),
+                exe: Some("bash"),
+                args: Vec::new(),
+                workdir: None,
+                rm: false,
+                detach: false,
+                remove_volumes: false,
+                tty: false,
+            });
+
+        assert_eq!(rendered, "docker compose exec web bash");
     }
 
     #[test]

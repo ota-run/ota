@@ -12443,70 +12443,74 @@ fn direct_task_requirement_versions_for_backend(
     context_name: Option<&str>,
     target_os: &str,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
-    let mut runtimes = BTreeMap::<String, (String, String)>::new();
-    let mut tools = BTreeMap::<String, (String, String)>::new();
-    merge_requirement_versions(
-        &mut runtimes,
-        &contract.runtimes,
-        target_os,
-        "contract.runtimes",
-    )?;
-    merge_requirement_versions(&mut tools, &contract.tools, target_os, "contract.tools")?;
+    let mut surface = task.scoped_requirement_surface_for_execution(backend, context_name);
+    let scoped_tools_empty = surface.tools.is_empty();
 
-    let runtime_source = format!("task `{task_name}` runtimes");
-    let tool_source = format!("task `{task_name}` tools");
-    let scoped_surface = task.scoped_requirement_surface_for_execution(backend, context_name);
-    merge_requirement_versions(
-        &mut runtimes,
-        &scoped_surface.runtimes,
-        target_os,
-        runtime_source.as_str(),
-    )?;
-    merge_requirement_versions(
-        &mut tools,
-        &scoped_surface.tools,
-        target_os,
-        tool_source.as_str(),
-    )?;
-    let scoped_surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
+    for (name, requirement) in &surface.runtimes.clone() {
+        surface.runtimes.insert(
+            name.clone(),
+            contract.resolve_scoped_runtime_requirement(name, requirement),
+        );
+    }
+    for (name, requirement) in &surface.tools.clone() {
+        surface.tools.insert(
+            name.clone(),
+            contract.resolve_scoped_tool_requirement(name, requirement),
+        );
+    }
+
+    if surface.runtimes.is_empty() {
+        surface.runtimes = contract.runtimes.clone();
+    }
+    if scoped_tools_empty {
+        if matches!(backend, Backend::Native) {
+            surface.tools = contract.tools.clone();
+        }
+    }
+    if let Some(exe) = task.effective_command_launch_executable_for_backend(backend, target_os) {
+        surface
+            .tools
+            .entry(exe)
+            .or_insert(crate::schema::ToolRequirement::Simple(String::from("*")));
+    }
+    if let Some(context_name) = context_name
+        && let Some((_, context)) = named_execution_context(contract, context_name)
+    {
+        surface.merge(&contract.resolved_context_requirement_surface(context));
+    }
+    if backend == Backend::Native {
+        let scoped_native = task.scoped_native_requirements_for_execution(backend, context_name);
+        surface.merge(
+            &contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os),
+        );
+    }
+
+    let required_tool_names = surface.tools.keys().cloned().collect::<BTreeSet<_>>();
+    let surface = requirement_surface_with_toolchain_owned_capabilities_for_required_tools(
         contract,
-        &scoped_surface,
+        &surface,
         &contract
             .task_toolchain_names_for_execution(task, backend, context_name)
             .into_iter()
             .collect(),
         target_os,
-        None,
+        Some(&required_tool_names),
     );
+
+    let mut runtimes = BTreeMap::<String, (String, String)>::new();
+    let mut tools = BTreeMap::<String, (String, String)>::new();
     merge_requirement_versions(
         &mut runtimes,
-        &scoped_surface.runtimes,
+        &surface.runtimes,
         target_os,
-        "task toolchain-owned runtimes",
+        format!("task `{task_name}` selected runtimes").as_str(),
     )?;
     merge_requirement_versions(
         &mut tools,
-        &scoped_surface.tools,
+        &surface.tools,
         target_os,
-        "task toolchain-owned tools",
+        format!("task `{task_name}` selected tools").as_str(),
     )?;
-    if backend == Backend::Native {
-        let scoped_native = task.scoped_native_requirements_for_execution(backend, context_name);
-        let native_surface =
-            contract.native_prerequisite_requirement_surface_for_os(scoped_native, target_os);
-        merge_requirement_versions(
-            &mut runtimes,
-            &native_surface.runtimes,
-            target_os,
-            "task native prerequisite runtimes",
-        )?;
-        merge_requirement_versions(
-            &mut tools,
-            &native_surface.tools,
-            target_os,
-            "task native prerequisite tools",
-        )?;
-    }
 
     Ok((
         runtimes
@@ -44554,6 +44558,63 @@ tasks:
             Some(ProvisioningExecutionTarget::Native)
         ));
         assert_eq!(plan.backend_unit, "shared_local_backend:workbench");
+    }
+
+    #[test]
+    fn direct_task_backend_fulfillment_scopes_tools_to_selected_container_context() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: qredex-like
+tools:
+  maven: "*"
+execution:
+  contexts:
+    tooling:
+      backend: container
+      lifecycle: ephemeral
+      fulfillment: run
+      container:
+        image: mcr.microsoft.com/devcontainers/javascript-node:24-bookworm
+      requirements:
+        tools:
+          curl: ">=8.13.0"
+          jq: "jq-1.7.1"
+          yq: "4.52.5"
+tasks:
+  api:tests:contract:
+    context: tooling
+    command:
+      exe: yq
+      args:
+        - --version
+"#,
+        )
+        .expect("contract should parse");
+
+        let task = contract
+            .tasks
+            .get("api:tests:contract")
+            .expect("task should exist");
+        let (_runtimes, tools) = super::direct_task_requirement_versions_for_backend(
+            &contract,
+            task,
+            "api:tests:contract",
+            Backend::Container,
+            Some("tooling"),
+            "linux",
+        )
+        .expect("selected task requirement versions should resolve");
+
+        assert_eq!(tools.get("curl").map(String::as_str), Some(">=8.13.0"));
+        assert_eq!(tools.get("jq").map(String::as_str), Some("jq-1.7.1"));
+        assert_eq!(tools.get("yq").map(String::as_str), Some("4.52.5"));
+        assert!(
+            !tools.contains_key("maven"),
+            "container tooling task should not inherit unrelated top-level tools: {tools:?}"
+        );
     }
 
     #[cfg(unix)]
