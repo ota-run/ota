@@ -61,13 +61,19 @@ services:
     manager:
       kind: compose
       name: local
-      file: docker-compose.yml
+      files:
+        - docker/docker-compose.yml
+      env_files:
+        - .env.compose
       service: api
   postgres:
     manager:
       kind: compose
       name: local
-      file: docker-compose.yml
+      files:
+        - docker/docker-compose.yml
+      env_files:
+        - .env.compose
       service: postgres
 tasks:
   compose:staged:up:
@@ -141,6 +147,23 @@ tasks:
     compose:
       kind: down
       remove_volumes: true
+      timeout_seconds: 2
+    requirements:
+      tools:
+        docker: "*"
+  compose:ps:
+    context: host
+    description: Inspect selected Compose services through first-class compose ownership
+    adapter_inputs:
+      overlays:
+        compose:
+          cwd: docker
+          files:
+            - docker/docker-compose.yml
+    compose:
+      kind: ps
+      services:
+        - api
     requirements:
       tools:
         docker: "*"

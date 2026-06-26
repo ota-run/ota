@@ -3696,6 +3696,12 @@ fn validate_task_compose_invocation(
                     compose.kind.label()
                 )));
             }
+            if compose.timeout_seconds.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.timeout_seconds` with `kind: {}`",
+                    compose.kind.label()
+                )));
+            }
             if compose.kind == crate::schema::TaskComposeExecutionKind::Attach {
                 if compose.rm {
                     errors.push(ValidationError::new(format!(
@@ -3743,6 +3749,11 @@ fn validate_task_compose_invocation(
             if compose.remove_volumes {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: up`"
+                )));
+            }
+            if compose.timeout_seconds.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.timeout_seconds` with `kind: up`"
                 )));
             }
         }
@@ -3834,6 +3845,11 @@ fn validate_task_compose_invocation(
                     "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: build`"
                 )));
             }
+            if compose.timeout_seconds.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.timeout_seconds` with `kind: build`"
+                )));
+            }
         }
         crate::schema::TaskComposeExecutionKind::Stop => {
             if has_service {
@@ -3879,6 +3895,11 @@ fn validate_task_compose_invocation(
             if compose.remove_volumes {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: stop`"
+                )));
+            }
+            if compose.timeout_seconds.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.timeout_seconds` with `kind: stop`"
                 )));
             }
         }
@@ -3928,6 +3949,11 @@ fn validate_task_compose_invocation(
                     "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: restart`"
                 )));
             }
+            if compose.timeout_seconds.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.timeout_seconds` with `kind: restart`"
+                )));
+            }
         }
         crate::schema::TaskComposeExecutionKind::Rm => {
             if has_service {
@@ -3970,6 +3996,11 @@ fn validate_task_compose_invocation(
                     "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: rm`"
                 )));
             }
+            if compose.timeout_seconds.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.timeout_seconds` with `kind: rm`"
+                )));
+            }
         }
         crate::schema::TaskComposeExecutionKind::Logs => {
             if has_service {
@@ -4010,6 +4041,63 @@ fn validate_task_compose_invocation(
             if compose.remove_volumes {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: logs`"
+                )));
+            }
+            if compose.timeout_seconds.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.timeout_seconds` with `kind: logs`"
+                )));
+            }
+        }
+        crate::schema::TaskComposeExecutionKind::Ps => {
+            if has_service {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.service` with `kind: ps`; use `{field_path}.services`"
+                )));
+            }
+            if compose.rm {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: ps`"
+                )));
+            }
+            if compose.detach {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.detach: true` with `kind: ps`"
+                )));
+            }
+            if compose.workdir.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.workdir` with `kind: ps`"
+                )));
+            }
+            if compose.tty {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: ps`"
+                )));
+            }
+            if compose.force_recreate {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force_recreate: true` with `kind: ps`"
+                )));
+            }
+            if compose.force {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force: true` with `kind: ps`"
+                )));
+            }
+            if compose.follow {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.follow: true` with `kind: ps`"
+                )));
+            }
+            if compose.remove_volumes {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: ps`"
+                )));
+            }
+            if compose.timeout_seconds.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.timeout_seconds` with `kind: ps`"
                 )));
             }
         }
@@ -4091,6 +4179,7 @@ fn validate_task_compose_execution(
             | crate::schema::TaskComposeExecutionKind::Restart
             | crate::schema::TaskComposeExecutionKind::Rm
             | crate::schema::TaskComposeExecutionKind::Logs
+            | crate::schema::TaskComposeExecutionKind::Ps
     ) {
         if !compose.exe.trim().is_empty() {
             errors.push(ValidationError::new(format!(
@@ -5084,17 +5173,37 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if source.file.trim().is_empty() {
+                    validate_adapter_input_optional_non_empty(
+                        Some(task_name),
+                        "prepare.source.file",
+                        source.file.as_deref(),
+                        errors,
+                    );
+                    validate_adapter_input_paths(
+                        Some(task_name),
+                        "prepare.source",
+                        "files",
+                        &source.files,
+                        errors,
+                    );
+                    validate_adapter_input_paths(
+                        Some(task_name),
+                        "prepare.source",
+                        "env_files",
+                        &source.env_files,
+                        errors,
+                    );
+                    if source.effective_files().is_empty() {
                         errors.push(ValidationError::new(format!(
-                            "task `{task_name}` prepare `docker_compose` must declare a non-empty `prepare.source.file`"
+                            "task `{task_name}` prepare `docker_compose` must declare at least one compose file through `prepare.source.file` or `prepare.source.files`"
                         )));
-                    } else {
-                        validate_repo_relative_file_action_path(
-                            task_name,
-                            "prepare.source.file",
-                            source.file.as_str(),
-                            errors,
-                        );
+                    }
+                    if let Some(file) = source.file.as_deref()
+                        && source.files.iter().any(|entry| entry.trim() == file.trim())
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `docker_compose` must not duplicate `prepare.source.file` inside `prepare.source.files`"
+                        )));
                     }
                     if !requirements.tools.contains_key("docker") {
                         errors.push(ValidationError::new(format!(
@@ -13627,7 +13736,11 @@ fn validate_services(
                             "service `{name}` compose manager must declare a non-empty `manager.service`"
                         )));
                     }
-                    if manager.file.as_deref().is_some_and(|value| value.trim().is_empty()) {
+                    if manager
+                        .file
+                        .as_deref()
+                        .is_some_and(|value| value.trim().is_empty())
+                    {
                         errors.push(ValidationError::new(format!(
                             "service `{name}` manager field `file` must not be empty"
                         )));
@@ -24668,6 +24781,36 @@ tasks:
     }
 
     #[test]
+    fn rejects_compose_timeout_seconds_outside_down() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  staged:up:
+    compose:
+      kind: up
+      timeout_seconds: 2
+      services:
+        - web
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(messages.contains(&String::from(
+            "task `staged:up` task must not declare `compose.timeout_seconds` with `kind: up`"
+        )));
+    }
+
+    #[test]
     fn rejects_compose_follow_outside_logs() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -24746,6 +24889,54 @@ tasks:
         )));
         assert!(messages.contains(&String::from(
             "task `stack:stop` task must not declare `compose.exe` with `kind: stop`"
+        )));
+    }
+
+    #[test]
+    fn rejects_compose_ps_unsupported_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:ps:
+    compose:
+      kind: ps
+      service: main
+      detach: true
+      follow: true
+      workdir: /workspace
+      tty: true
+      exe: bash
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(messages.contains(&String::from(
+            "task `stack:ps` task must not declare `compose.service` with `kind: ps`; use `compose.services`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:ps` task must not declare `compose.detach: true` with `kind: ps`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:ps` task must not declare `compose.follow: true` with `kind: ps`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:ps` task must not declare `compose.workdir` with `kind: ps`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:ps` task must not declare `compose.tty: true` with `kind: ps`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:ps` task must not declare `compose.exe` with `kind: ps`"
         )));
     }
 
@@ -25410,7 +25601,11 @@ tasks:
       source:
         kind: docker_compose
         cwd: docker
-        file: docker-compose.dev.yml
+        files:
+          - docker-compose.base.yml
+          - docker-compose.dev.yml
+        env_files:
+          - .env.compose
       targets: [redis, database]
     requirements:
       tools:
@@ -25441,7 +25636,8 @@ tasks:
       source:
         kind: docker_compose
         cwd: docker
-        file: docker-compose.dev.yml
+        files:
+          - docker-compose.dev.yml
       targets: [redis]
 "#,
         )
@@ -25452,6 +25648,42 @@ tasks:
         assert!(rendered.contains("must declare `requirements.tools.docker`"));
         assert!(rendered.contains("must declare `effects.network: true`"));
         assert!(rendered.contains("must declare `effects.network_kind: dependency_hydration`"));
+    }
+
+    #[test]
+    fn rejects_docker_compose_hydration_without_compose_file_truth() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:docker:images:
+    prepare:
+      kind: dependency_hydration
+      medium: container_images
+      source:
+        kind: docker_compose
+        cwd: docker
+      targets: [redis]
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).expect_err("prepare task should be rejected");
+        assert!(
+            errors.to_string().contains(
+                "must declare at least one compose file through `prepare.source.file` or `prepare.source.files`"
+            ),
+            "{errors}"
+        );
     }
 
     #[test]

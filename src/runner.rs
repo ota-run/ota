@@ -1778,6 +1778,8 @@ pub struct RepoExecutionLockOwner {
     pub persistent_backend_families: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_materialization_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub write_paths: Vec<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub service_task: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1794,6 +1796,7 @@ pub enum RepoExecutionConflictReason {
     ComposeProject,
     PersistentBackendFamily,
     EnvMaterializationPath,
+    WritePath,
     ServiceTask,
 }
 
@@ -1829,19 +1832,43 @@ fn repo_execution_lock_owner_for_backend(
     overrides: ExecutionOverrides,
     backend: &ResolvedExecutionBackend,
 ) -> RepoExecutionLockOwner {
-    let backend_kind = resolved_execution_backend_kind(backend);
     let persistent_backend_families = persistent_backend_family_ownership(task_name, backend);
-    let compose_projects = contract
-        .tasks
-        .get(task_name)
-        .and_then(|task| task.compose_adapter_project_name_for_backend(backend_kind))
-        .map(|value| vec![value.to_string()])
-        .unwrap_or_default();
-    let env_materialization_paths = contract
-        .tasks
-        .get(task_name)
-        .map(task_env_materialization_ownership)
-        .unwrap_or_default();
+    let mut host_services: Vec<String> = Vec::new();
+    let mut compose_projects: Vec<String> = Vec::new();
+    let mut env_materialization_paths: Vec<String> = Vec::new();
+    let mut write_paths: Vec<String> = Vec::new();
+    let mut service_task = false;
+    let plan = plan_task_execution_with_overrides(contract, task_name, overrides)
+        .expect("active execution owner should plan a known task");
+    for step in &plan.steps {
+        let Some(task) = contract.tasks.get(step.task.as_str()) else {
+            continue;
+        };
+        for service_name in required_service_closure(contract, &task.requires_services) {
+            let is_host_service = contract
+                .services
+                .get(service_name.as_str())
+                .and_then(|service| service.manager.as_ref())
+                .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Host);
+            if is_host_service && !host_services.contains(&service_name) {
+                host_services.push(service_name);
+            }
+        }
+        if let Some(project) = task.compose_adapter_project_name_for_backend(step.backend)
+            && !compose_projects
+                .iter()
+                .any(|existing| existing.as_str() == project.as_str())
+        {
+            compose_projects.push(project.to_string());
+        }
+        for path in task_env_materialization_ownership(task) {
+            push_unique_owned_path(&mut env_materialization_paths, path.as_str());
+        }
+        for path in task_write_path_ownership(task) {
+            push_unique_owned_path(&mut write_paths, path.as_str());
+        }
+        service_task |= task.service_runtime_for_backend(step.backend).is_some();
+    }
     let lifecycle = match backend {
         ResolvedExecutionBackend::Native {
             shared_local_backend: Some(shared_local_backend),
@@ -1858,31 +1885,12 @@ fn repo_execution_lock_owner_for_backend(
             .map(|backend| format_backend(backend).to_string()),
         execution_mode: format_backend(resolved_execution_backend_kind(backend)).to_string(),
         lifecycle,
-        host_services: required_service_closure(
-            contract,
-            &contract
-                .tasks
-                .get(task_name)
-                .map(|task| task.requires_services.clone())
-                .unwrap_or_default(),
-        )
-        .into_iter()
-        .filter(|service_name| {
-            contract
-                .services
-                .get(service_name.as_str())
-                .and_then(|service| service.manager.as_ref())
-                .is_some_and(|manager| manager.kind == crate::schema::ServiceManagerKind::Host)
-        })
-        .collect(),
+        host_services,
         compose_projects,
         persistent_backend_families,
         env_materialization_paths,
-        service_task: contract
-            .tasks
-            .get(task_name)
-            .and_then(|task| task.service_runtime_for_backend(backend_kind))
-            .is_some(),
+        write_paths,
+        service_task,
         parent_pid: active_execution_parent_pid_from_env(),
         pid: std::process::id(),
         started_at: format_repo_execution_lock_timestamp(OffsetDateTime::now_utc()),
@@ -1937,6 +1945,14 @@ fn task_env_materialization_ownership(task: &TaskSpec) -> Vec<String> {
     let mut paths = task.projected_env_materialization_paths.clone();
     if let Some(action) = task.action.as_ref() {
         collect_action_env_materialization_paths(action, &mut paths);
+    }
+    paths
+}
+
+fn task_write_path_ownership(task: &TaskSpec) -> Vec<String> {
+    let mut paths = Vec::new();
+    for path in &task.effects.writes {
+        push_unique_owned_path(&mut paths, path.as_str());
     }
     paths
 }
@@ -2741,6 +2757,10 @@ fn projected_compose_invocation_command_for_task(
     }
     if compose.remove_volumes {
         projected_args.push(String::from("-v"));
+    }
+    if let Some(timeout_seconds) = compose.timeout_seconds {
+        projected_args.push(String::from("-t"));
+        projected_args.push(timeout_seconds.to_string());
     }
     if !compose.tty
         && matches!(
@@ -9672,20 +9692,53 @@ fn prepare_task_shell_command(
             let base_command = match &spec.source {
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
                     let cwd = source.cwd.trim();
-                    let file = source.file.trim();
                     let engine = source.engine.as_str();
+                    let file_flags = source
+                        .effective_files()
+                        .into_iter()
+                        .flat_map(|file| {
+                            [
+                                String::from("-f"),
+                                shell_quote_command_word(file, quote_style),
+                            ]
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let env_file_flags = source
+                        .effective_env_files()
+                        .into_iter()
+                        .flat_map(|file| {
+                            [
+                                String::from("--env-file"),
+                                shell_quote_command_word(file, quote_style),
+                            ]
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     let targets = spec
                         .targets
                         .iter()
                         .map(|target| shell_quote_command_word(target.trim(), quote_style))
                         .collect::<Vec<_>>()
                         .join(" ");
-                    Ok(format!(
-                        "cd {} && {} compose -f {} pull {}",
-                        shell_quote_command_word(cwd, quote_style),
+                    let mut parts = vec![
                         shell_quote_command_word(engine, quote_style),
-                        shell_quote_command_word(file, quote_style),
-                        targets
+                        String::from("compose"),
+                    ];
+                    if !file_flags.is_empty() {
+                        parts.push(file_flags);
+                    }
+                    if !env_file_flags.is_empty() {
+                        parts.push(env_file_flags);
+                    }
+                    parts.push(String::from("pull"));
+                    if !targets.is_empty() {
+                        parts.push(targets);
+                    }
+                    Ok(format!(
+                        "cd {} && {}",
+                        shell_quote_command_word(cwd, quote_style),
+                        parts.join(" ")
                     ))
                 }
                 crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => {
@@ -26648,6 +26701,13 @@ fn execution_conflict_reasons_with_active_owner(
     {
         reasons.push(RepoExecutionConflictReason::EnvMaterializationPath);
     }
+    if candidate
+        .write_paths
+        .iter()
+        .any(|path| active.write_paths.contains(path))
+    {
+        reasons.push(RepoExecutionConflictReason::WritePath);
+    }
     if candidate.service_task && active.service_task && candidate.task == active.task {
         reasons.push(RepoExecutionConflictReason::ServiceTask);
     }
@@ -27902,6 +27962,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -27948,6 +28009,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -27962,6 +28024,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -27986,6 +28049,7 @@ mod tests {
             compose_projects: vec![String::from("app-local")],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: true,
             parent_pid: None,
             pid: 42000,
@@ -28000,6 +28064,7 @@ mod tests {
             compose_projects: vec![String::from("app-local")],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: true,
             parent_pid: Some(parent_owner.pid),
             pid: 42001,
@@ -28024,6 +28089,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -28038,6 +28104,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -28077,6 +28144,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![family.clone()],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -28091,6 +28159,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![family],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -28131,6 +28200,7 @@ mod tests {
             compose_projects: vec![String::from("app-local")],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -28145,6 +28215,7 @@ mod tests {
             compose_projects: vec![String::from("app-local")],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -28183,6 +28254,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![String::from(".env.local")],
+            write_paths: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -28197,6 +28269,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![String::from(".env.local")],
+            write_paths: vec![],
             service_task: false,
             parent_pid: None,
             pid: std::process::id(),
@@ -28226,6 +28299,57 @@ mod tests {
     }
 
     #[test]
+    fn shared_write_path_ownership_conflicts_across_tasks() {
+        let fixture = tempdir().expect("tempdir");
+        let first_owner = super::RepoExecutionLockOwner {
+            task: String::from("install"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            write_paths: vec![String::from("node_modules")],
+            service_task: false,
+            parent_pid: None,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:03Z"),
+        };
+        let second_owner = super::RepoExecutionLockOwner {
+            task: String::from("check:cws"),
+            requested_mode: Some(String::from("native")),
+            execution_mode: String::from("native"),
+            lifecycle: None,
+            host_services: vec![],
+            compose_projects: vec![],
+            persistent_backend_families: vec![],
+            env_materialization_paths: vec![],
+            write_paths: vec![String::from("node_modules")],
+            service_task: false,
+            parent_pid: None,
+            pid: std::process::id(),
+            started_at: String::from("2026-06-05T22:14:04Z"),
+        };
+
+        let _guard = register_active_repo_execution("install", fixture.path(), &first_owner)
+            .expect("first owner should register");
+        match register_active_repo_execution("check:cws", fixture.path(), &second_owner) {
+            Err(RunError::RepoExecutionConflict {
+                task,
+                reasons,
+                owners,
+                ..
+            }) => {
+                assert_eq!(task, "check:cws");
+                assert_eq!(reasons, vec![super::RepoExecutionConflictReason::WritePath]);
+                assert_eq!(owners, vec![first_owner]);
+            }
+            other => panic!("expected shared write-path ownership conflict, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn stale_active_repo_execution_record_is_pruned_before_registration() {
         let fixture = tempdir().expect("tempdir");
         fs::create_dir_all(repo_ota_state_dir(fixture.path())).expect("state dir");
@@ -28242,6 +28366,7 @@ mod tests {
                     compose_projects: vec![],
                     persistent_backend_families: vec![],
                     env_materialization_paths: vec![],
+                    write_paths: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: u32::MAX,
@@ -28260,6 +28385,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -28282,6 +28408,7 @@ mod tests {
             compose_projects: vec![],
             persistent_backend_families: vec![],
             env_materialization_paths: vec![],
+            write_paths: vec![],
             service_task: true,
             parent_pid: None,
             pid: std::process::id(),
@@ -28585,6 +28712,88 @@ tasks:
             owner.env_materialization_paths,
             vec![String::from(".env.docker-build")]
         );
+    }
+
+    #[test]
+    fn repo_execution_lock_owner_derives_write_path_ownership() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: ci
+    effects:
+      writes:
+        - node_modules
+"#,
+        )
+        .expect("contract should parse");
+
+        let backend =
+            resolve_execution_backend(&contract, "install", ExecutionOverrides::default())
+                .expect("install backend");
+        let owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            "install",
+            ExecutionOverrides::default(),
+            &backend,
+        );
+        assert_eq!(owner.write_paths, vec![String::from("node_modules")]);
+    }
+
+    #[test]
+    fn repo_execution_lock_owner_includes_dependency_write_path_ownership() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: ci
+    effects:
+      writes:
+        - node_modules
+  screenshots:
+    depends_on:
+      - install
+    command:
+      exe: npm
+      args:
+        - run
+        - screenshots
+"#,
+        )
+        .expect("contract should parse");
+
+        let backend =
+            resolve_execution_backend(&contract, "screenshots", ExecutionOverrides::default())
+                .expect("screenshots backend");
+        let owner = repo_execution_lock_owner_for_backend(
+            &contract,
+            "screenshots",
+            ExecutionOverrides::default(),
+            &backend,
+        );
+        assert_eq!(owner.write_paths, vec![String::from("node_modules")]);
     }
 
     #[test]
@@ -56590,7 +56799,10 @@ tasks:
       source:
         kind: docker_compose
         cwd: docker
-        file: docker-compose.dev.yml
+        files:
+          - docker-compose.dev.yml
+        env_files:
+          - .env.compose
       targets: [redis, database]
     requirements:
       tools:
@@ -56642,7 +56854,9 @@ tasks:
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
         let logged = fs::read_to_string(log_path).unwrap();
         assert!(
-            logged.contains("compose -f docker-compose.dev.yml pull redis database"),
+            logged.contains(
+                "compose -f docker-compose.dev.yml --env-file .env.compose pull redis database"
+            ),
             "{logged}"
         );
         assert!(
@@ -58340,7 +58554,9 @@ tasks:
                 source: crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(
                     crate::schema::TaskDockerComposeHydrationSourceSpec {
                         cwd: String::from("docker dir"),
-                        file: String::from("docker compose.dev.yml"),
+                        file: Some(String::from("docker compose.base.yml")),
+                        files: vec![String::from("docker compose.dev.yml")],
+                        env_files: vec![String::from(".env.compose")],
                         engine: crate::schema::ComposeCliEngine::Docker,
                     },
                 ),
@@ -58354,7 +58570,7 @@ tasks:
 
         assert_eq!(
             command,
-            r#"cd "docker dir" && docker compose -f "docker compose.dev.yml" pull "redis cache" database"#
+            r#"cd "docker dir" && docker compose -f "docker compose.base.yml" -f "docker compose.dev.yml" --env-file ".env.compose" pull "redis cache" database"#
         );
     }
 
@@ -58396,7 +58612,9 @@ tasks:
                 source: crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(
                     crate::schema::TaskDockerComposeHydrationSourceSpec {
                         cwd: String::from("docker"),
-                        file: String::from("compose.dev.yml"),
+                        file: Some(String::from("compose.base.yml")),
+                        files: vec![String::from("compose.dev.yml")],
+                        env_files: vec![String::from(".env.compose")],
                         engine: crate::schema::ComposeCliEngine::Podman,
                     },
                 ),
@@ -58410,7 +58628,7 @@ tasks:
 
         assert_eq!(
             command,
-            "cd 'docker' && 'podman' compose -f 'compose.dev.yml' pull 'redis' 'database'"
+            "cd 'docker' && 'podman' compose -f 'compose.base.yml' -f 'compose.dev.yml' --env-file '.env.compose' pull 'redis' 'database'"
         );
     }
 
@@ -58693,6 +58911,46 @@ tasks:
     }
 
     #[test]
+    fn projected_compose_down_can_set_timeout() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:down:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    compose:
+      kind: down
+      timeout_seconds: 2
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("stack:down").unwrap();
+        let projected = super::projected_compose_command_for_task(
+            task,
+            Backend::Native,
+            task.compose.as_ref().unwrap(),
+        );
+
+        assert_eq!(projected.exe, "docker");
+        assert_eq!(projected.cwd.as_deref(), Some("infra"));
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("compose"),
+                String::from("down"),
+                String::from("-t"),
+                String::from("2"),
+            ]
+        );
+    }
+
+    #[test]
     fn projected_compose_up_can_force_recreate() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -58770,6 +59028,44 @@ tasks:
                 String::from("logs"),
                 String::from("-f"),
                 String::from("web"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_compose_ps_uses_service_groups() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:ps:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    compose:
+      kind: ps
+      services:
+        - main
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("stack:ps").unwrap();
+        let projected = super::projected_compose_command_for_task(
+            task,
+            Backend::Native,
+            task.compose.as_ref().unwrap(),
+        );
+
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("compose"),
+                String::from("ps"),
+                String::from("main"),
             ]
         );
     }

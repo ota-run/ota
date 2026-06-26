@@ -38056,7 +38056,15 @@ fn collect_prepare_field_paths(
             match &spec.source {
                 TaskDependencyHydrationSourceSpec::DockerCompose(source) => {
                     fields.push(format!("{prefix}.source.cwd"));
-                    fields.push(format!("{prefix}.source.file"));
+                    if source.file.is_some() {
+                        fields.push(format!("{prefix}.source.file"));
+                    }
+                    for (index, _file) in source.files.iter().enumerate() {
+                        fields.push(format!("{prefix}.source.files.{index}"));
+                    }
+                    for (index, _file) in source.env_files.iter().enumerate() {
+                        fields.push(format!("{prefix}.source.env_files.{index}"));
+                    }
                     if source.engine != crate::schema::ComposeCliEngine::Docker {
                         fields.push(format!("{prefix}.source.engine"));
                     }
@@ -39287,6 +39295,10 @@ fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary
     }
     if compose.remove_volumes {
         preview.push_str(" -v");
+    }
+    if let Some(timeout_seconds) = compose.timeout_seconds {
+        preview.push_str(" -t ");
+        preview.push_str(timeout_seconds.to_string().as_str());
     }
     if !compose.tty && matches!(compose.kind, "exec" | "run") {
         preview.push_str(" -T");
@@ -51902,6 +51914,8 @@ tasks:
                         source_kind: Some("node_package_manager"),
                         cwd: Some("."),
                         file: None,
+                        files: Vec::new(),
+                        env_files: Vec::new(),
                         manager: Some("pnpm"),
                         mode: Some("install"),
                         group_mode: None,
@@ -51921,6 +51935,8 @@ tasks:
                         source_kind: Some("uv"),
                         cwd: Some("api"),
                         file: None,
+                        files: Vec::new(),
+                        env_files: Vec::new(),
                         manager: Some("uv"),
                         mode: Some("sync"),
                         group_mode: None,
@@ -51938,6 +51954,8 @@ tasks:
                 source_kind: None,
                 cwd: None,
                 file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
                 manager: None,
                 mode: None,
                 group_mode: None,
@@ -52012,6 +52030,8 @@ tasks:
                 source_kind: Some("node_package_manager"),
                 cwd: Some("."),
                 file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
                 manager: Some("yarn"),
                 mode: Some("install"),
                 group_mode: None,
@@ -52065,6 +52085,8 @@ tasks:
                 source_kind: Some("node_package_manager"),
                 cwd: Some("."),
                 file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
                 manager: Some("bun"),
                 mode: Some("install"),
                 group_mode: None,
@@ -52140,6 +52162,8 @@ tasks:
                 source_kind: Some("node_package_manager"),
                 cwd: Some("."),
                 file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
                 manager: Some("yarn"),
                 mode: Some("install"),
                 group_mode: None,
@@ -52208,6 +52232,8 @@ tasks:
                 source_kind: Some("node_package_manager"),
                 cwd: Some("."),
                 file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
                 manager: Some("npm"),
                 mode: Some("install"),
                 group_mode: None,
@@ -52276,6 +52302,8 @@ tasks:
                 source_kind: Some("node_package_manager"),
                 cwd: Some("app"),
                 file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
                 manager: Some("npm"),
                 mode: Some("ci"),
                 group_mode: None,
@@ -52298,6 +52326,7 @@ tasks:
                     force: false,
                     follow: false,
                     remove_volumes: false,
+                    timeout_seconds: None,
                     tty: false,
                 }),
             }),
@@ -52357,6 +52386,8 @@ tasks:
                 source_kind: Some("bundler"),
                 cwd: Some("."),
                 file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
                 manager: Some("bundle"),
                 mode: Some("install"),
                 group_mode: None,
@@ -52379,6 +52410,7 @@ tasks:
                     force: false,
                     follow: false,
                     remove_volumes: false,
+                    timeout_seconds: None,
                     tty: false,
                 }),
             }),
@@ -52443,6 +52475,7 @@ tasks:
                 force: false,
                 follow: false,
                 remove_volumes: false,
+                timeout_seconds: None,
                 tty: false,
             }),
             launch: None,
@@ -54978,6 +55011,7 @@ tasks:
                 force: false,
                 follow: false,
                 remove_volumes: false,
+                timeout_seconds: None,
                 tty: false,
             });
 
@@ -55001,10 +55035,35 @@ tasks:
                 force: false,
                 follow: true,
                 remove_volumes: false,
+                timeout_seconds: None,
                 tty: false,
             });
 
         assert_eq!(rendered, "docker compose logs -f web");
+    }
+
+    #[test]
+    fn render_task_compose_text_projects_down_timeout() {
+        let rendered =
+            super::render_task_compose_text(&crate::output::TaskComposeExecutionSummary {
+                kind: "down",
+                engine: "docker",
+                service: None,
+                services: Vec::new(),
+                exe: None,
+                args: Vec::new(),
+                workdir: None,
+                rm: false,
+                detach: false,
+                force_recreate: false,
+                force: false,
+                follow: false,
+                remove_volumes: false,
+                timeout_seconds: Some(2),
+                tty: false,
+            });
+
+        assert_eq!(rendered, "docker compose down -t 2");
     }
 
     #[test]
@@ -56942,6 +57001,7 @@ tasks:
                     compose_projects: vec![String::from("app-local")],
                     persistent_backend_families: vec![],
                     env_materialization_paths: vec![],
+                    write_paths: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: 48211,
@@ -56998,6 +57058,7 @@ tasks:
                     compose_projects: vec![],
                     persistent_backend_families: vec![],
                     env_materialization_paths: vec![],
+                    write_paths: vec![],
                     service_task: true,
                     parent_pid: None,
                     pid: 48211,
@@ -71265,6 +71326,7 @@ tasks:
                     compose_projects: vec![String::from("app-local")],
                     persistent_backend_families: vec![String::from("family-a")],
                     env_materialization_paths: vec![String::from(".env.local")],
+                    write_paths: vec![String::from("node_modules")],
                     service_task: true,
                     parent_pid: None,
                     pid: 48211,
@@ -83296,6 +83358,7 @@ fn repo_execution_conflict_reason_label(
         crate::runner::RepoExecutionConflictReason::EnvMaterializationPath => {
             "env_materialization_path"
         }
+        crate::runner::RepoExecutionConflictReason::WritePath => "write_path",
         crate::runner::RepoExecutionConflictReason::ServiceTask => "service_task",
     }
 }

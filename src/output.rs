@@ -3627,6 +3627,8 @@ pub struct TaskComposeExecutionSummary<'a> {
     pub follow: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_volumes: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u32>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
 }
@@ -3653,6 +3655,8 @@ pub struct TaskComposeInvocationSummary<'a> {
     pub follow: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_volumes: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u32>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
 }
@@ -3761,6 +3765,10 @@ pub struct TaskPrepareSummary<'a> {
     pub cwd: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manager: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3798,6 +3806,10 @@ pub struct WorkspaceTaskPrepareSummary {
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manager: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3844,6 +3856,8 @@ pub struct WorkspaceTaskComposeInvocationSummary {
     pub follow: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_volumes: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u32>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
 }
@@ -3901,6 +3915,7 @@ fn summarize_task_compose<'a>(
         force: compose.invocation.force,
         follow: compose.invocation.follow,
         remove_volumes: compose.invocation.remove_volumes,
+        timeout_seconds: compose.invocation.timeout_seconds,
         tty: compose.invocation.tty,
     })
 }
@@ -3920,6 +3935,7 @@ fn summarize_task_compose_invocation<'a>(
         force: compose.force,
         follow: compose.follow,
         remove_volumes: compose.remove_volumes,
+        timeout_seconds: compose.timeout_seconds,
         tty: compose.tty,
     })
 }
@@ -3939,6 +3955,7 @@ fn summarize_task_compose_invocation_owned(
         force: compose.force,
         follow: compose.follow,
         remove_volumes: compose.remove_volumes,
+        timeout_seconds: compose.timeout_seconds,
         tty: compose.tty,
     })
 }
@@ -4170,6 +4187,8 @@ pub fn summarize_task_prepare(
             source_kind: None,
             cwd: None,
             file: None,
+            files: Vec::new(),
+            env_files: Vec::new(),
             manager: None,
             mode: None,
             group_mode: None,
@@ -4195,6 +4214,8 @@ pub fn summarize_task_prepare(
                 source_kind: Some(source_kind),
                 cwd: None,
                 file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
                 manager: None,
                 mode,
                 group_mode: None,
@@ -4213,6 +4234,8 @@ pub fn summarize_task_prepare(
                 source_kind,
                 cwd,
                 file,
+                files,
+                env_files,
                 manager,
                 mode,
                 group_mode,
@@ -4227,7 +4250,9 @@ pub fn summarize_task_prepare(
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
                     "docker_compose",
                     Some(source.cwd.as_str()),
-                    Some(source.file.as_str()),
+                    source.file.as_deref(),
+                    source.files.iter().map(String::as_str).collect(),
+                    source.env_files.iter().map(String::as_str).collect(),
                     None,
                     None,
                     None,
@@ -4243,6 +4268,8 @@ pub fn summarize_task_prepare(
                     "node_package_manager",
                     Some(source.cwd.as_str()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some(match source.manager {
                         crate::schema::TaskNodePackageManagerKind::Npm => "npm",
                         crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
@@ -4266,6 +4293,8 @@ pub fn summarize_task_prepare(
                     "bundler",
                     Some(source.cwd.as_str()),
                     source.path.as_deref(),
+                    Vec::new(),
+                    Vec::new(),
                     Some("bundle"),
                     Some("install"),
                     None,
@@ -4281,6 +4310,8 @@ pub fn summarize_task_prepare(
                     "uv",
                     Some(source.cwd.as_str()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some("uv"),
                     Some("sync"),
                     None,
@@ -4296,6 +4327,8 @@ pub fn summarize_task_prepare(
                     "poetry",
                     Some(source.cwd.as_str()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some("poetry"),
                     Some("install"),
                     Some(match source.group_mode {
@@ -4314,6 +4347,8 @@ pub fn summarize_task_prepare(
                     "go_modules",
                     Some(source.cwd.as_str()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     None,
                     Some("download"),
                     None,
@@ -4329,6 +4364,8 @@ pub fn summarize_task_prepare(
                     "helm",
                     Some(source.cwd.as_str()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some("helm"),
                     Some("dependency_build"),
                     None,
@@ -4344,6 +4381,8 @@ pub fn summarize_task_prepare(
                     "maven",
                     Some(source.cwd.as_str()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some(if source.wrapper { "./mvnw" } else { "mvn" }),
                     Some(source.mode.goal()),
                     None,
@@ -4359,6 +4398,8 @@ pub fn summarize_task_prepare(
                     "gradle",
                     Some(source.cwd.as_str()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some(if source.wrapper {
                         "./gradlew"
                     } else {
@@ -4378,6 +4419,8 @@ pub fn summarize_task_prepare(
                     "cargo",
                     Some(source.cwd.as_str()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some("cargo"),
                     Some("fetch"),
                     None,
@@ -4393,6 +4436,8 @@ pub fn summarize_task_prepare(
                     "dotnet_restore",
                     Some(source.cwd.as_str()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some("dotnet"),
                     Some("restore"),
                     None,
@@ -4419,6 +4464,8 @@ pub fn summarize_task_prepare(
                 source_kind: Some(source_kind),
                 cwd,
                 file,
+                files,
+                env_files,
                 manager,
                 mode,
                 group_mode,
@@ -4450,6 +4497,8 @@ pub fn summarize_task_prepare_owned(
             source_kind: None,
             cwd: None,
             file: None,
+            files: Vec::new(),
+            env_files: Vec::new(),
             manager: None,
             mode: None,
             group_mode: None,
@@ -4475,6 +4524,8 @@ pub fn summarize_task_prepare_owned(
                 source_kind: Some(source_kind),
                 cwd: None,
                 file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
                 manager: None,
                 mode,
                 group_mode: None,
@@ -4493,6 +4544,8 @@ pub fn summarize_task_prepare_owned(
                 source_kind,
                 cwd,
                 file,
+                files,
+                env_files,
                 manager,
                 mode,
                 group_mode,
@@ -4507,7 +4560,9 @@ pub fn summarize_task_prepare_owned(
                 crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
                     "docker_compose",
                     Some(source.cwd.clone()),
-                    Some(source.file.clone()),
+                    source.file.clone(),
+                    source.files.clone(),
+                    source.env_files.clone(),
                     None,
                     None,
                     None,
@@ -4523,6 +4578,8 @@ pub fn summarize_task_prepare_owned(
                     "node_package_manager",
                     Some(source.cwd.clone()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some(match source.manager {
                         crate::schema::TaskNodePackageManagerKind::Npm => "npm",
                         crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
@@ -4546,6 +4603,8 @@ pub fn summarize_task_prepare_owned(
                     "bundler",
                     Some(source.cwd.clone()),
                     source.path.clone(),
+                    Vec::new(),
+                    Vec::new(),
                     Some("bundle"),
                     Some("install"),
                     None,
@@ -4561,6 +4620,8 @@ pub fn summarize_task_prepare_owned(
                     "uv",
                     Some(source.cwd.clone()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some("uv"),
                     Some("sync"),
                     None,
@@ -4576,6 +4637,8 @@ pub fn summarize_task_prepare_owned(
                     "poetry",
                     Some(source.cwd.clone()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some("poetry"),
                     Some("install"),
                     Some(match source.group_mode {
@@ -4594,6 +4657,8 @@ pub fn summarize_task_prepare_owned(
                     "go_modules",
                     Some(source.cwd.clone()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     None,
                     Some("download"),
                     None,
@@ -4609,6 +4674,8 @@ pub fn summarize_task_prepare_owned(
                     "helm",
                     Some(source.cwd.clone()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some("helm"),
                     Some("dependency_build"),
                     None,
@@ -4624,6 +4691,8 @@ pub fn summarize_task_prepare_owned(
                     "maven",
                     Some(source.cwd.clone()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some(if source.wrapper { "./mvnw" } else { "mvn" }),
                     Some(source.mode.goal()),
                     None,
@@ -4639,6 +4708,8 @@ pub fn summarize_task_prepare_owned(
                     "gradle",
                     Some(source.cwd.clone()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some(if source.wrapper {
                         "./gradlew"
                     } else {
@@ -4658,6 +4729,8 @@ pub fn summarize_task_prepare_owned(
                     "cargo",
                     Some(source.cwd.clone()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some("cargo"),
                     Some("fetch"),
                     None,
@@ -4673,6 +4746,8 @@ pub fn summarize_task_prepare_owned(
                     "dotnet_restore",
                     Some(source.cwd.clone()),
                     None,
+                    Vec::new(),
+                    Vec::new(),
                     Some("dotnet"),
                     Some("restore"),
                     None,
@@ -4699,6 +4774,8 @@ pub fn summarize_task_prepare_owned(
                 source_kind: Some(source_kind),
                 cwd,
                 file,
+                files,
+                env_files,
                 manager,
                 mode,
                 group_mode,
@@ -5074,6 +5151,36 @@ tasks:
     }
 
     #[test]
+    fn summarize_task_compose_down_can_set_timeout() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:down:
+    compose:
+      kind: down
+      timeout_seconds: 2
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "stack:down",
+            contract.tasks.get("stack:down").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.kind, "compose_down");
+        let compose = summary.compose.expect("compose summary should exist");
+        assert_eq!(compose.kind, "down");
+        assert_eq!(compose.timeout_seconds, Some(2));
+    }
+
+    #[test]
     fn summarize_task_compose_restart_uses_service_groups() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -5173,6 +5280,38 @@ tasks:
         assert_eq!(compose.kind, "logs");
         assert!(compose.follow);
         assert_eq!(compose.services, vec!["web"]);
+    }
+
+    #[test]
+    fn summarize_task_compose_ps_uses_service_groups() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:ps:
+    compose:
+      kind: ps
+      services:
+        - main
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "stack:ps",
+            contract.tasks.get("stack:ps").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.kind, "compose_ps");
+        let compose = summary.compose.expect("compose summary should exist");
+        assert_eq!(compose.kind, "ps");
+        assert_eq!(compose.service, None);
+        assert_eq!(compose.services, vec!["main"]);
     }
 
     #[test]

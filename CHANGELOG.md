@@ -26,6 +26,22 @@
 
 ## Unreleased
 
+- tightened active repo-execution conflict ownership so Ota now derives shared writable-path
+  ownership from the full selected task path, not just the requested leaf task; overlapping runs
+  that converge on the same declared `effects.writes` path now fail fast with a `write_path`
+  conflict instead of racing through dependency setup and corrupting shared state like
+  `node_modules`
+- widened structured `compose.kind: down` with `compose.timeout_seconds`, so graceful shutdown
+  timeout truth like `docker compose down -t 2` no longer has to fall back to raw command bodies
+  when a repo needs deterministic Compose teardown ownership
+- widened structured Compose control tasks with `compose.kind: ps`, so staged inspection lanes like
+  `docker compose ps main` can stay on the same first-class `compose` surface as `up`, `down`,
+  `build`, `stop`, `restart`, `rm`, and `logs` instead of falling back to raw host command glue
+- widened `prepare.kind: dependency_hydration` for `source.kind: docker_compose` with ordered
+  `prepare.source.files` and `prepare.source.env_files`, while keeping `prepare.source.file` as a
+  compatibility alias; Compose-backed image hydration can now own the same multi-file and
+  interpolation env-file truth as the rest of Ota’s Compose surfaces instead of collapsing back to
+  single-file-only pull glue
 - widened `services.<name>.manager.kind: compose` with ordered `manager.files` and
   `manager.env_files`, while keeping `manager.file` and `manager.env_file` as compatibility
   aliases; compose-managed services can now own the same multi-file and multi-env-file overlay

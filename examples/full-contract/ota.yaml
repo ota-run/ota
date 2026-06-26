@@ -242,7 +242,8 @@ tasks:
       source:
         kind: docker_compose
         cwd: .
-        file: docker-compose.yml
+        files:
+          - docker-compose.yml
       targets:
         - postgres
     requirements:

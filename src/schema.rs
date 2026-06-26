@@ -3827,7 +3827,12 @@ pub struct ServiceManagerSpec {
 impl ServiceManagerSpec {
     fn effective_compose_files(&self) -> Vec<&str> {
         let mut files = Vec::new();
-        if let Some(file) = self.file.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        if let Some(file) = self
+            .file
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             files.push(file);
         }
         for file in self.files.iter().map(String::as_str).map(str::trim) {
@@ -5834,6 +5839,8 @@ pub struct TaskComposeInvocationSpec {
     pub follow: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_volumes: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u32>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
 }
@@ -5851,6 +5858,7 @@ impl TaskComposeInvocationSpec {
             TaskComposeExecutionKind::Restart => "compose_restart",
             TaskComposeExecutionKind::Rm => "compose_rm",
             TaskComposeExecutionKind::Logs => "compose_logs",
+            TaskComposeExecutionKind::Ps => "compose_ps",
         }
     }
 
@@ -5865,6 +5873,7 @@ impl TaskComposeInvocationSpec {
             TaskComposeExecutionKind::Restart => "restart",
             TaskComposeExecutionKind::Rm => "rm",
             TaskComposeExecutionKind::Logs => "logs",
+            TaskComposeExecutionKind::Ps => "ps",
         }
     }
 
@@ -5888,6 +5897,10 @@ impl TaskComposeInvocationSpec {
         }
         if self.remove_volumes {
             preview.push_str(" -v");
+        }
+        if let Some(timeout_seconds) = self.timeout_seconds {
+            preview.push_str(" -t ");
+            preview.push_str(timeout_seconds.to_string().as_str());
         }
         if !self.tty
             && matches!(
@@ -5958,7 +5971,8 @@ impl TaskComposeExecutionSpec {
             | TaskComposeExecutionKind::Stop
             | TaskComposeExecutionKind::Restart
             | TaskComposeExecutionKind::Rm
-            | TaskComposeExecutionKind::Logs => self.invocation.preview_prefix(),
+            | TaskComposeExecutionKind::Logs
+            | TaskComposeExecutionKind::Ps => self.invocation.preview_prefix(),
             _ => self
                 .invocation
                 .preview_with_command(self.exe.as_str(), self.args.as_slice()),
@@ -5980,6 +5994,7 @@ pub enum TaskComposeExecutionKind {
     Restart,
     Rm,
     Logs,
+    Ps,
 }
 
 impl TaskComposeExecutionKind {
@@ -5995,6 +6010,7 @@ impl TaskComposeExecutionKind {
             Self::Restart => "restart",
             Self::Rm => "rm",
             Self::Logs => "logs",
+            Self::Ps => "ps",
         }
     }
 }
@@ -6433,20 +6449,50 @@ impl TaskDependencyHydrationSourceSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskDockerComposeHydrationSourceSpec {
     pub cwd: String,
-    pub file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<String>,
     #[serde(default, skip_serializing_if = "is_default_compose_cli_engine")]
     pub engine: ComposeCliEngine,
 }
 
 impl TaskDockerComposeHydrationSourceSpec {
+    pub fn effective_files(&self) -> Vec<&str> {
+        self.file
+            .iter()
+            .map(String::as_str)
+            .chain(self.files.iter().map(String::as_str))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect()
+    }
+
+    pub fn effective_env_files(&self) -> Vec<&str> {
+        self.env_files
+            .iter()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .collect()
+    }
+
     pub fn display_path(&self) -> String {
         let cwd = self.cwd.trim().trim_end_matches('/');
-        let file = self.file.trim().trim_start_matches("./");
-        if cwd.is_empty() || cwd == "." {
-            file.to_string()
-        } else {
-            format!("{cwd}/{file}")
-        }
+        self.effective_files()
+            .into_iter()
+            .map(|file| file.trim_start_matches("./"))
+            .map(|file| {
+                if cwd.is_empty() || cwd == "." {
+                    file.to_string()
+                } else {
+                    format!("{cwd}/{file}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
@@ -8782,6 +8828,7 @@ tasks:
                             force: false,
                             follow: false,
                             remove_volumes: false,
+                            timeout_seconds: None,
                             tty: false,
                         }),
                     },

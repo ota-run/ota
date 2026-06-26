@@ -1702,7 +1702,11 @@ tasks:
         kind: docker_compose
         engine: docker
         cwd: docker
-        file: docker-compose.dev.yml
+        files:
+          - docker-compose.base.yml
+          - docker-compose.dev.yml
+        env_files:
+          - .env.compose
       targets:
         - redis
         - database
@@ -1953,7 +1957,7 @@ Task-effect rules:
 
 `compose` fields:
 
-- `compose.kind`: required Compose execution shape; ota ships `exec`, `run`, `attach`, `up`, `down`, `build`, `stop`, `restart`, `rm`, and `logs`
+- `compose.kind`: required Compose execution shape; ota ships `exec`, `run`, `attach`, `up`, `down`, `build`, `stop`, `restart`, `rm`, `logs`, and `ps`
 - `compose.engine`: optional Compose CLI engine; `docker` by default, `podman` also supported
 - `compose.service`: required Compose service name for `kind: exec`, `run`, or `attach`
 - `compose.services`: optional ordered service list for `kind: up` or `kind: build`
@@ -1965,18 +1969,20 @@ Task-effect rules:
 - `compose.force`: optional `compose rm -f`; valid only with `kind: rm`
 - `compose.follow`: optional `compose logs -f`; valid only with `kind: logs`
 - `compose.remove_volumes`: optional `compose down -v`; valid only with `kind: down`
+- `compose.timeout_seconds`: optional `compose down -t <seconds>` graceful shutdown timeout;
+  valid only with `kind: down`
 - `compose.tty`: optional TTY preservation for `exec` and `run`; omitted means ota adds `-T` for deterministic non-interactive execution. `kind: attach` is always interactive and preserves TTY by definition.
 
 `compose` rules:
 
-- use `compose` when the repo truth is a service-side finite command such as `bundle exec rails db:migrate`, `python manage.py migrate`, or `npm run lint` inside a declared Compose service, or when one finite staged task truthfully owns `docker compose up [-d] [--force-recreate] <services...>`, `docker compose build [services...]`, `docker compose restart [services...]`, `docker compose rm [-f] [services...]`, `docker compose logs [-f] [services...]`, or `docker compose down`
+- use `compose` when the repo truth is a service-side finite command such as `bundle exec rails db:migrate`, `python manage.py migrate`, or `npm run lint` inside a declared Compose service, or when one finite staged task truthfully owns `docker compose up [-d] [--force-recreate] <services...>`, `docker compose build [services...]`, `docker compose restart [services...]`, `docker compose rm [-f] [services...]`, `docker compose logs [-f] [services...]`, `docker compose ps [services...]`, or `docker compose down`
 - `compose` is a task body, so it is mutually exclusive with `run`, `script`, `command`, `prepare`, `launch`, `action`, and `aggregate`
 - `compose` currently requires `requirements.tools.docker` or `requirements.tools.podman` to keep the host Compose engine truthful
 - keep host-side Compose adapter truth under `adapter_inputs.compose` or workflow overlays; keep service-side command truth or staged compose subcommand truth under `compose`
 - `compose.kind: exec`, `run`, and `attach` require `compose.service`
 - `compose.kind: up` uses `compose.services` for staged service-group activation and must not declare `compose.service`
 - `compose.kind: build` uses optional `compose.services` for staged image build selection and must not declare `compose.service`
-- `compose.kind: stop`, `restart`, `rm`, and `logs` use optional `compose.services` for staged service selection and must not declare `compose.service`
+- `compose.kind: stop`, `restart`, `rm`, `logs`, and `ps` use optional `compose.services` for staged service selection and must not declare `compose.service`
 - `compose.kind: down` is project-scoped and must not declare `compose.service` or `compose.services`
 - `compose.workdir`, `compose.exe`, and `compose.args` only apply to `compose.kind: exec`, `run`, or `attach`
 - `compose.rm` is only valid with `compose.kind: run`
@@ -1984,6 +1990,7 @@ Task-effect rules:
 - `compose.force` is only valid with `compose.kind: rm`
 - `compose.follow` is only valid with `compose.kind: logs`
 - `compose.remove_volumes` is only valid with `compose.kind: down`
+- `compose.timeout_seconds` is only valid with `compose.kind: down`
 - `compose.detach` is only valid with `compose.kind: exec` or `compose.kind: up`
 - `compose.kind: attach` must not declare `compose.rm` or `compose.detach`
 
@@ -2001,7 +2008,9 @@ Task-effect rules:
     - `prepare.source.kind: docker_compose`
     - `prepare.source.engine`: optional compose CLI engine; `docker` by default, `podman` also supported
     - `prepare.source.cwd`: required repo-relative working directory for the compose invocation
-    - `prepare.source.file`: required compose file path relative to `prepare.source.cwd`
+    - `prepare.source.file`: optional single-file compatibility alias relative to `prepare.source.cwd`
+    - `prepare.source.files`: optional ordered compose file stack relative to `prepare.source.cwd`; declare at least one compose file through `prepare.source.file` or `prepare.source.files`
+    - `prepare.source.env_files`: optional ordered compose interpolation env-file stack relative to `prepare.source.cwd`
     - `prepare.targets`: required non-empty list of concrete dependencies ota should hydrate
   - `prepare.medium: package_dependencies`
     - `prepare.source.kind: node_package_manager`
