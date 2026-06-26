@@ -1147,6 +1147,23 @@ impl AdapterInputFamily {
         }
     }
 
+    fn variant_declares_inputs(self, variant: &crate::schema::TaskVariantSpec) -> bool {
+        match self {
+            Self::Compose => variant
+                .adapter_inputs
+                .effective_compose()
+                .is_some_and(|compose| !compose.is_empty()),
+            Self::Bake => variant
+                .adapter_inputs
+                .effective_bake()
+                .is_some_and(|bake| !bake.is_empty()),
+            Self::Helm => variant
+                .adapter_inputs
+                .effective_helm()
+                .is_some_and(|helm| !helm.is_empty()),
+        }
+    }
+
     pub(crate) fn branch_declares_inputs(self, branch: &TaskModeBranchSpec) -> bool {
         match self {
             Self::Compose => branch_declares_family_inputs::<TaskComposeAdapterInputsSpec>(branch),
@@ -1174,6 +1191,10 @@ impl AdapterInputFamily {
 
     pub(crate) fn task_supports(self, task: &TaskSpec) -> bool {
         self.task_declares_inputs(task)
+            || task
+                .variants
+                .iter()
+                .any(|variant| self.variant_declares_inputs(variant))
             || self.task_uses_adapter(task)
             || task.variants.iter().any(|variant| {
                 self.shell_uses_adapter(variant.run.as_deref())
@@ -1244,6 +1265,10 @@ impl AdapterInputFamily {
 
     fn task_supports_direct_binding(self, task: &TaskSpec) -> bool {
         self.task_declares_inputs(task)
+            || task
+                .variants
+                .iter()
+                .any(|variant| self.variant_declares_inputs(variant))
             || self.task_uses_adapter(task)
             || task.variants.iter().any(|variant| {
                 self.shell_uses_adapter(variant.run.as_deref())

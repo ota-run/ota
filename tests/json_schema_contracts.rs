@@ -1877,9 +1877,11 @@ fn full_contract_schema_is_published_and_covered_by_schema_publication() {
         &schema["$defs"]["workflowInstanceTaskRuntimeOverlay"]["properties"];
     assert!(task_spec.get("compose").is_some());
     assert!(task_mode_branch.get("compose").is_some());
-    assert!(task_launch_variants.iter().any(|variant| {
-        variant["properties"]["kind"] == json!({ "const": "compose" })
-    }));
+    assert!(
+        task_launch_variants
+            .iter()
+            .any(|variant| { variant["properties"]["kind"] == json!({ "const": "compose" }) })
+    );
     assert!(env_profile_render.get("files").is_some());
     assert!(workflow.get("adapter_inputs").is_some());
     assert!(workflow.get("instances").is_some());

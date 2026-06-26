@@ -208,6 +208,30 @@ tasks:
     requirements:
       toolchains:
         - ruby
+  setup:ruby:gems:compose:
+    context: host
+    description: Hydrate Compose-volume-backed Ruby dependencies through the app service
+    category: setup
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+        compose:
+          kind: run
+          service: app
+          workdir: /workspace
+          rm: true
+    effects:
+      adapter_state:
+        - compose_volume:bundle_data
+      network: true
+      network_kind: dependency_hydration
+    requirements:
+      tools:
+        docker: "*"
   setup:docker:images:
     context: host
     description: Pre-pull registry-backed docker dependencies before service startup

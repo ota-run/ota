@@ -26,6 +26,17 @@
 
 ## Unreleased
 
+- added first-class `tasks.<name>.effects.adapter_state` for durable adapter-owned task state such
+  as Compose volumes, and widened typed dependency hydration so `prepare.kind: dependency_hydration`
+  can declare durable state through `effects.writes` or `effects.adapter_state` instead of being
+  forced back to shell or fake repo writes on volume-backed Compose lanes
+- added Unix host `OTA_HOST_GID` interpolation alongside `OTA_HOST_UID` so native and compose task
+  env can truthfully model host user/group projections like `CURRENT_UID=<uid>:<gid>` without shell
+  `id -g` glue
+- widened `tasks.<name>.variants` so OS-scoped variants can declare `env`, `env_files`,
+  `env_bindings`, `inputs`, `requirements`, and `adapter_inputs` without cloning the task body,
+  which lets one structured task keep a single executable shape while specializing process,
+  prerequisite, and Compose/Bake/Helm overlays per OS
 - fixed persistent runtime ownership regeneration so recreated `.ota/state/ownership-id` files no
   longer mint a fresh repo identity and strand Ota-managed containers or dependency-isolation
   assets outside repo-scoped cleanup; repo ownership now regenerates deterministically from the

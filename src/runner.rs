@@ -77,11 +77,11 @@ use crate::schema::{
     ExtensionKind, FileCheckExpectation, Lifecycle, NativePrerequisiteActivationKind,
     NativePrerequisiteActivationShell, NativePrerequisiteActivationSpec, ReadinessProbeTargetKind,
     RemoteBackend, RuntimeRequirement, TaskModeBranchSpec, TaskRuntimeHostPortMode,
-    TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod, TaskRuntimeReadinessKind,
-    TaskRuntimeReadinessSpec, TaskRuntimeSpec, TaskServiceEnvBindingFormat,
-    TaskServiceEnvBindingSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
-    TaskTargetSpec, ToolAcquisitionProvider, ToolRequirement, ToolchainFulfillmentMode,
-    ToolchainSpec, format_memory_size_bytes, parse_memory_size_bytes,
+    TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeReadinessHttpMethod,
+    TaskRuntimeReadinessKind, TaskRuntimeReadinessSpec, TaskRuntimeSpec,
+    TaskServiceEnvBindingFormat, TaskServiceEnvBindingSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetAddressView, TaskTargetSpec, ToolAcquisitionProvider, ToolRequirement,
+    ToolchainFulfillmentMode, ToolchainSpec, format_memory_size_bytes, parse_memory_size_bytes,
     parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::terminal::supports_dynamic_stderr_ui;
@@ -879,10 +879,7 @@ pub enum RunError {
     #[error(
         "task `{task}` cannot apply `--host-port` because no compose file was declared or discovered from `{working_dir}`"
     )]
-    HostPortOverrideNativeComposeFileMissing {
-        task: String,
-        working_dir: String,
-    },
+    HostPortOverrideNativeComposeFileMissing { task: String, working_dir: String },
     #[error("task `{task}` cannot apply `--memory` when execution resolves to `{backend}`")]
     MemoryOverrideUnsupportedBackend { task: String, backend: &'static str },
     #[error(
@@ -2048,6 +2045,20 @@ pub(crate) fn host_uid_template_value(working_dir: &Path) -> Option<String> {
     }
 }
 
+pub(crate) fn host_gid_template_value(working_dir: &Path) -> Option<String> {
+    #[cfg(unix)]
+    {
+        fs::metadata(working_dir)
+            .ok()
+            .map(|metadata| metadata.gid().to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = working_dir;
+        None
+    }
+}
+
 pub(crate) fn host_home_template_value() -> Option<String> {
     #[cfg(windows)]
     {
@@ -2069,6 +2080,7 @@ pub(crate) fn expand_task_env_templates(
     host_workspace: &str,
     host_home: Option<&str>,
     host_uid: Option<&str>,
+    host_gid: Option<&str>,
 ) -> String {
     let mut expanded = value
         .replace("${OTA_WORKSPACE}", ota_workspace)
@@ -2083,6 +2095,10 @@ pub(crate) fn expand_task_env_templates(
     expanded = expanded
         .replace("${OTA_HOST_UID}", host_uid)
         .replace("$OTA_HOST_UID", host_uid);
+    let host_gid = host_gid.unwrap_or("");
+    expanded = expanded
+        .replace("${OTA_HOST_GID}", host_gid)
+        .replace("$OTA_HOST_GID", host_gid);
     expanded
 }
 
@@ -2197,10 +2213,11 @@ fn service_env_bindings_for_task(
     engine_hint: Option<&str>,
     password_env_values: Option<&BTreeMap<String, ResolvedEnvValue>>,
 ) -> BTreeMap<String, String> {
-    task.env_bindings_for_backend_with_context_name(
+    task.env_bindings_for_backend_with_context_name_for_os(
         contract.execution.as_ref(),
         backend,
         context_name,
+        current_os(),
     )
     .into_iter()
     .filter_map(|(name, binding)| {
@@ -2372,19 +2389,27 @@ fn effective_task_env_for_backend_with_resolved_env(
     let host_workspace = host_workspace_template_value(working_dir);
     let host_home = host_home_template_value();
     let host_uid = host_uid_template_value(working_dir);
+    let host_gid = host_gid_template_value(working_dir);
     let backend_kind = resolved_execution_backend_kind(backend);
+    let current_os = current_os();
     let engine_hint = match backend {
         ResolvedExecutionBackend::Container { engine, .. } => Some(engine.as_str()),
         _ => None,
     };
     let context_name = resolved_backend_context_name(backend);
     let mut env = derived_attachment_env_for_backend(backend, ota_workspace.as_str());
-    env.extend(load_task_env_file_values(task, backend_kind, working_dir));
+    env.extend(load_task_env_file_values(
+        task,
+        backend_kind,
+        current_os,
+        working_dir,
+    ));
     env.extend(
-        task.env_for_backend_with_context_name(
+        task.env_for_backend_with_context_name_for_os(
             contract.execution.as_ref(),
             backend_kind,
             context_name,
+            current_os,
         )
         .into_iter()
         .map(|(name, value)| {
@@ -2396,6 +2421,7 @@ fn effective_task_env_for_backend_with_resolved_env(
                     host_workspace.as_str(),
                     host_home.as_deref(),
                     host_uid.as_deref(),
+                    host_gid.as_deref(),
                 ),
             )
         }),
@@ -2416,6 +2442,9 @@ fn effective_task_env_for_backend_with_resolved_env(
     }
     if let Some(host_uid) = host_uid {
         env.insert(String::from("OTA_HOST_UID"), host_uid);
+    }
+    if let Some(host_gid) = host_gid {
+        env.insert(String::from("OTA_HOST_GID"), host_gid);
     }
     env
 }
@@ -2464,7 +2493,14 @@ pub(crate) fn effective_task_env_for_selection(
     let host_workspace = host_workspace_template_value(working_dir);
     let host_home = host_home_template_value();
     let host_uid = host_uid_template_value(working_dir);
-    env.extend(load_task_env_file_values(task, backend, working_dir));
+    let host_gid = host_gid_template_value(working_dir);
+    let current_os = current_os();
+    env.extend(load_task_env_file_values(
+        task,
+        backend,
+        current_os,
+        working_dir,
+    ));
     let engine_hint = if backend == Backend::Container {
         effective_task_container_backend_for_target_resolution(contract, task_name, overrides)
             .and_then(|container| {
@@ -2476,20 +2512,26 @@ pub(crate) fn effective_task_env_for_selection(
         None
     };
     env.extend(
-        task.env_for_backend_with_context_name(contract.execution.as_ref(), backend, context_name)
-            .into_iter()
-            .map(|(name, value)| {
-                (
-                    name,
-                    expand_task_env_templates(
-                        &value,
-                        ota_workspace.as_str(),
-                        host_workspace.as_str(),
-                        host_home.as_deref(),
-                        host_uid.as_deref(),
-                    ),
-                )
-            }),
+        task.env_for_backend_with_context_name_for_os(
+            contract.execution.as_ref(),
+            backend,
+            context_name,
+            current_os,
+        )
+        .into_iter()
+        .map(|(name, value)| {
+            (
+                name,
+                expand_task_env_templates(
+                    &value,
+                    ota_workspace.as_str(),
+                    host_workspace.as_str(),
+                    host_home.as_deref(),
+                    host_uid.as_deref(),
+                    host_gid.as_deref(),
+                ),
+            )
+        }),
     );
     env.extend(task_adapter_env_bindings(task, backend));
     env.extend(service_env_bindings_for_task(
@@ -2508,16 +2550,20 @@ pub(crate) fn effective_task_env_for_selection(
     if let Some(host_uid) = host_uid {
         env.insert(String::from("OTA_HOST_UID"), host_uid);
     }
+    if let Some(host_gid) = host_gid {
+        env.insert(String::from("OTA_HOST_GID"), host_gid);
+    }
     Some(env)
 }
 
 fn load_task_env_file_values(
     task: &TaskSpec,
     backend: Backend,
+    os: &str,
     working_dir: &Path,
 ) -> BTreeMap<String, String> {
     let mut merged = BTreeMap::new();
-    for path in task.env_files_for_backend(backend) {
+    for path in task.env_files_for_backend_for_os(backend, os) {
         let trimmed = path.trim();
         if trimmed.is_empty() {
             continue;
@@ -2547,7 +2593,7 @@ pub(crate) fn ensure_task_env_files_ready(
     backend: Backend,
     working_dir: &Path,
 ) -> Result<(), RunError> {
-    for path in task.env_files_for_backend(backend) {
+    for path in task.env_files_for_backend_for_os(backend, current_os()) {
         let trimmed = path.trim();
         if trimmed.is_empty() {
             continue;
@@ -2671,8 +2717,8 @@ fn projected_compose_launch_command_for_task(
 }
 
 fn projected_compose_invocation_command_for_task(
-    _task: &TaskSpec,
-    _backend: Backend,
+    task: &TaskSpec,
+    backend: Backend,
     compose: &crate::schema::TaskComposeInvocationSpec,
     exe: &str,
     args: &[String],
@@ -2726,7 +2772,7 @@ fn projected_compose_invocation_command_for_task(
     crate::schema::TaskCommandSpec {
         exe: compose.engine.as_str().to_string(),
         args: projected_args,
-        cwd: None,
+        cwd: task.compose_adapter_cwd_for_backend(backend),
     }
 }
 
@@ -2782,23 +2828,27 @@ fn dependency_hydration_command_specs(
                 cwd: Some(source.cwd.clone()),
             }]
         }
-        crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => vec![
-            crate::schema::TaskCommandSpec {
-                exe: String::from("bundle"),
-                args: vec![
-                    String::from("config"),
-                    String::from("set"),
-                    String::from("path"),
-                    source.path.clone(),
-                ],
-                cwd: Some(source.cwd.clone()),
-            },
-            crate::schema::TaskCommandSpec {
+        crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => {
+            let mut commands = Vec::new();
+            if let Some(path) = source.path.as_ref() {
+                commands.push(crate::schema::TaskCommandSpec {
+                    exe: String::from("bundle"),
+                    args: vec![
+                        String::from("config"),
+                        String::from("set"),
+                        String::from("path"),
+                        path.clone(),
+                    ],
+                    cwd: Some(source.cwd.clone()),
+                });
+            }
+            commands.push(crate::schema::TaskCommandSpec {
                 exe: String::from("bundle"),
                 args: vec![String::from("install")],
                 cwd: Some(source.cwd.clone()),
-            },
-        ],
+            });
+            commands
+        }
         crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => {
             vec![crate::schema::TaskCommandSpec {
                 exe: String::from("uv"),
@@ -9661,11 +9711,19 @@ fn prepare_task_shell_command(
                     }
                     Ok(command)
                 }
-                crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => Ok(format!(
-                    "cd {} && bundle config set path {} && bundle install",
-                    shell_quote_command_word(source.cwd.trim(), quote_style),
-                    shell_quote_command_word(source.path.trim(), quote_style)
-                )),
+                crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => {
+                    let cwd = shell_quote_command_word(source.cwd.trim(), quote_style);
+                    let command = if let Some(path) = source.path.as_deref() {
+                        format!(
+                            "cd {} && bundle config set path {} && bundle install",
+                            cwd,
+                            shell_quote_command_word(path.trim(), quote_style)
+                        )
+                    } else {
+                        format!("cd {} && bundle install", cwd)
+                    };
+                    Ok(command)
+                }
                 crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => Ok(format!(
                     "cd {} && uv sync",
                     shell_quote_command_word(source.cwd.trim(), quote_style)
@@ -13626,14 +13684,8 @@ fn resolve_task_inputs(
     if let Some(input_name) = single_task_input_name(task)
         && let Some(value) = single_task_input_shorthand_value(input_args)
     {
-        insert_task_input_value(
-            task_name,
-            task,
-            &mut provided,
-            input_name.to_string(),
-            value,
-        )?;
-        explicit_inputs.insert(input_name.to_string());
+        insert_task_input_value(task_name, task, &mut provided, input_name.clone(), value)?;
+        explicit_inputs.insert(input_name);
     } else {
         let mut index = 0;
 
@@ -13667,7 +13719,8 @@ fn resolve_task_inputs(
             }
 
             let input_name = flag.replace('-', "_");
-            let Some(_spec) = task.inputs.get(&input_name) else {
+            let effective_inputs = task.inputs_for_current_os();
+            let Some(_spec) = effective_inputs.get(&input_name) else {
                 return Err(RunError::UnknownTaskInput {
                     task: task_name.to_string(),
                     input: input_name,
@@ -13706,7 +13759,8 @@ fn resolve_task_inputs(
         execution_overrides,
     )?;
 
-    for (name, spec) in &task.inputs {
+    let effective_inputs = task.inputs_for_current_os();
+    for (name, spec) in &effective_inputs {
         if provided.contains_key(name) {
             continue;
         }
@@ -15234,9 +15288,10 @@ fn activation_expected_state(mode: TaskTargetActivationMode) -> &'static str {
     }
 }
 
-fn single_task_input_name(task: &TaskSpec) -> Option<&str> {
-    (task.inputs.len() == 1)
-        .then(|| task.inputs.keys().next().map(String::as_str))
+fn single_task_input_name(task: &TaskSpec) -> Option<String> {
+    let inputs = task.inputs_for_current_os();
+    (inputs.len() == 1)
+        .then(|| inputs.keys().next().cloned())
         .flatten()
 }
 
@@ -15258,8 +15313,8 @@ fn insert_task_input_value(
     input_name: String,
     value: String,
 ) -> Result<(), RunError> {
-    let spec = task
-        .inputs
+    let effective_inputs = task.inputs_for_current_os();
+    let spec = effective_inputs
         .get(&input_name)
         .expect("validated input insertion should only reference declared task inputs");
 
@@ -16825,12 +16880,8 @@ fn selected_native_compose_host_port_override(
             listener: listener_name.clone(),
         })?;
 
-    let compose_stack = effective_native_compose_file_stack(
-        task_name,
-        task,
-        env_overrides,
-        effective_working_dir,
-    )?;
+    let compose_stack =
+        effective_native_compose_file_stack(task_name, task, env_overrides, effective_working_dir)?;
     let override_file = write_native_compose_host_port_override_file(
         task_name,
         repo_working_dir,
@@ -16921,12 +16972,17 @@ fn write_native_compose_host_port_override_file(
     host_port: u16,
     bind_port: u16,
 ) -> Result<PathBuf, RunError> {
-    let state_dir = working_dir.join(".ota").join("state").join("compose-overrides");
-    fs::create_dir_all(&state_dir).map_err(|source| RunError::DependencyIsolationOwnershipFailure {
-        task: task_name.to_string(),
-        action: String::from("create native compose override state directory"),
-        path: state_dir.display().to_string(),
-        details: source.to_string(),
+    let state_dir = working_dir
+        .join(".ota")
+        .join("state")
+        .join("compose-overrides");
+    fs::create_dir_all(&state_dir).map_err(|source| {
+        RunError::DependencyIsolationOwnershipFailure {
+            task: task_name.to_string(),
+            action: String::from("create native compose override state directory"),
+            path: state_dir.display().to_string(),
+            details: source.to_string(),
+        }
     })?;
     let file_path = state_dir.join(format!(
         "{}-{}-{}.yaml",
@@ -16940,11 +16996,13 @@ fn write_native_compose_host_port_override_file(
         host_port,
         bind_port
     );
-    fs::write(&file_path, contents).map_err(|source| RunError::DependencyIsolationOwnershipFailure {
-        task: task_name.to_string(),
-        action: String::from("write native compose override file"),
-        path: file_path.display().to_string(),
-        details: source.to_string(),
+    fs::write(&file_path, contents).map_err(|source| {
+        RunError::DependencyIsolationOwnershipFailure {
+            task: task_name.to_string(),
+            action: String::from("write native compose override file"),
+            path: file_path.display().to_string(),
+            details: source.to_string(),
+        }
     })?;
     Ok(file_path)
 }
@@ -27657,7 +27715,7 @@ mod tests {
         register_active_repo_execution, repo_execution_lock_owner_for_backend,
         repo_execution_lock_path, repo_ota_state_dir, resolve_execution_backend,
         resolve_execution_backend_with_contract_path, resolve_task_env, resolve_task_env_details,
-        resolve_task_env_details_for_task, resolve_task_target_binding_url,
+        resolve_task_env_details_for_task, resolve_task_inputs, resolve_task_target_binding_url,
         resolve_task_target_binding_url_with_contract_path, run_task, run_task_captured,
         run_task_captured_with_args_with_overrides, run_task_with_args,
         run_task_with_args_with_overrides_and_stream_capture, run_task_with_overrides,
@@ -29243,6 +29301,7 @@ tasks:
       HOST_ROOT: ${OTA_HOST_WORKSPACE}
       HOST_HOME: ${OTA_HOST_HOME}
       USER_UID: ${OTA_HOST_UID}
+      USER_GID: ${OTA_HOST_GID}
     script: ./scripts/api/run.sh
 "#,
         )
@@ -29310,9 +29369,185 @@ tasks:
                 .expect("repo fixture metadata should load")
                 .uid()
                 .to_string();
+            let expected_gid = fs::metadata(working_dir)
+                .expect("repo fixture metadata should load")
+                .gid()
+                .to_string();
             assert_eq!(
                 env.get("USER_UID").map(String::as_str),
                 Some(expected_uid.as_str())
+            );
+            assert_eq!(
+                env.get("USER_GID").map(String::as_str),
+                Some(expected_gid.as_str())
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            assert_eq!(env.get("USER_UID").map(String::as_str), Some(""));
+            assert_eq!(env.get("USER_GID").map(String::as_str), Some(""));
+        }
+    }
+
+    #[test]
+    fn effective_task_env_for_backend_merges_selected_variant_env_and_env_files() {
+        let fixture = TempDir::new().expect("tempdir should create");
+        let working_dir = fixture.path();
+        fs::write(working_dir.join(".env.linux"), "FROM_FILE=linux\n").unwrap();
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    env:
+      APP_MODE: base
+    command:
+      exe: echo
+      args:
+        - hi
+    variants:
+      - when:
+          os: linux
+        env:
+          APP_MODE: linux
+        env_files:
+          - .env.linux
+"#,
+        )
+        .unwrap();
+
+        let env = effective_task_env_for_backend(
+            &contract,
+            contract.tasks.get("dev").unwrap(),
+            &ResolvedExecutionBackend::Native {
+                shared_local_backend: None,
+            },
+            working_dir,
+        );
+
+        if current_os() == "linux" {
+            assert_eq!(env.get("APP_MODE").map(String::as_str), Some("linux"));
+            assert_eq!(env.get("FROM_FILE").map(String::as_str), Some("linux"));
+        } else {
+            assert_eq!(env.get("APP_MODE").map(String::as_str), Some("base"));
+            assert!(!env.contains_key("FROM_FILE"));
+        }
+    }
+
+    #[test]
+    fn effective_task_env_for_selection_merges_selected_variant_env_bindings() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  test:
+    command:
+      exe: echo
+      args:
+        - hi
+    variants:
+      - when:
+          os: linux
+        env_bindings:
+          DATABASE_URL:
+            from_service:
+              service: postgres
+              view: host
+              scheme: postgres
+"#,
+        )
+        .unwrap();
+
+        let env = effective_task_env_for_selection(
+            &contract,
+            "test",
+            ExecutionOverrides::default(),
+            Path::new("/repo"),
+        )
+        .unwrap();
+
+        if current_os() == "linux" {
+            assert_eq!(
+                env.get("DATABASE_URL").map(String::as_str),
+                Some("postgres://127.0.0.1:5432")
+            );
+        } else {
+            assert!(!env.contains_key("DATABASE_URL"));
+        }
+    }
+
+    #[test]
+    fn variant_inputs_override_defaults_for_current_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  deploy:
+    inputs:
+      profile:
+        default: dev
+        allowed:
+          - dev
+          - prod
+    command:
+      exe: echo
+      args:
+        - hi
+    variants:
+      - when:
+          os: linux
+        inputs:
+          profile:
+            default: ci
+            allowed:
+              - ci
+              - prod
+"#,
+        )
+        .unwrap();
+
+        let resolved = resolve_task_inputs(
+            &contract,
+            Path::new("ota.yaml"),
+            "deploy",
+            contract.tasks.get("deploy").unwrap(),
+            &[],
+            Backend::Native,
+            ExecutionOverrides::default(),
+            true,
+        )
+        .unwrap();
+
+        if current_os() == "linux" {
+            assert_eq!(
+                resolved
+                    .env_overrides
+                    .get("OTA_INPUT_PROFILE")
+                    .map(String::as_str),
+                Some("ci")
+            );
+        } else {
+            assert_eq!(
+                resolved
+                    .env_overrides
+                    .get("OTA_INPUT_PROFILE")
+                    .map(String::as_str),
+                Some("dev")
             );
         }
     }
@@ -39861,7 +40096,11 @@ tasks:
                 service: web
 "#
         ));
-        fs::write(fixture.dir.path().join("docker-compose.yml"), "services:\n  web:\n    image: nginx:alpine\n").unwrap();
+        fs::write(
+            fixture.dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    image: nginx:alpine\n",
+        )
+        .unwrap();
 
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -39922,7 +40161,10 @@ exit 1
 
         assert_eq!(outcome.exit_code, 0, "{}", outcome.stderr);
         let compose_file = fs::read_to_string(state_dir.join("compose-file.txt")).unwrap();
-        assert!(compose_file.contains("docker-compose.yml"), "{compose_file}");
+        assert!(
+            compose_file.contains("docker-compose.yml"),
+            "{compose_file}"
+        );
         let override_file = fs::read_to_string(state_dir.join("override.yml")).unwrap();
         assert!(
             override_file.contains(&format!(r#""{}:{}""#, override_port, original_port)),
@@ -57199,6 +57441,48 @@ policies:
         );
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn bundler_hydration_prepare_without_repo_local_path_can_wrap_through_compose() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: api
+        compose:
+          kind: exec
+          service: api
+          workdir: /workspace
+"#,
+        )
+        .unwrap();
+        let task = contract.tasks.get("setup").unwrap();
+        let prepare = task.prepare.as_ref().unwrap();
+        let backend = ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        };
+
+        let command =
+            super::prepare_task_shell_command("setup", Some(task), prepare, &backend).unwrap();
+
+        assert_eq!(
+            command,
+            "cd 'infra' && 'docker' 'compose' 'exec' '-T' '-w' '/workspace/api' 'api' 'bundle' 'install'"
+        );
+    }
+
     #[test]
     fn dependency_hydration_prepare_executes_poetry_from_declared_cwd() {
         let _guard = env_mutex_lock();
@@ -58260,6 +58544,63 @@ tasks:
         assert_eq!(
             command,
             "cd 'infra' && 'docker' 'compose' 'exec' '-T' '-w' '/workspace/api' 'api' 'bundle' 'config' 'set' 'path' 'vendor/bundle' && cd 'infra' && 'docker' 'compose' 'exec' '-T' '-w' '/workspace/api' 'api' 'bundle' 'install'"
+        );
+    }
+
+    #[test]
+    fn bundler_hydration_prepare_without_repo_local_path_uses_single_compose_command() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: api
+        compose:
+          kind: exec
+          service: api
+          workdir: /workspace
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("setup").unwrap();
+        let prepare = task.prepare.as_ref().unwrap();
+        let crate::schema::TaskPrepareSpec::DependencyHydration(spec) = prepare else {
+            panic!("expected dependency hydration prepare");
+        };
+
+        let commands = super::compose_wrapped_dependency_hydration_commands(
+            task,
+            Backend::Native,
+            &spec.source,
+            spec.source.compose_invocation().unwrap(),
+        );
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].exe, "docker");
+        assert_eq!(
+            commands[0].args,
+            vec![
+                String::from("compose"),
+                String::from("exec"),
+                String::from("-T"),
+                String::from("-w"),
+                String::from("/workspace/api"),
+                String::from("api"),
+                String::from("bundle"),
+                String::from("install"),
+            ]
         );
     }
 

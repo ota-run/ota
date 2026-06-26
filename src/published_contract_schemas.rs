@@ -1135,6 +1135,19 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "args": { "$ref": "#/$defs/stringArray" }
       }
     },
+    "taskComposeInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "service"],
+      "properties": {
+        "kind": { "enum": ["exec", "run"] },
+        "engine": { "enum": ["docker", "podman"] },
+        "service": { "type": "string" },
+        "workdir": { "type": "string" },
+        "rm": { "type": "boolean" },
+        "tty": { "type": "boolean" }
+      }
+    },
     "taskLaunch": {
       "oneOf": [
         {
@@ -1202,17 +1215,19 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "mode": { "enum": ["install", "ci"] },
             "frozen_lockfile": { "type": "boolean" },
             "inline_builds": { "type": "boolean" },
-            "force": { "type": "boolean" }
+            "force": { "type": "boolean" },
+            "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "cwd", "path"],
+          "required": ["kind", "cwd"],
           "properties": {
             "kind": { "const": "bundler" },
             "cwd": { "type": "string" },
-            "path": { "type": "string" }
+            "path": { "type": "string" },
+            "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },
         {
@@ -1224,7 +1239,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "cwd": { "type": "string" },
             "groups": { "$ref": "#/$defs/stringArray" },
             "group_mode": { "enum": ["with", "only"] },
-            "no_root": { "type": "boolean" }
+            "no_root": { "type": "boolean" },
+            "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },
         {
@@ -1233,7 +1249,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "required": ["kind", "cwd"],
           "properties": {
             "kind": { "const": "uv" },
-            "cwd": { "type": "string" }
+            "cwd": { "type": "string" },
+            "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },
         {
@@ -1242,7 +1259,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "required": ["kind", "cwd"],
           "properties": {
             "kind": { "const": "go_modules" },
-            "cwd": { "type": "string" }
+            "cwd": { "type": "string" },
+            "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },
         {
@@ -1251,7 +1269,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "required": ["kind", "cwd"],
           "properties": {
             "kind": { "const": "helm" },
-            "cwd": { "type": "string" }
+            "cwd": { "type": "string" },
+            "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },
         {
@@ -1260,7 +1279,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "required": ["kind", "cwd"],
           "properties": {
             "kind": { "const": "cargo" },
-            "cwd": { "type": "string" }
+            "cwd": { "type": "string" },
+            "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },
         {
@@ -1269,7 +1289,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "required": ["kind", "cwd"],
           "properties": {
             "kind": { "const": "dotnet_restore" },
-            "cwd": { "type": "string" }
+            "cwd": { "type": "string" },
+            "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },
         {
@@ -1279,7 +1300,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "properties": {
             "kind": { "const": "gradle" },
             "cwd": { "type": "string" },
-            "wrapper": { "type": "boolean" }
+            "wrapper": { "type": "boolean" },
+            "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         },
         {
@@ -1291,7 +1313,8 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "cwd": { "type": "string" },
             "wrapper": { "type": "boolean" },
             "mode": { "enum": ["resolve", "go_offline"] },
-            "skip_tests": { "type": "boolean" }
+            "skip_tests": { "type": "boolean" },
+            "compose": { "$ref": "#/$defs/taskComposeInvocation" }
           }
         }
       ]
@@ -1348,6 +1371,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "writes": { "$ref": "#/$defs/stringArray" },
         "network": { "type": "boolean" },
         "network_kind": { "enum": ["broad", "dependency_hydration", "integration_test", "tool_bootstrap"] },
+        "adapter_state": { "$ref": "#/$defs/stringArray" },
         "external_state": { "$ref": "#/$defs/stringArray" }
       }
     },

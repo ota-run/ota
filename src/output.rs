@@ -3236,13 +3236,13 @@ pub struct TaskSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<&'a str>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub env: &'a BTreeMap<String, String>,
+    pub env: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub env_files: Vec<&'a str>,
+    pub env_files: Vec<String>,
     #[serde(skip_serializing_if = "TaskAdapterInputsSummary::is_empty")]
     pub adapter_inputs: TaskAdapterInputsSummary,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub inputs: &'a BTreeMap<String, TaskInputSpec>,
+    pub inputs: BTreeMap<String, TaskInputSpec>,
     pub kind: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<&'a str>,
@@ -3290,6 +3290,8 @@ pub struct TaskEffectsSummary {
     pub network: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network_kind: Option<crate::schema::TaskNetworkEffectKind>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub adapter_state: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub external_state: Vec<String>,
 }
@@ -3363,6 +3365,7 @@ impl TaskEffectsSummary {
             writes: spec.writes.clone(),
             network: spec.network,
             network_kind: spec.network_kind,
+            adapter_state: spec.adapter_state.clone(),
             external_state: spec.external_state.clone(),
         }
     }
@@ -3371,6 +3374,7 @@ impl TaskEffectsSummary {
         self.writes.is_empty()
             && !self.network
             && self.network_kind.is_none()
+            && self.adapter_state.is_empty()
             && self.external_state.is_empty()
     }
 }
@@ -3403,6 +3407,15 @@ impl<'a> TaskSummary<'a> {
         let resolved_execution = task
             .resolved_execution_for_backend(selected_backend, current_os)
             .expect("validated task must resolve to a default or variant execution");
+        let effective_env = task.env_for_backend_with_context_name_for_os(
+            contract.execution.as_ref(),
+            selected_backend,
+            effective.context_name,
+            current_os,
+        );
+        let effective_env_files = task.env_files_for_backend_for_os(selected_backend, current_os);
+        let effective_adapter_inputs =
+            effective_task_adapter_inputs_summary(task, selected_backend, current_os);
         Self {
             name,
             context: effective.context_name,
@@ -3411,10 +3424,10 @@ impl<'a> TaskSummary<'a> {
             description: task.description.as_deref(),
             notes: task.notes.as_deref(),
             category: task.category.as_deref(),
-            env: &task.env,
-            env_files: task.env_files.iter().map(String::as_str).collect(),
-            adapter_inputs: summarize_task_adapter_inputs(&task.adapter_inputs),
-            inputs: &task.inputs,
+            env: effective_env,
+            env_files: effective_env_files,
+            adapter_inputs: effective_adapter_inputs,
+            inputs: task.inputs_for_os(current_os),
             kind: resolved_execution.kind,
             run: (resolved_execution.kind == "run")
                 .then(|| resolved_execution.shell_body())
@@ -3429,7 +3442,10 @@ impl<'a> TaskSummary<'a> {
             prepare: summarize_task_prepare(resolved_execution.prepare()),
             aggregate: summarize_task_aggregate(resolved_execution.aggregate()),
             effects: TaskEffectsSummary::from_spec(&task.effects),
-            selected_variant_os: resolved_execution.os,
+            selected_variant_os: task
+                .selected_variant(current_os)
+                .and_then(|variant| variant.when.os.as_deref())
+                .or(resolved_execution.os),
             depends_on: task.depends_on_for_backend(selected_backend).to_vec(),
             requires_services: task.requires_services.clone(),
             when_checks: task.when.checks.clone(),
@@ -3449,7 +3465,11 @@ impl<'a> TaskSummary<'a> {
                         .expect("validated task variant must declare `when.os`"),
                     kind: variant
                         .execution_kind()
-                        .expect("validated task variant must declare exactly one execution form"),
+                        .or_else(|| task.any_execution_kind())
+                        .expect("validated task variant must resolve to one execution form"),
+                    env: &variant.env,
+                    env_files: variant.env_files.iter().map(String::as_str).collect(),
+                    inputs: &variant.inputs,
                     run: variant.run.as_deref(),
                     script: variant.script.as_deref(),
                     command: variant
@@ -3457,6 +3477,7 @@ impl<'a> TaskSummary<'a> {
                         .as_ref()
                         .and_then(|command| summarize_task_command(Some(command))),
                     compose: summarize_task_compose(variant.compose.as_ref()),
+                    adapter_inputs: summarize_task_adapter_inputs(&variant.adapter_inputs),
                 })
                 .collect(),
             modes: task
@@ -3655,6 +3676,39 @@ pub fn summarize_task_adapter_inputs(
             })
             .filter(|bake| !bake.is_empty()),
     }
+}
+
+fn effective_task_adapter_inputs_summary(
+    task: &TaskSpec,
+    backend: crate::schema::Backend,
+    current_os: &str,
+) -> TaskAdapterInputsSummary {
+    let compose = {
+        let cwd = task.compose_adapter_cwd_for_backend_for_os(backend, current_os);
+        let env_files = task.compose_adapter_env_files_for_backend_for_os(backend, current_os);
+        let files = task.compose_adapter_files_for_backend_for_os(backend, current_os);
+        let profiles = task.compose_adapter_profiles_for_backend_for_os(backend, current_os);
+        let project_name =
+            task.compose_adapter_project_name_for_backend_for_os(backend, current_os);
+        let summary = TaskComposeAdapterInputsSummary {
+            cwd,
+            env_files,
+            files,
+            profiles,
+            project_name,
+        };
+        (!summary.is_empty()).then_some(summary)
+    };
+
+    let bake = {
+        let summary = TaskBakeAdapterInputsSummary {
+            cwd: task.bake_adapter_cwd_for_backend_for_os(backend, current_os),
+            files: task.bake_adapter_files_for_backend_for_os(backend, current_os),
+        };
+        (!summary.is_empty()).then_some(summary)
+    };
+
+    TaskAdapterInputsSummary { compose, bake }
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -4172,7 +4226,7 @@ pub fn summarize_task_prepare(
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
                     "bundler",
                     Some(source.cwd.as_str()),
-                    Some(source.path.as_str()),
+                    source.path.as_deref(),
                     Some("bundle"),
                     Some("install"),
                     None,
@@ -4452,7 +4506,7 @@ pub fn summarize_task_prepare_owned(
                 crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
                     "bundler",
                     Some(source.cwd.clone()),
-                    Some(source.path.clone()),
+                    source.path.clone(),
                     Some("bundle"),
                     Some("install"),
                     None,
@@ -4895,7 +4949,7 @@ tasks:
             &contract,
         );
 
-        assert_eq!(summary.kind, "compose_up");
+        assert_eq!(summary.kind, "compose");
         let compose = summary.compose.expect("compose summary should exist");
         assert_eq!(compose.kind, "up");
         assert_eq!(compose.service, None);
@@ -4925,7 +4979,10 @@ tasks:
 
         let summary = super::TaskSummary::from_spec(
             "image:build",
-            contract.tasks.get("image:build").expect("task should exist"),
+            contract
+                .tasks
+                .get("image:build")
+                .expect("task should exist"),
             "linux",
             &contract,
         );
@@ -4957,7 +5014,10 @@ tasks:
 
         let summary = super::TaskSummary::from_spec(
             "stack:clean",
-            contract.tasks.get("stack:clean").expect("task should exist"),
+            contract
+                .tasks
+                .get("stack:clean")
+                .expect("task should exist"),
             "linux",
             &contract,
         );
@@ -5003,6 +5063,173 @@ tasks:
         assert_eq!(launch.action, Some("up"));
         assert_eq!(launch.services, vec!["api", "worker"]);
         assert!(launch.detach);
+    }
+
+    #[test]
+    fn summarize_task_uses_selected_variant_adapter_inputs_with_base_compose() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    adapter_inputs:
+      overlays:
+        compose:
+          files:
+            - compose.yaml
+          project_name: app
+    compose:
+      kind: up
+      detach: true
+      services:
+        - web
+    variants:
+      - when:
+          os: linux
+        adapter_inputs:
+          overlays:
+            compose:
+              env_files:
+                - .env.linux
+              files:
+                - compose.linux.yaml
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "dev",
+            contract.tasks.get("dev").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.kind, "compose_up");
+        assert_eq!(summary.selected_variant_os, Some("linux"));
+        let compose = summary
+            .adapter_inputs
+            .compose
+            .expect("compose adapter inputs should exist");
+        assert_eq!(compose.env_files, vec![String::from(".env.linux")]);
+        assert_eq!(
+            compose.files,
+            vec![
+                String::from("compose.yaml"),
+                String::from("compose.linux.yaml")
+            ]
+        );
+        assert_eq!(compose.project_name.as_deref(), Some("app"));
+        assert_eq!(summary.variants.len(), 1);
+        assert!(
+            !summary.variants[0].adapter_inputs.is_empty(),
+            "variant summary should surface adapter inputs"
+        );
+    }
+
+    #[test]
+    fn summarize_task_uses_selected_variant_env_with_base_command() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    env:
+      APP_MODE: base
+    command:
+      exe: echo
+      args:
+        - hi
+    variants:
+      - when:
+          os: linux
+        env:
+          APP_MODE: linux
+        env_files:
+          - .env.linux
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "dev",
+            contract.tasks.get("dev").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.selected_variant_os, Some("linux"));
+        assert_eq!(
+            summary.env.get("APP_MODE").map(String::as_str),
+            Some("linux")
+        );
+        assert_eq!(summary.env_files, vec![String::from(".env.linux")]);
+        assert_eq!(
+            summary.variants[0].env.get("APP_MODE").map(String::as_str),
+            Some("linux")
+        );
+        assert_eq!(summary.variants[0].env_files, vec![".env.linux"]);
+    }
+
+    #[test]
+    fn summarize_task_uses_selected_variant_inputs_with_base_command() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    inputs:
+      profile:
+        default: dev
+        allowed:
+          - dev
+          - prod
+    command:
+      exe: echo
+      args:
+        - hi
+    variants:
+      - when:
+          os: linux
+        inputs:
+          profile:
+            default: ci
+            allowed:
+              - ci
+              - prod
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "dev",
+            contract.tasks.get("dev").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(
+            summary
+                .inputs
+                .get("profile")
+                .and_then(|spec| spec.default.as_deref()),
+            Some("ci")
+        );
+        assert_eq!(
+            summary.variants[0]
+                .inputs
+                .get("profile")
+                .and_then(|spec| spec.default.as_deref()),
+            Some("ci")
+        );
     }
 
     #[test]

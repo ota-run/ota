@@ -2261,7 +2261,11 @@ fn validate_env(env: &EnvConfig, errors: &mut Vec<ValidationError>) {
                         "`env.profiles.{name}.render.files[{index}].path` duplicates rendered artifact path `{path}`"
                     )));
                 }
-                if profile.env_files.iter().any(|existing| existing.trim() == path) {
+                if profile
+                    .env_files
+                    .iter()
+                    .any(|existing| existing.trim() == path)
+                {
                     errors.push(ValidationError::new(format!(
                         "`env.profiles.{name}.render.files[{index}].path` must not be duplicated in `env.profiles.{name}.env_files`; rendered structured artifacts are injected or inspected separately"
                     )));
@@ -2443,35 +2447,7 @@ fn validate_tasks(
             }
         }
 
-        for (input_name, input) in &task.inputs {
-            if !is_task_input_name(input_name) {
-                errors.push(ValidationError::new(format!(
-                    "task `{name}` input `{input_name}` must use lowercase snake_case"
-                )));
-            }
-            if let Some(default) = input.default.as_deref()
-                && default.trim().is_empty()
-            {
-                errors.push(ValidationError::new(format!(
-                    "task `{name}` input `{input_name}` must not declare an empty `default`"
-                )));
-            }
-            for allowed in &input.allowed {
-                if allowed.trim().is_empty() {
-                    errors.push(ValidationError::new(format!(
-                        "task `{name}` input `{input_name}` must not declare an empty allowed value"
-                    )));
-                }
-            }
-            if let Some(default) = input.default.as_deref()
-                && !input.allowed.is_empty()
-                && !input.allowed.iter().any(|value| value == default)
-            {
-                errors.push(ValidationError::new(format!(
-                    "task `{name}` input `{input_name}` default must be one of the allowed values"
-                )));
-            }
-        }
+        validate_task_inputs(name, "inputs", &task.inputs, errors);
 
         let mut seen_override_inputs: BTreeMap<&str, &str> = BTreeMap::new();
         let mut seen_target_envs: BTreeMap<String, &str> = BTreeMap::new();
@@ -2618,9 +2594,14 @@ fn validate_tasks(
                     errors.push(ValidationError::new(format!(
                         "task `{name}` target `{target_name}` must not declare an empty `override_input`"
                     )));
-                } else if !task.inputs.contains_key(override_input) {
+                } else if !task.inputs.contains_key(override_input)
+                    && !task
+                        .variants
+                        .iter()
+                        .any(|variant| variant.inputs.contains_key(override_input))
+                {
                     errors.push(ValidationError::new(format!(
-                        "task `{name}` target `{target_name}` declares `override_input: {override_input}`, but task input `{override_input}` is not declared under `tasks.{name}.inputs`"
+                        "task `{name}` target `{target_name}` declares `override_input: {override_input}`, but task input `{override_input}` is not declared under `tasks.{name}.inputs` or any task variant inputs"
                     )));
                 }
                 if let Some(previous_target) =
@@ -2868,6 +2849,38 @@ fn validate_tasks(
                 )));
             }
 
+            validate_task_adapter_inputs(
+                name,
+                &format!("variants[{index}].adapter_inputs"),
+                &variant.adapter_inputs,
+                errors,
+            );
+            validate_task_inputs(
+                name,
+                &format!("variants[{index}].inputs"),
+                &variant.inputs,
+                errors,
+            );
+            validate_task_variant_requirement_references(
+                contract, name, index, task, variant, errors,
+            );
+            let mut variant_literal_env = task.env.clone();
+            variant_literal_env.extend(variant.env.clone());
+            validate_task_env_bindings(
+                contract,
+                name,
+                &format!("variants[{index}].env_bindings"),
+                &variant_literal_env,
+                &variant.env_bindings,
+                errors,
+            );
+            validate_task_env_files(
+                name,
+                &format!("variants[{index}].env_files"),
+                &variant.env_files,
+                errors,
+            );
+
             match (
                 variant.run.as_deref(),
                 variant.script.as_deref(),
@@ -2909,9 +2922,25 @@ fn validate_tasks(
                 | (Some(_), Some(_), Some(_), Some(_)) => errors.push(ValidationError::new(format!(
                     "task `{name}` variant #{index} must not declare more than one of `run`, `script`, `command`, or `compose`"
                 ))),
-                (None, None, None, None) => errors.push(ValidationError::new(format!(
-                    "task `{name}` variant #{index} must declare exactly one of `run`, `script`, `command`, or `compose`"
-                ))),
+(None, None, None, None)
+                    if variant.adapter_inputs.is_empty()
+                        && variant.env.is_empty()
+                        && variant.env_files.is_empty()
+                        && variant.env_bindings.is_empty()
+                        && variant.inputs.is_empty()
+                        && variant.requirements.is_empty() =>
+                {
+                    errors.push(
+                    ValidationError::new(format!(
+                        "task `{name}` variant #{index} must declare one execution override or non-empty `env`, `env_files`, `env_bindings`, `inputs`, `requirements`, or `adapter_inputs`"
+                    )),
+                )
+                }
+                (None, None, None, None) if task.any_execution_kind().is_none() => errors.push(
+                    ValidationError::new(format!(
+                        "task `{name}` variant #{index} declares only task-input overlays, but task `{name}` has no base or mode-owned execution body to inherit"
+                    )),
+                ),
                 _ => {}
             }
             if let Some(compose) = variant.compose.as_ref() {
@@ -2920,7 +2949,7 @@ fn validate_tasks(
                     &format!("variant #{index}"),
                     "compose",
                     compose,
-                    &task.requirements,
+                    &merged_task_variant_requirements(task, variant),
                     errors,
                 );
             }
@@ -3776,6 +3805,10 @@ fn compose_wrapped_dependency_hydration_requires_host_tooling(
     source.compose_invocation().is_none()
 }
 
+fn dependency_hydration_declares_durable_state(effects: &crate::schema::TaskEffectsSpec) -> bool {
+    !effects.writes.is_empty() || !effects.adapter_state.is_empty()
+}
+
 fn validate_compose_wrapped_dependency_hydration_requirements(
     task_name: &str,
     source: &crate::schema::TaskDependencyHydrationSourceSpec,
@@ -4178,6 +4211,43 @@ fn validate_task_action(
             for (index, step) in spec.steps.iter().enumerate() {
                 validate_task_ensure_bundle_step(task_name, index, step, errors);
             }
+        }
+    }
+}
+
+fn validate_task_inputs(
+    task_name: &str,
+    field_path: &str,
+    inputs: &BTreeMap<String, crate::schema::TaskInputSpec>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (input_name, input) in inputs {
+        if !is_task_input_name(input_name) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` `{field_path}.{input_name}` must use lowercase snake_case"
+            )));
+        }
+        if let Some(default) = input.default.as_deref()
+            && default.trim().is_empty()
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` `{field_path}.{input_name}.default` must not be empty"
+            )));
+        }
+        for (index, allowed) in input.allowed.iter().enumerate() {
+            if allowed.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` `{field_path}.{input_name}.allowed[{index}]` must not be empty"
+                )));
+            }
+        }
+        if let Some(default) = input.default.as_deref()
+            && !input.allowed.is_empty()
+            && !input.allowed.iter().any(|value| value == default)
+        {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` `{field_path}.{input_name}.default` must be one of the allowed values"
+            )));
         }
     }
 }
@@ -4848,9 +4918,9 @@ fn validate_task_prepare(
                             "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
                         )));
                     }
-                    if effects.writes.is_empty() {
+                    if !dependency_hydration_declares_durable_state(effects) {
                         errors.push(ValidationError::new(format!(
-                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: node_package_manager` must declare at least one durable repo write in `effects.writes`"
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: node_package_manager` must declare durable state in `effects.writes` or `effects.adapter_state`"
                         )));
                     }
                     if matches!(
@@ -4963,17 +5033,29 @@ fn validate_task_prepare(
                             errors,
                         );
                     }
-                    if source.path.trim().is_empty() {
-                        errors.push(ValidationError::new(format!(
-                            "task `{task_name}` prepare `bundler` must declare a non-empty `prepare.source.path`"
-                        )));
-                    } else {
-                        validate_repo_relative_file_action_path(
-                            task_name,
-                            "prepare.source.path",
-                            source.path.as_str(),
-                            errors,
-                        );
+                    match source.path.as_deref() {
+                        Some(path) if path.trim().is_empty() => {
+                            errors.push(ValidationError::new(format!(
+                                "task `{task_name}` prepare `bundler` must not declare an empty `prepare.source.path`"
+                            )));
+                        }
+                        Some(path) => {
+                            validate_repo_relative_file_action_path(
+                                task_name,
+                                "prepare.source.path",
+                                path,
+                                errors,
+                            );
+                        }
+                        None if compose_wrapped_dependency_hydration_requires_host_tooling(
+                            &spec.source,
+                        ) =>
+                        {
+                            errors.push(ValidationError::new(format!(
+                                "task `{task_name}` prepare `bundler` must declare `prepare.source.path` for host-side repo-local gem hydration"
+                            )));
+                        }
+                        None => {}
                     }
                     if compose_wrapped_dependency_hydration_requires_host_tooling(&spec.source)
                         && !requirements
@@ -4997,9 +5079,9 @@ fn validate_task_prepare(
                             "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
                         )));
                     }
-                    if effects.writes.is_empty() {
+                    if !dependency_hydration_declares_durable_state(effects) {
                         errors.push(ValidationError::new(format!(
-                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: bundler` must declare at least one durable repo write in `effects.writes`"
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: bundler` must declare durable state in `effects.writes` or `effects.adapter_state`"
                         )));
                     }
                 }
@@ -5050,9 +5132,9 @@ fn validate_task_prepare(
                             "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
                         )));
                     }
-                    if effects.writes.is_empty() {
+                    if !dependency_hydration_declares_durable_state(effects) {
                         errors.push(ValidationError::new(format!(
-                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: uv` must declare at least one durable repo write in `effects.writes`"
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: uv` must declare durable state in `effects.writes` or `effects.adapter_state`"
                         )));
                     }
                 }
@@ -5103,9 +5185,9 @@ fn validate_task_prepare(
                             "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
                         )));
                     }
-                    if effects.writes.is_empty() {
+                    if !dependency_hydration_declares_durable_state(effects) {
                         errors.push(ValidationError::new(format!(
-                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: poetry` must declare at least one durable repo write in `effects.writes`"
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: poetry` must declare durable state in `effects.writes` or `effects.adapter_state`"
                         )));
                     }
                     for (index, group) in source.groups.iter().enumerate() {
@@ -5208,9 +5290,9 @@ fn validate_task_prepare(
                             "task `{task_name}` prepare `dependency_hydration` must declare `effects.network_kind: dependency_hydration`"
                         )));
                     }
-                    if effects.writes.is_empty() {
+                    if !dependency_hydration_declares_durable_state(effects) {
                         errors.push(ValidationError::new(format!(
-                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: helm` must declare at least one durable repo write in `effects.writes`"
+                            "task `{task_name}` prepare `dependency_hydration` with `source.kind: helm` must declare durable state in `effects.writes` or `effects.adapter_state`"
                         )));
                     }
                 }
@@ -6864,7 +6946,7 @@ fn validate_task_runtime(
                                     compose.invocation.kind,
                                     crate::schema::TaskComposeExecutionKind::Up
                                 )
-                                    .then_some(compose.invocation.services.as_slice())
+                                .then_some(compose.invocation.services.as_slice())
                             })
                             .or_else(|| {
                                 execution.launch().and_then(|launch| match launch {
@@ -6880,7 +6962,9 @@ fn validate_task_runtime(
                             )));
                         } else if let Some(declared_services) = declared_services
                             && !declared_services.is_empty()
-                            && !declared_services.iter().any(|declared| declared.trim() == service)
+                            && !declared_services
+                                .iter()
+                                .any(|declared| declared.trim() == service)
                         {
                             errors.push(ValidationError::new(format!(
                                 "task `{task_name}` listener `{listener_name}` `project.publication.compose.service: {service}` is not included in the selected compose service set"
@@ -12715,6 +12799,284 @@ fn validate_task_requirement_references(
     }
 }
 
+fn merged_task_variant_requirements(
+    task: &TaskSpec,
+    variant: &crate::schema::TaskVariantSpec,
+) -> crate::schema::TaskRequirementsSpec {
+    let mut merged = task.requirements.clone();
+    for (name, requirement) in &variant.requirements.runtimes {
+        let overlay = merged
+            .runtimes
+            .get(name)
+            .map(|base| base.merged_with_overlay(requirement))
+            .unwrap_or_else(|| requirement.clone());
+        merged.runtimes.insert(name.clone(), overlay);
+    }
+    for (name, requirement) in &variant.requirements.tools {
+        let overlay = merged
+            .tools
+            .get(name)
+            .map(|base| base.merged_with_overlay(requirement))
+            .unwrap_or_else(|| requirement.clone());
+        merged.tools.insert(name.clone(), overlay);
+    }
+    merged.toolchains = merged_task_variant_named_requirements(
+        &merged.toolchains,
+        &variant.requirements.toolchains,
+    );
+    merged.native =
+        merged_task_variant_named_requirements(&merged.native, &variant.requirements.native);
+    merged.env = merged_task_variant_named_requirements(&merged.env, &variant.requirements.env);
+    merged.checks =
+        merged_task_variant_named_requirements(&merged.checks, &variant.requirements.checks);
+    merged.any_of.extend(variant.requirements.any_of.clone());
+    merged
+}
+
+fn merged_task_variant_named_requirements(base: &[String], overlay: &[String]) -> Vec<String> {
+    let mut merged = Vec::with_capacity(base.len() + overlay.len());
+    let mut seen = BTreeSet::new();
+    for value in base.iter().chain(overlay.iter()) {
+        if seen.insert(value.as_str()) {
+            merged.push(value.clone());
+        }
+    }
+    merged
+}
+
+fn validate_task_variant_requirement_references(
+    contract: &Contract,
+    task_name: &str,
+    index: usize,
+    task: &TaskSpec,
+    variant: &crate::schema::TaskVariantSpec,
+    errors: &mut Vec<ValidationError>,
+) {
+    let requirements = &variant.requirements;
+    let variant_os = variant.when.os.as_deref().unwrap_or("linux");
+    validate_named_versions(
+        &format!("task `{task_name}` variants[{index}] runtime requirement"),
+        &requirements.runtimes,
+        errors,
+        |value| value.version(),
+    );
+    validate_runtime_details(&requirements.runtimes, errors);
+    validate_named_versions(
+        &format!("task `{task_name}` variants[{index}] tool requirement"),
+        &requirements.tools,
+        errors,
+        |value| value.version(),
+    );
+    validate_tool_details(&requirements.tools, errors);
+
+    for (branch_index, branch) in requirements.any_of.iter().enumerate() {
+        validate_named_versions(
+            &format!(
+                "task `{task_name}` variants[{index}].requirements.any_of[{branch_index}] runtime requirement"
+            ),
+            &branch.runtimes,
+            errors,
+            |value| value.version(),
+        );
+        validate_runtime_details(&branch.runtimes, errors);
+        validate_named_versions(
+            &format!(
+                "task `{task_name}` variants[{index}].requirements.any_of[{branch_index}] tool requirement"
+            ),
+            &branch.tools,
+            errors,
+            |value| value.version(),
+        );
+        validate_tool_details(&branch.tools, errors);
+        if branch.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` variants[{index}].requirements.any_of[{branch_index}] must declare at least one requirement (`runtimes`, `tools`, `toolchains`, `native`, `env`, or `checks`)"
+            )));
+        }
+        if branch.when.backend.is_none() && branch.when.context.is_none() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` variants[{index}].requirements.any_of[{branch_index}] must declare `when.backend` or `when.context`"
+            )));
+        }
+        if let Some(context_name) = branch.when.context.as_deref() {
+            if context_name.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` variants[{index}].requirements.any_of[{branch_index}] must not declare an empty `when.context`"
+                )));
+            } else if let Some(execution) = contract.execution.as_ref() {
+                if !execution.contexts.contains_key(context_name) {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` variants[{index}].requirements.any_of[{branch_index}] references unknown execution context `{context_name}`"
+                    )));
+                } else if let Some(required_backend) = branch.when.backend
+                    && let Some(context) = execution.contexts.get(context_name)
+                    && context.backend != required_backend
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` variants[{index}].requirements.any_of[{branch_index}] declares backend `{}` but context `{context_name}` uses backend `{}`",
+                        format_backend(required_backend),
+                        format_backend(context.backend),
+                    )));
+                }
+            } else {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` variants[{index}].requirements.any_of[{branch_index}] declares `when.context: {context_name}` but this contract does not define `execution.contexts`"
+                )));
+            }
+        }
+    }
+
+    let mut matcher_keys = BTreeSet::new();
+    for (branch_index, branch) in requirements.any_of.iter().enumerate() {
+        let matcher_key = format!(
+            "backend:{}|context:{}",
+            branch.when.backend.map(format_backend).unwrap_or("any"),
+            branch.when.context.as_deref().unwrap_or("any")
+        );
+        if !matcher_keys.insert(matcher_key.clone()) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` variants[{index}].requirements.any_of[{branch_index}] duplicates matcher `{matcher_key}`"
+            )));
+        }
+    }
+
+    let backend = task.workflow_backend(contract.execution.as_ref());
+    let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
+    let mut requirement_toolchains =
+        contract.task_toolchain_names_for_execution_for_os(task, backend, context_name, variant_os);
+    requirement_toolchains.extend(requirements.toolchains.iter().cloned());
+    for branch in &requirements.any_of {
+        requirement_toolchains.extend(branch.toolchains.iter().cloned());
+    }
+    requirement_toolchains.sort();
+    requirement_toolchains.dedup();
+
+    validate_named_toolchain_requirements(
+        contract,
+        &requirements.toolchains,
+        &format!("task `{task_name}` variants[{index}]"),
+        &format!("`tasks.{task_name}.variants[{index}].requirements.toolchains`"),
+        errors,
+    );
+    for (branch_index, branch) in requirements.any_of.iter().enumerate() {
+        validate_named_toolchain_requirements(
+            contract,
+            &branch.toolchains,
+            &format!("task `{task_name}` variants[{index}] requirements.any_of[{branch_index}]"),
+            &format!(
+                "`tasks.{task_name}.variants[{index}].requirements.any_of[{branch_index}].toolchains`"
+            ),
+            errors,
+        );
+    }
+    validate_tool_requirements_have_deterministic_toolchain_ownership(
+        contract,
+        &requirements.tools,
+        &requirement_toolchains,
+        &format!("task `{task_name}` variants[{index}]"),
+        &format!("`tasks.{task_name}.variants[{index}].requirements.toolchains`"),
+        errors,
+    );
+    for (branch_index, branch) in requirements.any_of.iter().enumerate() {
+        let branch_backend = branch.when.backend.unwrap_or(backend);
+        let branch_context_name = branch
+            .when
+            .context
+            .as_deref()
+            .or_else(|| task.context_for_backend(contract.execution.as_ref(), branch_backend));
+        let branch_toolchains = contract.task_toolchain_names_for_execution_for_os(
+            task,
+            branch_backend,
+            branch_context_name,
+            variant_os,
+        );
+        validate_tool_requirements_have_deterministic_toolchain_ownership(
+            contract,
+            &branch.tools,
+            &branch_toolchains,
+            &format!("task `{task_name}` variants[{index}].requirements.any_of[{branch_index}]"),
+            &format!(
+                "`tasks.{task_name}.variants[{index}].requirements.any_of[{branch_index}].toolchains`"
+            ),
+            errors,
+        );
+    }
+
+    let mut requirement_env = requirements.env.clone();
+    for branch in &requirements.any_of {
+        requirement_env.extend(branch.env.iter().cloned());
+    }
+    requirement_env.sort();
+    requirement_env.dedup();
+    for env_name in &requirement_env {
+        if env_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` variants[{index}] must not declare an empty `requirements.env` entry"
+            )));
+            continue;
+        }
+        if !contract.env.contains_key(env_name) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` variants[{index}] references unknown environment requirement `{env_name}` in `requirements.env`"
+            )));
+        }
+    }
+
+    let mut requirement_native = requirements.native.clone();
+    for branch in &requirements.any_of {
+        requirement_native.extend(branch.native.iter().cloned());
+    }
+    requirement_native.sort();
+    requirement_native.dedup();
+    for native_name in &requirement_native {
+        if native_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` variants[{index}] must not declare an empty `requirements.native` entry"
+            )));
+            continue;
+        }
+        if !contract.native_prerequisites.contains_key(native_name) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` variants[{index}] references unknown native prerequisite `{native_name}` in `requirements.native`"
+            )));
+        }
+    }
+    validate_task_native_requirement_activations(contract, task_name, &requirement_native, errors);
+
+    let mut requirement_checks = requirements.checks.clone();
+    for branch in &requirements.any_of {
+        requirement_checks.extend(branch.checks.iter().cloned());
+    }
+    requirement_checks.sort();
+    requirement_checks.dedup();
+    for check_name in &requirement_checks {
+        if check_name.trim().is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` variants[{index}] must not declare an empty `requirements.checks` entry"
+            )));
+            continue;
+        }
+        let Some(check) = contract
+            .checks
+            .iter()
+            .find(|check| check.name == *check_name)
+        else {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` variants[{index}] references unknown check `{check_name}` in `requirements.checks`"
+            )));
+            continue;
+        };
+        if !matches!(
+            check.kind,
+            CheckKind::Precondition | CheckKind::File | CheckKind::Env | CheckKind::ChangedFiles
+        ) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` variants[{index}] references unsupported check kind `{check_name}` in `requirements.checks`; only `precondition`, `file`, `env`, or `changed_files` checks are allowed"
+            )));
+        }
+    }
+}
+
 fn validate_task_condition_references(
     contract: &Contract,
     task_name: &str,
@@ -15565,6 +15927,28 @@ fn validate_task_effects(task_name: &str, task: &TaskSpec, errors: &mut Vec<Vali
             )));
         }
     }
+
+    let mut declared_adapter_state = BTreeSet::new();
+    for state in &task.effects.adapter_state {
+        let trimmed = state.trim();
+        if trimmed.is_empty() {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `adapter_state` entries must not be empty"
+            )));
+            continue;
+        }
+        if !is_valid_adapter_state_token(trimmed) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `adapter_state` entry `{trimmed}` must be a lowercase `<adapter_family>:<state_name>` token like `compose_volume:bundle_data`"
+            )));
+            continue;
+        }
+        if !declared_adapter_state.insert(trimmed.to_owned()) {
+            errors.push(ValidationError::new(format!(
+                "task `{task_name}` effect `adapter_state` must not contain duplicate entry `{trimmed}`"
+            )));
+        }
+    }
 }
 
 fn validate_agent_safe_task_effects(contract: &Contract, errors: &mut Vec<ValidationError>) {
@@ -15712,6 +16096,15 @@ fn is_valid_external_state_token(value: &str) -> bool {
     }
 
     !matches!(last, '-' | '_')
+}
+
+fn is_valid_adapter_state_token(value: &str) -> bool {
+    let Some((family, state)) = value.split_once(':') else {
+        return false;
+    };
+    !state.contains(':')
+        && is_valid_external_state_token(family)
+        && is_valid_external_state_token(state)
 }
 
 fn normalized_paths_overlap(left: &str, right: &str) -> bool {
@@ -15867,7 +16260,11 @@ fn validate_workflow_instance_task_runtime_overlay(
                     errors,
                 );
             }
-            if host.path.as_deref().is_some_and(|value| value.trim().is_empty()) {
+            if host
+                .path
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+            {
                 errors.push(ValidationError::new(format!(
                     "`{field_prefix}.listeners.{listener_name}.project.host.path` must not be empty"
                 )));
@@ -15917,7 +16314,11 @@ fn validate_workflow_instance_runtime_readiness_overlay(
         .map(str::trim)
         .is_some_and(|listener| !runtime.listeners.contains_key(listener))
     {
-        let listener = readiness.listener.as_deref().map(str::trim).unwrap_or_default();
+        let listener = readiness
+            .listener
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
         errors.push(ValidationError::new(format!(
             "`{field_prefix}.readiness.listener` references unknown base listener `{listener}`"
         )));
@@ -15938,11 +16339,7 @@ fn validate_workflow_instance_runtime_readiness_overlay(
             "`{field_prefix}.readiness.path` must not be empty"
         )));
     }
-    validate_runtime_readiness_timing(
-        &format!("{field_prefix} task overlay"),
-        readiness,
-        errors,
-    );
+    validate_runtime_readiness_timing(&format!("{field_prefix} task overlay"), readiness, errors);
 }
 
 fn format_backend(backend: crate::schema::Backend) -> &'static str {
@@ -16239,9 +16636,8 @@ workflows:
         let errors = validate_contract(&contract).expect_err("invalid workflow instance overlays");
         let rendered = errors.to_string();
         assert!(
-            rendered.contains(
-                "`workflows.app.instances.ws0.tasks` references unknown task `missing`"
-            ),
+            rendered
+                .contains("`workflows.app.instances.ws0.tasks` references unknown task `missing`"),
             "{rendered}"
         );
         assert!(
@@ -21941,6 +22337,10 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  contexts:
+    host:
+      backend: native
 services:
   postgres:
     required: true
@@ -23626,16 +24026,10 @@ tasks:
             .iter()
             .any(|error| error.to_string()
                 == "task `attach` task with `compose.engine: docker` must declare `requirements.tools.docker`"));
-        assert!(errors
-            .errors()
-            .iter()
-            .any(|error| error.to_string()
-                == "task `attach` task must only declare `compose.detach: true` with `kind: exec`"));
-        assert!(errors
-            .errors()
-            .iter()
-            .any(|error| error.to_string()
-                == "task `attach` task must not declare `compose.detach: true` with `kind: attach`"));
+        assert!(errors.errors().iter().any(|error| error.to_string()
+            == "task `attach` task must only declare `compose.detach: true` with `kind: exec`"));
+        assert!(errors.errors().iter().any(|error| error.to_string()
+            == "task `attach` task must not declare `compose.detach: true` with `kind: attach`"));
     }
 
     #[test]
@@ -25114,7 +25508,9 @@ tasks:
         let rendered = errors.to_string();
         assert!(rendered.contains("must declare `requirements.toolchains: [node]`"));
         assert!(
-            rendered.contains("must declare at least one durable repo write in `effects.writes`")
+            rendered.contains(
+                "must declare durable state in `effects.writes` or `effects.adapter_state`"
+            )
         );
     }
 
@@ -25154,6 +25550,120 @@ tasks:
 
         validate_contract(&contract)
             .expect("compose-wrapped node hydration should not require host node toolchain");
+    }
+
+    #[test]
+    fn accepts_compose_wrapped_node_package_manager_prepare_with_adapter_owned_durable_state() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  install:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: app
+        manager: npm
+        mode: ci
+        compose:
+          kind: run
+          service: api
+          workdir: /workspace
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      adapter_state:
+        - compose_volume:node_modules
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("compose-wrapped node hydration should accept adapter-owned durable state");
+    }
+
+    #[test]
+    fn accepts_compose_wrapped_bundler_prepare_with_adapter_owned_durable_state() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  deps:ruby:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        path: vendor/bundle
+        compose:
+          kind: run
+          service: web
+          workdir: /app
+          rm: true
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      adapter_state:
+        - compose_volume:bundle_data
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract)
+            .expect("compose-wrapped bundler hydration should accept adapter-owned durable state");
+    }
+
+    #[test]
+    fn accepts_compose_wrapped_bundler_prepare_without_declared_repo_local_path() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  deps:ruby:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: bundler
+        cwd: .
+        compose:
+          kind: run
+          service: web
+          workdir: /app
+          rm: true
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      adapter_state:
+        - compose_volume:bundle_data
+      network: true
+      network_kind: dependency_hydration
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect(
+            "compose-wrapped bundler hydration should allow the container-default bundle path",
+        );
     }
 
     #[test]
@@ -25626,7 +26136,9 @@ tasks:
         let rendered = errors.to_string();
         assert!(rendered.contains("must declare `requirements.toolchains: [ruby]`"));
         assert!(
-            rendered.contains("must declare at least one durable repo write in `effects.writes`")
+            rendered.contains(
+                "must declare durable state in `effects.writes` or `effects.adapter_state`"
+            )
         );
     }
 
@@ -26077,6 +26589,10 @@ tasks:
 version: 1
 project:
   name: ota
+execution:
+  contexts:
+    host:
+      backend: native
 services:
   postgres:
     endpoints:
@@ -26198,6 +26714,236 @@ tasks:
             errors.errors()[0].to_string(),
             "task `setup` must not declare multiple variants for `when.os: macos`"
         );
+    }
+
+    #[test]
+    fn allows_task_variant_with_adapter_inputs_only() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    compose:
+      kind: up
+      detach: true
+      services:
+        - web
+    requirements:
+      tools:
+        docker: "*"
+    variants:
+      - when:
+          os: linux
+        adapter_inputs:
+          overlays:
+            compose:
+              files:
+                - compose.linux.yaml
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("adapter-input-only variant should be valid");
+    }
+
+    #[test]
+    fn allows_task_variant_with_env_only() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    command:
+      exe: echo
+      args:
+        - hi
+    variants:
+      - when:
+          os: linux
+        env:
+          APP_MODE: linux
+        env_files:
+          - .env.linux
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("env-only variant should be valid");
+    }
+
+    #[test]
+    fn allows_task_variant_with_env_bindings_only() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  contexts:
+    host:
+      backend: native
+services:
+  postgres:
+    endpoints:
+      host:
+        address: 127.0.0.1
+        port: 5432
+tasks:
+  test:
+    command:
+      exe: echo
+      args:
+        - hi
+    variants:
+      - when:
+          os: linux
+        env_bindings:
+          DATABASE_URL:
+            from_service:
+              service: postgres
+              view: host
+              scheme: postgres
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("env-binding-only variant should be valid");
+    }
+
+    #[test]
+    fn allows_task_variant_with_inputs_only() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    command:
+      exe: echo
+      args:
+        - hi
+    variants:
+      - when:
+          os: linux
+        inputs:
+          profile:
+            default: ci
+            allowed:
+              - ci
+              - prod
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("input-only variant should be valid");
+    }
+
+    #[test]
+    fn allows_task_variant_with_requirements_only() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    command:
+      exe: echo
+      args:
+        - hi
+    variants:
+      - when:
+          os: linux
+        requirements:
+          tools:
+            podman: "*"
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("requirements-only variant should be valid");
+    }
+
+    #[test]
+    fn rejects_task_variant_any_of_tool_requirement_without_explicit_toolchain_scope() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.94.0"
+tasks:
+  lint:
+    run: cargo fmt --check
+    variants:
+      - when:
+          os: linux
+        requirements:
+          any_of:
+            - when:
+                backend: native
+              tools:
+                cargo: "*"
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("variant branch tool requirements should demand explicit toolchain scope")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `lint` variants[0].requirements.any_of[0] references tool requirement `cargo` in `requirements.tools` without an explicit toolchain scope"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_empty_task_variant_without_execution_or_adapter_inputs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  dev:
+    command:
+      exe: echo
+      args:
+        - hi
+    variants:
+      - when:
+          os: linux
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        assert!(errors.errors().iter().any(|error| {
+            error.to_string().contains(
+                "task `dev` variant #0 must declare one execution override or non-empty `env`, `env_files`, `env_bindings`, `inputs`, `requirements`, or `adapter_inputs`",
+            )
+        }));
     }
 
     #[test]
@@ -33204,6 +33950,53 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `setup` effect `external_state` must not contain duplicate entry `docker`",
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_task_adapter_state_effect_entries() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    run: pnpm install
+    effects:
+      adapter_state:
+        - ComposeVolume:bundle_data
+        - ""
+        - compose_volume:bundle_data
+        - compose_volume:bundle_data
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid adapter state entries should fail validation")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup` effect `adapter_state` entry `ComposeVolume:bundle_data` must be a lowercase `<adapter_family>:<state_name>` token like `compose_volume:bundle_data`",
+            )),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error
+                .contains("task `setup` effect `adapter_state` entries must not be empty",)),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup` effect `adapter_state` must not contain duplicate entry `compose_volume:bundle_data`",
             )),
             "{rendered:?}"
         );

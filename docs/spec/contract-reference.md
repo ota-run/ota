@@ -477,7 +477,7 @@ Current implementation:
 - ota injects `OTA_WORKSPACE` into task execution so backend-aware workspace-relative paths stay explicit without hardcoding `/workspace`
 - ota also injects `OTA_HOST_WORKSPACE` into task execution so host-launched tasks can still refer to the real repo path even when the selected backend or helper workflow path also publishes `OTA_WORKSPACE`
 - ota also injects `OTA_HOST_HOME` into task execution so selected workflow instances can derive stable host-owned clone or cache roots without shell `echo $HOME` / `%USERPROFILE%` glue
-- ota injects `OTA_HOST_UID` on Unix-like hosts so host-launched service and compose paths can pass the real host user id into deterministic env interpolation without shell `id -u` glue; on non-Unix hosts the value is absent unless the contract resolves it some other way
+- ota injects `OTA_HOST_UID` and `OTA_HOST_GID` on Unix-like hosts so host-launched service and compose paths can pass the real host user/group ids into deterministic env interpolation without shell `id -u` / `id -g` glue; on non-Unix hosts those values are absent unless the contract resolves them some other way
 - task env precedence is: resolved context env, then `tasks.<name>.env`, then selected `tasks.<name>.execution.modes.<mode>.env`
 - ota-derived cache env is fallback-only and currently covers `MAVEN_OPTS` for isolated `.m2`, `NPM_CONFIG_CACHE` for isolated `.npm`, `PNPM_STORE_DIR` for isolated `.pnpm-store`, `GRADLE_USER_HOME` for isolated `.gradle`, `PIP_CACHE_DIR` for isolated `.pip-cache`, and `POETRY_CACHE_DIR` for isolated `.pypoetry-cache`; explicit task or context env still wins
 - container contexts can declare `container.resources.memory` so ota requests a deterministic container memory limit; `ota run --memory <size>` overrides one run while keeping task identity and internal listener bind ports unchanged
@@ -1714,6 +1714,30 @@ tasks:
       network_kind: dependency_hydration
       external_state:
         - docker
+  setup:container:deps:
+    description: Hydrate container-owned dependencies through a declared Compose service
+    category: setup
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: app
+        manager: npm
+        mode: ci
+        compose:
+          kind: run
+          service: api
+          workdir: /workspace/app
+          rm: true
+    requirements:
+      tools:
+        docker: "*"
+    effects:
+      adapter_state:
+        - compose_volume:node_modules
+      network: true
+      network_kind: dependency_hydration
   setup:
     description: Install dependencies
     category: setup
@@ -1871,6 +1895,8 @@ Fields:
   remote services during execution
 - `network_kind`: optional network lane classifier (`broad`, `dependency_hydration`,
   `integration_test`, or `tool_bootstrap`) for networked task paths
+- `adapter_state`: optional list of lowercase `<adapter_family>:<state_name>` tokens naming
+  durable adapter-owned state the task mutates, such as `compose_volume:bundle_data`
 - `external_state`: optional list of lowercase tokens naming out-of-repo state the task mutates,
   such as `docker` or `postgres`
 
@@ -1891,8 +1917,12 @@ Task-effect rules:
   `effects.network_kind: broad` (or omit `network_kind`) for wider API/remote-call execution
 - use `effects.external_state` when the task mutates state outside the repo filesystem, such as
   Docker resources, databases, or hosted services
+- use `effects.adapter_state` when durable state lives behind an adapter boundary instead of a
+  repo path, such as a Compose volume that persists Bundler gems or `node_modules`
 - `effects.network_kind` requires `effects.network: true`
 - keep entries relative, normalized, and free of `..` segments
+- keep `effects.adapter_state` entries as lowercase `<adapter_family>:<state_name>` tokens so
+  adapter-owned durability stays machine-readable instead of collapsing back to prose
 - keep `effects.external_state` entries as lowercase tokens so the side-effect surface stays
   machine-readable instead of turning into prose
 - prefer shipped canonical `effects.external_state` tokens when they fit:
@@ -1983,7 +2013,7 @@ Task-effect rules:
       - `prepare.source.compose.tty`: optional TTY preservation; omitted means ota adds `-T` for deterministic non-interactive execution
     - `prepare.source.kind: bundler`
     - `prepare.source.cwd`: required repo-relative working directory for the Bundler invocation
-    - `prepare.source.path`: required repo-relative bundle install path for the repo-local gem lane
+    - `prepare.source.path`: optional repo-relative bundle install path; required for the repo-local gem lane, omitted for compose-wrapped lanes that truthfully use the container-default Bundler path
     - `prepare.source.kind: uv`
     - `prepare.source.cwd`: required repo-relative working directory for the `uv sync` invocation
     - `prepare.source.kind: poetry`
@@ -2019,12 +2049,12 @@ Task-effect rules:
 - `prepare.kind: tool_bootstrap` currently requires `requirements.toolchains: [python]`, `effects.network: true`, and `effects.network_kind: tool_bootstrap`
 - use `prepare.kind: tool_bootstrap` when the task truth is contract-owned tool installation rather than repo dependency hydration; for example bootstrapping `uv` through `pip`
 - `prepare.kind: dependency_hydration` currently requires `effects.network: true` and `effects.network_kind: dependency_hydration`; add tool or toolchain requirements that match the selected hydration source and wrapper
-- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Node toolchain truth for the in-container command
-- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: bundler` currently requires `requirements.toolchains: [ruby]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Ruby toolchain truth for the in-container command
-- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: uv` currently requires `requirements.toolchains: [python]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Python toolchain truth for the in-container command
-- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: poetry` currently requires `requirements.toolchains: [python]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Python toolchain truth for the in-container command
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Node toolchain truth for the in-container command
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: bundler` currently requires `requirements.toolchains: [ruby]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; host-side repo-local gem hydration also requires `prepare.source.path`, while compose-wrapped lanes may omit it when Bundler truthfully uses the container-default install path; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Ruby toolchain truth for the in-container command
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: uv` currently requires `requirements.toolchains: [python]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Python toolchain truth for the in-container command
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: poetry` currently requires `requirements.toolchains: [python]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Python toolchain truth for the in-container command
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: go_modules` currently requires `requirements.toolchains: [go]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Go toolchain truth for the in-container command
-- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: helm` currently requires `requirements.tools.helm`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and at least one durable repo write in `effects.writes`
+- `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: helm` currently requires `requirements.tools.helm`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: maven` currently requires `requirements.toolchains: [java]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`; when `prepare.source.wrapper` is absent or false, it also requires `requirements.tools.maven`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Java or Maven tool truth for the in-container command
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: gradle` currently requires `requirements.toolchains: [java]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`; when `prepare.source.wrapper` is absent or false, it also requires `requirements.tools.gradle`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Java or Gradle tool truth for the in-container command
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: cargo` currently requires `requirements.toolchains: [rust]`, `effects.network: true`, and `effects.network_kind: dependency_hydration`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Rust toolchain truth for the in-container command
@@ -2036,7 +2066,9 @@ Task-effect rules:
 - `prepare.source.manager: yarn` may also declare `inline_builds: true` when the repo truth is `yarn install --inline-builds`
 - `prepare.source.manager: bun` currently uses `mode: install`; use `frozen_lockfile: true` when the repo truth is strict `bun install --frozen-lockfile`
 - `prepare.source.compose` wraps the typed hydration lane through `docker|podman compose exec/run`; keep package-manager truth under `prepare.source.kind` and service/container truth under `prepare.source.compose`
-- `prepare.source.kind: bundler` currently executes the narrow canonical repo-local gem hydration lane: `bundle config set path <path> && bundle install`
+- `prepare.source.kind: bundler` currently executes one of two narrow canonical hydration lanes:
+  - host-side or explicit repo-local path truth: `bundle config set path <path> && bundle install`
+  - compose-wrapped container-default path truth: `bundle install`
 - `prepare.source.kind: uv` currently executes the narrow canonical uv hydration lane: `uv sync`
 - `prepare.source.kind: poetry` currently executes the narrow canonical Poetry hydration lane: `poetry install`, with optional `--with` or `--only` group selection and optional `--no-root`
 - `prepare.source.kind: go_modules` currently executes the narrow canonical Go module hydration lane: `go mod download`
@@ -3012,7 +3044,9 @@ tasks:
 Variant fields:
 
 - `when.os`: required for each current variant entry; supported values are `linux`, `macos`, and `windows`
-- exactly one of `run`, `script`, or `command`
+- optional one execution override: `run`, `script`, `command`, or `compose`
+- optional `env` / `env_files` / `env_bindings` / `inputs` / `requirements` when the task keeps the same body but needs OS-scoped process or requirement truth
+- optional `adapter_inputs` when the task keeps the same body but needs OS-scoped Compose/Bake/Helm overlay truth
 
 Hook fields:
 
@@ -3042,7 +3076,8 @@ Rules:
 - `run` must be non-empty when present
 - `script` must be non-empty when present
 - variant entries must declare `when.os`
-- variant entries must declare exactly one of `run`, `script`, or `command`
+- variant entries may declare one execution override (`run`, `script`, `command`, or `compose`) and/or non-empty `env`, `env_files`, `env_bindings`, `inputs`, `requirements`, or `adapter_inputs`
+- variant entries must not declare more than one execution override
 - duplicate variants for the same `when.os` are rejected
 - dependency references must resolve to known tasks
 - aggregate member references must resolve to known tasks
@@ -3059,7 +3094,9 @@ Current execution model:
 - `command` is the structured finite argv execution form
 - `aggregate` executes its declared `aggregate.tasks` in order and records the parent aggregate task as the requested entrypoint
 - task `env` values are applied when ota runs the task and override repo-level env with the same name
+- selected variant `env`, `env_files`, and `env_bindings` overlay onto the task-level process input truth before backend-mode-specific overrides apply
 - when variants are declared, ota resolves the best matching `when.os` entry first and falls back to the default execution
+- if the selected variant only declares task-input overlays (`env`, `env_files`, `env_bindings`, `inputs`, `requirements`, or `adapter_inputs`), ota keeps the base task body and applies the selected OS-scoped overlays on top of task-level truth
 - `depends_on` runs before the task body
 - dependency-plane selection is explicit: when the parent task resolves to a backend and a dependency truthfully supports that same backend through `execution.default_mode` or `execution.modes.<mode>`, ota keeps the dependency on that plane for the invocation; otherwise the dependency falls back to its own canonical backend selection
 - `aggregate` replaces fake no-op wrappers such as `run: "true"` for verification entrypoints like `verify`
@@ -3369,6 +3406,7 @@ Current behavior:
 - keep instance truth bounded and explicit: this first-class lane is for instance-specific env overrides, task adapter input overrides, and surface port/path overlays, not arbitrary free-form templating across the whole contract
 - use `workflows.<name>.instances.<instance>.env` when every task on the selected workflow path should inherit one instance-specific env value such as a cloned workspace root
 - use `workflows.<name>.instances.<instance>.tasks.<task>.adapter_inputs` when one selected task path needs instance-specific compose project naming, bake files, or other adapter-owned truth without splitting the workflow into repo-local shell variants
+- use `tasks.<name>.variants` with `variants.<i>.env`, `variants.<i>.env_files`, `variants.<i>.env_bindings`, `variants.<i>.inputs`, `variants.<i>.requirements`, or `variants.<i>.adapter_inputs` when one task keeps the same body but needs OS-scoped process, prerequisite, or adapter overlays such as Linux-only host uid/gid interpolation, service-derived URLs, input defaults/allowed values, platform-specific tool requirements, Compose files, env files, or profiles
 - use `workflows.<name>.instances.<instance>.tasks.<task>.runtime` when one selected task path needs instance-specific service listener publication or readiness selection and the base task already owns explicit `runtime` truth
 - keep workflow-instance runtime specialization on the task runtime boundary: override existing listener bind/project ports or readiness fields there instead of inventing a separate workflow-level listener model
 - workflow-instance task runtime overlays currently merge onto an existing top-level task `runtime`; they do not invent new listeners or replace runtime ownership from scratch

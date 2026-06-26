@@ -109,9 +109,7 @@ fn assert_matches_published_contract_schema(source: &Path, contents: &str, compi
             .map(|error| {
                 format!(
                     "{} | instance: {} | schema: {}",
-                    error,
-                    error.instance_path,
-                    error.schema_path
+                    error, error.instance_path, error.schema_path
                 )
             })
             .collect::<Vec<_>>();
@@ -140,9 +138,7 @@ fn assert_matches_published_workspace_contract_schema(
             .map(|error| {
                 format!(
                     "{} | instance: {} | schema: {}",
-                    error,
-                    error.instance_path,
-                    error.schema_path
+                    error, error.instance_path, error.schema_path
                 )
             })
             .collect::<Vec<_>>();
@@ -160,9 +156,7 @@ fn assert_serialized_value_matches_schema(source: &Path, value: &Value, compiled
             .map(|error| {
                 format!(
                     "{} | instance: {} | schema: {}",
-                    error,
-                    error.instance_path,
-                    error.schema_path
+                    error, error.instance_path, error.schema_path
                 )
             })
             .collect::<Vec<_>>();
@@ -629,7 +623,7 @@ fn canonical_contract_reference_keeps_structured_command_and_aggregate_guidance(
             "- `aggregate.tasks`: required non-empty ordered list of task names ota should execute as the aggregate body",
             "- `aggregate` is a task body, so it is mutually exclusive with `run`, `script`, `command`, `compose`, `prepare`, `launch`, and `action`",
             "- tasks must declare exactly one task body: `run`, `script`, `command`, `compose`, `prepare`, `launch`, `action`, or `aggregate`, unless the task intentionally resolves through variants or execution-mode inheritance",
-            "- variant entries must declare exactly one of `run`, `script`, or `command`",
+            "- variant entries may declare one execution override (`run`, `script`, `command`, or `compose`) and/or non-empty `env`, `env_files`, `env_bindings`, `inputs`, `requirements`, or `adapter_inputs`",
         ],
     );
 }

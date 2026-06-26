@@ -10874,7 +10874,7 @@ fn selected_task_requirement_check_names(
         let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
         let scoped_checks = task.scoped_check_requirements_for_execution(backend, context_name);
         let scoped_native = task.scoped_native_requirements_for_execution(backend, context_name);
-        if !task.requirements.is_empty() {
+        if !scoped_checks.is_empty() || !scoped_native.is_empty() {
             scoped = true;
         }
         selected.extend(scoped_checks);

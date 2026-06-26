@@ -866,7 +866,7 @@ fn normalize_detected_ruby_starter(contract: &mut DetectContract, root: &Path) {
                 "Hydrate Ruby gem dependencies through Bundler.",
                 TaskDependencyHydrationSourceSpec::Bundler(TaskBundlerHydrationSourceSpec {
                     cwd: String::from("."),
-                    path: String::from("vendor/bundle"),
+                    path: Some(String::from("vendor/bundle")),
                     compose: None,
                 }),
                 "ruby",
@@ -2862,7 +2862,7 @@ pub(crate) fn starter_pack_contract(config: StarterPackConfig, root: &Path) -> D
                     "Hydrate Ruby gem dependencies through Bundler.",
                     TaskDependencyHydrationSourceSpec::Bundler(TaskBundlerHydrationSourceSpec {
                         cwd: String::from("."),
-                        path: String::from("vendor/bundle"),
+                        path: Some(String::from("vendor/bundle")),
                         compose: None,
                     }),
                     "ruby",

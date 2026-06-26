@@ -466,7 +466,9 @@ pub fn validate_workspace_contract(
                     }
                 }
                 if let Some(workflow_name) = repo.workflow.as_deref()
-                    && repo_contract.selected_workflow(Some(workflow_name)).is_none()
+                    && repo_contract
+                        .selected_workflow(Some(workflow_name))
+                        .is_none()
                 {
                     errors.push(WorkspaceValidationError::new(format!(
                         "workspace repo `{}` workflow `{}` is not declared in contract `{}`",
@@ -1790,8 +1792,7 @@ repos:
         )
         .unwrap();
 
-        validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
-            .unwrap();
+        validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract).unwrap();
     }
 
     #[test]

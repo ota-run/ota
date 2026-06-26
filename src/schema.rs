@@ -488,12 +488,22 @@ impl Contract {
         backend: Backend,
         context_name: Option<&str>,
     ) -> Vec<String> {
+        self.task_toolchain_names_for_execution_for_os(task, backend, context_name, current_os())
+    }
+
+    pub fn task_toolchain_names_for_execution_for_os(
+        &self,
+        task: &TaskSpec,
+        backend: Backend,
+        context_name: Option<&str>,
+        os: &str,
+    ) -> Vec<String> {
         let context_toolchains = context_name
             .and_then(|name| self.execution.as_ref()?.contexts.get(name))
             .map(|context| context.requirements.toolchains.as_slice())
             .unwrap_or_default();
         merged_named_requirements(
-            &task.scoped_toolchain_requirements_for_execution(backend, context_name),
+            &task.scoped_toolchain_requirements_for_execution_for_os(backend, context_name, os),
             context_toolchains,
         )
     }
@@ -912,15 +922,12 @@ fn collect_workflow_instance_dependents(
     dependents: &mut Vec<String>,
 ) {
     for (candidate_name, candidate) in &instances.items {
-        let requires_selected = candidate
-            .topology
-            .as_ref()
-            .is_some_and(|topology| {
-                topology
-                    .requires_instances
-                    .iter()
-                    .any(|required| required.trim() == instance_name)
-            });
+        let requires_selected = candidate.topology.as_ref().is_some_and(|topology| {
+            topology
+                .requires_instances
+                .iter()
+                .any(|required| required.trim() == instance_name)
+        });
         if !requires_selected || !visited.insert(candidate_name.clone()) {
             continue;
         }
@@ -1588,6 +1595,90 @@ impl TaskRequirementsSpec {
             .filter(|(_, entry)| entry.when.matches(backend, context_name))
             .max_by_key(|(_, entry)| entry.when.specificity())
             .map(|(_, entry)| entry)
+    }
+
+    pub fn selected_runtime_requirements_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> BTreeMap<String, RuntimeRequirement> {
+        let mut runtimes = self.runtimes.clone();
+        if let Some(selected_any_of) = self.selected_any_of(backend, context_name) {
+            for (name, requirement) in &selected_any_of.runtimes {
+                let merged = runtimes
+                    .get(name)
+                    .map(|base| base.merged_with_overlay(&requirement))
+                    .unwrap_or_else(|| requirement.clone());
+                runtimes.insert(name.clone(), merged);
+            }
+        }
+        runtimes
+    }
+
+    pub fn selected_tool_requirements_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> BTreeMap<String, ToolRequirement> {
+        let mut tools = self.tools.clone();
+        if let Some(selected_any_of) = self.selected_any_of(backend, context_name) {
+            for (name, requirement) in &selected_any_of.tools {
+                let merged = tools
+                    .get(name)
+                    .map(|base| base.merged_with_overlay(&requirement))
+                    .unwrap_or_else(|| requirement.clone());
+                tools.insert(name.clone(), merged);
+            }
+        }
+        tools
+    }
+
+    pub fn selected_toolchain_requirements_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> Vec<String> {
+        let overlay = self
+            .selected_any_of(backend, context_name)
+            .map(|branch| branch.toolchains.as_slice())
+            .unwrap_or_default();
+        merged_named_requirements(&self.toolchains, overlay)
+    }
+
+    pub fn selected_native_requirements_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> Vec<String> {
+        let overlay = self
+            .selected_any_of(backend, context_name)
+            .map(|branch| branch.native.as_slice())
+            .unwrap_or_default();
+        merged_named_requirements(&self.native, overlay)
+    }
+
+    pub fn selected_env_requirements_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> Vec<String> {
+        let overlay = self
+            .selected_any_of(backend, context_name)
+            .map(|branch| branch.env.as_slice())
+            .unwrap_or_default();
+        merged_named_requirements(&self.env, overlay)
+    }
+
+    pub fn selected_check_requirements_for_execution(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> Vec<String> {
+        let overlay = self
+            .selected_any_of(backend, context_name)
+            .map(|branch| branch.checks.as_slice())
+            .unwrap_or_default();
+        merged_named_requirements(&self.checks, overlay)
     }
 }
 
@@ -4022,6 +4113,8 @@ pub struct TaskEffectsSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_kind: Option<TaskNetworkEffectKind>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adapter_state: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub external_state: Vec<String>,
 }
 
@@ -4030,6 +4123,7 @@ impl TaskEffectsSpec {
         self.writes.is_empty()
             && !self.network
             && self.network_kind.is_none()
+            && self.adapter_state.is_empty()
             && self.external_state.is_empty()
     }
 
@@ -4279,24 +4373,56 @@ impl TaskSpec {
         }
     }
 
+    pub fn any_execution_kind(&self) -> Option<&'static str> {
+        self.default_execution_kind().or_else(|| {
+            self.execution.as_ref().and_then(|execution| {
+                [
+                    execution.modes.native.as_ref(),
+                    execution.modes.container.as_ref(),
+                    execution.modes.remote.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                .find_map(TaskModeBranchSpec::execution_kind)
+            })
+        })
+    }
+
     pub fn resolved_execution(&self, os: &str) -> Option<TaskExecution<'_>> {
+        if let Some(variant) = self.selected_variant(os) {
+            if let Some(execution) = variant.execution() {
+                return Some(execution);
+            }
+            return Some(TaskExecution {
+                kind: self.default_execution_kind()?,
+                body: self.default_execution_body(),
+                command: self.command.as_ref(),
+                compose: self.compose.as_ref(),
+                launch: self.launch.as_ref(),
+                action: self.action.as_ref(),
+                prepare: self.prepare.as_ref(),
+                aggregate: self.aggregate.as_ref(),
+                os: variant.when.os.as_deref(),
+            });
+        }
+
+        Some(TaskExecution {
+            kind: self.default_execution_kind()?,
+            body: self.default_execution_body(),
+            command: self.command.as_ref(),
+            compose: self.compose.as_ref(),
+            launch: self.launch.as_ref(),
+            action: self.action.as_ref(),
+            prepare: self.prepare.as_ref(),
+            aggregate: self.aggregate.as_ref(),
+            os: None,
+        })
+    }
+
+    pub fn selected_variant(&self, os: &str) -> Option<&TaskVariantSpec> {
         self.variants
             .iter()
             .find(|variant| variant.when.matches(os))
-            .and_then(TaskVariantSpec::execution)
-            .or_else(|| {
-                Some(TaskExecution {
-                    kind: self.default_execution_kind()?,
-                    body: self.default_execution_body(),
-                    command: self.command.as_ref(),
-                    compose: self.compose.as_ref(),
-                    launch: self.launch.as_ref(),
-                    action: self.action.as_ref(),
-                    prepare: self.prepare.as_ref(),
-                    aggregate: self.aggregate.as_ref(),
-                    os: None,
-                })
-            })
     }
 
     pub fn mode_default_backend(&self) -> Option<Backend> {
@@ -4381,7 +4507,7 @@ impl TaskSpec {
         execution: Option<&Execution>,
         backend: Backend,
     ) -> BTreeMap<String, String> {
-        self.env_for_backend_with_context_name(execution, backend, None)
+        self.env_for_backend_with_context_name_for_os(execution, backend, None, current_os())
     }
 
     pub fn env_for_backend_with_context_name(
@@ -4389,6 +4515,21 @@ impl TaskSpec {
         execution: Option<&Execution>,
         backend: Backend,
         context_name_override: Option<&str>,
+    ) -> BTreeMap<String, String> {
+        self.env_for_backend_with_context_name_for_os(
+            execution,
+            backend,
+            context_name_override,
+            current_os(),
+        )
+    }
+
+    pub fn env_for_backend_with_context_name_for_os(
+        &self,
+        execution: Option<&Execution>,
+        backend: Backend,
+        context_name_override: Option<&str>,
+        os: &str,
     ) -> BTreeMap<String, String> {
         let mut merged = context_name_override
             .and_then(|context_name| {
@@ -4405,6 +4546,9 @@ impl TaskSpec {
             .map(|context| context.env.clone())
             .unwrap_or_default();
         merged.extend(self.env.clone());
+        if let Some(variant) = self.selected_variant(os) {
+            merged.extend(variant.env.clone());
+        }
         if let Some(branch) = self.mode_execution_branch(backend) {
             merged.extend(branch.env.clone());
         }
@@ -4412,19 +4556,72 @@ impl TaskSpec {
     }
 
     pub fn env_files_for_backend(&self, backend: Backend) -> Vec<String> {
+        self.env_files_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn env_files_for_backend_for_os(&self, backend: Backend, os: &str) -> Vec<String> {
         let mut merged = self.env_files.clone();
+        if let Some(variant) = self.selected_variant(os) {
+            merged.extend(variant.env_files.clone());
+        }
         if let Some(branch) = self.mode_execution_branch(backend) {
             merged.extend(branch.env_files.clone());
         }
         merged
     }
 
+    pub fn inputs_for_os(&self, os: &str) -> BTreeMap<String, TaskInputSpec> {
+        let mut merged = self.inputs.clone();
+        if let Some(variant) = self.selected_variant(os) {
+            merged.extend(variant.inputs.clone());
+        }
+        merged
+    }
+
+    pub fn inputs_for_current_os(&self) -> BTreeMap<String, TaskInputSpec> {
+        self.inputs_for_os(current_os())
+    }
+
+    fn selected_variant_requirements(&self, os: &str) -> Option<&TaskRequirementsSpec> {
+        self.selected_variant(os)
+            .map(|variant| &variant.requirements)
+    }
+
+    fn selected_variant_compose_adapter_inputs(
+        &self,
+        os: &str,
+    ) -> Option<TaskComposeAdapterInputsSpec> {
+        self.selected_variant(os)
+            .and_then(|variant| variant.adapter_inputs.effective_compose())
+    }
+
+    fn selected_variant_bake_adapter_inputs(&self, os: &str) -> Option<TaskBakeAdapterInputsSpec> {
+        self.selected_variant(os)
+            .and_then(|variant| variant.adapter_inputs.effective_bake())
+    }
+
+    fn selected_variant_helm_adapter_inputs(&self, os: &str) -> Option<TaskHelmAdapterInputsSpec> {
+        self.selected_variant(os)
+            .and_then(|variant| variant.adapter_inputs.effective_helm())
+    }
+
     pub fn compose_adapter_env_files_for_backend(&self, backend: Backend) -> Vec<String> {
+        self.compose_adapter_env_files_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn compose_adapter_env_files_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Vec<String> {
         let mut merged = self
             .adapter_inputs
             .effective_compose()
             .map(|compose| compose.env_files)
             .unwrap_or_default();
+        if let Some(compose) = self.selected_variant_compose_adapter_inputs(os) {
+            merged.extend(compose.env_files);
+        }
         if let Some(branch) = self.mode_execution_branch(backend)
             && let Some(compose) = branch.adapter_inputs.effective_compose()
         {
@@ -4434,11 +4631,25 @@ impl TaskSpec {
     }
 
     pub fn compose_adapter_cwd_for_backend(&self, backend: Backend) -> Option<String> {
+        self.compose_adapter_cwd_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn compose_adapter_cwd_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Option<String> {
         self.mode_execution_branch(backend)
             .and_then(|branch| branch.adapter_inputs.effective_compose())
             .and_then(|compose| compose.cwd)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.selected_variant_compose_adapter_inputs(os)
+                    .and_then(|compose| compose.cwd)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
             .or_else(|| {
                 self.adapter_inputs
                     .effective_compose()
@@ -4449,11 +4660,22 @@ impl TaskSpec {
     }
 
     pub fn compose_adapter_files_for_backend(&self, backend: Backend) -> Vec<String> {
+        self.compose_adapter_files_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn compose_adapter_files_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Vec<String> {
         let mut merged = self
             .adapter_inputs
             .effective_compose()
             .map(|compose| compose.files)
             .unwrap_or_default();
+        if let Some(compose) = self.selected_variant_compose_adapter_inputs(os) {
+            merged.extend(compose.files);
+        }
         if let Some(branch) = self.mode_execution_branch(backend)
             && let Some(compose) = branch.adapter_inputs.effective_compose()
         {
@@ -4463,11 +4685,22 @@ impl TaskSpec {
     }
 
     pub fn compose_adapter_profiles_for_backend(&self, backend: Backend) -> Vec<String> {
+        self.compose_adapter_profiles_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn compose_adapter_profiles_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Vec<String> {
         let mut merged = self
             .adapter_inputs
             .effective_compose()
             .map(|compose| compose.profiles)
             .unwrap_or_default();
+        if let Some(compose) = self.selected_variant_compose_adapter_inputs(os) {
+            merged.extend(compose.profiles);
+        }
         if let Some(branch) = self.mode_execution_branch(backend)
             && let Some(compose) = branch.adapter_inputs.effective_compose()
         {
@@ -4477,11 +4710,25 @@ impl TaskSpec {
     }
 
     pub fn compose_adapter_project_name_for_backend(&self, backend: Backend) -> Option<String> {
+        self.compose_adapter_project_name_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn compose_adapter_project_name_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Option<String> {
         self.mode_execution_branch(backend)
             .and_then(|branch| branch.adapter_inputs.effective_compose())
             .and_then(|compose| compose.project_name)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.selected_variant_compose_adapter_inputs(os)
+                    .and_then(|compose| compose.project_name)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
             .or_else(|| {
                 self.adapter_inputs
                     .effective_compose()
@@ -4492,11 +4739,18 @@ impl TaskSpec {
     }
 
     pub fn bake_adapter_files_for_backend(&self, backend: Backend) -> Vec<String> {
+        self.bake_adapter_files_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn bake_adapter_files_for_backend_for_os(&self, backend: Backend, os: &str) -> Vec<String> {
         let mut merged = self
             .adapter_inputs
             .effective_bake()
             .map(|bake| bake.files)
             .unwrap_or_default();
+        if let Some(bake) = self.selected_variant_bake_adapter_inputs(os) {
+            merged.extend(bake.files);
+        }
         if let Some(branch) = self.mode_execution_branch(backend)
             && let Some(bake) = branch.adapter_inputs.effective_bake()
         {
@@ -4506,11 +4760,25 @@ impl TaskSpec {
     }
 
     pub fn bake_adapter_cwd_for_backend(&self, backend: Backend) -> Option<String> {
+        self.bake_adapter_cwd_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn bake_adapter_cwd_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Option<String> {
         self.mode_execution_branch(backend)
             .and_then(|branch| branch.adapter_inputs.effective_bake())
             .and_then(|bake| bake.cwd)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.selected_variant_bake_adapter_inputs(os)
+                    .and_then(|bake| bake.cwd)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
             .or_else(|| {
                 self.adapter_inputs
                     .effective_bake()
@@ -4521,11 +4789,22 @@ impl TaskSpec {
     }
 
     pub fn helm_adapter_values_files_for_backend(&self, backend: Backend) -> Vec<String> {
+        self.helm_adapter_values_files_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn helm_adapter_values_files_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Vec<String> {
         let mut merged = self
             .adapter_inputs
             .effective_helm()
             .map(|helm| helm.values_files)
             .unwrap_or_default();
+        if let Some(helm) = self.selected_variant_helm_adapter_inputs(os) {
+            merged.extend(helm.values_files);
+        }
         if let Some(branch) = self.mode_execution_branch(backend)
             && let Some(helm) = branch.adapter_inputs.effective_helm()
         {
@@ -4535,11 +4814,25 @@ impl TaskSpec {
     }
 
     pub fn helm_adapter_cwd_for_backend(&self, backend: Backend) -> Option<String> {
+        self.helm_adapter_cwd_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn helm_adapter_cwd_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Option<String> {
         self.mode_execution_branch(backend)
             .and_then(|branch| branch.adapter_inputs.effective_helm())
             .and_then(|helm| helm.cwd)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.selected_variant_helm_adapter_inputs(os)
+                    .and_then(|helm| helm.cwd)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
             .or_else(|| {
                 self.adapter_inputs
                     .effective_helm()
@@ -4550,11 +4843,25 @@ impl TaskSpec {
     }
 
     pub fn helm_adapter_chart_for_backend(&self, backend: Backend) -> Option<String> {
+        self.helm_adapter_chart_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn helm_adapter_chart_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Option<String> {
         self.mode_execution_branch(backend)
             .and_then(|branch| branch.adapter_inputs.effective_helm())
             .and_then(|helm| helm.chart)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.selected_variant_helm_adapter_inputs(os)
+                    .and_then(|helm| helm.chart)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
             .or_else(|| {
                 self.adapter_inputs
                     .effective_helm()
@@ -4565,11 +4872,25 @@ impl TaskSpec {
     }
 
     pub fn helm_adapter_release_name_for_backend(&self, backend: Backend) -> Option<String> {
+        self.helm_adapter_release_name_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn helm_adapter_release_name_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Option<String> {
         self.mode_execution_branch(backend)
             .and_then(|branch| branch.adapter_inputs.effective_helm())
             .and_then(|helm| helm.release_name)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.selected_variant_helm_adapter_inputs(os)
+                    .and_then(|helm| helm.release_name)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
             .or_else(|| {
                 self.adapter_inputs
                     .effective_helm()
@@ -4580,11 +4901,25 @@ impl TaskSpec {
     }
 
     pub fn helm_adapter_namespace_for_backend(&self, backend: Backend) -> Option<String> {
+        self.helm_adapter_namespace_for_backend_for_os(backend, current_os())
+    }
+
+    pub fn helm_adapter_namespace_for_backend_for_os(
+        &self,
+        backend: Backend,
+        os: &str,
+    ) -> Option<String> {
         self.mode_execution_branch(backend)
             .and_then(|branch| branch.adapter_inputs.effective_helm())
             .and_then(|helm| helm.namespace)
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+            .or_else(|| {
+                self.selected_variant_helm_adapter_inputs(os)
+                    .and_then(|helm| helm.namespace)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            })
             .or_else(|| {
                 self.adapter_inputs
                     .effective_helm()
@@ -4600,7 +4935,25 @@ impl TaskSpec {
         backend: Backend,
         _context_name_override: Option<&str>,
     ) -> BTreeMap<String, TaskEnvBindingSpec> {
+        self.env_bindings_for_backend_with_context_name_for_os(
+            _execution,
+            backend,
+            _context_name_override,
+            current_os(),
+        )
+    }
+
+    pub fn env_bindings_for_backend_with_context_name_for_os(
+        &self,
+        _execution: Option<&Execution>,
+        backend: Backend,
+        _context_name_override: Option<&str>,
+        os: &str,
+    ) -> BTreeMap<String, TaskEnvBindingSpec> {
         let mut merged = self.env_bindings.clone();
+        if let Some(variant) = self.selected_variant(os) {
+            merged.extend(variant.env_bindings.clone());
+        }
         if let Some(branch) = self.mode_execution_branch(backend) {
             merged.extend(branch.env_bindings.clone());
         }
@@ -4718,7 +5071,11 @@ impl TaskSpec {
     }
 
     pub fn scoped_requirement_surface(&self) -> RequirementSurface {
-        self.scoped_requirement_surface_for_execution(Backend::Native, self.context.as_deref())
+        self.scoped_requirement_surface_for_execution_for_os(
+            Backend::Native,
+            self.context.as_deref(),
+            current_os(),
+        )
     }
 
     pub fn scoped_requirement_surface_for_execution(
@@ -4726,23 +5083,40 @@ impl TaskSpec {
         backend: Backend,
         context_name: Option<&str>,
     ) -> RequirementSurface {
-        let mut runtimes = self.requirements.runtimes.clone();
-        let mut tools = self.requirements.tools.clone();
+        self.scoped_requirement_surface_for_execution_for_os(backend, context_name, current_os())
+    }
+
+    pub fn scoped_requirement_surface_for_execution_for_os(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+        os: &str,
+    ) -> RequirementSurface {
+        let mut runtimes = self
+            .requirements
+            .selected_runtime_requirements_for_execution(backend, context_name);
+        let mut tools = self
+            .requirements
+            .selected_tool_requirements_for_execution(backend, context_name);
         let presence_only_tools = self.inferred_command_presence_only_tools();
-        if let Some(selected_any_of) = self.requirements.selected_any_of(backend, context_name) {
-            for (name, requirement) in &selected_any_of.runtimes {
+        if let Some(variant_requirements) = self.selected_variant_requirements(os) {
+            for (name, requirement) in variant_requirements
+                .selected_runtime_requirements_for_execution(backend, context_name)
+            {
                 let merged = runtimes
-                    .get(name)
-                    .map(|base| base.merged_with_overlay(requirement))
-                    .unwrap_or_else(|| requirement.clone());
-                runtimes.insert(name.clone(), merged);
+                    .get(&name)
+                    .map(|base| base.merged_with_overlay(&requirement))
+                    .unwrap_or(requirement);
+                runtimes.insert(name, merged);
             }
-            for (name, requirement) in &selected_any_of.tools {
+            for (name, requirement) in
+                variant_requirements.selected_tool_requirements_for_execution(backend, context_name)
+            {
                 let merged = tools
-                    .get(name)
-                    .map(|base| base.merged_with_overlay(requirement))
-                    .unwrap_or_else(|| requirement.clone());
-                tools.insert(name.clone(), merged);
+                    .get(&name)
+                    .map(|base| base.merged_with_overlay(&requirement))
+                    .unwrap_or(requirement);
+                tools.insert(name, merged);
             }
         }
         if let Some(orchestrator) = self.orchestrator_for_backend(backend) {
@@ -4762,12 +5136,26 @@ impl TaskSpec {
         backend: Backend,
         context_name: Option<&str>,
     ) -> Vec<String> {
-        let overlay = self
+        self.scoped_toolchain_requirements_for_execution_for_os(backend, context_name, current_os())
+    }
+
+    pub fn scoped_toolchain_requirements_for_execution_for_os(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+        os: &str,
+    ) -> Vec<String> {
+        let mut merged = self
             .requirements
-            .selected_any_of(backend, context_name)
-            .map(|branch| branch.toolchains.as_slice())
-            .unwrap_or_default();
-        merged_named_requirements(&self.requirements.toolchains, overlay)
+            .selected_toolchain_requirements_for_execution(backend, context_name);
+        if let Some(variant_requirements) = self.selected_variant_requirements(os) {
+            merged = merged_named_requirements(
+                &merged,
+                &variant_requirements
+                    .selected_toolchain_requirements_for_execution(backend, context_name),
+            );
+        }
+        merged
     }
 
     pub fn scoped_native_requirements_for_execution(
@@ -4775,12 +5163,26 @@ impl TaskSpec {
         backend: Backend,
         context_name: Option<&str>,
     ) -> Vec<String> {
-        let overlay = self
+        self.scoped_native_requirements_for_execution_for_os(backend, context_name, current_os())
+    }
+
+    pub fn scoped_native_requirements_for_execution_for_os(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+        os: &str,
+    ) -> Vec<String> {
+        let mut merged = self
             .requirements
-            .selected_any_of(backend, context_name)
-            .map(|branch| branch.native.as_slice())
-            .unwrap_or_default();
-        merged_named_requirements(&self.requirements.native, overlay)
+            .selected_native_requirements_for_execution(backend, context_name);
+        if let Some(variant_requirements) = self.selected_variant_requirements(os) {
+            merged = merged_named_requirements(
+                &merged,
+                &variant_requirements
+                    .selected_native_requirements_for_execution(backend, context_name),
+            );
+        }
+        merged
     }
 
     pub fn scoped_env_requirements_for_execution(
@@ -4788,12 +5190,25 @@ impl TaskSpec {
         backend: Backend,
         context_name: Option<&str>,
     ) -> Vec<String> {
-        let overlay = self
+        self.scoped_env_requirements_for_execution_for_os(backend, context_name, current_os())
+    }
+
+    pub fn scoped_env_requirements_for_execution_for_os(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+        os: &str,
+    ) -> Vec<String> {
+        let mut names = self
             .requirements
-            .selected_any_of(backend, context_name)
-            .map(|branch| branch.env.as_slice())
-            .unwrap_or_default();
-        let mut names = merged_named_requirements(&self.requirements.env, overlay);
+            .selected_env_requirements_for_execution(backend, context_name);
+        if let Some(variant_requirements) = self.selected_variant_requirements(os) {
+            names = merged_named_requirements(
+                &names,
+                &variant_requirements
+                    .selected_env_requirements_for_execution(backend, context_name),
+            );
+        }
         for password_env in self.env_binding_password_env_names_for_backend(backend) {
             if !names.iter().any(|name| name == &password_env) {
                 names.push(password_env);
@@ -4860,12 +5275,26 @@ impl TaskSpec {
         backend: Backend,
         context_name: Option<&str>,
     ) -> Vec<String> {
-        let overlay = self
+        self.scoped_check_requirements_for_execution_for_os(backend, context_name, current_os())
+    }
+
+    pub fn scoped_check_requirements_for_execution_for_os(
+        &self,
+        backend: Backend,
+        context_name: Option<&str>,
+        os: &str,
+    ) -> Vec<String> {
+        let mut merged = self
             .requirements
-            .selected_any_of(backend, context_name)
-            .map(|branch| branch.checks.as_slice())
-            .unwrap_or_default();
-        merged_named_requirements(&self.requirements.checks, overlay)
+            .selected_check_requirements_for_execution(backend, context_name);
+        if let Some(variant_requirements) = self.selected_variant_requirements(os) {
+            merged = merged_named_requirements(
+                &merged,
+                &variant_requirements
+                    .selected_check_requirements_for_execution(backend, context_name),
+            );
+        }
+        merged
     }
 
     pub fn declared_command_launch_executables(&self) -> BTreeSet<String> {
@@ -5681,11 +6110,15 @@ impl TaskPrepareSpec {
                 }
                 TaskDependencyHydrationSourceSpec::Bundler(source) => {
                     let mut preview = format!(
-                        "hydrate {} with bundler install in `{}` using `{}`",
+                        "hydrate {} with bundler install in `{}`",
                         spec.medium.label(),
                         source.cwd.trim(),
-                        source.path.trim()
                     );
+                    if let Some(path) = source.path.as_ref().map(String::as_str) {
+                        preview.push_str(" using `");
+                        preview.push_str(path.trim());
+                        preview.push('`');
+                    }
                     if let Some(compose) = source.compose.as_ref() {
                         preview.push_str(" via ");
                         preview.push_str(compose.preview_prefix().as_str());
@@ -6012,7 +6445,8 @@ impl TaskNodePackageManagerHydrationSourceSpec {
 #[serde(deny_unknown_fields)]
 pub struct TaskBundlerHydrationSourceSpec {
     pub cwd: String,
-    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeInvocationSpec>,
 }
@@ -6792,7 +7226,10 @@ pub enum TaskRuntimePortMode {
 pub struct TaskRuntimeProjectionSpec {
     #[serde(default)]
     pub host: Option<TaskRuntimeHostProjectionSpec>,
-    #[serde(default, skip_serializing_if = "TaskRuntimeProjectionPublicationSpec::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "TaskRuntimeProjectionPublicationSpec::is_empty"
+    )]
     pub publication: TaskRuntimeProjectionPublicationSpec,
 }
 
@@ -7183,6 +7620,18 @@ pub struct TaskVariantSpec {
     pub command: Option<TaskCommandSpec>,
     #[serde(default)]
     pub compose: Option<TaskComposeExecutionSpec>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env_bindings: BTreeMap<String, TaskEnvBindingSpec>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub inputs: BTreeMap<String, TaskInputSpec>,
+    #[serde(default)]
+    pub requirements: TaskRequirementsSpec,
+    #[serde(default, skip_serializing_if = "TaskAdapterInputsSpec::is_empty")]
+    pub adapter_inputs: TaskAdapterInputsSpec,
 }
 
 impl TaskVariantSpec {
@@ -7227,6 +7676,29 @@ impl TaskVariantSpec {
             os: self.when.os.as_deref(),
         })
     }
+
+    pub fn has_execution_override(&self) -> bool {
+        self.execution_kind().is_some()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.has_execution_override() && self.adapter_inputs.is_empty()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn current_os() -> &'static str {
+    "macos"
+}
+
+#[cfg(target_os = "linux")]
+fn current_os() -> &'static str {
+    "linux"
+}
+
+#[cfg(target_os = "windows")]
+fn current_os() -> &'static str {
+    "windows"
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
@@ -7312,6 +7784,12 @@ impl<'a> TaskExecution<'a> {
 pub struct TaskVariantView<'a> {
     pub os: &'a str,
     pub kind: &'a str,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: &'a BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub env_files: Vec<&'a str>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub inputs: &'a BTreeMap<String, TaskInputSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -7320,6 +7798,8 @@ pub struct TaskVariantView<'a> {
     pub command: Option<crate::output::TaskCommandSummary<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compose: Option<crate::output::TaskComposeExecutionSummary<'a>>,
+    #[serde(skip_serializing_if = "crate::output::TaskAdapterInputsSummary::is_empty")]
+    pub adapter_inputs: crate::output::TaskAdapterInputsSummary,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -8801,6 +9281,109 @@ tasks:
                 "`{run_cmd}` must not infer `where` or `which` as a tool requirement"
             );
         }
+    }
+
+    #[test]
+    fn scoped_requirement_surface_merges_selected_variant_requirements_for_os() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+runtimes:
+  python:
+    version: "3.12"
+toolchains:
+  ruby:
+    version: "3.3"
+env:
+  vars:
+    DATABASE_URL:
+      required: true
+checks:
+  - name: host-ready
+    kind: precondition
+    severity: error
+    run: echo ready
+native_prerequisites:
+  host-build-tools:
+    platforms:
+      linux:
+        check: host-ready
+tasks:
+  dev:
+    command:
+      exe: echo
+      args:
+        - hi
+    requirements:
+      runtimes:
+        python: "3.12"
+      tools:
+        docker: "*"
+      toolchains:
+        - ruby
+      env:
+        - DATABASE_URL
+      checks:
+        - host-ready
+    variants:
+      - when:
+          os: linux
+        requirements:
+          tools:
+            podman: "*"
+          native:
+            - host-build-tools
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("dev").unwrap();
+        let linux =
+            task.scoped_requirement_surface_for_execution_for_os(Backend::Native, None, "linux");
+        assert!(linux.runtimes.contains_key("python"));
+        assert!(linux.tools.contains_key("docker"));
+        assert!(linux.tools.contains_key("podman"));
+        assert_eq!(
+            task.scoped_toolchain_requirements_for_execution_for_os(Backend::Native, None, "linux"),
+            vec![String::from("ruby")]
+        );
+        assert_eq!(
+            task.scoped_env_requirements_for_execution_for_os(Backend::Native, None, "linux"),
+            vec![String::from("DATABASE_URL")]
+        );
+        assert_eq!(
+            task.scoped_check_requirements_for_execution_for_os(Backend::Native, None, "linux"),
+            vec![String::from("host-ready")]
+        );
+        assert_eq!(
+            task.scoped_native_requirements_for_execution_for_os(Backend::Native, None, "linux"),
+            vec![String::from("host-build-tools")]
+        );
+
+        let macos =
+            task.scoped_requirement_surface_for_execution_for_os(Backend::Native, None, "macos");
+        assert!(macos.runtimes.contains_key("python"));
+        assert!(macos.tools.contains_key("docker"));
+        assert!(!macos.tools.contains_key("podman"));
+        assert_eq!(
+            task.scoped_toolchain_requirements_for_execution_for_os(Backend::Native, None, "macos"),
+            vec![String::from("ruby")]
+        );
+        assert_eq!(
+            task.scoped_env_requirements_for_execution_for_os(Backend::Native, None, "macos"),
+            vec![String::from("DATABASE_URL")]
+        );
+        assert_eq!(
+            task.scoped_check_requirements_for_execution_for_os(Backend::Native, None, "macos"),
+            vec![String::from("host-ready")]
+        );
+        assert_eq!(
+            task.scoped_native_requirements_for_execution_for_os(Backend::Native, None, "macos"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

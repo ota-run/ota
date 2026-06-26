@@ -14885,6 +14885,15 @@ fn parse_effect_override_selector(value: &str) -> Option<String> {
     if selector.eq_ignore_ascii_case("network:tool_bootstrap") {
         return Some(String::from("network:tool_bootstrap"));
     }
+    if let Some(state) = selector.strip_prefix("adapter_state:") {
+        let token = state.trim();
+        if token.is_empty() {
+            return None;
+        }
+        if is_valid_adapter_state_effect_token(token) {
+            return Some(format!("adapter_state:{token}"));
+        }
+    }
     if let Some(state) = selector.strip_prefix("external_state:") {
         let token = state.trim();
         if token.is_empty() {
@@ -14895,6 +14904,15 @@ fn parse_effect_override_selector(value: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn is_valid_adapter_state_effect_token(value: &str) -> bool {
+    let Some((family, state)) = value.split_once(':') else {
+        return false;
+    };
+    !state.contains(':')
+        && is_valid_external_state_effect_token(family)
+        && is_valid_external_state_effect_token(state)
 }
 
 fn is_valid_external_state_effect_token(value: &str) -> bool {
@@ -14937,7 +14955,7 @@ fn parse_effect_governance_overrides(
         };
         let Some(selector) = parse_effect_override_selector(selector_raw) else {
             return Err(format!(
-                "invalid `--effect-override {raw}` effect selector; use one of `network`, `network:broad`, `network:dependency_hydration`, `network:integration_test`, `network:tool_bootstrap`, or `external_state:<token>`"
+                "invalid `--effect-override {raw}` effect selector; use one of `network`, `network:broad`, `network:dependency_hydration`, `network:integration_test`, `network:tool_bootstrap`, `adapter_state:<adapter_family>:<state_name>`, or `external_state:<token>`"
             ));
         };
         let Some(decision) = parse_effect_override_decision(decision_raw) else {
@@ -15467,8 +15485,10 @@ fn collect_task_closure_effects(
 ) -> (
     Option<crate::schema::TaskNetworkEffectKind>,
     BTreeSet<String>,
+    BTreeSet<String>,
 ) {
     let mut network_kind: Option<crate::schema::TaskNetworkEffectKind> = None;
+    let mut adapter_state = BTreeSet::new();
     let mut external_state = BTreeSet::new();
     let mut visited = BTreeSet::new();
     let mut stack = vec![(task_name.to_string(), overrides)];
@@ -15501,6 +15521,7 @@ fn collect_task_closure_effects(
                 _ => crate::schema::TaskNetworkEffectKind::DependencyHydration,
             });
         }
+        adapter_state.extend(task.effects.adapter_state.iter().cloned());
         external_state.extend(task.effects.external_state.iter().cloned());
         for dependency in task.depends_on_for_backend(backend) {
             let Some(dependency_task) = contract.tasks.get(dependency) else {
@@ -15527,7 +15548,7 @@ fn collect_task_closure_effects(
         }
     }
 
-    (network_kind, external_state)
+    (network_kind, adapter_state, external_state)
 }
 
 fn safe_task_effect_policy_lines(
@@ -15539,12 +15560,18 @@ fn safe_task_effect_policy_lines(
     let Ok(Some((policy_pack, _policy_path))) = load_org_policy_pack_auto(contract_path) else {
         return Vec::new();
     };
-    let (network_kind, external_state) =
+    let (network_kind, adapter_state, external_state) =
         collect_task_closure_effects(contract, task_name, overrides);
     let scope = task_effect_governance_scope(contract, task_name);
     let overrides = current_effect_governance_overrides();
     policy_pack
-        .effect_governance_decisions(scope, network_kind, &external_state, Some(&overrides))
+        .effect_governance_decisions(
+            scope,
+            network_kind,
+            &adapter_state,
+            &external_state,
+            Some(&overrides),
+        )
         .into_iter()
         .map(|decision| {
             format!(
@@ -15570,13 +15597,14 @@ fn append_safe_task_effect_policy_findings(
     let Ok(Some((policy_pack, policy_path))) = load_org_policy_pack_auto(contract_path) else {
         return;
     };
-    let (network_kind, external_state) =
+    let (network_kind, adapter_state, external_state) =
         collect_task_closure_effects(contract, task_name, execution_overrides);
     let scope = task_effect_governance_scope(contract, task_name);
     let overrides = current_effect_governance_overrides();
     let decisions = policy_pack.effect_governance_decisions(
         scope,
         network_kind,
+        &adapter_state,
         &external_state,
         Some(&overrides),
     );
@@ -39042,7 +39070,7 @@ fn render_tasks_text(
         );
         if !task.inputs.is_empty() {
             output.push_str(&format!("\n  {}", paint_key("Inputs")));
-            output.push_str(&render_task_inputs_compact(task.inputs));
+            output.push_str(&render_task_inputs_compact(&task.inputs));
         }
         if !task.env.is_empty() {
             let env = task
@@ -39165,6 +39193,9 @@ fn render_task_effects_text(effects: &crate::output::TaskEffectsSummary) -> Stri
         } else {
             parts.push(String::from("network=true"));
         }
+    }
+    if !effects.adapter_state.is_empty() {
+        parts.push(format!("adapter_state={}", effects.adapter_state.join(",")));
     }
     if !effects.external_state.is_empty() {
         parts.push(format!(
@@ -39615,8 +39646,12 @@ fn render_dependency_hydration_prepare_text<T: AsRef<str>>(
         }
         Some("bundler") => {
             let cwd = cwd.unwrap_or(".");
-            let file = file.unwrap_or("Gemfile");
-            format!("hydrate {medium} with `bundle install` in `{cwd}` using `{file}`")
+            match file {
+                Some(file) => {
+                    format!("hydrate {medium} with `bundle install` in `{cwd}` using `{file}`")
+                }
+                None => format!("hydrate {medium} with `bundle install` in `{cwd}`"),
+            }
         }
         Some("uv") => {
             let cwd = cwd.unwrap_or(".");
@@ -39789,7 +39824,7 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
         }
         if !task.inputs.is_empty() {
             output.push_str(&format!("\n  {}", paint_key("Inputs")));
-            output.push_str(&render_task_inputs_compact(task.inputs));
+            output.push_str(&render_task_inputs_compact(&task.inputs));
         }
         if let Some(notes) = task.notes {
             output.push_str(&format!(
@@ -40062,7 +40097,7 @@ fn render_task_inputs_compact(inputs: &BTreeMap<String, crate::schema::TaskInput
 
 fn render_task_use_command(task: &TaskSummary<'_>) -> String {
     let mut command = format!("ota run {}", task.name);
-    for (name, spec) in task.inputs {
+    for (name, spec) in &task.inputs {
         command.push(' ');
         command.push_str(&format!("--{}", name.replace('_', "-")));
         command.push(' ');
@@ -51423,10 +51458,10 @@ tasks:
             description: Some("Run the live API automation suite"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "script",
             run: None,
             script: Some("./scripts/api/run-api-tests.sh"),
@@ -51499,10 +51534,10 @@ tasks:
             description: Some("Run the live API automation suite"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "script",
             run: None,
             script: Some("./scripts/api/run-api-tests.sh"),
@@ -51556,10 +51591,10 @@ tasks:
             description: Some("Run the canonical verification entrypoint"),
             notes: None,
             category: Some("test"),
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "aggregate",
             run: None,
             script: None,
@@ -51628,10 +51663,10 @@ tasks:
             description: Some("Run the app"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "script",
             run: Some("pnpm dev"),
             script: None,
@@ -51745,10 +51780,10 @@ tasks:
             description: Some("Prepare the repo"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "script",
             run: None,
             script: Some("pnpm install"),
@@ -51762,6 +51797,7 @@ tasks:
                 writes: vec![String::from("node_modules")],
                 network: true,
                 network_kind: Some(crate::schema::TaskNetworkEffectKind::DependencyHydration),
+                adapter_state: Vec::new(),
                 external_state: vec![String::from("docker"), String::from("postgres")],
             },
             selected_variant_os: None,
@@ -51800,10 +51836,10 @@ tasks:
             description: Some("Prepare the repo"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "prepare",
             run: None,
             script: None,
@@ -51874,6 +51910,7 @@ tasks:
                 writes: vec![String::from("node_modules"), String::from(".venv")],
                 network: true,
                 network_kind: Some(crate::schema::TaskNetworkEffectKind::DependencyHydration),
+                adapter_state: Vec::new(),
                 external_state: Vec::new(),
             },
             selected_variant_os: None,
@@ -51912,10 +51949,10 @@ tasks:
             description: Some("Hydrate Yarn dependencies"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "prepare",
             run: None,
             script: None,
@@ -51965,10 +52002,10 @@ tasks:
             description: Some("Hydrate Bun dependencies"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "prepare",
             run: None,
             script: None,
@@ -52040,10 +52077,10 @@ tasks:
             description: Some("Hydrate Yarn dependencies"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "prepare",
             run: None,
             script: None,
@@ -52108,10 +52145,10 @@ tasks:
             description: Some("Hydrate npm dependencies with force"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "prepare",
             run: None,
             script: None,
@@ -52176,10 +52213,10 @@ tasks:
             description: Some("Hydrate dependencies through compose"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "prepare",
             run: None,
             script: None,
@@ -52243,6 +52280,85 @@ tasks:
     }
 
     #[test]
+    fn render_tasks_text_reports_compose_wrapped_bundler_without_repo_local_path() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "deps:ruby",
+            context: Some("host"),
+            default_mode: None,
+            effective_default_mode: "native",
+            description: Some("Hydrate Ruby dependencies through compose"),
+            notes: None,
+            category: None,
+            env: env.clone(),
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs: inputs.clone(),
+            kind: "prepare",
+            run: None,
+            script: None,
+            command: None,
+            compose: None,
+            launch: None,
+            action: None,
+            prepare: Some(crate::output::TaskPrepareSummary {
+                kind: "dependency_hydration",
+                steps: Vec::new(),
+                medium: Some("package_dependencies"),
+                source_kind: Some("bundler"),
+                cwd: Some("."),
+                file: None,
+                manager: Some("bundle"),
+                mode: Some("install"),
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: false,
+                inline_builds: false,
+                force: false,
+                no_root: false,
+                skip_tests: false,
+                targets: Vec::new(),
+                compose: Some(crate::output::TaskComposeInvocationSummary {
+                    kind: "run",
+                    engine: "docker",
+                    service: Some("web"),
+                    services: Vec::new(),
+                    workdir: Some("/usr/src/app"),
+                    rm: true,
+                    detach: false,
+                    remove_volumes: false,
+                    tty: false,
+                }),
+            }),
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+
+        assert!(
+            rendered.contains(
+                "Prepare: hydrate package dependencies with `bundle install` in `.` via docker compose run -T --rm -w /usr/src/app web"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("using `Gemfile`"), "{rendered}");
+    }
+
+    #[test]
     fn render_tasks_text_previews_compose_execution_body() {
         let env = BTreeMap::new();
         let inputs = BTreeMap::new();
@@ -52254,10 +52370,10 @@ tasks:
             description: Some("Run database migrations"),
             notes: None,
             category: None,
-            env: &env,
+            env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-            inputs: &inputs,
+            inputs: inputs.clone(),
             kind: "compose_exec",
             run: None,
             script: None,
@@ -52602,10 +52718,10 @@ workflows:
                 description: Some("Run packaged quickstart"),
                 notes: None,
                 category: None,
-                env: &env,
+                env: env.clone(),
                 env_files: Vec::new(),
                 adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-                inputs: &inputs,
+                inputs: inputs.clone(),
                 kind: "command",
                 run: None,
                 script: None,
@@ -52690,10 +52806,10 @@ workflows:
                 description: Some("Start packaged compose stack"),
                 notes: None,
                 category: None,
-                env: &env,
+                env: env.clone(),
                 env_files: Vec::new(),
                 adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
-                inputs: &inputs,
+                inputs: inputs.clone(),
                 kind: "compose",
                 run: None,
                 script: None,
@@ -52806,6 +52922,7 @@ workflows:
                         writes: vec![String::from("node_modules")],
                         network: true,
                         network_kind: None,
+                        adapter_state: Vec::new(),
                         external_state: vec![String::from("docker")],
                     },
                     depends_on: Vec::new(),
@@ -54931,6 +55048,7 @@ tasks:
         );
         assert_eq!(native_effects.0, None);
         assert!(native_effects.1.is_empty());
+        assert!(native_effects.2.is_empty());
 
         let container_effects = super::collect_task_closure_effects(
             &contract,
@@ -54944,7 +55062,8 @@ tasks:
             container_effects.0,
             Some(crate::schema::TaskNetworkEffectKind::DependencyHydration)
         );
-        assert!(container_effects.1.contains("registry"));
+        assert!(container_effects.1.is_empty());
+        assert!(container_effects.2.contains("registry"));
     }
 
     #[test]
@@ -54984,7 +55103,8 @@ tasks:
             effects.0,
             Some(crate::schema::TaskNetworkEffectKind::IntegrationTest)
         );
-        assert!(effects.1.contains("postgres"));
+        assert!(effects.1.is_empty());
+        assert!(effects.2.contains("postgres"));
     }
 
     #[test]
@@ -79226,6 +79346,7 @@ fn effect_override_parser_accepts_supported_selectors() {
         String::from("network:dependency_hydration=allow"),
         String::from("network:integration_test=warn"),
         String::from("network:tool_bootstrap=allow"),
+        String::from("adapter_state:compose_volume:bundle_data=deny"),
         String::from("external_state:docker_compose=warn"),
     ])
     .expect("selectors should parse");
@@ -79247,6 +79368,12 @@ fn effect_override_parser_accepts_supported_selectors() {
         Some(&PolicyEffectDecision::Allow)
     );
     assert_eq!(
+        overrides
+            .decisions
+            .get("adapter_state:compose_volume:bundle_data"),
+        Some(&PolicyEffectDecision::Deny)
+    );
+    assert_eq!(
         overrides.decisions.get("external_state:docker_compose"),
         Some(&PolicyEffectDecision::Warn)
     );
@@ -79254,7 +79381,13 @@ fn effect_override_parser_accepts_supported_selectors() {
 
 #[cfg(test)]
 #[test]
-fn effect_override_parser_rejects_invalid_external_state_tokens() {
+fn effect_override_parser_rejects_invalid_effect_tokens() {
+    let error = parse_effect_governance_overrides(&[String::from(
+        "adapter_state:ComposeVolume:cache=deny",
+    )])
+    .expect_err("uppercase adapter token should be rejected");
+    assert!(error.contains("effect selector"), "{error}");
+
     let error = parse_effect_governance_overrides(&[String::from("external_state:Docker=allow")])
         .expect_err("uppercase token should be rejected");
     assert!(error.contains("effect selector"), "{error}");
@@ -82416,7 +82549,8 @@ fn render_run_structured_error_text(
             address,
             port,
         } => {
-            let compose_engine = native_structured_compose_engine_for_task(contract, task, overrides);
+            let compose_engine =
+                native_structured_compose_engine_for_task(contract, task, overrides);
             let mut why_lines = vec![
                 format!("task `{task}` listener `{listener}` needs `{address}:{port}`"),
                 format!("port `{port}` is already in use on the host"),
@@ -90669,8 +90803,9 @@ fn receipt_native_prerequisites(
     };
     let mut prerequisites = Vec::new();
     let mut seen = BTreeSet::new();
-    for name in &task_spec.requirements.native {
-        if !seen.insert(name.as_str()) {
+    let context_name = task_spec.context_for_backend(contract.execution.as_ref(), backend);
+    for name in task_spec.scoped_native_requirements_for_execution(backend, context_name) {
+        if !seen.insert(name.clone()) {
             continue;
         }
         let Some(prerequisite) = contract.native_prerequisites.get(name.as_str()) else {
@@ -95594,6 +95729,10 @@ fn expand_render_template_env_value(value: &str, working_dir: &Path) -> String {
     if let Some(host_uid) = crate::runner::host_uid_template_value(working_dir) {
         rendered = rendered.replace("${OTA_HOST_UID}", host_uid.as_str());
         rendered = rendered.replace("$OTA_HOST_UID", host_uid.as_str());
+    }
+    if let Some(host_gid) = crate::runner::host_gid_template_value(working_dir) {
+        rendered = rendered.replace("${OTA_HOST_GID}", host_gid.as_str());
+        rendered = rendered.replace("$OTA_HOST_GID", host_gid.as_str());
     }
     rendered
 }
