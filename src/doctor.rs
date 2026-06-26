@@ -3619,6 +3619,12 @@ impl Finding {
             {
                 "OTA_CONTRACT_ADVISORY_EXTERNAL_STATE_TOKEN_CANONICAL"
             }
+            s if s.starts_with("task `")
+                && s.contains(" materializes git checkout `")
+                && s.contains(" without explicit `source.ref`") =>
+            {
+                "OTA_CONTRACT_ADVISORY_ENSURE_GIT_CHECKOUT_MOVING_HEAD"
+            }
             s if s.starts_with("`agent.bootstrap.ota.")
                 && s.ends_with("` should pin the ota release version") =>
             {
@@ -4987,6 +4993,9 @@ fn diagnose_contract_advisories(
             ContractAdvisory::NonCanonicalExternalStateToken(advisory) => {
                 ContractAdvisory::NonCanonicalExternalStateToken(advisory)
             }
+            ContractAdvisory::EnsureGitCheckoutMovingHead(advisory) => {
+                ContractAdvisory::EnsureGitCheckoutMovingHead(advisory)
+            }
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
                 ContractAdvisory::AgentBootstrapUnpinned(advisory)
             }
@@ -5092,6 +5101,10 @@ fn contract_advisory_finding(advisory: ContractAdvisory) -> Finding {
         ContractAdvisory::NonCanonicalExternalStateToken(advisory) => format!(
             "Task `{}` uses non-canonical external-state token `{}`",
             advisory.task_name, advisory.token
+        ),
+        ContractAdvisory::EnsureGitCheckoutMovingHead(advisory) => format!(
+            "Task `{}` materializes git checkout `{}` without explicit `source.ref`",
+            advisory.task_name, advisory.checkout_path
         ),
         ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
             format!("`{}` should pin the ota release version", advisory.field)
@@ -23609,6 +23622,12 @@ tasks:
             },
             DoctorFindingReferenceEntry {
                 code: "OTA_CONTRACT_ADVISORY_AGENT_BOOTSTRAP_UNPINNED",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_ENSURE_GIT_CHECKOUT_MOVING_HEAD",
                 category: "contract",
                 owner_surface: "repo_contract",
                 provenance_key_surface: "repo_contract",

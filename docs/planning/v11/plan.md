@@ -1,0 +1,252 @@
+<!--
+                █████
+               ░░███
+       ██████  ███████    ██████
+      ███░░███░░░███░    ░░░░░███
+     ░███ ░███  ░███      ███████
+     ░███ ░███  ░███ ███ ███░░███
+     ░░██████   ░░█████ ░░████████
+      ░░░░░░     ░░░░░   ░░░░░░░░
+
+   Copyright (C) 2026 — 2026, Ota. All Rights Reserved.
+
+   DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
+
+   Licensed under the Apache License, Version 2.0. See LICENSE for the full license text.
+   You may not use this file except in compliance with that License.
+   Unless required by applicable law or agreed to in writing, software distributed under the
+   License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+   either express or implied. See the License for the specific language governing permissions
+   and limitations under the License.
+
+   If you need additional information or have any questions, please email: os@ota.run
+-->
+
+# V11 Plan
+
+Status: planned.
+
+Release target:
+
+- post-`1.6.22` planning slice
+
+Source direction:
+
+- [Execution receipt](../../spec/execution-receipt.md)
+- [Semantic diff and explain](../../spec/semantic-diff-and-explain.md)
+- [Doctor finding contract](../../spec/doctor-finding-contract.md)
+- [JSON output reference](../../spec/json-output-reference.md)
+- [V10 plan](../v10/plan.md)
+
+V11 theme:
+
+- completion truth for agents
+- reviewer evidence for agent-authored work
+- local, CI, and agent execution convergence
+
+This slice turns a recurring product signal into an explicit planning surface:
+
+- agents can produce code that looks plausible
+- maintainers still reject the PR because the repo never made completion truth explicit enough
+
+The product goal is not "better prompting."
+The product goal is making the repo say what a correct, safe, complete change actually means.
+
+## Problem statement
+
+A large class of rejected agent-authored work is not only a model-quality problem.
+
+It is an execution-governance problem:
+
+- the agent prepared the repo incorrectly
+- the agent ran the wrong verification lane
+- the repo required services, env, or setup order that were never declared clearly
+- the agent crossed unsafe boundaries because the repo did not make them explicit
+- the maintainer had to reconstruct whether the change was actually complete
+
+Ota already addresses parts of this, but the current product surface still leaves "what counts as
+done?" too implicit in many repos.
+
+V11 is the slice for making completion truth and reviewer evidence first-class.
+
+## Included capabilities
+
+- explicit completion surfaces for agent-authored change validation
+- stronger reviewer-facing evidence for what verification actually ran
+- clearer separation between code failure, readiness failure, and contract drift
+- better convergence between local, CI, and agent execution truth
+- stronger machine-readable stop/review signals for unsafe or incomplete agent outcomes
+
+## Non-goals
+
+- do not turn Ota into a generic PR review platform
+- do not build hosted human approval workflow as part of this slice
+- do not claim that Ota can prove code correctness from receipts alone
+- do not collapse execution evidence, semantic diff, and reviewer intent into one structure
+- do not make agents autonomous over dangerous tasks just because the verification story improves
+
+## Product framing
+
+Do not frame this as:
+
+- AI agent quality scoring
+- agent leaderboard instrumentation
+- prompt management
+
+Frame it as:
+
+- completion truth
+- reviewer evidence
+- execution convergence
+
+The core question is:
+
+- can the repo tell an agent what a correct, safe, complete change looks like?
+
+## Core product gaps
+
+### 1. Completion truth is still too implicit
+
+Today a repo can declare tasks, workflows, readiness, and safe-task boundaries.
+
+What is still weaker than it should be is the explicit answer to:
+
+- what verification lane counts as completion for this class of change
+- what evidence must exist before an agent should stop
+- what should block "done" even when code changes look locally plausible
+
+V11 should make that surface clearer and more machine-checkable.
+
+### 2. Reviewer evidence is still too reconstructive
+
+Today a maintainer can inspect:
+
+- receipts
+- proof artifacts
+- doctor output
+- semantic diff / snapshot correlation
+
+That is already useful.
+
+What is still weaker than it should be is the direct reviewer answer to:
+
+- what contract/workflow/task the agent believed it was following
+- what verification actually ran
+- what failed versus what was skipped
+- whether the fix changed repo truth, runtime state, or only code
+
+V11 should reduce reviewer reconstruction work further.
+
+### 3. Local, CI, and agent truth still drift too easily
+
+Even when the repo declares useful contract truth, maintainers can still end up with:
+
+- one local path
+- one CI path
+- one agent path
+
+V11 should keep pushing toward one explicit execution contract instead of three partially aligned
+conventions.
+
+### 4. Unsafe or incomplete agent stopping conditions are still too soft
+
+The repo should be able to say more clearly:
+
+- this task is safe
+- this effect is external or destructive
+- this workflow is verification, not setup
+- this repo is not ready, so code-level completion claims should stop here
+
+V11 should strengthen those stop/review semantics.
+
+## Proposed execution slices
+
+### 1. Completion contract surface
+
+Define a clearer contract-owned surface for completion truth.
+
+This should let a repo say:
+
+- which task or workflow is the canonical completion lane
+- which verification steps must pass after changes
+- when "done" is not satisfied even if the code change itself compiles or tests partially
+
+Design bar:
+
+- completion truth should be repo-owned
+- completion truth should be machine-readable
+- completion truth should reuse existing task/workflow structure where possible
+- completion truth should not require reviewers to infer intent from prose alone
+
+### 2. Reviewer evidence surface
+
+Widen receipts / proof / JSON summaries so reviewers can answer:
+
+- what path the agent selected
+- what actually executed
+- what was skipped
+- what contract snapshot and semantic assumptions were in play
+- whether the failure or stop condition was code, setup, readiness, or contract drift
+
+This is not a new generic reporting engine.
+It is the next trust layer on top of existing receipt and proof surfaces.
+
+### 3. Execution convergence governance
+
+Push repos harder toward one canonical verification truth across:
+
+- local execution
+- CI workflows
+- agent execution
+
+Expected direction:
+
+- reuse repo-owned task/workflow truth
+- reduce handwritten duplication in CI
+- warn more clearly when the repo's public or machine-facing execution stories split
+
+### 4. Stronger stop/review semantics
+
+Improve machine-readable and human-readable signals for:
+
+- incomplete verification
+- readiness blockers
+- skipped required proof
+- unsafe mutation boundaries
+- task paths that should not be treated as autonomous completion
+
+This should sharpen the line between:
+
+- change attempted
+- change verified
+- repo ready
+- safe to merge
+
+## Proposed operator questions
+
+V11 should make Ota better at answering these directly:
+
+- What does this repo require before a change can be considered complete?
+- What exact verification path did the agent run?
+- Did the repo become ready, or did the agent stop in an unready state?
+- Did the fix change code, contract truth, or only local runtime state?
+- Is the current PR failure a code problem, a readiness problem, or contract drift?
+- Is this agent outcome reviewable as a safe completion candidate, or should it have stopped earlier?
+
+## Rollout order
+
+1. Define the completion-truth contract surface.
+2. Publish machine-readable reviewer evidence for selected path and outcome.
+3. Tighten stop/review semantics around incomplete verification and unready repo state.
+4. Add governance for local/CI/agent execution drift.
+5. Pressure-test on real repos with agent-facing verification lanes.
+
+This order keeps the repo-owned truth first, the evidence second, and the stricter governance last.
+
+## Acceptance bar
+
+- a repo can declare a canonical completion lane without relying on prose alone
+- Ota can publish what verification actually ran in a reviewer-useful way
+- maintainers can distinguish code failure from readiness failure from contract drift more directly
+- local, CI, and agent execution truth have a clearer contract-bound convergence path
+- incomplete or unsafe agent outcomes surface stop/review signals earlier and more honestly

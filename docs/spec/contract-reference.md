@@ -1961,21 +1961,28 @@ Task-effect rules:
 - `compose.exe`: required executable to run inside the selected service for `kind: exec`, `run`, or `attach`
 - `compose.args`: optional argument list passed to `compose.exe` for `kind: exec`, `run`, or `attach`
 - `compose.rm`: optional `compose run --rm`; valid only with `kind: run`
+- `compose.force_recreate`: optional `compose up --force-recreate`; valid only with `kind: up`
+- `compose.force`: optional `compose rm -f`; valid only with `kind: rm`
+- `compose.follow`: optional `compose logs -f`; valid only with `kind: logs`
 - `compose.remove_volumes`: optional `compose down -v`; valid only with `kind: down`
 - `compose.tty`: optional TTY preservation for `exec` and `run`; omitted means ota adds `-T` for deterministic non-interactive execution. `kind: attach` is always interactive and preserves TTY by definition.
 
 `compose` rules:
 
-- use `compose` when the repo truth is a service-side finite command such as `bundle exec rails db:migrate`, `python manage.py migrate`, or `npm run lint` inside a declared Compose service, or when one finite staged task truthfully owns `docker compose up [-d] <services...>`, `docker compose build [services...]`, or `docker compose down`
+- use `compose` when the repo truth is a service-side finite command such as `bundle exec rails db:migrate`, `python manage.py migrate`, or `npm run lint` inside a declared Compose service, or when one finite staged task truthfully owns `docker compose up [-d] [--force-recreate] <services...>`, `docker compose build [services...]`, `docker compose restart [services...]`, `docker compose rm [-f] [services...]`, `docker compose logs [-f] [services...]`, or `docker compose down`
 - `compose` is a task body, so it is mutually exclusive with `run`, `script`, `command`, `prepare`, `launch`, `action`, and `aggregate`
 - `compose` currently requires `requirements.tools.docker` or `requirements.tools.podman` to keep the host Compose engine truthful
 - keep host-side Compose adapter truth under `adapter_inputs.compose` or workflow overlays; keep service-side command truth or staged compose subcommand truth under `compose`
 - `compose.kind: exec`, `run`, and `attach` require `compose.service`
 - `compose.kind: up` uses `compose.services` for staged service-group activation and must not declare `compose.service`
 - `compose.kind: build` uses optional `compose.services` for staged image build selection and must not declare `compose.service`
+- `compose.kind: restart`, `rm`, and `logs` use optional `compose.services` for staged service selection and must not declare `compose.service`
 - `compose.kind: down` is project-scoped and must not declare `compose.service` or `compose.services`
 - `compose.workdir`, `compose.exe`, and `compose.args` only apply to `compose.kind: exec`, `run`, or `attach`
 - `compose.rm` is only valid with `compose.kind: run`
+- `compose.force_recreate` is only valid with `compose.kind: up`
+- `compose.force` is only valid with `compose.kind: rm`
+- `compose.follow` is only valid with `compose.kind: logs`
 - `compose.remove_volumes` is only valid with `compose.kind: down`
 - `compose.detach` is only valid with `compose.kind: exec` or `compose.kind: up`
 - `compose.kind: attach` must not declare `compose.rm` or `compose.detach`
@@ -2320,7 +2327,9 @@ bootstrap glue. Ota clones `action.source.git` into `action.path` only when that
 optionally checks out `action.source.ref`, and then leaves existing directories untouched on repeat
 runs. This is intentionally a materialization surface, not an update/reset surface: use it when
 bootstrap needs “make sure this checkout exists”, not when setup should implicitly pull, fetch, or
-rewrite a repo that is already present.
+rewrite a repo that is already present. When `action.source.ref` is omitted, Ota intentionally
+tracks the remote default branch head and `ota validate` / `ota doctor` warn that the checkout is
+moving-head pressure truth rather than deterministic proof truth.
 
 Use `action.kind: ensure_container_network` when setup needs one deterministic external container
 network without shell glue. It inspects the named provider-owned network, creates it only when

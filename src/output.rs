@@ -3620,6 +3620,12 @@ pub struct TaskComposeExecutionSummary<'a> {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force_recreate: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_volumes: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
@@ -3639,6 +3645,12 @@ pub struct TaskComposeInvocationSummary<'a> {
     pub rm: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force_recreate: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_volumes: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -3825,6 +3837,12 @@ pub struct WorkspaceTaskComposeInvocationSummary {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force_recreate: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_volumes: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
@@ -3879,6 +3897,9 @@ fn summarize_task_compose<'a>(
         workdir: compose.invocation.workdir.as_deref(),
         rm: compose.invocation.rm,
         detach: compose.invocation.detach,
+        force_recreate: compose.invocation.force_recreate,
+        force: compose.invocation.force,
+        follow: compose.invocation.follow,
         remove_volumes: compose.invocation.remove_volumes,
         tty: compose.invocation.tty,
     })
@@ -3895,6 +3916,9 @@ fn summarize_task_compose_invocation<'a>(
         workdir: compose.workdir.as_deref(),
         rm: compose.rm,
         detach: compose.detach,
+        force_recreate: compose.force_recreate,
+        force: compose.force,
+        follow: compose.follow,
         remove_volumes: compose.remove_volumes,
         tty: compose.tty,
     })
@@ -3911,6 +3935,9 @@ fn summarize_task_compose_invocation_owned(
         workdir: compose.workdir.clone(),
         rm: compose.rm,
         detach: compose.detach,
+        force_recreate: compose.force_recreate,
+        force: compose.force,
+        follow: compose.follow,
         remove_volumes: compose.remove_volumes,
         tty: compose.tty,
     })
@@ -4961,7 +4988,7 @@ tasks:
             &contract,
         );
 
-        assert_eq!(summary.kind, "compose");
+        assert_eq!(summary.kind, "compose_up");
         let compose = summary.compose.expect("compose summary should exist");
         assert_eq!(compose.kind, "up");
         assert_eq!(compose.service, None);
@@ -5038,6 +5065,75 @@ tasks:
         let compose = summary.compose.expect("compose summary should exist");
         assert_eq!(compose.kind, "down");
         assert!(compose.remove_volumes);
+    }
+
+    #[test]
+    fn summarize_task_compose_restart_uses_service_groups() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:restart:
+    compose:
+      kind: restart
+      services:
+        - web
+        - worker
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "stack:restart",
+            contract
+                .tasks
+                .get("stack:restart")
+                .expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.kind, "compose_restart");
+        let compose = summary.compose.expect("compose summary should exist");
+        assert_eq!(compose.kind, "restart");
+        assert_eq!(compose.service, None);
+        assert_eq!(compose.services, vec!["web", "worker"]);
+    }
+
+    #[test]
+    fn summarize_task_compose_logs_can_follow() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:logs:
+    compose:
+      kind: logs
+      follow: true
+      services:
+        - web
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "stack:logs",
+            contract.tasks.get("stack:logs").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.kind, "compose_logs");
+        let compose = summary.compose.expect("compose summary should exist");
+        assert_eq!(compose.kind, "logs");
+        assert!(compose.follow);
+        assert_eq!(compose.services, vec!["web"]);
     }
 
     #[test]

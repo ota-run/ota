@@ -38,7 +38,8 @@ V7.1 is complete and archived.
 V7.2 is complete and archived.
 V8 is complete and archived.
 V9 is complete and archived.
-V9.1 is active.
+V9.1 is complete and archived.
+V10 is active.
 
 ## V1 archive
 
@@ -54,7 +55,8 @@ V9.1 is active.
 - keep `ota agents` visible as a first-class derived adoption surface
 - keep the premium UX review loop green when text/help surfaces change
 - hold enterprise-facing scope behind the adoption readiness gate
-- ship the V9.1 public-adoption hardening slice in narrow, real slices
+- keep the V10 semantic snapshot, assumption diff, and failure-correlation slice narrow and
+  reviewable
 - keep the canonical roadmap aligned with the spec repo versioning
 
 ## V2 archive
@@ -76,11 +78,11 @@ V9.1 is active.
 
 ## Active version
 
-- [V9.1 plan](docs/planning/v9.1/plan.md)
+- [V10 plan](docs/planning/v10/plan.md)
 
 ## Next planned version
 
-- [V10 plan](docs/planning/v10/plan.md)
+- [V11 plan](docs/planning/v11/plan.md)
 
 ## Implemented foundation
 
@@ -91,13 +93,13 @@ V9.1 is active.
 
 ## Near-term next steps
 
-- keep the V9.1 public-adoption surfaces stable and reviewable
+- keep the V10 semantic contract surfaces stable and reviewable
 - preserve the shipped repo/workspace trust baseline
 - keep docs and active planning aligned with the canonical spec repo
 - keep extension and editor surfaces contract-bound
 - avoid widening into generic plugin-runtime scope
-- stage V10 semantic contract snapshots, assumption diffs, and failure correlation as a separate
-  version with first implementation targeted at `ota 1.6.22`
+- stage V11 completion truth, reviewer evidence, and local/CI/agent convergence as the next
+  planned version after the semantic snapshot thread
 
 ## Archived V2 shape
 

@@ -1706,6 +1706,18 @@ fn render_validate_warning(advisory: &ContractAdvisory) -> String {
             paint_key("Next:"),
             render_validate_warning_detail(&advisory.next()),
         ),
+        ContractAdvisory::EnsureGitCheckoutMovingHead(value) => format!(
+            "{} task `{}` checkout `{}`\n  {} {}\n  {} {}\n  {} {}",
+            list_bullet(),
+            value.task_name,
+            value.checkout_path,
+            paint_key("Risk:"),
+            render_validate_warning_detail("moving-head checkout materialization"),
+            paint_key("Why:"),
+            render_validate_warning_detail(&advisory.why()),
+            paint_key("Next:"),
+            render_validate_warning_detail(&advisory.next()),
+        ),
         ContractAdvisory::AgentBootstrapUnpinned(value) => format!(
             "{} field `{}`\n  {} {}\n  {} {}\n  {} {}",
             list_bullet(),
@@ -39262,6 +39274,15 @@ fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary
     if compose.detach {
         preview.push_str(" -d");
     }
+    if compose.force_recreate {
+        preview.push_str(" --force-recreate");
+    }
+    if compose.force {
+        preview.push_str(" -f");
+    }
+    if compose.follow {
+        preview.push_str(" -f");
+    }
     if compose.remove_volumes {
         preview.push_str(" -v");
     }
@@ -52271,6 +52292,9 @@ tasks:
                     workdir: Some("/workspace/app"),
                     rm: false,
                     detach: false,
+                    force_recreate: false,
+                    force: false,
+                    follow: false,
                     remove_volumes: false,
                     tty: false,
                 }),
@@ -52349,6 +52373,9 @@ tasks:
                     workdir: Some("/usr/src/app"),
                     rm: true,
                     detach: false,
+                    force_recreate: false,
+                    force: false,
+                    follow: false,
                     remove_volumes: false,
                     tty: false,
                 }),
@@ -52410,6 +52437,9 @@ tasks:
                 workdir: Some("/workspace"),
                 rm: false,
                 detach: false,
+                force_recreate: false,
+                force: false,
+                follow: false,
                 remove_volumes: false,
                 tty: false,
             }),
@@ -54942,11 +54972,37 @@ tasks:
                 workdir: None,
                 rm: false,
                 detach: false,
+                force_recreate: false,
+                force: false,
+                follow: false,
                 remove_volumes: false,
                 tty: false,
             });
 
         assert_eq!(rendered, "docker compose exec web bash");
+    }
+
+    #[test]
+    fn render_task_compose_text_projects_control_flags() {
+        let rendered =
+            super::render_task_compose_text(&crate::output::TaskComposeExecutionSummary {
+                kind: "logs",
+                engine: "docker",
+                service: None,
+                services: vec!["web"],
+                exe: None,
+                args: Vec::new(),
+                workdir: None,
+                rm: false,
+                detach: false,
+                force_recreate: false,
+                force: false,
+                follow: true,
+                remove_volumes: false,
+                tty: false,
+            });
+
+        assert_eq!(rendered, "docker compose logs -f web");
     }
 
     #[test]

@@ -43,13 +43,13 @@ use crate::schema::{
     AgentBootstrapOtaSource, AgentPosture, Backend, CheckKind, ContainerBackend, Contract,
     EnvConfig, ExecutionContext, ExecutionSharedBackend, ExecutionSharedBackendFulfillment,
     ExecutionSharedBackendScope, ExtensionKind, Lifecycle, NativePrerequisitePlatformSpec,
-    OrchestratorKind, RuntimeRequirement, ServiceProducerSpec, ServiceSpec, TaskCommandSpec,
-    TaskLaunchSpec, TaskModeBranchSpec, TaskNetworkEffectKind, TaskRuntimeHostPortMode,
-    TaskRuntimeHostProjectionSpec, TaskRuntimeKind, TaskRuntimePortMode, TaskRuntimeProtocol,
-    TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode, TaskTargetAddressView,
-    TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement, ToolchainFulfillmentMode,
-    ToolchainFulfillmentSource, ToolchainProvider, ToolchainSpec, parse_memory_size_bytes,
-    parse_readiness_duration_spec, task_target_env_name,
+    OrchestratorKind, RuntimeRequirement, ServiceProducerSpec, ServiceSpec, TaskActionSpec,
+    TaskCommandSpec, TaskEnsureBundleStepSpec, TaskLaunchSpec, TaskModeBranchSpec,
+    TaskNetworkEffectKind, TaskRuntimeHostPortMode, TaskRuntimeHostProjectionSpec, TaskRuntimeKind,
+    TaskRuntimePortMode, TaskRuntimeProtocol, TaskRuntimeSpec, TaskSpec, TaskTargetActivationMode,
+    TaskTargetAddressView, TaskTargetServiceRefSpec, TaskTargetSpec, ToolRequirement,
+    ToolchainFulfillmentMode, ToolchainFulfillmentSource, ToolchainProvider, ToolchainSpec,
+    parse_memory_size_bytes, parse_readiness_duration_spec, task_target_env_name,
 };
 use crate::toolchains::{
     declared_toolchain_contract, fulfillment_source_legacy_provider,
@@ -3672,6 +3672,24 @@ fn validate_task_compose_invocation(
                     "task `{task_name}` {scope} must only declare `{field_path}.detach: true` with `kind: exec`"
                 )));
             }
+            if compose.force_recreate {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force_recreate: true` with `kind: {}`",
+                    compose.kind.label()
+                )));
+            }
+            if compose.force {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force: true` with `kind: {}`",
+                    compose.kind.label()
+                )));
+            }
+            if compose.follow {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.follow: true` with `kind: {}`",
+                    compose.kind.label()
+                )));
+            }
             if compose.remove_volumes {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: {}`",
@@ -3712,6 +3730,16 @@ fn validate_task_compose_invocation(
                     "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: up`"
                 )));
             }
+            if compose.force {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force: true` with `kind: up`"
+                )));
+            }
+            if compose.follow {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.follow: true` with `kind: up`"
+                )));
+            }
             if compose.remove_volumes {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: up`"
@@ -3744,6 +3772,21 @@ fn validate_task_compose_invocation(
                     "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: down`"
                 )));
             }
+            if compose.force_recreate {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force_recreate: true` with `kind: down`"
+                )));
+            }
+            if compose.force {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force: true` with `kind: down`"
+                )));
+            }
+            if compose.follow {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.follow: true` with `kind: down`"
+                )));
+            }
         }
         crate::schema::TaskComposeExecutionKind::Build => {
             if has_service {
@@ -3771,9 +3814,155 @@ fn validate_task_compose_invocation(
                     "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: build`"
                 )));
             }
+            if compose.force_recreate {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force_recreate: true` with `kind: build`"
+                )));
+            }
+            if compose.force {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force: true` with `kind: build`"
+                )));
+            }
+            if compose.follow {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.follow: true` with `kind: build`"
+                )));
+            }
             if compose.remove_volumes {
                 errors.push(ValidationError::new(format!(
                     "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: build`"
+                )));
+            }
+        }
+        crate::schema::TaskComposeExecutionKind::Restart => {
+            if has_service {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.service` with `kind: restart`; use `{field_path}.services`"
+                )));
+            }
+            if compose.rm {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: restart`"
+                )));
+            }
+            if compose.detach {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.detach: true` with `kind: restart`"
+                )));
+            }
+            if compose.workdir.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.workdir` with `kind: restart`"
+                )));
+            }
+            if compose.tty {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: restart`"
+                )));
+            }
+            if compose.force_recreate {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force_recreate: true` with `kind: restart`"
+                )));
+            }
+            if compose.force {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force: true` with `kind: restart`"
+                )));
+            }
+            if compose.follow {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.follow: true` with `kind: restart`"
+                )));
+            }
+            if compose.remove_volumes {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: restart`"
+                )));
+            }
+        }
+        crate::schema::TaskComposeExecutionKind::Rm => {
+            if has_service {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.service` with `kind: rm`; use `{field_path}.services`"
+                )));
+            }
+            if compose.rm {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: rm`"
+                )));
+            }
+            if compose.detach {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.detach: true` with `kind: rm`"
+                )));
+            }
+            if compose.workdir.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.workdir` with `kind: rm`"
+                )));
+            }
+            if compose.tty {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: rm`"
+                )));
+            }
+            if compose.force_recreate {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force_recreate: true` with `kind: rm`"
+                )));
+            }
+            if compose.follow {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.follow: true` with `kind: rm`"
+                )));
+            }
+            if compose.remove_volumes {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: rm`"
+                )));
+            }
+        }
+        crate::schema::TaskComposeExecutionKind::Logs => {
+            if has_service {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.service` with `kind: logs`; use `{field_path}.services`"
+                )));
+            }
+            if compose.rm {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: logs`"
+                )));
+            }
+            if compose.detach {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.detach: true` with `kind: logs`"
+                )));
+            }
+            if compose.workdir.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.workdir` with `kind: logs`"
+                )));
+            }
+            if compose.tty {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: logs`"
+                )));
+            }
+            if compose.force_recreate {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force_recreate: true` with `kind: logs`"
+                )));
+            }
+            if compose.force {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force: true` with `kind: logs`"
+                )));
+            }
+            if compose.remove_volumes {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: logs`"
                 )));
             }
         }
@@ -3851,6 +4040,9 @@ fn validate_task_compose_execution(
         crate::schema::TaskComposeExecutionKind::Up
             | crate::schema::TaskComposeExecutionKind::Down
             | crate::schema::TaskComposeExecutionKind::Build
+            | crate::schema::TaskComposeExecutionKind::Restart
+            | crate::schema::TaskComposeExecutionKind::Rm
+            | crate::schema::TaskComposeExecutionKind::Logs
     ) {
         if !compose.exe.trim().is_empty() {
             errors.push(ValidationError::new(format!(
@@ -5522,6 +5714,15 @@ fn validate_task_prepare(
                     compose,
                     errors,
                 );
+                if !matches!(
+                    compose.kind,
+                    crate::schema::TaskComposeExecutionKind::Exec
+                        | crate::schema::TaskComposeExecutionKind::Run
+                ) {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `dependency_hydration` must declare `prepare.source.compose.kind: exec` or `run`"
+                    )));
+                }
             }
         }
     }
@@ -8146,6 +8347,7 @@ pub enum ContractAdvisory {
     SensitiveAgentWritablePath(SensitiveAgentWritablePathAdvisory),
     SensitiveWriteException(SensitiveWriteExceptionAdvisory),
     NonCanonicalExternalStateToken(NonCanonicalExternalStateTokenAdvisory),
+    EnsureGitCheckoutMovingHead(EnsureGitCheckoutMovingHeadAdvisory),
     AgentBootstrapUnpinned(AgentBootstrapUnpinnedAdvisory),
     AgentBootstrapBranchTracking(AgentBootstrapBranchTrackingAdvisory),
     AgentSafeTaskNetwork(AgentSafeTaskNetworkAdvisory),
@@ -8371,6 +8573,13 @@ pub struct NonCanonicalExternalStateTokenAdvisory {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnsureGitCheckoutMovingHeadAdvisory {
+    pub task_name: String,
+    pub checkout_path: String,
+    pub location: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentBootstrapUnpinnedAdvisory {
     pub field: String,
 }
@@ -8498,6 +8707,9 @@ impl ContractAdvisory {
             }
             ContractAdvisory::NonCanonicalExternalStateToken(_) => {
                 "OTA_CONTRACT_ADVISORY_EXTERNAL_STATE_TOKEN_CANONICAL"
+            }
+            ContractAdvisory::EnsureGitCheckoutMovingHead(_) => {
+                "OTA_CONTRACT_ADVISORY_ENSURE_GIT_CHECKOUT_MOVING_HEAD"
             }
             ContractAdvisory::AgentBootstrapUnpinned(_) => {
                 "OTA_CONTRACT_ADVISORY_AGENT_BOOTSTRAP_UNPINNED"
@@ -8684,6 +8896,10 @@ impl ContractAdvisory {
                 "task `{}` uses non-canonical external-state token `{}`",
                 advisory.task_name, advisory.token
             ),
+            ContractAdvisory::EnsureGitCheckoutMovingHead(advisory) => format!(
+                "task `{}` materializes git checkout `{}` without explicit `source.ref`",
+                advisory.task_name, advisory.checkout_path
+            ),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => {
                 format!("`{}` should pin the ota release version", advisory.field)
             }
@@ -8860,6 +9076,10 @@ impl ContractAdvisory {
                 advisory.canonical_token,
                 shipped_external_state_token_examples()
             ),
+            ContractAdvisory::EnsureGitCheckoutMovingHead(advisory) => format!(
+                "`{}` clones `{}` from the remote default branch because `source.ref` is omitted; that is truthful for moving-head bootstrap pressure, but not deterministic proof truth",
+                advisory.location, advisory.checkout_path
+            ),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
                 "`{}` installs ota from a moving target without an explicit version pin",
                 advisory.field
@@ -8916,6 +9136,7 @@ impl ContractAdvisory {
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::NonCanonicalExternalStateToken(_)
+            | ContractAdvisory::EnsureGitCheckoutMovingHead(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
@@ -8957,6 +9178,7 @@ impl ContractAdvisory {
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::NonCanonicalExternalStateToken(_)
+            | ContractAdvisory::EnsureGitCheckoutMovingHead(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
@@ -8999,6 +9221,7 @@ impl ContractAdvisory {
             | ContractAdvisory::SensitiveAgentWritablePath(_)
             | ContractAdvisory::SensitiveWriteException(_)
             | ContractAdvisory::NonCanonicalExternalStateToken(_)
+            | ContractAdvisory::EnsureGitCheckoutMovingHead(_)
             | ContractAdvisory::AgentBootstrapUnpinned(_)
             | ContractAdvisory::AgentBootstrapBranchTracking(_)
             | ContractAdvisory::AgentSafeTaskNetwork(_)
@@ -9166,6 +9389,10 @@ impl ContractAdvisory {
                 "replace `effects.external_state: [{}]` with canonical token `{}` unless this task truly mutates a distinct external system not covered by the shipped vocabulary",
                 advisory.token, advisory.canonical_token
             ),
+            ContractAdvisory::EnsureGitCheckoutMovingHead(advisory) => format!(
+                "keep omitted `source.ref` only for active pressure lanes that intentionally track upstream head, or set `{}` to an exact revision or immutable release ref when checkout materialization needs deterministic proof",
+                advisory.location
+            ),
             ContractAdvisory::AgentBootstrapUnpinned(advisory) => format!(
                 "set `{}` to explicit ota install truth, for example `source.kind: version` with `version: vX.Y.Z`, or `source.kind: git_rev` with `rev: <exact-commit>` for deterministic unreleased proof, to keep agent bootstrap deterministic",
                 advisory.field
@@ -9325,6 +9552,7 @@ pub fn collect_contract_advisories_with_contract_path(
     advisories.extend(collect_non_canonical_external_state_token_advisories(
         contract,
     ));
+    advisories.extend(collect_ensure_git_checkout_moving_head_advisories(contract));
     advisories.extend(collect_agent_bootstrap_unpinned_advisories(contract));
     advisories.extend(collect_agent_safe_task_effect_advisories(contract));
     advisories.extend(collect_missing_integration_test_network_kind_advisories(
@@ -11789,6 +12017,64 @@ fn collect_non_canonical_external_state_token_advisories(
         }
     }
     advisories
+}
+
+fn collect_ensure_git_checkout_moving_head_advisories(
+    contract: &Contract,
+) -> Vec<ContractAdvisory> {
+    let mut advisories = Vec::new();
+    for (task_name, task) in &contract.tasks {
+        let Some(action) = task.action.as_ref() else {
+            continue;
+        };
+        collect_ensure_git_checkout_moving_head_advisories_from_action(
+            task_name,
+            "tasks".to_string(),
+            action,
+            &mut advisories,
+        );
+    }
+    advisories
+}
+
+fn collect_ensure_git_checkout_moving_head_advisories_from_action(
+    task_name: &str,
+    location_prefix: String,
+    action: &TaskActionSpec,
+    advisories: &mut Vec<ContractAdvisory>,
+) {
+    match action {
+        TaskActionSpec::EnsureGitCheckout(spec) => {
+            if spec.source.git_ref.is_none() {
+                advisories.push(ContractAdvisory::EnsureGitCheckoutMovingHead(
+                    EnsureGitCheckoutMovingHeadAdvisory {
+                        task_name: task_name.to_string(),
+                        checkout_path: spec.path.trim().to_string(),
+                        location: format!("{location_prefix}.{task_name}.action"),
+                    },
+                ));
+            }
+        }
+        TaskActionSpec::EnsureBundle(spec) => {
+            for (index, step) in spec.steps.iter().enumerate() {
+                let TaskEnsureBundleStepSpec::EnsureGitCheckout(checkout) = step else {
+                    continue;
+                };
+                if checkout.source.git_ref.is_none() {
+                    advisories.push(ContractAdvisory::EnsureGitCheckoutMovingHead(
+                        EnsureGitCheckoutMovingHeadAdvisory {
+                            task_name: task_name.to_string(),
+                            checkout_path: checkout.path.trim().to_string(),
+                            location: format!(
+                                "{location_prefix}.{task_name}.action.steps[{index}]"
+                            ),
+                        },
+                    ));
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn collect_agent_bootstrap_unpinned_advisories(contract: &Contract) -> Vec<ContractAdvisory> {
@@ -24083,11 +24369,14 @@ tasks:
         .unwrap();
 
         let errors = validate_contract(&contract).unwrap_err();
-        assert_eq!(errors.errors().len(), 1);
-        assert_eq!(
-            errors.errors()[0].to_string(),
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(messages.contains(&String::from(
             "task `dev` task must only declare `compose.rm: true` with `kind: run`"
-        );
+        )));
     }
 
     #[test]
@@ -24244,6 +24533,83 @@ tasks:
             .collect::<Vec<_>>();
         assert!(messages.contains(&String::from(
             "task `staged:up` task must not declare `compose.remove_volumes: true` with `kind: up`"
+        )));
+    }
+
+    #[test]
+    fn rejects_compose_follow_outside_logs() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:up:
+    compose:
+      kind: up
+      follow: true
+      services:
+        - web
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(messages.contains(&String::from(
+            "task `stack:up` task must not declare `compose.follow: true` with `kind: up`"
+        )));
+    }
+
+    #[test]
+    fn rejects_dependency_hydration_compose_control_kinds() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    prepare:
+      kind: dependency_hydration
+      medium: package_dependencies
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: npm
+        mode: install
+        compose:
+          kind: restart
+          services:
+            - web
+    requirements:
+      toolchains:
+        - node
+      tools:
+        docker: "*"
+    effects:
+      network: true
+      network_kind: dependency_hydration
+      writes:
+        - node_modules
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(messages.contains(&String::from(
+            "task `setup` prepare `dependency_hydration` must declare `prepare.source.compose.kind: exec` or `run`"
         )));
     }
 
@@ -34925,6 +35291,97 @@ agent:
                 if value.field == "agent.bootstrap.ota.source"
                     && value.branch == "1.6.21-implementation"
         )));
+    }
+
+    #[test]
+    fn collects_ensure_git_checkout_moving_head_advisory_for_direct_action() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bootstrap:
+    action:
+      kind: ensure_git_checkout
+      path: vendor/wagtail
+      source:
+        git: https://github.com/wagtail/wagtail.git
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::EnsureGitCheckoutMovingHead(value)
+                if value.task_name == "bootstrap"
+                    && value.checkout_path == "vendor/wagtail"
+                    && value.location == "tasks.bootstrap.action"
+        )));
+    }
+
+    #[test]
+    fn collects_ensure_git_checkout_moving_head_advisory_for_bundle_step() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bootstrap:
+    action:
+      kind: ensure_bundle
+      steps:
+        - kind: ensure_directory
+          path: vendor
+        - kind: ensure_git_checkout
+          path: vendor/wagtail
+          source:
+            git: https://github.com/wagtail/wagtail.git
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(advisories.iter().any(|advisory| matches!(
+            advisory,
+            ContractAdvisory::EnsureGitCheckoutMovingHead(value)
+                if value.task_name == "bootstrap"
+                    && value.checkout_path == "vendor/wagtail"
+                    && value.location == "tasks.bootstrap.action.steps[1]"
+        )));
+    }
+
+    #[test]
+    fn skips_ensure_git_checkout_moving_head_advisory_when_ref_is_declared() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  bootstrap:
+    action:
+      kind: ensure_git_checkout
+      path: vendor/wagtail
+      source:
+        git: https://github.com/wagtail/wagtail.git
+        ref: refs/tags/v6.1.2
+"#,
+        )
+        .unwrap();
+
+        let advisories = collect_contract_advisories(&contract);
+        assert!(
+            !advisories.iter().any(|advisory| matches!(
+                advisory,
+                ContractAdvisory::EnsureGitCheckoutMovingHead(_)
+            ))
+        );
     }
 
     #[test]

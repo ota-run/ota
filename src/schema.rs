@@ -5804,6 +5804,12 @@ pub struct TaskComposeInvocationSpec {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub detach: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force_recreate: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub remove_volumes: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tty: bool,
@@ -5818,6 +5824,9 @@ impl TaskComposeInvocationSpec {
             TaskComposeExecutionKind::Up => "compose_up",
             TaskComposeExecutionKind::Down => "compose_down",
             TaskComposeExecutionKind::Build => "compose_build",
+            TaskComposeExecutionKind::Restart => "compose_restart",
+            TaskComposeExecutionKind::Rm => "compose_rm",
+            TaskComposeExecutionKind::Logs => "compose_logs",
         }
     }
 
@@ -5828,6 +5837,9 @@ impl TaskComposeInvocationSpec {
             TaskComposeExecutionKind::Up => "up",
             TaskComposeExecutionKind::Down => "down",
             TaskComposeExecutionKind::Build => "build",
+            TaskComposeExecutionKind::Restart => "restart",
+            TaskComposeExecutionKind::Rm => "rm",
+            TaskComposeExecutionKind::Logs => "logs",
         }
     }
 
@@ -5839,6 +5851,15 @@ impl TaskComposeInvocationSpec {
         );
         if self.detach {
             preview.push_str(" -d");
+        }
+        if self.force_recreate {
+            preview.push_str(" --force-recreate");
+        }
+        if self.force {
+            preview.push_str(" -f");
+        }
+        if self.follow {
+            preview.push_str(" -f");
         }
         if self.remove_volumes {
             preview.push_str(" -v");
@@ -5906,9 +5927,12 @@ impl TaskComposeExecutionSpec {
 
     pub fn preview(&self) -> String {
         match self.invocation.kind {
-            TaskComposeExecutionKind::Up | TaskComposeExecutionKind::Down => {
-                self.invocation.preview_prefix()
-            }
+            TaskComposeExecutionKind::Up
+            | TaskComposeExecutionKind::Down
+            | TaskComposeExecutionKind::Build
+            | TaskComposeExecutionKind::Restart
+            | TaskComposeExecutionKind::Rm
+            | TaskComposeExecutionKind::Logs => self.invocation.preview_prefix(),
             _ => self
                 .invocation
                 .preview_with_command(self.exe.as_str(), self.args.as_slice()),
@@ -5926,6 +5950,9 @@ pub enum TaskComposeExecutionKind {
     Up,
     Down,
     Build,
+    Restart,
+    Rm,
+    Logs,
 }
 
 impl TaskComposeExecutionKind {
@@ -5937,6 +5964,9 @@ impl TaskComposeExecutionKind {
             Self::Up => "up",
             Self::Down => "down",
             Self::Build => "build",
+            Self::Restart => "restart",
+            Self::Rm => "rm",
+            Self::Logs => "logs",
         }
     }
 }
@@ -8704,6 +8734,9 @@ tasks:
                             workdir: Some(String::from("/workspace")),
                             rm: true,
                             detach: false,
+                            force_recreate: false,
+                            force: false,
+                            follow: false,
                             remove_volumes: false,
                             tty: false,
                         }),

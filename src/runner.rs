@@ -2730,6 +2730,15 @@ fn projected_compose_invocation_command_for_task(
     if compose.detach {
         projected_args.push(String::from("-d"));
     }
+    if compose.force_recreate {
+        projected_args.push(String::from("--force-recreate"));
+    }
+    if compose.force {
+        projected_args.push(String::from("-f"));
+    }
+    if compose.follow {
+        projected_args.push(String::from("-f"));
+    }
     if compose.remove_volumes {
         projected_args.push(String::from("-v"));
     }
@@ -58539,7 +58548,7 @@ tasks:
         );
 
         assert_eq!(projected.exe, "docker");
-        assert_eq!(projected.cwd, None);
+        assert_eq!(projected.cwd.as_deref(), Some("infra"));
         assert_eq!(
             projected.args,
             vec![
@@ -58679,6 +58688,88 @@ tasks:
                 String::from("compose"),
                 String::from("down"),
                 String::from("-v"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_compose_up_can_force_recreate() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:up:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    compose:
+      kind: up
+      detach: true
+      force_recreate: true
+      services:
+        - web
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("stack:up").unwrap();
+        let projected = super::projected_compose_command_for_task(
+            task,
+            Backend::Native,
+            task.compose.as_ref().unwrap(),
+        );
+
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("compose"),
+                String::from("up"),
+                String::from("-d"),
+                String::from("--force-recreate"),
+                String::from("web"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projected_compose_logs_can_follow() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:logs:
+    adapter_inputs:
+      compose:
+        cwd: infra
+    compose:
+      kind: logs
+      follow: true
+      services:
+        - web
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("stack:logs").unwrap();
+        let projected = super::projected_compose_command_for_task(
+            task,
+            Backend::Native,
+            task.compose.as_ref().unwrap(),
+        );
+
+        assert_eq!(
+            projected.args,
+            vec![
+                String::from("compose"),
+                String::from("logs"),
+                String::from("-f"),
+                String::from("web"),
             ]
         );
     }

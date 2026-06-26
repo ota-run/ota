@@ -31,7 +31,9 @@
   `ensure_file`, `ensure_env_file`, and `ensure_bundle`; Ota clones a declared Git source only
   when the repo-relative checkout path is missing, optionally checks out a declared ref, and
   intentionally leaves existing directories untouched instead of smuggling fetch/reset/update
-  semantics into bootstrap
+  semantics into bootstrap; `ota validate` / `ota doctor` now also warn when checkout
+  materialization omits `source.ref`, so moving-head pressure bootstrap does not silently read as
+  deterministic proof truth
 - added first-class `tasks.<name>.effects.adapter_state` for durable adapter-owned task state such
   as Compose volumes, and widened typed dependency hydration so `prepare.kind: dependency_hydration`
   can declare durable state through `effects.writes` or `effects.adapter_state` instead of being
@@ -81,6 +83,11 @@
   accept finite native `compose` bodies and tightened `ota up --dry-run --json` action text so
   `command` and `compose` tasks publish the actual structured execution preview instead of generic
   task placeholders
+- widened `tasks.<name>.compose` again with first-class `compose.kind: restart`,
+  `compose.kind: rm`, `compose.kind: logs`, `compose.force_recreate: true` for
+  `compose up --force-recreate`, `compose.force: true` for `compose rm -f`, and
+  `compose.follow: true` for `compose logs -f`, so repos can model Compose control lanes without
+  falling back to opaque host-shell `docker|podman compose ...` glue
 - fixed runtime-proof workflow-instance selection and container Corepack run-path fulfillment, so
   `ota proof runtime --workflow <name>@<instance>` now preserves instance overlays in topology,
   cleanup, and proof artifacts, and container-mode setup/run lanes now honor selected container
