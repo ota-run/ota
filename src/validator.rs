@@ -3835,6 +3835,53 @@ fn validate_task_compose_invocation(
                 )));
             }
         }
+        crate::schema::TaskComposeExecutionKind::Stop => {
+            if has_service {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.service` with `kind: stop`; use `{field_path}.services`"
+                )));
+            }
+            if compose.rm {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.rm: true` with `kind: stop`"
+                )));
+            }
+            if compose.detach {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.detach: true` with `kind: stop`"
+                )));
+            }
+            if compose.workdir.is_some() {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.workdir` with `kind: stop`"
+                )));
+            }
+            if compose.tty {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.tty: true` with `kind: stop`"
+                )));
+            }
+            if compose.force_recreate {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force_recreate: true` with `kind: stop`"
+                )));
+            }
+            if compose.force {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.force: true` with `kind: stop`"
+                )));
+            }
+            if compose.follow {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.follow: true` with `kind: stop`"
+                )));
+            }
+            if compose.remove_volumes {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` {scope} must not declare `{field_path}.remove_volumes: true` with `kind: stop`"
+                )));
+            }
+        }
         crate::schema::TaskComposeExecutionKind::Restart => {
             if has_service {
                 errors.push(ValidationError::new(format!(
@@ -4040,6 +4087,7 @@ fn validate_task_compose_execution(
         crate::schema::TaskComposeExecutionKind::Up
             | crate::schema::TaskComposeExecutionKind::Down
             | crate::schema::TaskComposeExecutionKind::Build
+            | crate::schema::TaskComposeExecutionKind::Stop
             | crate::schema::TaskComposeExecutionKind::Restart
             | crate::schema::TaskComposeExecutionKind::Rm
             | crate::schema::TaskComposeExecutionKind::Logs
@@ -24563,6 +24611,58 @@ tasks:
             .collect::<Vec<_>>();
         assert!(messages.contains(&String::from(
             "task `stack:up` task must not declare `compose.follow: true` with `kind: up`"
+        )));
+    }
+
+    #[test]
+    fn rejects_compose_stop_unsupported_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:stop:
+    compose:
+      kind: stop
+      service: web
+      detach: true
+      force: true
+      follow: true
+      workdir: /workspace
+      tty: true
+      exe: bash
+"#,
+        )
+        .unwrap();
+
+        let errors = validate_contract(&contract).unwrap_err();
+        let messages = errors
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert!(messages.contains(&String::from(
+            "task `stack:stop` task must not declare `compose.service` with `kind: stop`; use `compose.services`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:stop` task must not declare `compose.detach: true` with `kind: stop`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:stop` task must not declare `compose.force: true` with `kind: stop`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:stop` task must not declare `compose.follow: true` with `kind: stop`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:stop` task must not declare `compose.workdir` with `kind: stop`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:stop` task must not declare `compose.tty: true` with `kind: stop`"
+        )));
+        assert!(messages.contains(&String::from(
+            "task `stack:stop` task must not declare `compose.exe` with `kind: stop`"
         )));
     }
 

@@ -88,6 +88,9 @@
   `compose up --force-recreate`, `compose.force: true` for `compose rm -f`, and
   `compose.follow: true` for `compose logs -f`, so repos can model Compose control lanes without
   falling back to opaque host-shell `docker|podman compose ...` glue
+- widened `tasks.<name>.compose` again with first-class `compose.kind: stop`, so repos can own
+  truthful stopped-container preconditions such as `docker|podman compose stop <services...>`
+  structurally before `compose rm` cleanup instead of falling back to repo-local shell glue
 - fixed runtime-proof workflow-instance selection and container Corepack run-path fulfillment, so
   `ota proof runtime --workflow <name>@<instance>` now preserves instance overlays in topology,
   cleanup, and proof artifacts, and container-mode setup/run lanes now honor selected container

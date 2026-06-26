@@ -59041,6 +59041,46 @@ tasks:
     }
 
     #[test]
+    fn compose_stop_projects_control_command_without_shell_glue() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:stop:
+    compose:
+      kind: stop
+      services:
+        - web
+        - worker
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("stack:stop").unwrap();
+        let command = super::projected_compose_invocation_command_for_task(
+            task,
+            Backend::Native,
+            &task.compose.as_ref().unwrap().invocation,
+            "",
+            &[],
+        );
+
+        assert_eq!(command.exe, "docker");
+        assert_eq!(
+            command.args,
+            vec![
+                String::from("compose"),
+                String::from("stop"),
+                String::from("web"),
+                String::from("worker"),
+            ]
+        );
+    }
+
+    #[test]
     fn run_path_toolchain_fulfillment_runs_rustup_once_per_backend() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(

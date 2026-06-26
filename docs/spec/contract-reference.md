@@ -1953,7 +1953,7 @@ Task-effect rules:
 
 `compose` fields:
 
-- `compose.kind`: required Compose execution shape; ota ships `exec`, `run`, `attach`, `up`, `down`, and `build`
+- `compose.kind`: required Compose execution shape; ota ships `exec`, `run`, `attach`, `up`, `down`, `build`, `stop`, `restart`, `rm`, and `logs`
 - `compose.engine`: optional Compose CLI engine; `docker` by default, `podman` also supported
 - `compose.service`: required Compose service name for `kind: exec`, `run`, or `attach`
 - `compose.services`: optional ordered service list for `kind: up` or `kind: build`
@@ -1976,7 +1976,7 @@ Task-effect rules:
 - `compose.kind: exec`, `run`, and `attach` require `compose.service`
 - `compose.kind: up` uses `compose.services` for staged service-group activation and must not declare `compose.service`
 - `compose.kind: build` uses optional `compose.services` for staged image build selection and must not declare `compose.service`
-- `compose.kind: restart`, `rm`, and `logs` use optional `compose.services` for staged service selection and must not declare `compose.service`
+- `compose.kind: stop`, `restart`, `rm`, and `logs` use optional `compose.services` for staged service selection and must not declare `compose.service`
 - `compose.kind: down` is project-scoped and must not declare `compose.service` or `compose.services`
 - `compose.workdir`, `compose.exe`, and `compose.args` only apply to `compose.kind: exec`, `run`, or `attach`
 - `compose.rm` is only valid with `compose.kind: run`

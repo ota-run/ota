@@ -1108,7 +1108,7 @@
       "additionalProperties": false,
       "required": ["kind"],
       "properties": {
-        "kind": { "enum": ["exec", "run", "attach", "up", "down", "build", "restart", "rm", "logs"] },
+        "kind": { "enum": ["exec", "run", "attach", "up", "down", "build", "stop", "restart", "rm", "logs"] },
         "engine": { "enum": ["docker", "podman"] },
         "service": { "type": "string" },
         "services": { "$ref": "#/$defs/stringArray" },

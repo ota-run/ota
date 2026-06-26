@@ -5104,6 +5104,39 @@ tasks:
     }
 
     #[test]
+    fn summarize_task_compose_stop_uses_service_groups() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  stack:stop:
+    compose:
+      kind: stop
+      services:
+        - web
+        - worker
+"#,
+        )
+        .expect("contract should parse");
+
+        let summary = super::TaskSummary::from_spec(
+            "stack:stop",
+            contract.tasks.get("stack:stop").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+
+        assert_eq!(summary.kind, "compose_stop");
+        let compose = summary.compose.expect("compose summary should exist");
+        assert_eq!(compose.kind, "stop");
+        assert_eq!(compose.service, None);
+        assert_eq!(compose.services, vec!["web", "worker"]);
+    }
+
+    #[test]
     fn summarize_task_compose_logs_can_follow() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),

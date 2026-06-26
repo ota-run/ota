@@ -5824,6 +5824,7 @@ impl TaskComposeInvocationSpec {
             TaskComposeExecutionKind::Up => "compose_up",
             TaskComposeExecutionKind::Down => "compose_down",
             TaskComposeExecutionKind::Build => "compose_build",
+            TaskComposeExecutionKind::Stop => "compose_stop",
             TaskComposeExecutionKind::Restart => "compose_restart",
             TaskComposeExecutionKind::Rm => "compose_rm",
             TaskComposeExecutionKind::Logs => "compose_logs",
@@ -5837,6 +5838,7 @@ impl TaskComposeInvocationSpec {
             TaskComposeExecutionKind::Up => "up",
             TaskComposeExecutionKind::Down => "down",
             TaskComposeExecutionKind::Build => "build",
+            TaskComposeExecutionKind::Stop => "stop",
             TaskComposeExecutionKind::Restart => "restart",
             TaskComposeExecutionKind::Rm => "rm",
             TaskComposeExecutionKind::Logs => "logs",
@@ -5930,6 +5932,7 @@ impl TaskComposeExecutionSpec {
             TaskComposeExecutionKind::Up
             | TaskComposeExecutionKind::Down
             | TaskComposeExecutionKind::Build
+            | TaskComposeExecutionKind::Stop
             | TaskComposeExecutionKind::Restart
             | TaskComposeExecutionKind::Rm
             | TaskComposeExecutionKind::Logs => self.invocation.preview_prefix(),
@@ -5950,6 +5953,7 @@ pub enum TaskComposeExecutionKind {
     Up,
     Down,
     Build,
+    Stop,
     Restart,
     Rm,
     Logs,
@@ -5964,6 +5968,7 @@ impl TaskComposeExecutionKind {
             Self::Up => "up",
             Self::Down => "down",
             Self::Build => "build",
+            Self::Stop => "stop",
             Self::Restart => "restart",
             Self::Rm => "rm",
             Self::Logs => "logs",
