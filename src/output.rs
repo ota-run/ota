@@ -1399,6 +1399,8 @@ pub struct WorkspaceTaskSummary {
     pub name: String,
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_task: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
@@ -2034,6 +2036,8 @@ pub struct WorkspaceRepoRunReport {
     pub ok: bool,
     pub status: String,
     pub task: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_task: Option<String>,
     pub findings: Vec<Finding>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_url: Option<String>,

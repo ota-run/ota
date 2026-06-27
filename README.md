@@ -372,6 +372,9 @@ That keeps one workflow's archived receipt/baseline lane from silently replacing
 Use `ota receipt --snapshot ...` when you want to read the archived semantic contract truth
 directly instead of only consuming it through `ota diff` or receipt correlation.
 
+Public architecture guide:
+[Execution Governance Loop](https://ota.run/docs/reference/execution-governance-loop)
+
 Public operator guide:
 [Semantic Snapshots and Correlation](https://ota.run/docs/reference/semantic-snapshots-and-correlation)
 
@@ -511,8 +514,8 @@ Current behavior:
 - `ota detect --merge` applies only additive `high` confidence missing fields to an existing `ota.yaml`
 - there is no standalone `ota drift` command yet; drift review stays on `ota detect --merge --dry-run` and trust/readiness drift stays on `ota doctor`
 - `ota workspace validate` validates `ota.workspace.yaml` separately from repo contracts
-- `ota workspace tasks` lists workspace repo tasks in dependency order without executing them, including declared post-outcome hook relationships when repo contracts define them
-- `ota workspace run <task>` executes one task across workspace repos in dependency order with deterministic reporting
+- `ota workspace tasks` lists workspace repo tasks in dependency order without executing them, including declared post-outcome hook relationships when repo contracts define them and any workspace-owned repo task bindings declared under `repos.<name>.tasks`
+- `ota workspace run <task>` executes one task across workspace repos in dependency order with deterministic reporting; when `repos.<name>.tasks.<task>.task` is declared, the workspace task resolves to that repo-local task name for that repo instead of requiring every repo to share the same literal task name
 - `ota workspace explain` turns workspace readiness findings into ordered remediation steps
 - `ota workspace check` runs configured checks across workspace repos with deterministic reporting and honors `repos.<name>.workflow` when the workspace contract pins a non-default repo workflow
 - `ota workspace doctor` aggregates repo readiness across a workspace contract without merging repo and workspace truth, including repos that are not acquired yet, and uses `repos.<name>.workflow` when the workspace declares a canonical repo path

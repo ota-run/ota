@@ -85,12 +85,20 @@ pub struct WorkspaceRepoSpec {
     pub contract: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tasks: BTreeMap<String, WorkspaceRepoTaskBindingSpec>,
     #[serde(default)]
     pub required: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends_on: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<WorkspaceRepoSourceSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRepoTaskBindingSpec {
+    pub task: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -110,12 +118,22 @@ pub struct WorkspaceRepoRef {
     pub path: PathBuf,
     pub contract_path: PathBuf,
     pub workflow: Option<String>,
+    pub task_bindings: BTreeMap<String, String>,
     pub required: bool,
     pub depends_on: Vec<String>,
     pub present: bool,
     pub source_url: Option<String>,
     pub source_ref: Option<String>,
     pub policy_env: BTreeMap<String, String>,
+}
+
+impl WorkspaceRepoRef {
+    pub fn resolve_workspace_task<'a>(&'a self, task: &'a str) -> &'a str {
+        self.task_bindings
+            .get(task)
+            .map(String::as_str)
+            .unwrap_or(task)
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone)]
@@ -726,11 +744,21 @@ pub fn validate_workspace_shape(
         repo_refs.push(WorkspaceRepoRef {
             name: name.clone(),
             path: repo_root,
-            contract_path,
+            contract_path: contract_path.clone(),
             workflow: repo
                 .workflow
                 .as_ref()
                 .map(|workflow| workflow.trim().to_string()),
+            task_bindings: repo
+                .tasks
+                .iter()
+                .map(|(workspace_task, binding)| {
+                    (
+                        workspace_task.trim().to_string(),
+                        binding.task.trim().to_string(),
+                    )
+                })
+                .collect(),
             required: repo.required,
             depends_on: repo.depends_on.clone(),
             present,
@@ -758,6 +786,54 @@ pub fn validate_workspace_shape(
                 errors.push(WorkspaceValidationError::new(format!(
                     "workspace repo `{name}` is required and must not depend on optional repo `{dependency}`"
                 )));
+            }
+        }
+
+        for (workspace_task, binding) in &repo.tasks {
+            if workspace_task.trim().is_empty() {
+                errors.push(WorkspaceValidationError::new(format!(
+                    "workspace repo `{name}` must not declare an empty `tasks` binding name"
+                )));
+            }
+            if binding.task.trim().is_empty() {
+                errors.push(WorkspaceValidationError::new(format!(
+                    "workspace repo `{name}` task binding `{workspace_task}` must declare a non-empty `task`"
+                )));
+            }
+        }
+
+        if present {
+            match load_contract(&contract_path) {
+                Ok(repo_contract) => {
+                    if validate_contract_with_path(&repo_contract, Some(&contract_path)).is_ok() {
+                        for (workspace_task, binding) in &repo.tasks {
+                            let workspace_task = workspace_task.trim();
+                            let target_task = binding.task.trim();
+                            let Some(task_spec) = repo_contract.tasks.get(target_task) else {
+                                errors.push(WorkspaceValidationError::new(format!(
+                                    "workspace repo `{name}` task binding `{workspace_task}` targets unknown repo task `{target_task}`"
+                                )));
+                                continue;
+                            };
+                            if task_spec.internal {
+                                errors.push(WorkspaceValidationError::new(format!(
+                                    "workspace repo `{name}` task binding `{workspace_task}` must not target internal repo task `{target_task}`"
+                                )));
+                            }
+                            if workspace_task != target_task
+                                && repo_contract
+                                    .tasks
+                                    .get(workspace_task)
+                                    .is_some_and(|task| !task.internal)
+                            {
+                                errors.push(WorkspaceValidationError::new(format!(
+                                    "workspace repo `{name}` task binding `{workspace_task}` conflicts with visible repo task `{workspace_task}`; rename the workspace binding or the repo task so `ota workspace run {workspace_task}` stays unambiguous"
+                                )));
+                            }
+                        }
+                    }
+                }
+                Err(_) => {}
             }
         }
     }
@@ -1291,6 +1367,47 @@ repos:
         .unwrap();
 
         validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract).unwrap();
+    }
+
+    #[test]
+    fn rejects_workspace_task_binding_that_targets_unknown_repo_task() {
+        let fixture = TempDir::new().unwrap();
+        std::fs::create_dir_all(fixture.path().join("apps").join("web")).unwrap();
+        std::fs::write(
+            fixture.path().join("apps").join("web").join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  dev:
+    run: echo dev
+"#,
+        )
+        .unwrap();
+
+        let contract = parse_workspace_contract_str(
+            fixture.path().join("ota.workspace.yaml").as_path(),
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+    tasks:
+      prepare-dev:
+        task: generate-sdk
+"#,
+        )
+        .unwrap();
+
+        let error = validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
+            .expect_err("unknown repo task binding should fail validation");
+        assert!(error.errors().iter().any(|entry| {
+            entry.to_string()
+                == "workspace repo `web` task binding `prepare-dev` targets unknown repo task `generate-sdk`"
+        }));
     }
 
     #[test]

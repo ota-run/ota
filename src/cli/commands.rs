@@ -28878,56 +28878,76 @@ pub fn workspace_tasks(
                         .filter(|(_, task)| !task.internal)
                         .map(|(name, _)| name.as_str())
                         .collect::<BTreeSet<_>>();
-                    let tasks = contract
+                    let summarize_workspace_task = |workspace_name: String,
+                                                    repo_task: Option<String>,
+                                                    task: &TaskSpec| {
+                        let execution = task.resolved_execution(current_os()).expect(
+                            "validated task must resolve to a default or variant execution",
+                        );
+                        let filter_relationships = |relationships: &[String]| {
+                            relationships
+                                .iter()
+                                .filter(|dependency| {
+                                    visible_task_names.contains(dependency.as_str())
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        };
+                        WorkspaceTaskSummary {
+                            name: workspace_name,
+                            kind: execution.kind.to_string(),
+                            repo_task,
+                            description: task.description.clone(),
+                            run: (execution.kind == "run")
+                                .then(|| execution.shell_body().map(str::to_string))
+                                .flatten(),
+                            script: (execution.kind == "script")
+                                .then(|| execution.shell_body().map(str::to_string))
+                                .flatten(),
+                            launch: crate::output::summarize_task_launch_owned(
+                                execution.launch(),
+                            ),
+                            action: crate::output::summarize_task_action_owned(
+                                execution.action(),
+                            ),
+                            prepare: crate::output::summarize_task_prepare_owned(
+                                execution.prepare(),
+                            ),
+                            aggregate: crate::output::summarize_task_aggregate(
+                                execution.aggregate(),
+                            ),
+                            effects: crate::output::TaskEffectsSummary::from_spec(&task.effects),
+                            depends_on: filter_relationships(&task.depends_on),
+                            requires_services: task.requires_services.clone(),
+                            after_success: filter_relationships(&task.after_success),
+                            after_failure: filter_relationships(&task.after_failure),
+                            after_always: filter_relationships(&task.after_always),
+                        }
+                    };
+                    let mut tasks = contract
                         .tasks
                         .iter()
                         .filter(|(_, task)| !task.internal)
-                        .map(|(name, task)| {
-                            let execution = task.resolved_execution(current_os()).expect(
-                                "validated task must resolve to a default or variant execution",
-                            );
-                            let filter_relationships = |relationships: &[String]| {
-                                relationships
-                                    .iter()
-                                    .filter(|dependency| {
-                                        visible_task_names.contains(dependency.as_str())
-                                    })
-                                    .cloned()
-                                    .collect::<Vec<_>>()
-                            };
-                            WorkspaceTaskSummary {
-                                name: name.clone(),
-                                kind: execution.kind.to_string(),
-                                description: task.description.clone(),
-                                run: (execution.kind == "run")
-                                    .then(|| execution.shell_body().map(str::to_string))
-                                    .flatten(),
-                                script: (execution.kind == "script")
-                                    .then(|| execution.shell_body().map(str::to_string))
-                                    .flatten(),
-                                launch: crate::output::summarize_task_launch_owned(
-                                    execution.launch(),
-                                ),
-                                action: crate::output::summarize_task_action_owned(
-                                    execution.action(),
-                                ),
-                                prepare: crate::output::summarize_task_prepare_owned(
-                                    execution.prepare(),
-                                ),
-                                aggregate: crate::output::summarize_task_aggregate(
-                                    execution.aggregate(),
-                                ),
-                                effects: crate::output::TaskEffectsSummary::from_spec(
-                                    &task.effects,
-                                ),
-                                depends_on: filter_relationships(&task.depends_on),
-                                requires_services: task.requires_services.clone(),
-                                after_success: filter_relationships(&task.after_success),
-                                after_failure: filter_relationships(&task.after_failure),
-                                after_always: filter_relationships(&task.after_always),
-                            }
-                        })
-                        .collect();
+                        .map(|(name, task)| summarize_workspace_task(name.clone(), None, task))
+                        .collect::<Vec<_>>();
+
+                    for (workspace_task, repo_task) in &repo.task_bindings {
+                        if tasks.iter().any(|task| task.name == *workspace_task) {
+                            continue;
+                        }
+                        let Some(task) = contract.tasks.get(repo_task) else {
+                            continue;
+                        };
+                        if task.internal {
+                            continue;
+                        }
+                        tasks.push(summarize_workspace_task(
+                            workspace_task.clone(),
+                            Some(repo_task.clone()),
+                            task,
+                        ));
+                    }
+                    tasks.sort_by(|left, right| left.name.cmp(&right.name));
 
                     repos.push(WorkspaceRepoTasksReport {
                         name: repo.name,
@@ -53428,6 +53448,7 @@ workflows:
                 tasks: vec![crate::output::WorkspaceTaskSummary {
                     name: String::from("quickstart"),
                     kind: String::from("command"),
+                    repo_task: None,
                     description: Some(String::from("Run n8n quickly")),
                     run: None,
                     script: None,
@@ -53486,6 +53507,7 @@ workflows:
                 tasks: vec![crate::output::WorkspaceTaskSummary {
                     name: String::from("verify"),
                     kind: String::from("aggregate"),
+                    repo_task: None,
                     description: Some(String::from("Run the canonical verification entrypoint")),
                     run: None,
                     script: None,
@@ -53516,6 +53538,68 @@ workflows:
             rendered.contains("Command: aggregate: lint, test"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn render_workspace_tasks_text_includes_repo_task_binding() {
+        let output = super::render_workspace_tasks_text(
+            ".",
+            &[crate::output::WorkspaceRepoTasksReport {
+                name: String::from("sdk"),
+                path: String::from("/tmp/sdk"),
+                contract_path: String::from("/tmp/sdk/ota.yaml"),
+                workflow: None,
+                required: true,
+                acquired: true,
+                depends_on: Vec::new(),
+                tasks: vec![crate::output::WorkspaceTaskSummary {
+                    name: String::from("prepare-dev"),
+                    kind: String::from("prepare"),
+                    repo_task: Some(String::from("generate-sdk")),
+                    description: Some(String::from("Generate the sibling SDK before app startup")),
+                    run: None,
+                    script: None,
+                    launch: None,
+                    action: None,
+                    prepare: Some(crate::output::WorkspaceTaskPrepareSummary {
+                        kind: "dependency_hydration",
+                        steps: Vec::new(),
+                        medium: Some("package_dependencies"),
+                        source_kind: Some("node_package_manager"),
+                        cwd: Some(String::from(".")),
+                        file: None,
+                        files: Vec::new(),
+                        env_files: Vec::new(),
+                        manager: Some("pnpm"),
+                        filter: None,
+                        mode: Some("install"),
+                        group_mode: None,
+                        groups: Vec::new(),
+                        frozen_lockfile: false,
+                        inline_builds: false,
+                        force: false,
+                        no_root: false,
+                        skip_tests: false,
+                        with_deps: false,
+                        targets: Vec::new(),
+                        browsers: Vec::new(),
+                        compose: None,
+                    }),
+                    aggregate: None,
+                    effects: crate::output::TaskEffectsSummary::default(),
+                    depends_on: Vec::new(),
+                    requires_services: Vec::new(),
+                    after_success: Vec::new(),
+                    after_failure: Vec::new(),
+                    after_always: Vec::new(),
+                }],
+            }],
+        );
+
+        let rendered = strip_ansi_codes(&output.stdout);
+        assert!(rendered.contains("repo_task=generate-sdk"), "{rendered}");
+        assert!(rendered.contains("prepare-dev"), "{rendered}");
+        assert!(rendered.contains("generate-sdk"), "{rendered}");
     }
 
     #[test]
@@ -65126,6 +65210,7 @@ tasks:
             path: root.to_path_buf(),
             contract_path: root.join("ota.yaml"),
             workflow: None,
+            task_bindings: BTreeMap::new(),
             required: true,
             depends_on: Vec::new(),
             present: true,
@@ -65204,6 +65289,7 @@ workflows:
             path: repo_path.clone(),
             contract_path,
             workflow: Some(String::from("backend")),
+            task_bindings: BTreeMap::new(),
             required: true,
             depends_on: Vec::new(),
             present: true,
@@ -65267,6 +65353,7 @@ workflows:
             path: repo_path,
             contract_path,
             workflow: Some(String::from("backend")),
+            task_bindings: BTreeMap::new(),
             required: true,
             depends_on: Vec::new(),
             present: true,
@@ -65279,6 +65366,63 @@ workflows:
 
         assert!(report.ok, "{report:?}");
         assert!(report.findings.is_empty(), "{:?}", report.findings);
+    }
+
+    #[test]
+    fn workspace_run_uses_repo_task_binding_when_declared() {
+        let fixture = TempDir::new().unwrap();
+        let repo_path = fixture.path().join("sdk");
+        fs::create_dir_all(&repo_path).unwrap();
+        let contract_path = repo_path.join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: sdk
+tasks:
+  generate-sdk:
+    action:
+      kind: ensure_file
+      path: generated.txt
+      value: generated
+"#
+            .trim_start(),
+        )
+        .unwrap();
+
+        let mut task_bindings = BTreeMap::new();
+        task_bindings.insert(String::from("prepare-dev"), String::from("generate-sdk"));
+
+        let repo = crate::workspace::WorkspaceRepoRef {
+            name: String::from("sdk"),
+            path: repo_path.clone(),
+            contract_path,
+            workflow: None,
+            task_bindings,
+            required: true,
+            depends_on: Vec::new(),
+            present: true,
+            source_url: None,
+            source_ref: None,
+            policy_env: BTreeMap::new(),
+        };
+
+        let report = super::run_workspace_repo_task(
+            repo,
+            "prepare-dev",
+            &[],
+            RepoExecutionMode::Capture,
+            fixture.path(),
+        );
+
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.task, "prepare-dev");
+        assert_eq!(report.repo_task.as_deref(), Some("generate-sdk"));
+        assert_eq!(
+            fs::read_to_string(repo_path.join("generated.txt")).unwrap(),
+            "generated"
+        );
     }
 
     #[test]
@@ -65327,6 +65471,7 @@ workflows:
             path: repo_path,
             contract_path,
             workflow: Some(String::from("backend")),
+            task_bindings: BTreeMap::new(),
             required: true,
             depends_on: Vec::new(),
             present: true,
@@ -65396,6 +65541,7 @@ workflows:
             path: repo_path,
             contract_path,
             workflow: None,
+            task_bindings: BTreeMap::new(),
             required: true,
             depends_on: Vec::new(),
             present: true,
@@ -89817,6 +89963,9 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                 task.name,
                 task.kind
             ));
+            if let Some(repo_task) = task.repo_task.as_deref() {
+                stdout.push_str(&format!(" repo_task={repo_task}"));
+            }
             if !task.depends_on.is_empty() {
                 stdout.push_str(&format!(" depends_on={}", task.depends_on.join(",")));
             }
@@ -89913,6 +90062,7 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                 repo.name.clone(),
                 task.name.clone(),
                 task.kind.clone(),
+                task.repo_task.clone().unwrap_or_else(|| String::from("-")),
                 if task.depends_on.is_empty() {
                     String::from("-")
                 } else {
@@ -89924,6 +90074,9 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
                     task.requires_services.join(",")
                 },
                 [
+                    task.repo_task
+                        .as_ref()
+                        .map(|repo_task| format!("repo={repo_task}")),
                     if task.after_success.is_empty() {
                         None
                     } else {
@@ -89970,6 +90123,7 @@ fn render_workspace_tasks_text(path: &str, repos: &[WorkspaceRepoTasksReport]) -
             "Repo",
             "Task",
             "Kind",
+            "Binding",
             "Depends On",
             "Requires Services",
             "Hooks",
@@ -92920,7 +93074,10 @@ fn workspace_run_receipt(
             index + 1,
             repo.name.clone(),
             repo.status.clone(),
-            Some(format!("task `{task}`")),
+            Some(match repo.repo_task.as_deref() {
+                Some(repo_task) => format!("task `{task}` -> repo task `{repo_task}`"),
+                None => format!("task `{task}`"),
+            }),
             repo.exit_code,
         ));
     }
@@ -100659,6 +100816,7 @@ fn blocked_workspace_repo_run(
         ok: !repo.required,
         status: if repo.required { "BLOCKED" } else { "WARN" }.to_string(),
         task: task.to_string(),
+        repo_task: None,
         findings: vec![Finding {
             identity: None,
             severity: if repo.required {
@@ -101224,6 +101382,9 @@ fn run_workspace_repo_task(
     let repo_name = repo.name.clone();
     let contract_path_display = repo.contract_path.display().to_string();
     let path_display = repo.path.display().to_string();
+    let requested_task = task.to_string();
+    let resolved_task = repo.resolve_workspace_task(task).to_string();
+    let resolved_task_field = (resolved_task != requested_task).then(|| resolved_task.clone());
 
     match acquire_workspace_repo(&repo, mode) {
         Ok(acquisition) if acquisition.exit_code != 0 => {
@@ -101239,7 +101400,8 @@ fn run_workspace_repo_task(
                     "WARN"
                 }
                 .to_string(),
-                task: task.to_string(),
+                task: requested_task.clone(),
+                repo_task: resolved_task_field.clone(),
                 findings: vec![Finding {
                     identity: None,
                     severity: if repo.required {
@@ -101256,7 +101418,8 @@ fn run_workspace_repo_task(
                         None => format!("workspace repo `{}` could not be acquired", repo_name),
                     },
                     next: format!(
-                        "inspect the `Source:` and `Acquire output:` lines, then fix source access and credentials before rerunning `ota workspace run {task}`"
+                        "inspect the `Source:` and `Acquire output:` lines, then fix source access and credentials before rerunning `ota workspace run {}`",
+                        requested_task
                     ),
                 }],
                 source_url: repo.source_url.clone(),
@@ -101290,7 +101453,8 @@ fn run_workspace_repo_task(
                     "WARN"
                 }
                 .to_string(),
-                task: task.to_string(),
+                task: requested_task.clone(),
+                repo_task: resolved_task_field.clone(),
                 findings: vec![Finding {
                     identity: None,
                     severity: if repo.required {
@@ -101304,7 +101468,8 @@ fn run_workspace_repo_task(
                         repo_name, error
                     ),
                     next: format!(
-                        "inspect the `Source:` line and acquisition output, then fix source access and credentials before rerunning `ota workspace run {task}`"
+                        "inspect the `Source:` line and acquisition output, then fix source access and credentials before rerunning `ota workspace run {}`",
+                        requested_task
                     ),
                 }],
                 source_url: repo.source_url.clone(),
@@ -101322,7 +101487,10 @@ fn run_workspace_repo_task(
 
     match load_contract(&repo.contract_path) {
         Ok(contract) => {
-            let task_command = contract.tasks.get(task).and_then(task_command_preview);
+            let task_command = contract
+                .tasks
+                .get(&resolved_task)
+                .and_then(task_command_preview);
             if let Err(error) = validate_contract_with_path(&contract, Some(&repo.contract_path)) {
                 return WorkspaceRepoRunReport {
                     name: repo.name,
@@ -101336,7 +101504,8 @@ fn run_workspace_repo_task(
                         "WARN"
                     }
                     .to_string(),
-                    task: task.to_string(),
+                    task: requested_task.clone(),
+                    repo_task: resolved_task_field.clone(),
                     findings: error
                         .errors()
                         .iter()
@@ -101355,7 +101524,7 @@ fn run_workspace_repo_task(
                             next: workspace_repo_validate_then_rerun_next(
                                 &repo.contract_path,
                                 &command_for_workspace(
-                                    &format!("ota workspace run {task}"),
+                                    &format!("ota workspace run {}", requested_task),
                                     workspace_path,
                                 ),
                             ),
@@ -101375,12 +101544,12 @@ fn run_workspace_repo_task(
 
             let env_sources = contract
                 .tasks
-                .get(task)
+                .get(&resolved_task)
                 .map(|task_spec| {
                     workspace_env_sources(
                         &contract,
                         &repo.contract_path,
-                        Some(task),
+                        Some(&resolved_task),
                         Some(&task_spec.env),
                         Some(&repo.policy_env),
                     )
@@ -101391,7 +101560,7 @@ fn run_workspace_repo_task(
                     run_task_captured_with_args_with_overrides_with_policy(
                         &contract,
                         &repo.contract_path,
-                        task,
+                        &resolved_task,
                         task_args,
                         ExecutionOverrides::default(),
                         Some(&repo.policy_env),
@@ -101411,7 +101580,7 @@ fn run_workspace_repo_task(
                     run_task_with_progress_and_args_and_overrides_with_policy(
                         &contract,
                         &repo.contract_path,
-                        task,
+                        &resolved_task,
                         false,
                         task_args,
                         ExecutionOverrides::default(),
@@ -101440,7 +101609,8 @@ fn run_workspace_repo_task(
                     required: repo.required,
                     ok: true,
                     status: String::from("READY"),
-                    task: task.to_string(),
+                    task: requested_task.clone(),
+                    repo_task: resolved_task_field.clone(),
                     findings: Vec::new(),
                     source_url: repo.source_url.clone(),
                     source_ref: repo.source_ref.clone(),
@@ -101465,7 +101635,8 @@ fn run_workspace_repo_task(
                     required: repo.required,
                     ok: !repo.required,
                     status: if repo.required { "TASK FAILED" } else { "WARN" }.to_string(),
-                    task: task.to_string(),
+                    task: requested_task.clone(),
+                    repo_task: resolved_task_field.clone(),
                     findings: vec![Finding {
                         identity: None,
                         severity: if repo.required {
@@ -101473,14 +101644,14 @@ fn run_workspace_repo_task(
                         } else {
                             FindingSeverity::Warn
                         },
-                        summary: format!("Task failed: {}", task),
+                        summary: format!("Task failed: {}", resolved_task),
                         why: format!(
                             "workspace repo `{}` task `{}` exited with code {}",
-                            repo_name, task, result.exit_code
+                            repo_name, resolved_task, result.exit_code
                         ),
                         next: format!(
                             "inspect repo `{}` task `{}` output and repair the failure",
-                            repo_name, task
+                            repo_name, resolved_task
                         ),
                     }],
                     source_url: repo.source_url.clone(),
@@ -101506,7 +101677,8 @@ fn run_workspace_repo_task(
                     required: repo.required,
                     ok: !repo.required,
                     status: if repo.required { "TASK FAILED" } else { "WARN" }.to_string(),
-                    task: task.to_string(),
+                    task: requested_task.clone(),
+                    repo_task: resolved_task_field.clone(),
                     findings: vec![Finding {
                         identity: None,
                         severity: if repo.required {
@@ -101514,16 +101686,16 @@ fn run_workspace_repo_task(
                         } else {
                             FindingSeverity::Warn
                         },
-                        summary: format!("Task execution failed: {}", task),
+                        summary: format!("Task execution failed: {}", resolved_task),
                         why: format!(
                             "workspace repo `{}` task `{}` could not be executed: {}",
                             repo_name,
-                            task,
+                            resolved_task,
                             render_run_error(error)
                         ),
                         next: format!(
                             "repair repo `{}` task `{}` and rerun `ota workspace run {}`",
-                            repo_name, task, task
+                            repo_name, resolved_task, requested_task
                         ),
                     }],
                     source_url: repo.source_url.clone(),
@@ -101550,7 +101722,8 @@ fn run_workspace_repo_task(
                 "WARN"
             }
             .to_string(),
-            task: task.to_string(),
+            task: requested_task.clone(),
+            repo_task: resolved_task_field,
             findings: vec![Finding {
                 identity: None,
                 severity: if repo.required {
@@ -101565,7 +101738,10 @@ fn run_workspace_repo_task(
                 ),
                 next: workspace_repo_validate_then_rerun_next(
                     &repo.contract_path,
-                    &command_for_workspace(&format!("ota workspace run {task}"), workspace_path),
+                    &command_for_workspace(
+                        &format!("ota workspace run {}", requested_task),
+                        workspace_path,
+                    ),
                 ),
             }],
             source_url: repo.source_url.clone(),

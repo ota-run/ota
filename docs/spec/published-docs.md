@@ -49,6 +49,7 @@ The initial shipped entries cover core reference surfaces such as:
 - workspace
 - command
 - JSON output
+- execution governance loop
 - execution topology
 - local service topology
 - toolchains/runtimes/tools

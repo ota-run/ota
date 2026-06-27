@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- added workspace-owned repo task bindings under `repos.<name>.tasks.<workspace_task>.task`, so
+  `ota workspace run <task>` no longer requires every repo to share the same local task name;
+  workspaces can now map one shared workspace verb such as `prepare-dev` onto repo-local tasks
+  like `generate-sdk`, while `ota workspace tasks` and workspace run receipts expose the resolved
+  repo task truth instead of leaving mixed-name cross-repo execution buried in shell or tribal
+  knowledge
 - widened `prepare.kind: sequence` from structural prepare-only chaining to mixed structured setup
   ownership: ordered `prepare.steps` can now combine typed prepare lanes such as
   `dependency_hydration` and `tool_bootstrap` with deterministic native bootstrap mutations such

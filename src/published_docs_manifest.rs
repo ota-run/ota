@@ -82,6 +82,18 @@ const CANONICAL_DOCS_JSON: &str = r####"{
       ]
     },
     {
+      "id": "execution-governance-loop",
+      "title": "ota Execution Governance Loop",
+      "kind": "reference",
+      "source_path": "docs/spec/execution-governance-loop.md",
+      "source_url": "https://github.com/ota-run/ota/blob/main/docs/spec/execution-governance-loop.md",
+      "public_url": "https://ota.run/docs/reference/execution-governance-loop",
+      "canonical_for": [
+        "how contract, execution, proof, diff, and policy fit together",
+        "public execution-governance architecture guidance"
+      ]
+    },
+    {
       "id": "execution-topology",
       "title": "ota Execution Topology",
       "kind": "reference",

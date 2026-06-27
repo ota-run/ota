@@ -79,6 +79,9 @@ Fields:
 repos:
   web:
     path: apps/web
+    tasks:
+      prepare-dev:
+        task: build-sdk
     source:
       repo: web
   api:
@@ -97,9 +100,16 @@ Fields:
 - `path`: required path to a repo directory, relative to `ota.workspace.yaml`
 - `contract`: optional explicit repo contract path, relative to `ota.workspace.yaml`
 - `workflow`: optional repo workflow selection used by workspace execution paths
+- `tasks`: optional workspace-owned task bindings that map one shared workspace task name to a
+  repo-local task name
 - `required`: optional boolean
 - `depends_on`: optional list of workspace repo names
 - `source`: optional acquisition source for repos that are not present yet
+
+`tasks` fields:
+
+- `tasks.<workspace_task>.task`: required repo-local task name `ota workspace run <workspace_task>`
+  should execute for this repo
 
 `source` fields:
 
@@ -109,6 +119,11 @@ Fields:
 
 Design intent:
 
+- `repos.<name>.tasks` lets one workspace verb span repos that do not share the same local task
+  name
+- this keeps cross-repo execution truth in the workspace contract instead of hiding it in shell
+  wrappers or repo-specific readme steps
+- ota still falls back to the literal task name when no workspace binding is declared for that repo
 - `source.git` is the canonical acquisition field
 - `source.repo` is shorthand for multiple repos sharing the same `workspace.git_base`
 - both are generic git concepts and work for GitHub, GitLab, Bitbucket, and internal git hosts
@@ -120,12 +135,19 @@ Current validation behavior:
 - repo `path` must be non-empty
 - repo `path` must exist and point to a directory unless `source` is declared
 - `contract` must be non-empty when present
+- `tasks` binding names must not be empty
+- `tasks.<workspace_task>.task` must not be empty
 - if `contract` is omitted, ota expects `<repo path>/ota.yaml`
 - `source` must declare exactly one of `git` or `repo`
 - `source.repo` requires `workspace.git_base`
 - `depends_on` references must resolve to known workspace repos
 - workspace repo dependency cycles are rejected
 - each present repo contract must load and pass repo-level validation
+- when the repo is already present and its contract validates, each `tasks` binding target must
+  resolve to a non-internal repo task
+- when the repo is already present and its contract validates, a workspace task binding must not
+  shadow a visible repo task of the same name with a different target task, because
+  `ota workspace run <task>` would become ambiguous
 
 ## Current scope
 
@@ -140,7 +162,7 @@ The shipped workspace surface is intentionally narrow:
 
 Current non-goals:
 
-- workspace task orchestration
+- workspace task orchestration beyond one shared workspace task name mapped repo-by-repo
 - workspace-wide environment mutation
 - hidden repo bootstrap behavior
 - passing a repo URL directly on the CLI without a workspace contract
@@ -165,6 +187,19 @@ Current workspace diagnosis behavior:
   stable finding identity
 
 This keeps workspace behavior as orchestration over repo readiness, not a parallel readiness system.
+
+## `ota workspace tasks` and `ota workspace run`
+
+Current workspace task behavior:
+
+- `ota workspace tasks` lists visible repo tasks in dependency order
+- it also lists workspace-owned task bindings when `repos.<name>.tasks` maps a shared workspace
+  task name to a different local repo task
+- `ota workspace run <task>` executes the same literal repo task name by default
+- when `repos.<name>.tasks.<task>.task` is declared, `ota workspace run <task>` resolves that
+  repo-local task instead for that repo
+- workspace run receipts and JSON output keep the requested workspace task visible and also expose
+  the resolved repo task when the binding differs
 
 ## `ota workspace up`
 
