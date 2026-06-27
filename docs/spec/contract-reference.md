@@ -2002,8 +2002,11 @@ Task-effect rules:
 - `prepare.kind: tool_bootstrap`
   - `prepare.tool`: required bootstrap target; ota currently ships `uv` and `playwright_browsers`
   - `prepare.browsers`: optional explicit Playwright browser subset; ota currently ships `chromium`, `firefox`, `webkit`, `chrome`, and `msedge`
+  - `prepare.with_deps`: optional Playwright dependency lane for `playwright install --with-deps`
   - `prepare.source.kind: pip`
   - `prepare.source.exe`: required Python executable ota should use for `-m pip install ...`
+  - `prepare.source.kind: poetry`
+  - `prepare.source.cwd`: required repo-relative working directory for `poetry run ...` bootstrap
   - `prepare.source.kind: node_package_manager`
   - `prepare.source.cwd`: required repo-relative working directory for the bootstrap invocation
   - `prepare.source.manager`: required package manager; ota currently ships `npm`, `pnpm`, `yarn`, and `bun`
@@ -2069,8 +2072,10 @@ Task-effect rules:
 - use `prepare.kind: sequence` when one honest setup lane needs more than one structural finite step, such as Node hydration plus Python hydration in one repo-level `setup` task
 - `prepare.kind: tool_bootstrap` currently requires `effects.network: true` and `effects.network_kind: tool_bootstrap`; add toolchain requirements that match the selected bootstrap source
 - `prepare.kind: tool_bootstrap` with `source.kind: pip` currently requires `requirements.toolchains: [python]`
+- `prepare.kind: tool_bootstrap` with `source.kind: poetry` currently requires `requirements.toolchains: [python]` and currently only supports `prepare.tool: playwright_browsers`
 - `prepare.kind: tool_bootstrap` with `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]` and currently only supports `prepare.tool: playwright_browsers`
 - `prepare.kind: tool_bootstrap` with `prepare.browsers` currently only applies to `prepare.tool: playwright_browsers`
+- `prepare.kind: tool_bootstrap` with `prepare.with_deps: true` currently only applies to `prepare.tool: playwright_browsers`
 - `prepare.kind: tool_bootstrap` with `prepare.source.filter` currently only applies to `source.kind: node_package_manager` with `manager: pnpm`
 - use `prepare.kind: tool_bootstrap` when the task truth is contract-owned tool installation rather than repo dependency hydration; for example bootstrapping `uv` through `pip` or downloading Playwright browsers through a repo-owned Node package manager
 - `prepare.kind: dependency_hydration` currently requires `effects.network: true` and `effects.network_kind: dependency_hydration`; add tool or toolchain requirements that match the selected hydration source and wrapper
@@ -2104,12 +2109,20 @@ Task-effect rules:
 - `prepare.source.kind: dotnet_restore` currently executes the narrow canonical .NET hydration lane: `dotnet restore`
 - `prepare.kind: tool_bootstrap` currently executes two narrow canonical tool-bootstrap lanes:
   - Python lane: `<exe> -m pip install --disable-pip-version-check -q uv`
+  - Poetry lane for `prepare.tool: playwright_browsers`:
+    - `poetry run playwright install [browsers...]`
+    - `poetry run playwright install --with-deps [browsers...]`
   - Node lane for `prepare.tool: playwright_browsers`:
     - `npx playwright install [browsers...]`
+    - `npx playwright install --with-deps [browsers...]`
     - `pnpm exec playwright install [browsers...]`
+    - `pnpm exec playwright install --with-deps [browsers...]`
     - `pnpm --filter <selector> exec playwright install [browsers...]`
+    - `pnpm --filter <selector> exec playwright install --with-deps [browsers...]`
     - `yarn playwright install [browsers...]`
+    - `yarn playwright install --with-deps [browsers...]`
     - `bunx playwright install [browsers...]`
+    - `bunx playwright install --with-deps [browsers...]`
 - `prepare` does not replace workflow-owned host bootstrap; workflow prepare is still the explicit host bootstrap lane and now points at one native finite owner (`prepare.task` or `prepare.action`)
 - `prepare` is not orchestrator-managed in the current shipped slice
 

@@ -9673,6 +9673,41 @@ fn prepare_task_shell_command(
                 shell_quote_command_word(source.exe.trim(), quote_style),
                 shell_quote_command_word(spec.tool.label(), quote_style)
             )),
+            crate::schema::TaskToolBootstrapSourceSpec::Poetry(source) => {
+                let cwd = source.cwd.trim();
+                let browser_suffix = if spec.browsers.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " {}",
+                        spec.browsers
+                            .iter()
+                            .map(|browser| browser.label())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    )
+                };
+                let deps = if spec.with_deps { " --with-deps" } else { "" };
+                let command = match spec.tool {
+                    crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers => {
+                        format!("poetry run playwright install{deps}{browser_suffix}")
+                    }
+                    _ => {
+                        return Err(RunError::InvalidTaskExecution {
+                            task: _task_name.to_string(),
+                        });
+                    }
+                };
+                if cwd.is_empty() || cwd == "." {
+                    Ok(command)
+                } else {
+                    Ok(format!(
+                        "cd {} && {}",
+                        shell_quote_command_word(cwd, quote_style),
+                        command
+                    ))
+                }
+            }
             crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) => {
                 let cwd = source.cwd.trim();
                 let browser_suffix = if spec.browsers.is_empty() {
@@ -9687,11 +9722,12 @@ fn prepare_task_shell_command(
                             .join(" ")
                     )
                 };
+                let deps = if spec.with_deps { " --with-deps" } else { "" };
                 let command = match (source.manager, spec.tool) {
                     (
                         crate::schema::TaskNodePackageManagerKind::Npm,
                         crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers,
-                    ) => format!("npx playwright install{browser_suffix}"),
+                    ) => format!("npx playwright install{deps}{browser_suffix}"),
                     (
                         crate::schema::TaskNodePackageManagerKind::Pnpm,
                         crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers,
@@ -9703,21 +9739,22 @@ fn prepare_task_shell_command(
                     {
                         Some(filter) => {
                             format!(
-                                "pnpm --filter {} exec playwright install{}",
+                                "pnpm --filter {} exec playwright install{}{}",
                                 shell_quote_command_word(filter, quote_style),
+                                deps,
                                 browser_suffix
                             )
                         }
-                        None => format!("pnpm exec playwright install{browser_suffix}"),
+                        None => format!("pnpm exec playwright install{deps}{browser_suffix}"),
                     },
                     (
                         crate::schema::TaskNodePackageManagerKind::Yarn,
                         crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers,
-                    ) => format!("yarn playwright install{browser_suffix}"),
+                    ) => format!("yarn playwright install{deps}{browser_suffix}"),
                     (
                         crate::schema::TaskNodePackageManagerKind::Bun,
                         crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers,
-                    ) => format!("bunx playwright install{browser_suffix}"),
+                    ) => format!("bunx playwright install{deps}{browser_suffix}"),
                     _ => {
                         return Err(RunError::InvalidTaskExecution {
                             task: _task_name.to_string(),
@@ -58613,6 +58650,85 @@ tasks:
     }
 
     #[test]
+    fn tool_bootstrap_prepare_executes_poetry_playwright_browser_install() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    version: "3.12"
+tasks:
+  setup:browsers:
+    prepare:
+      kind: tool_bootstrap
+      tool: playwright_browsers
+      browsers:
+        - chromium
+      with_deps: true
+      source:
+        kind: poetry
+        cwd: .
+    requirements:
+      toolchains:
+        - python
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let python_body = if cfg!(windows) {
+            "@echo off\r\necho Python 3.12.0\r\n"
+        } else {
+            "#!/bin/sh\necho 'Python 3.12.0'\n"
+        };
+        let poetry_body = if cfg!(windows) {
+            "@echo off\r\n>> \"%OTA_POETRY_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_POETRY_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "python", python_body);
+        write_fake_bin(&bin_dir, "python3", python_body);
+        write_fake_bin(&bin_dir, "poetry", poetry_body);
+        let log_path = fixture.dir.path().join("poetry.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_POETRY_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_POETRY_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup:browsers")
+            .expect("poetry browser bootstrap should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_POETRY_LOG", value) },
+            None => unsafe { env::remove_var("OTA_POETRY_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(
+            logged.contains("run playwright install --with-deps chromium"),
+            "{logged}"
+        );
+    }
+
+    #[test]
     fn prepare_sequence_executes_structural_steps_in_declared_order() {
         let _guard = env_mutex_lock();
         let fixture = ContractFixture::new(
@@ -58790,6 +58906,7 @@ tasks:
                     },
                 ),
                 browsers: Vec::new(),
+                with_deps: false,
             },
         );
 

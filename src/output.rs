@@ -3789,6 +3789,8 @@ pub struct TaskPrepareSummary<'a> {
     pub no_root: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub skip_tests: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub with_deps: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<&'a str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -3834,6 +3836,8 @@ pub struct WorkspaceTaskPrepareSummary {
     pub no_root: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub skip_tests: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub with_deps: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -4207,6 +4211,7 @@ pub fn summarize_task_prepare(
             force: false,
             no_root: false,
             skip_tests: false,
+            with_deps: false,
             targets: Vec::new(),
             browsers: Vec::new(),
             compose: None,
@@ -4216,6 +4221,13 @@ pub fn summarize_task_prepare(
                 crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
                     ("pip", Some(spec.tool.label()), None, None, None)
                 }
+                crate::schema::TaskToolBootstrapSourceSpec::Poetry(source) => (
+                    "poetry",
+                    Some(spec.tool.label()),
+                    Some(source.cwd.trim()),
+                    None,
+                    None,
+                ),
                 crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) => (
                     "node_package_manager",
                     Some(spec.tool.label()),
@@ -4243,6 +4255,7 @@ pub fn summarize_task_prepare(
                 force: false,
                 no_root: false,
                 skip_tests: false,
+                with_deps: spec.with_deps,
                 targets: Vec::new(),
                 browsers: spec
                     .browsers
@@ -4499,6 +4512,7 @@ pub fn summarize_task_prepare(
                 force,
                 no_root,
                 skip_tests,
+                with_deps: false,
                 targets: spec.targets.iter().map(String::as_str).collect(),
                 browsers: Vec::new(),
                 compose,
@@ -4534,6 +4548,7 @@ pub fn summarize_task_prepare_owned(
             force: false,
             no_root: false,
             skip_tests: false,
+            with_deps: false,
             targets: Vec::new(),
             browsers: Vec::new(),
             compose: None,
@@ -4543,6 +4558,13 @@ pub fn summarize_task_prepare_owned(
                 crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
                     ("pip", Some(spec.tool.label()), None, None, None)
                 }
+                crate::schema::TaskToolBootstrapSourceSpec::Poetry(source) => (
+                    "poetry",
+                    Some(spec.tool.label()),
+                    Some(source.cwd.trim().to_string()),
+                    None,
+                    None,
+                ),
                 crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) => (
                     "node_package_manager",
                     Some(spec.tool.label()),
@@ -4570,6 +4592,7 @@ pub fn summarize_task_prepare_owned(
                 force: false,
                 no_root: false,
                 skip_tests: false,
+                with_deps: spec.with_deps,
                 targets: Vec::new(),
                 browsers: spec
                     .browsers
@@ -4826,6 +4849,7 @@ pub fn summarize_task_prepare_owned(
                 force,
                 no_root,
                 skip_tests,
+                with_deps: false,
                 targets: spec.targets.clone(),
                 browsers: Vec::new(),
                 compose,

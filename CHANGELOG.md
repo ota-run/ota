@@ -27,9 +27,10 @@
 ## Unreleased
 
 - widened `prepare.kind: tool_bootstrap` with `prepare.tool: playwright_browsers` and
-  `prepare.source.kind: node_package_manager`, so repos can own documented `playwright install`
-  browser bootstrap lanes structurally under npm, pnpm, yarn, or bun instead of falling back to
-  repo-local shell glue or leaving browser-runtime proof half-modeled
+  `prepare.source.kind: node_package_manager` and `prepare.source.kind: poetry`, so repos can own
+  documented `playwright install` browser bootstrap lanes structurally under npm, pnpm, yarn, bun,
+  or Poetry instead of falling back to repo-local shell glue or leaving browser-runtime proof
+  half-modeled
 - tightened active repo-execution conflict ownership so Ota now derives shared writable-path
   ownership from the full selected task path, not just the requested leaf task; overlapping runs
   that converge on the same declared `effects.writes` path now fail fast with a `write_path`

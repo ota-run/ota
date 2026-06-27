@@ -28,8 +28,10 @@ project:
 toolchains:
   node:
     version: "^22"
+  python:
+    version: "3.12"
 tasks:
-  browsers:install:
+  browsers:install:node:
     description: Install Playwright browsers through the repo-owned Yarn toolchain
     prepare:
       kind: tool_bootstrap
@@ -41,6 +43,23 @@ tasks:
     requirements:
       toolchains:
         - node
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+  browsers:install:poetry:
+    description: Install Playwright Chromium through the repo-owned Poetry runtime
+    prepare:
+      kind: tool_bootstrap
+      tool: playwright_browsers
+      browsers:
+        - chromium
+      with_deps: true
+      source:
+        kind: poetry
+        cwd: .
+    requirements:
+      toolchains:
+        - python
     effects:
       network: true
       network_kind: tool_bootstrap

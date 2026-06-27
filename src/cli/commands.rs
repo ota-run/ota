@@ -38046,11 +38046,17 @@ fn collect_prepare_field_paths(
                 crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
                     fields.push(format!("{prefix}.source.exe"));
                 }
+                crate::schema::TaskToolBootstrapSourceSpec::Poetry(_source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                }
                 crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(_source) => {
                     fields.push(format!("{prefix}.source.cwd"));
                     fields.push(format!("{prefix}.source.manager"));
                     fields.push(format!("{prefix}.source.filter"));
                 }
+            }
+            if spec.with_deps {
+                fields.push(format!("{prefix}.with_deps"));
             }
             for (index, _browser) in spec.browsers.iter().enumerate() {
                 fields.push(format!("{prefix}.browsers.{index}"));
@@ -39566,6 +39572,7 @@ fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> 
             prepare.manager,
             prepare.filter,
             prepare.mode,
+            prepare.with_deps,
             &prepare.browsers,
         ),
         _ => String::from("-"),
@@ -39659,6 +39666,7 @@ fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> 
             prepare.manager,
             prepare.filter.as_deref(),
             prepare.mode,
+            prepare.with_deps,
             &prepare.browsers,
         ),
         _ => String::from("-"),
@@ -39671,6 +39679,7 @@ fn render_tool_bootstrap_prepare_text(
     manager: Option<&str>,
     filter: Option<&str>,
     mode: Option<&str>,
+    with_deps: bool,
     browsers: &[&str],
 ) -> String {
     match source_kind {
@@ -39687,21 +39696,42 @@ fn render_tool_bootstrap_prepare_text(
             } else {
                 format!(" {}", browsers.join(" "))
             };
+            let deps = if with_deps { " --with-deps" } else { "" };
             let command = match (manager, mode.unwrap_or("tool")) {
-                ("npm", "playwright_browsers") => format!("npx playwright install{browser_suffix}"),
-                ("pnpm", "playwright_browsers") => match filter
-                    .filter(|value| !value.trim().is_empty())
-                {
-                    Some(filter) => {
-                        format!("pnpm --filter {filter} exec playwright install{browser_suffix}")
+                ("npm", "playwright_browsers") => {
+                    format!("npx playwright install{deps}{browser_suffix}")
+                }
+                ("pnpm", "playwright_browsers") => {
+                    match filter.filter(|value| !value.trim().is_empty()) {
+                        Some(filter) => {
+                            format!(
+                                "pnpm --filter {filter} exec playwright install{deps}{browser_suffix}"
+                            )
+                        }
+                        None => format!("pnpm exec playwright install{deps}{browser_suffix}"),
                     }
-                    None => format!("pnpm exec playwright install{browser_suffix}"),
-                },
+                }
                 ("yarn", "playwright_browsers") => {
-                    format!("yarn playwright install{browser_suffix}")
+                    format!("yarn playwright install{deps}{browser_suffix}")
                 }
                 ("bun", "playwright_browsers") => {
-                    format!("bunx playwright install{browser_suffix}")
+                    format!("bunx playwright install{deps}{browser_suffix}")
+                }
+                _ => return String::from("-"),
+            };
+            format!("bootstrap tool `playwright_browsers` with `{command}` in `{cwd}`")
+        }
+        Some("poetry") => {
+            let cwd = cwd.unwrap_or(".");
+            let browser_suffix = if browsers.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", browsers.join(" "))
+            };
+            let deps = if with_deps { " --with-deps" } else { "" };
+            let command = match mode.unwrap_or("tool") {
+                "playwright_browsers" => {
+                    format!("poetry run playwright install{deps}{browser_suffix}")
                 }
                 _ => return String::from("-"),
             };
@@ -51994,6 +52024,7 @@ tasks:
                         force: false,
                         no_root: false,
                         skip_tests: false,
+                        with_deps: false,
                         targets: Vec::new(),
                         browsers: Vec::new(),
                         compose: None,
@@ -52017,6 +52048,7 @@ tasks:
                         force: false,
                         no_root: false,
                         skip_tests: false,
+                        with_deps: false,
                         targets: Vec::new(),
                         browsers: Vec::new(),
                         compose: None,
@@ -52038,6 +52070,7 @@ tasks:
                 force: false,
                 no_root: false,
                 skip_tests: false,
+                with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
                 compose: None,
@@ -52116,6 +52149,7 @@ tasks:
                 force: false,
                 no_root: false,
                 skip_tests: false,
+                with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
                 compose: None,
@@ -52173,6 +52207,7 @@ tasks:
                 force: false,
                 no_root: false,
                 skip_tests: false,
+                with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
                 compose: None,
@@ -52252,6 +52287,7 @@ tasks:
                 force: false,
                 no_root: false,
                 skip_tests: false,
+                with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
                 compose: None,
@@ -52324,6 +52360,7 @@ tasks:
                 force: true,
                 no_root: false,
                 skip_tests: false,
+                with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
                 compose: None,
@@ -52396,6 +52433,7 @@ tasks:
                 force: false,
                 no_root: false,
                 skip_tests: false,
+                with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
                 compose: Some(crate::output::TaskComposeInvocationSummary {
@@ -52482,6 +52520,7 @@ tasks:
                 force: false,
                 no_root: false,
                 skip_tests: false,
+                with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
                 compose: Some(crate::output::TaskComposeInvocationSummary {
@@ -52569,6 +52608,7 @@ tasks:
                 force: false,
                 no_root: false,
                 skip_tests: false,
+                with_deps: false,
                 targets: Vec::new(),
                 browsers: Vec::new(),
                 compose: None,
@@ -52641,6 +52681,7 @@ tasks:
                 force: false,
                 no_root: false,
                 skip_tests: false,
+                with_deps: false,
                 targets: Vec::new(),
                 browsers: vec!["chromium"],
                 compose: None,
@@ -52666,6 +52707,79 @@ tasks:
         assert!(
             rendered.contains(
                 "Prepare: bootstrap tool `playwright_browsers` with `pnpm --filter web exec playwright install chromium` in `.`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_tasks_text_reports_poetry_playwright_browser_tool_bootstrap() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "playwright:browsers",
+            context: Some("host"),
+            default_mode: None,
+            effective_default_mode: "native",
+            description: Some("Install Playwright browsers via Poetry"),
+            notes: None,
+            category: None,
+            env,
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs,
+            kind: "prepare",
+            run: None,
+            script: None,
+            command: None,
+            compose: None,
+            launch: None,
+            action: None,
+            prepare: Some(crate::output::TaskPrepareSummary {
+                kind: "tool_bootstrap",
+                steps: Vec::new(),
+                medium: None,
+                source_kind: Some("poetry"),
+                cwd: Some("."),
+                file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
+                manager: None,
+                filter: None,
+                mode: Some("playwright_browsers"),
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: false,
+                inline_builds: false,
+                force: false,
+                no_root: false,
+                skip_tests: false,
+                with_deps: true,
+                targets: Vec::new(),
+                browsers: vec!["chromium"],
+                compose: None,
+            }),
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+
+        assert!(
+            rendered.contains(
+                "Prepare: bootstrap tool `playwright_browsers` with `poetry run playwright install --with-deps chromium` in `.`"
             ),
             "{rendered}"
         );

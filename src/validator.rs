@@ -5111,84 +5111,141 @@ fn validate_task_prepare(
                 validate_task_prepare(task_name, step, requirements, effects, _backend, errors);
             }
         }
-        crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => match &spec.source {
-            crate::schema::TaskToolBootstrapSourceSpec::Pip(source) => {
-                if source.exe.trim().is_empty() {
-                    errors.push(ValidationError::new(format!(
+        crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
+            if spec.with_deps
+                && !matches!(
+                    spec.tool,
+                    crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers
+                )
+            {
+                errors.push(ValidationError::new(format!(
+                    "task `{task_name}` prepare `tool_bootstrap` must not declare `with_deps: true` unless `prepare.tool: playwright_browsers`"
+                )));
+            }
+            match &spec.source {
+                crate::schema::TaskToolBootstrapSourceSpec::Pip(source) => {
+                    if source.exe.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` with `source.kind: pip` must declare a non-empty `prepare.source.exe`"
                     )));
-                }
-                if !spec.browsers.is_empty() {
-                    errors.push(ValidationError::new(format!(
+                    }
+                    if !spec.browsers.is_empty() {
+                        errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` with `source.kind: pip` must not declare `prepare.browsers`; browser targets only apply to `prepare.tool: playwright_browsers`"
                     )));
-                }
-                if !requirements
-                    .toolchains
-                    .iter()
-                    .any(|toolchain| toolchain == "python")
-                {
-                    errors.push(ValidationError::new(format!(
+                    }
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "python")
+                    {
+                        errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` with `source.kind: pip` must declare `requirements.toolchains: [python]`"
                     )));
-                }
-                if !effects.network {
-                    errors.push(ValidationError::new(format!(
+                    }
+                    if !effects.network {
+                        errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` must declare `effects.network: true`"
                     )));
-                }
-                if effects.network_kind != Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap)
-                {
-                    errors.push(ValidationError::new(format!(
+                    }
+                    if effects.network_kind
+                        != Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap)
+                    {
+                        errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` must declare `effects.network_kind: tool_bootstrap`"
                     )));
+                    }
                 }
-            }
-            crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) => {
-                if source.cwd.trim().is_empty() {
-                    errors.push(ValidationError::new(format!(
+                crate::schema::TaskToolBootstrapSourceSpec::Poetry(source) => {
+                    if source.cwd.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: poetry` must declare a non-empty `prepare.source.cwd`"
+                    )));
+                    } else {
+                        validate_repo_relative_file_action_path(
+                            task_name,
+                            "prepare.source.cwd",
+                            source.cwd.as_str(),
+                            errors,
+                        );
+                    }
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "python")
+                    {
+                        errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: poetry` must declare `requirements.toolchains: [python]`"
+                    )));
+                    }
+                    if !matches!(
+                        spec.tool,
+                        crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers
+                    ) {
+                        errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: poetry` currently only supports `prepare.tool: playwright_browsers`"
+                    )));
+                    }
+                    if !effects.network {
+                        errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` must declare `effects.network: true`"
+                    )));
+                    }
+                    if effects.network_kind
+                        != Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap)
+                    {
+                        errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` must declare `effects.network_kind: tool_bootstrap`"
+                    )));
+                    }
+                }
+                crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) => {
+                    if source.cwd.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` must declare a non-empty `prepare.source.cwd`"
                     )));
-                }
-                if !requirements
-                    .toolchains
-                    .iter()
-                    .any(|toolchain| toolchain == "node")
-                {
-                    errors.push(ValidationError::new(format!(
+                    }
+                    if !requirements
+                        .toolchains
+                        .iter()
+                        .any(|toolchain| toolchain == "node")
+                    {
+                        errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` must declare `requirements.toolchains: [node]`"
                     )));
-                }
-                if spec.tool != crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers {
-                    errors.push(ValidationError::new(format!(
+                    }
+                    if spec.tool != crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers {
+                        errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.tool: playwright_browsers`"
                     )));
-                }
-                if let Some(filter) = source.filter.as_deref() {
-                    if filter.trim().is_empty() {
-                        errors.push(ValidationError::new(format!(
+                    }
+                    if let Some(filter) = source.filter.as_deref() {
+                        if filter.trim().is_empty() {
+                            errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` must declare a non-empty `prepare.source.filter` when present"
                         )));
-                    }
-                    if source.manager != crate::schema::TaskNodePackageManagerKind::Pnpm {
-                        errors.push(ValidationError::new(format!(
+                        }
+                        if source.manager != crate::schema::TaskNodePackageManagerKind::Pnpm {
+                            errors.push(ValidationError::new(format!(
                             "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.source.filter` with `manager: pnpm`"
                         )));
+                        }
                     }
-                }
-                if !effects.network {
-                    errors.push(ValidationError::new(format!(
+                    if !effects.network {
+                        errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` must declare `effects.network: true`"
                     )));
-                }
-                if effects.network_kind != Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap)
-                {
-                    errors.push(ValidationError::new(format!(
+                    }
+                    if effects.network_kind
+                        != Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap)
+                    {
+                        errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` must declare `effects.network_kind: tool_bootstrap`"
                     )));
+                    }
                 }
             }
-        },
+        }
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
             for (index, target) in spec.targets.iter().enumerate() {
                 if target.trim().is_empty() {
@@ -35482,6 +35539,41 @@ tasks:
     }
 
     #[test]
+    fn accepts_poetry_playwright_browser_tool_bootstrap_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    version: "3.12"
+tasks:
+  setup:browsers:
+    prepare:
+      kind: tool_bootstrap
+      tool: playwright_browsers
+      browsers:
+        - chromium
+      with_deps: true
+      source:
+        kind: poetry
+        cwd: .
+    requirements:
+      toolchains:
+        - python
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("poetry browser bootstrap should validate");
+    }
+
+    #[test]
     fn rejects_tool_bootstrap_prepare_without_python_and_tool_bootstrap_effect_kind() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -35610,6 +35702,51 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `setup:browsers` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.source.filter` with `manager: pnpm`"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_with_deps_for_non_playwright_tool_bootstrap() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    version: "3.12"
+tasks:
+  setup:tooling:
+    prepare:
+      kind: tool_bootstrap
+      tool: uv
+      with_deps: true
+      source:
+        kind: pip
+        exe: python
+    requirements:
+      toolchains:
+        - python
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("with_deps should be rejected for non-playwright tool bootstrap")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:tooling` prepare `tool_bootstrap` must not declare `with_deps: true` unless `prepare.tool: playwright_browsers`"
             )),
             "{rendered:?}"
         );

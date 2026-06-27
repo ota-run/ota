@@ -6324,10 +6324,16 @@ impl TaskPrepareSpec {
                     spec.tool.label(),
                     source.command_preview(spec.tool)
                 ),
+                TaskToolBootstrapSourceSpec::Poetry(source) => format!(
+                    "bootstrap tool `{}` with {} in `{}`",
+                    spec.tool.label(),
+                    source.command_preview(spec.tool, &spec.browsers, spec.with_deps),
+                    source.cwd.trim()
+                ),
                 TaskToolBootstrapSourceSpec::NodePackageManager(source) => format!(
                     "bootstrap tool `{}` with {} in `{}`",
                     spec.tool.label(),
-                    source.command_preview(spec.tool, &spec.browsers),
+                    source.command_preview(spec.tool, &spec.browsers, spec.with_deps),
                     source.cwd.trim()
                 ),
             },
@@ -6356,6 +6362,8 @@ pub struct TaskToolBootstrapPrepareSpec {
     pub source: TaskToolBootstrapSourceSpec,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browsers: Vec<TaskPlaywrightBrowserKind>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub with_deps: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -6378,6 +6386,7 @@ impl TaskBootstrapToolKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskToolBootstrapSourceSpec {
     Pip(TaskPipToolBootstrapSourceSpec),
+    Poetry(TaskPoetryToolBootstrapSourceSpec),
     NodePackageManager(TaskNodePackageManagerToolBootstrapSourceSpec),
 }
 
@@ -6433,6 +6442,7 @@ impl TaskNodePackageManagerToolBootstrapSourceSpec {
         &self,
         tool: TaskBootstrapToolKind,
         browsers: &[TaskPlaywrightBrowserKind],
+        with_deps: bool,
     ) -> String {
         let browser_suffix = if browsers.is_empty() {
             String::new()
@@ -6446,9 +6456,10 @@ impl TaskNodePackageManagerToolBootstrapSourceSpec {
                     .join(" ")
             )
         };
+        let deps = if with_deps { " --with-deps" } else { "" };
         match (self.manager, tool) {
             (TaskNodePackageManagerKind::Npm, TaskBootstrapToolKind::PlaywrightBrowsers) => {
-                format!("npx playwright install{browser_suffix}")
+                format!("npx playwright install{deps}{browser_suffix}")
             }
             (TaskNodePackageManagerKind::Pnpm, TaskBootstrapToolKind::PlaywrightBrowsers) => {
                 match self
@@ -6458,20 +6469,57 @@ impl TaskNodePackageManagerToolBootstrapSourceSpec {
                     .filter(|value| !value.is_empty())
                 {
                     Some(filter) => {
-                        format!("pnpm --filter {filter} exec playwright install{browser_suffix}")
+                        format!(
+                            "pnpm --filter {filter} exec playwright install{deps}{browser_suffix}"
+                        )
                     }
-                    None => format!("pnpm exec playwright install{browser_suffix}"),
+                    None => format!("pnpm exec playwright install{deps}{browser_suffix}"),
                 }
             }
             (TaskNodePackageManagerKind::Yarn, TaskBootstrapToolKind::PlaywrightBrowsers) => {
-                format!("yarn playwright install{browser_suffix}")
+                format!("yarn playwright install{deps}{browser_suffix}")
             }
             (TaskNodePackageManagerKind::Bun, TaskBootstrapToolKind::PlaywrightBrowsers) => {
-                format!("bunx playwright install{browser_suffix}")
+                format!("bunx playwright install{deps}{browser_suffix}")
             }
             (_, TaskBootstrapToolKind::Uv) => {
                 format!("{} install {}", self.manager.label(), tool.label())
             }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskPoetryToolBootstrapSourceSpec {
+    pub cwd: String,
+}
+
+impl TaskPoetryToolBootstrapSourceSpec {
+    pub fn command_preview(
+        &self,
+        tool: TaskBootstrapToolKind,
+        browsers: &[TaskPlaywrightBrowserKind],
+        with_deps: bool,
+    ) -> String {
+        let browser_suffix = if browsers.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " {}",
+                browsers
+                    .iter()
+                    .map(|browser| browser.label())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+        };
+        match tool {
+            TaskBootstrapToolKind::PlaywrightBrowsers => {
+                let deps = if with_deps { " --with-deps" } else { "" };
+                format!("poetry run playwright install{deps}{browser_suffix}")
+            }
+            _ => String::from("-"),
         }
     }
 }
@@ -8887,6 +8935,7 @@ tasks:
             tool: super::TaskBootstrapToolKind::Uv,
             source: super::TaskToolBootstrapSourceSpec::Pip(source),
             browsers: Vec::new(),
+            with_deps: false,
         });
         assert_eq!(
             prepare.preview(),
@@ -8902,13 +8951,14 @@ tasks:
             filter: None,
         };
         assert_eq!(
-            source.command_preview(super::TaskBootstrapToolKind::PlaywrightBrowsers, &[]),
+            source.command_preview(super::TaskBootstrapToolKind::PlaywrightBrowsers, &[], false),
             "yarn playwright install"
         );
         let prepare = super::TaskPrepareSpec::ToolBootstrap(super::TaskToolBootstrapPrepareSpec {
             tool: super::TaskBootstrapToolKind::PlaywrightBrowsers,
             source: super::TaskToolBootstrapSourceSpec::NodePackageManager(source),
             browsers: Vec::new(),
+            with_deps: false,
         });
         assert_eq!(
             prepare.preview(),
@@ -8926,9 +8976,35 @@ tasks:
         assert_eq!(
             source.command_preview(
                 super::TaskBootstrapToolKind::PlaywrightBrowsers,
-                &[super::TaskPlaywrightBrowserKind::Chromium]
+                &[super::TaskPlaywrightBrowserKind::Chromium],
+                false
             ),
             "pnpm --filter web exec playwright install chromium"
+        );
+    }
+
+    #[test]
+    fn tool_bootstrap_prepare_preview_uses_poetry_playwright_shape() {
+        let source = super::TaskPoetryToolBootstrapSourceSpec {
+            cwd: String::from("."),
+        };
+        assert_eq!(
+            source.command_preview(
+                super::TaskBootstrapToolKind::PlaywrightBrowsers,
+                &[super::TaskPlaywrightBrowserKind::Chromium],
+                true
+            ),
+            "poetry run playwright install --with-deps chromium"
+        );
+        let prepare = super::TaskPrepareSpec::ToolBootstrap(super::TaskToolBootstrapPrepareSpec {
+            tool: super::TaskBootstrapToolKind::PlaywrightBrowsers,
+            source: super::TaskToolBootstrapSourceSpec::Poetry(source),
+            browsers: vec![super::TaskPlaywrightBrowserKind::Chromium],
+            with_deps: true,
+        });
+        assert_eq!(
+            prepare.preview(),
+            "bootstrap tool `playwright_browsers` with poetry run playwright install --with-deps chromium in `.`"
         );
     }
 
