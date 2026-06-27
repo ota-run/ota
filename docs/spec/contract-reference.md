@@ -2000,9 +2000,14 @@ Task-effect rules:
 - `prepare.kind: sequence`
   - `prepare.steps`: required non-empty ordered list of child prepare steps
 - `prepare.kind: tool_bootstrap`
-  - `prepare.tool`: required bootstrap target; ota currently ships `uv`
+  - `prepare.tool`: required bootstrap target; ota currently ships `uv` and `playwright_browsers`
+  - `prepare.browsers`: optional explicit Playwright browser subset; ota currently ships `chromium`, `firefox`, `webkit`, `chrome`, and `msedge`
   - `prepare.source.kind: pip`
   - `prepare.source.exe`: required Python executable ota should use for `-m pip install ...`
+  - `prepare.source.kind: node_package_manager`
+  - `prepare.source.cwd`: required repo-relative working directory for the bootstrap invocation
+  - `prepare.source.manager`: required package manager; ota currently ships `npm`, `pnpm`, `yarn`, and `bun`
+  - `prepare.source.filter`: optional workspace/package selector for manager-owned targeted bootstrap; ota currently only owns this shape for `manager: pnpm`
 - `prepare.kind: dependency_hydration`
   - `prepare.medium: container_images`
     - `prepare.source.kind: docker_compose`
@@ -2062,8 +2067,12 @@ Task-effect rules:
 - `prepare.kind: sequence` uses the parent task's `requirements`, `effects`, and execution path for each ordered child step
 - `prepare.kind: sequence` must declare at least one child step under `prepare.steps`
 - use `prepare.kind: sequence` when one honest setup lane needs more than one structural finite step, such as Node hydration plus Python hydration in one repo-level `setup` task
-- `prepare.kind: tool_bootstrap` currently requires `requirements.toolchains: [python]`, `effects.network: true`, and `effects.network_kind: tool_bootstrap`
-- use `prepare.kind: tool_bootstrap` when the task truth is contract-owned tool installation rather than repo dependency hydration; for example bootstrapping `uv` through `pip`
+- `prepare.kind: tool_bootstrap` currently requires `effects.network: true` and `effects.network_kind: tool_bootstrap`; add toolchain requirements that match the selected bootstrap source
+- `prepare.kind: tool_bootstrap` with `source.kind: pip` currently requires `requirements.toolchains: [python]`
+- `prepare.kind: tool_bootstrap` with `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]` and currently only supports `prepare.tool: playwright_browsers`
+- `prepare.kind: tool_bootstrap` with `prepare.browsers` currently only applies to `prepare.tool: playwright_browsers`
+- `prepare.kind: tool_bootstrap` with `prepare.source.filter` currently only applies to `source.kind: node_package_manager` with `manager: pnpm`
+- use `prepare.kind: tool_bootstrap` when the task truth is contract-owned tool installation rather than repo dependency hydration; for example bootstrapping `uv` through `pip` or downloading Playwright browsers through a repo-owned Node package manager
 - `prepare.kind: dependency_hydration` currently requires `effects.network: true` and `effects.network_kind: dependency_hydration`; add tool or toolchain requirements that match the selected hydration source and wrapper
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: node_package_manager` currently requires `requirements.toolchains: [node]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Node toolchain truth for the in-container command
 - `prepare.kind: dependency_hydration` with `medium: package_dependencies` and `source.kind: bundler` currently requires `requirements.toolchains: [ruby]`, `effects.network: true`, `effects.network_kind: dependency_hydration`, and durable state in `effects.writes` or `effects.adapter_state`; host-side repo-local gem hydration also requires `prepare.source.path`, while compose-wrapped lanes may omit it when Bundler truthfully uses the container-default install path; when the lane is wrapped through `prepare.source.compose`, keep the host wrapper truthful with `requirements.tools.docker` or `requirements.tools.podman` and do not duplicate host Ruby toolchain truth for the in-container command
@@ -2093,7 +2102,14 @@ Task-effect rules:
 - `prepare.source.kind: gradle` currently executes the narrow canonical Gradle hydration lane: `./gradlew dependencies` when wrapper-owned, otherwise `gradle dependencies`
 - `prepare.source.kind: cargo` currently executes the narrow canonical Cargo hydration lane: `cargo fetch`
 - `prepare.source.kind: dotnet_restore` currently executes the narrow canonical .NET hydration lane: `dotnet restore`
-- `prepare.kind: tool_bootstrap` currently executes the narrow canonical Python tool-bootstrap lane: `<exe> -m pip install --disable-pip-version-check -q uv`
+- `prepare.kind: tool_bootstrap` currently executes two narrow canonical tool-bootstrap lanes:
+  - Python lane: `<exe> -m pip install --disable-pip-version-check -q uv`
+  - Node lane for `prepare.tool: playwright_browsers`:
+    - `npx playwright install [browsers...]`
+    - `pnpm exec playwright install [browsers...]`
+    - `pnpm --filter <selector> exec playwright install [browsers...]`
+    - `yarn playwright install [browsers...]`
+    - `bunx playwright install [browsers...]`
 - `prepare` does not replace workflow-owned host bootstrap; workflow prepare is still the explicit host bootstrap lane and now points at one native finite owner (`prepare.task` or `prepare.action`)
 - `prepare` is not orchestrator-managed in the current shipped slice
 

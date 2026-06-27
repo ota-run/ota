@@ -16819,8 +16819,6 @@ fn selected_task_requirement_surface(
         for tool_name in contract.tools.keys() {
             surface.tools.remove(tool_name);
         }
-    } else if surface.tools.is_empty() {
-        surface.tools = contract.tools.clone();
     }
     if let Some(exe) =
         task.effective_command_launch_executable_for_backend(effective.backend, current_os())
@@ -38048,6 +38046,14 @@ fn collect_prepare_field_paths(
                 crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
                     fields.push(format!("{prefix}.source.exe"));
                 }
+                crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(_source) => {
+                    fields.push(format!("{prefix}.source.cwd"));
+                    fields.push(format!("{prefix}.source.manager"));
+                    fields.push(format!("{prefix}.source.filter"));
+                }
+            }
+            for (index, _browser) in spec.browsers.iter().enumerate() {
+                fields.push(format!("{prefix}.browsers.{index}"));
             }
         }
         TaskPrepareSpec::DependencyHydration(spec) => {
@@ -39554,6 +39560,14 @@ fn render_task_prepare_text(prepare: &crate::output::TaskPrepareSummary<'_>) -> 
                 )
             }),
         ),
+        "tool_bootstrap" => render_tool_bootstrap_prepare_text(
+            prepare.source_kind,
+            prepare.cwd,
+            prepare.manager,
+            prepare.filter,
+            prepare.mode,
+            &prepare.browsers,
+        ),
         _ => String::from("-"),
     }
 }
@@ -39639,6 +39653,60 @@ fn render_workspace_task_prepare_text(prepare: &WorkspaceTaskPrepareSummary) -> 
                 )
             }),
         ),
+        "tool_bootstrap" => render_tool_bootstrap_prepare_text(
+            prepare.source_kind,
+            prepare.cwd.as_deref(),
+            prepare.manager,
+            prepare.filter.as_deref(),
+            prepare.mode,
+            &prepare.browsers,
+        ),
+        _ => String::from("-"),
+    }
+}
+
+fn render_tool_bootstrap_prepare_text(
+    source_kind: Option<&str>,
+    cwd: Option<&str>,
+    manager: Option<&str>,
+    filter: Option<&str>,
+    mode: Option<&str>,
+    browsers: &[&str],
+) -> String {
+    match source_kind {
+        Some("pip") => format!(
+            "bootstrap tool `{}` with `python -m pip install --disable-pip-version-check -q {}`",
+            mode.unwrap_or("tool"),
+            mode.unwrap_or("tool")
+        ),
+        Some("node_package_manager") => {
+            let cwd = cwd.unwrap_or(".");
+            let manager = manager.unwrap_or("package manager");
+            let browser_suffix = if browsers.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", browsers.join(" "))
+            };
+            let command = match (manager, mode.unwrap_or("tool")) {
+                ("npm", "playwright_browsers") => format!("npx playwright install{browser_suffix}"),
+                ("pnpm", "playwright_browsers") => match filter
+                    .filter(|value| !value.trim().is_empty())
+                {
+                    Some(filter) => {
+                        format!("pnpm --filter {filter} exec playwright install{browser_suffix}")
+                    }
+                    None => format!("pnpm exec playwright install{browser_suffix}"),
+                },
+                ("yarn", "playwright_browsers") => {
+                    format!("yarn playwright install{browser_suffix}")
+                }
+                ("bun", "playwright_browsers") => {
+                    format!("bunx playwright install{browser_suffix}")
+                }
+                _ => return String::from("-"),
+            };
+            format!("bootstrap tool `playwright_browsers` with `{command}` in `{cwd}`")
+        }
         _ => String::from("-"),
     }
 }
@@ -51917,6 +51985,7 @@ tasks:
                         files: Vec::new(),
                         env_files: Vec::new(),
                         manager: Some("pnpm"),
+                        filter: None,
                         mode: Some("install"),
                         group_mode: None,
                         groups: Vec::new(),
@@ -51926,6 +51995,7 @@ tasks:
                         no_root: false,
                         skip_tests: false,
                         targets: Vec::new(),
+                        browsers: Vec::new(),
                         compose: None,
                     },
                     crate::output::TaskPrepareSummary {
@@ -51938,6 +52008,7 @@ tasks:
                         files: Vec::new(),
                         env_files: Vec::new(),
                         manager: Some("uv"),
+                        filter: None,
                         mode: Some("sync"),
                         group_mode: None,
                         groups: Vec::new(),
@@ -51947,6 +52018,7 @@ tasks:
                         no_root: false,
                         skip_tests: false,
                         targets: Vec::new(),
+                        browsers: Vec::new(),
                         compose: None,
                     },
                 ],
@@ -51957,6 +52029,7 @@ tasks:
                 files: Vec::new(),
                 env_files: Vec::new(),
                 manager: None,
+                filter: None,
                 mode: None,
                 group_mode: None,
                 groups: Vec::new(),
@@ -51966,6 +52039,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                browsers: Vec::new(),
                 compose: None,
             }),
             aggregate: None,
@@ -52033,6 +52107,7 @@ tasks:
                 files: Vec::new(),
                 env_files: Vec::new(),
                 manager: Some("yarn"),
+                filter: None,
                 mode: Some("install"),
                 group_mode: None,
                 groups: Vec::new(),
@@ -52042,6 +52117,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                browsers: Vec::new(),
                 compose: None,
             }),
             aggregate: None,
@@ -52088,6 +52164,7 @@ tasks:
                 files: Vec::new(),
                 env_files: Vec::new(),
                 manager: Some("bun"),
+                filter: None,
                 mode: Some("install"),
                 group_mode: None,
                 groups: Vec::new(),
@@ -52097,6 +52174,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                browsers: Vec::new(),
                 compose: None,
             }),
             aggregate: None,
@@ -52165,6 +52243,7 @@ tasks:
                 files: Vec::new(),
                 env_files: Vec::new(),
                 manager: Some("yarn"),
+                filter: None,
                 mode: Some("install"),
                 group_mode: None,
                 groups: Vec::new(),
@@ -52174,6 +52253,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                browsers: Vec::new(),
                 compose: None,
             }),
             aggregate: None,
@@ -52235,6 +52315,7 @@ tasks:
                 files: Vec::new(),
                 env_files: Vec::new(),
                 manager: Some("npm"),
+                filter: None,
                 mode: Some("install"),
                 group_mode: None,
                 groups: Vec::new(),
@@ -52244,6 +52325,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                browsers: Vec::new(),
                 compose: None,
             }),
             aggregate: None,
@@ -52305,6 +52387,7 @@ tasks:
                 files: Vec::new(),
                 env_files: Vec::new(),
                 manager: Some("npm"),
+                filter: None,
                 mode: Some("ci"),
                 group_mode: None,
                 groups: Vec::new(),
@@ -52314,6 +52397,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                browsers: Vec::new(),
                 compose: Some(crate::output::TaskComposeInvocationSummary {
                     kind: "run",
                     engine: "docker",
@@ -52389,6 +52473,7 @@ tasks:
                 files: Vec::new(),
                 env_files: Vec::new(),
                 manager: Some("bundle"),
+                filter: None,
                 mode: Some("install"),
                 group_mode: None,
                 groups: Vec::new(),
@@ -52398,6 +52483,7 @@ tasks:
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                browsers: Vec::new(),
                 compose: Some(crate::output::TaskComposeInvocationSummary {
                     kind: "run",
                     engine: "docker",
@@ -52439,6 +52525,150 @@ tasks:
             "{rendered}"
         );
         assert!(!rendered.contains("using `Gemfile`"), "{rendered}");
+    }
+
+    #[test]
+    fn render_tasks_text_reports_playwright_browser_tool_bootstrap() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "playwright:browsers",
+            context: Some("host"),
+            default_mode: None,
+            effective_default_mode: "native",
+            description: Some("Install Playwright browsers"),
+            notes: None,
+            category: None,
+            env,
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs,
+            kind: "prepare",
+            run: None,
+            script: None,
+            command: None,
+            compose: None,
+            launch: None,
+            action: None,
+            prepare: Some(crate::output::TaskPrepareSummary {
+                kind: "tool_bootstrap",
+                steps: Vec::new(),
+                medium: None,
+                source_kind: Some("node_package_manager"),
+                cwd: Some("."),
+                file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
+                manager: Some("yarn"),
+                filter: None,
+                mode: Some("playwright_browsers"),
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: false,
+                inline_builds: false,
+                force: false,
+                no_root: false,
+                skip_tests: false,
+                targets: Vec::new(),
+                browsers: Vec::new(),
+                compose: None,
+            }),
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+
+        assert!(
+            rendered.contains(
+                "Prepare: bootstrap tool `playwright_browsers` with `yarn playwright install` in `.`"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_tasks_text_reports_filtered_playwright_browser_tool_bootstrap() {
+        let env = BTreeMap::new();
+        let inputs = BTreeMap::new();
+        let task = TaskSummary {
+            name: "playwright:browsers",
+            context: Some("host"),
+            default_mode: None,
+            effective_default_mode: "native",
+            description: Some("Install filtered Playwright browsers"),
+            notes: None,
+            category: None,
+            env,
+            env_files: Vec::new(),
+            adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
+            inputs,
+            kind: "prepare",
+            run: None,
+            script: None,
+            command: None,
+            compose: None,
+            launch: None,
+            action: None,
+            prepare: Some(crate::output::TaskPrepareSummary {
+                kind: "tool_bootstrap",
+                steps: Vec::new(),
+                medium: None,
+                source_kind: Some("node_package_manager"),
+                cwd: Some("."),
+                file: None,
+                files: Vec::new(),
+                env_files: Vec::new(),
+                manager: Some("pnpm"),
+                filter: Some("web"),
+                mode: Some("playwright_browsers"),
+                group_mode: None,
+                groups: Vec::new(),
+                frozen_lockfile: false,
+                inline_builds: false,
+                force: false,
+                no_root: false,
+                skip_tests: false,
+                targets: Vec::new(),
+                browsers: vec!["chromium"],
+                compose: None,
+            }),
+            aggregate: None,
+            effects: crate::output::TaskEffectsSummary::default(),
+            selected_variant_os: None,
+            depends_on: Vec::new(),
+            requires_services: Vec::new(),
+            when_checks: Vec::new(),
+            after_success: Vec::new(),
+            after_failure: Vec::new(),
+            after_always: Vec::new(),
+            safe_for_agent: false,
+            internal: false,
+            variants: Vec::new(),
+            modes: Vec::new(),
+            supports_native_mode_override: false,
+        };
+
+        let rendered = strip_ansi_codes(&render_tasks_text(".", None, None, &[task]));
+
+        assert!(
+            rendered.contains(
+                "Prepare: bootstrap tool `playwright_browsers` with `pnpm --filter web exec playwright install chromium` in `.`"
+            ),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -72112,6 +72342,58 @@ tasks:
         assert!(
             container_surface.tools.contains_key("pnpm"),
             "container task path should retain the inferred command tool"
+        );
+    }
+
+    #[test]
+    fn selected_task_requirement_surface_does_not_leak_unrelated_optional_repo_tools() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: langfuse
+tools:
+  clickhouse:
+    version: "*"
+    required: false
+toolchains:
+  node:
+    version: "24"
+    package_managers:
+      pnpm: "11.1.3"
+tasks:
+  playwright:browsers:
+    prepare:
+      kind: tool_bootstrap
+      tool: playwright_browsers
+      browsers:
+        - chromium
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        filter: web
+    requirements:
+      toolchains:
+        - node
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .expect("contract should parse");
+
+        let surface = super::selected_task_requirement_surface(
+            &contract,
+            "playwright:browsers",
+            ExecutionOverrides::default(),
+        )
+        .expect("task requirement surface should resolve");
+
+        assert!(
+            !surface.tools.contains_key("clickhouse"),
+            "unrelated optional repo tools should not leak into a narrow task surface"
         );
     }
 

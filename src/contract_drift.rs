@@ -776,10 +776,16 @@ fn existing_service_field_values(name: &str, service: &ServiceSpec) -> BTreeMap<
             fields.insert(format!("services.{name}.manager.file"), file.clone());
         }
         for (index, file) in manager.files.iter().enumerate() {
-            fields.insert(format!("services.{name}.manager.files.{index}"), file.clone());
+            fields.insert(
+                format!("services.{name}.manager.files.{index}"),
+                file.clone(),
+            );
         }
         if let Some(env_file) = manager.env_file.as_ref() {
-            fields.insert(format!("services.{name}.manager.env_file"), env_file.clone());
+            fields.insert(
+                format!("services.{name}.manager.env_file"),
+                env_file.clone(),
+            );
         }
         for (index, env_file) in manager.env_files.iter().enumerate() {
             fields.insert(
@@ -860,10 +866,16 @@ fn detect_service_field_values(name: &str, service: &DetectService) -> Vec<(Stri
             fields.push((format!("services.{name}.manager.file"), file.clone()));
         }
         for (index, file) in manager.files.iter().enumerate() {
-            fields.push((format!("services.{name}.manager.files.{index}"), file.clone()));
+            fields.push((
+                format!("services.{name}.manager.files.{index}"),
+                file.clone(),
+            ));
         }
         if let Some(env_file) = manager.env_file.as_ref() {
-            fields.push((format!("services.{name}.manager.env_file"), env_file.clone()));
+            fields.push((
+                format!("services.{name}.manager.env_file"),
+                env_file.clone(),
+            ));
         }
         for (index, env_file) in manager.env_files.iter().enumerate() {
             fields.push((

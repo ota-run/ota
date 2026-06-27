@@ -5118,6 +5118,11 @@ fn validate_task_prepare(
                         "task `{task_name}` prepare `tool_bootstrap` with `source.kind: pip` must declare a non-empty `prepare.source.exe`"
                     )));
                 }
+                if !spec.browsers.is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: pip` must not declare `prepare.browsers`; browser targets only apply to `prepare.tool: playwright_browsers`"
+                    )));
+                }
                 if !requirements
                     .toolchains
                     .iter()
@@ -5126,6 +5131,50 @@ fn validate_task_prepare(
                     errors.push(ValidationError::new(format!(
                         "task `{task_name}` prepare `tool_bootstrap` with `source.kind: pip` must declare `requirements.toolchains: [python]`"
                     )));
+                }
+                if !effects.network {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` must declare `effects.network: true`"
+                    )));
+                }
+                if effects.network_kind != Some(crate::schema::TaskNetworkEffectKind::ToolBootstrap)
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` must declare `effects.network_kind: tool_bootstrap`"
+                    )));
+                }
+            }
+            crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) => {
+                if source.cwd.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` must declare a non-empty `prepare.source.cwd`"
+                    )));
+                }
+                if !requirements
+                    .toolchains
+                    .iter()
+                    .any(|toolchain| toolchain == "node")
+                {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` must declare `requirements.toolchains: [node]`"
+                    )));
+                }
+                if spec.tool != crate::schema::TaskBootstrapToolKind::PlaywrightBrowsers {
+                    errors.push(ValidationError::new(format!(
+                        "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.tool: playwright_browsers`"
+                    )));
+                }
+                if let Some(filter) = source.filter.as_deref() {
+                    if filter.trim().is_empty() {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` must declare a non-empty `prepare.source.filter` when present"
+                        )));
+                    }
+                    if source.manager != crate::schema::TaskNodePackageManagerKind::Pnpm {
+                        errors.push(ValidationError::new(format!(
+                            "task `{task_name}` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.source.filter` with `manager: pnpm`"
+                        )));
+                    }
                 }
                 if !effects.network {
                     errors.push(ValidationError::new(format!(
@@ -35400,6 +35449,39 @@ tasks:
     }
 
     #[test]
+    fn accepts_playwright_browser_tool_bootstrap_task() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  setup:browsers:
+    prepare:
+      kind: tool_bootstrap
+      tool: playwright_browsers
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: yarn
+    requirements:
+      toolchains:
+        - node
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("playwright browser bootstrap should validate");
+    }
+
+    #[test]
     fn rejects_tool_bootstrap_prepare_without_python_and_tool_bootstrap_effect_kind() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -35441,6 +35523,93 @@ tasks:
         assert!(
             rendered.iter().any(|error| error.contains(
                 "task `setup:tooling` prepare `tool_bootstrap` must declare `effects.network_kind: tool_bootstrap`"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_playwright_browser_tool_bootstrap_without_node_toolchain() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:browsers:
+    prepare:
+      kind: tool_bootstrap
+      tool: playwright_browsers
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: yarn
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("missing node toolchain should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:browsers` prepare `tool_bootstrap` with `source.kind: node_package_manager` must declare `requirements.toolchains: [node]`"
+            )),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_playwright_browser_tool_bootstrap_filter_for_non_pnpm_manager() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  node:
+    version: "22"
+tasks:
+  setup:browsers:
+    prepare:
+      kind: tool_bootstrap
+      tool: playwright_browsers
+      browsers:
+        - chromium
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: yarn
+        filter: web
+    requirements:
+      toolchains:
+        - node
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("unsupported filter manager should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered.iter().any(|error| error.contains(
+                "task `setup:browsers` prepare `tool_bootstrap` with `source.kind: node_package_manager` currently only supports `prepare.source.filter` with `manager: pnpm`"
             )),
             "{rendered:?}"
         );

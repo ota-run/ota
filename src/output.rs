@@ -3772,6 +3772,8 @@ pub struct TaskPrepareSummary<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manager: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_mode: Option<&'static str>,
@@ -3789,6 +3791,8 @@ pub struct TaskPrepareSummary<'a> {
     pub skip_tests: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub browsers: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compose: Option<TaskComposeInvocationSummary<'a>>,
 }
@@ -3813,6 +3817,8 @@ pub struct WorkspaceTaskPrepareSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manager: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_mode: Option<&'static str>,
@@ -3830,6 +3836,8 @@ pub struct WorkspaceTaskPrepareSummary {
     pub skip_tests: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub browsers: Vec<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compose: Option<WorkspaceTaskComposeInvocationSummary>,
 }
@@ -4190,6 +4198,7 @@ pub fn summarize_task_prepare(
             files: Vec::new(),
             env_files: Vec::new(),
             manager: None,
+            filter: None,
             mode: None,
             group_mode: None,
             groups: Vec::new(),
@@ -4199,24 +4208,33 @@ pub fn summarize_task_prepare(
             no_root: false,
             skip_tests: false,
             targets: Vec::new(),
+            browsers: Vec::new(),
             compose: None,
         }),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
-            let (source_kind, mode) = match &spec.source {
+            let (source_kind, mode, cwd, manager, filter) = match &spec.source {
                 crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
-                    ("pip", Some(spec.tool.label()))
+                    ("pip", Some(spec.tool.label()), None, None, None)
                 }
+                crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) => (
+                    "node_package_manager",
+                    Some(spec.tool.label()),
+                    Some(source.cwd.trim()),
+                    Some(source.manager.label()),
+                    source.filter.as_deref().map(str::trim),
+                ),
             };
             Some(TaskPrepareSummary {
                 kind: "tool_bootstrap",
                 steps: Vec::new(),
                 medium: None,
                 source_kind: Some(source_kind),
-                cwd: None,
+                cwd,
                 file: None,
                 files: Vec::new(),
                 env_files: Vec::new(),
-                manager: None,
+                manager,
+                filter,
                 mode,
                 group_mode: None,
                 groups: Vec::new(),
@@ -4226,6 +4244,11 @@ pub fn summarize_task_prepare(
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                browsers: spec
+                    .browsers
+                    .iter()
+                    .map(|browser| browser.label())
+                    .collect(),
                 compose: None,
             })
         }
@@ -4467,6 +4490,7 @@ pub fn summarize_task_prepare(
                 files,
                 env_files,
                 manager,
+                filter: None,
                 mode,
                 group_mode,
                 groups,
@@ -4476,6 +4500,7 @@ pub fn summarize_task_prepare(
                 no_root,
                 skip_tests,
                 targets: spec.targets.iter().map(String::as_str).collect(),
+                browsers: Vec::new(),
                 compose,
             })
         }
@@ -4500,6 +4525,7 @@ pub fn summarize_task_prepare_owned(
             files: Vec::new(),
             env_files: Vec::new(),
             manager: None,
+            filter: None,
             mode: None,
             group_mode: None,
             groups: Vec::new(),
@@ -4509,24 +4535,33 @@ pub fn summarize_task_prepare_owned(
             no_root: false,
             skip_tests: false,
             targets: Vec::new(),
+            browsers: Vec::new(),
             compose: None,
         }),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
-            let (source_kind, mode) = match &spec.source {
+            let (source_kind, mode, cwd, manager, filter) = match &spec.source {
                 crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
-                    ("pip", Some(spec.tool.label()))
+                    ("pip", Some(spec.tool.label()), None, None, None)
                 }
+                crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) => (
+                    "node_package_manager",
+                    Some(spec.tool.label()),
+                    Some(source.cwd.trim().to_string()),
+                    Some(source.manager.label()),
+                    source.filter.as_deref().map(str::trim).map(str::to_string),
+                ),
             };
             Some(WorkspaceTaskPrepareSummary {
                 kind: "tool_bootstrap",
                 steps: Vec::new(),
                 medium: None,
                 source_kind: Some(source_kind),
-                cwd: None,
+                cwd,
                 file: None,
                 files: Vec::new(),
                 env_files: Vec::new(),
-                manager: None,
+                manager,
+                filter,
                 mode,
                 group_mode: None,
                 groups: Vec::new(),
@@ -4536,6 +4571,11 @@ pub fn summarize_task_prepare_owned(
                 no_root: false,
                 skip_tests: false,
                 targets: Vec::new(),
+                browsers: spec
+                    .browsers
+                    .iter()
+                    .map(|browser| browser.label())
+                    .collect(),
                 compose: None,
             })
         }
@@ -4777,6 +4817,7 @@ pub fn summarize_task_prepare_owned(
                 files,
                 env_files,
                 manager,
+                filter: None,
                 mode,
                 group_mode,
                 groups,
@@ -4786,6 +4827,7 @@ pub fn summarize_task_prepare_owned(
                 no_root,
                 skip_tests,
                 targets: spec.targets.clone(),
+                browsers: Vec::new(),
                 compose,
             })
         }

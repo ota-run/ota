@@ -490,16 +490,6 @@ fn selected_backend_precondition_selections(
                 .is_empty()
         })
     });
-    let scoped_tools = task_names.iter().any(|task_name| {
-        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
-            let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
-            let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
-            !task
-                .scoped_requirement_surface_for_execution(backend, context_name)
-                .tools
-                .is_empty()
-        })
-    });
     let scoped_env = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
@@ -622,11 +612,6 @@ fn selected_backend_precondition_selections(
             runtimes.extend(selection.requirement_surface.runtimes.clone());
             selection.requirement_surface.runtimes = runtimes;
         }
-        if !scoped_tools && matches!(selection.backend, Backend::Native) {
-            let mut tools = contract.tools.clone();
-            tools.extend(selection.requirement_surface.tools.clone());
-            selection.requirement_surface.tools = tools;
-        }
         if let Some(selected_tool_names) = selected_tool_names_by_backend.get(&(
             backend_key(selection.backend).to_string(),
             selection.context_name.clone(),
@@ -658,15 +643,6 @@ fn selected_task_backend_precondition_selections(
             !task
                 .scoped_requirement_surface_for_execution(effective.backend, effective.context_name)
                 .runtimes
-                .is_empty()
-        })
-    });
-    let scoped_tools = task_names.iter().any(|task_name| {
-        contract.tasks.get(task_name.as_str()).is_some_and(|task| {
-            let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-            !task
-                .scoped_requirement_surface_for_execution(effective.backend, effective.context_name)
-                .tools
                 .is_empty()
         })
     });
@@ -795,11 +771,6 @@ fn selected_task_backend_precondition_selections(
             let mut runtimes = contract.runtimes.clone();
             runtimes.extend(selection.requirement_surface.runtimes.clone());
             selection.requirement_surface.runtimes = runtimes;
-        }
-        if !scoped_tools && matches!(selection.backend, Backend::Native) {
-            let mut tools = contract.tools.clone();
-            tools.extend(selection.requirement_surface.tools.clone());
-            selection.requirement_surface.tools = tools;
         }
         if let Some(selected_tool_names) = selected_tool_names_by_backend.get(&(
             backend_key(selection.backend).to_string(),
@@ -17058,6 +17029,103 @@ workflows:
                     && !finding.next.contains("pnpmx")
             }),
             "{report:?}"
+        );
+    }
+
+    #[test]
+    fn doctor_selected_task_does_not_surface_unrelated_optional_repo_tool_findings() {
+        let _guard = env_mutex_lock();
+        let fixture = TempDir::new().unwrap();
+        let bin_dir = fixture.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) { "node.cmd" } else { "node" },
+            if cfg!(windows) {
+                "@echo off\r\necho v24.0.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'v24.0.0'\n"
+            },
+        );
+        write_fake_command(
+            &bin_dir,
+            if cfg!(windows) {
+                "corepack.cmd"
+            } else {
+                "corepack"
+            },
+            if cfg!(windows) {
+                "@echo off\r\necho corepack 0.31.0\r\n"
+            } else {
+                "#!/bin/sh\necho 'corepack 0.31.0'\n"
+            },
+        );
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", bin_dir.as_os_str().to_os_string());
+        }
+
+        let contract = parse_contract_str(
+            synthetic_contract_path(),
+            r#"
+version: 1
+project:
+  name: langfuse
+tools:
+  clickhouse:
+    version: "*"
+    required: false
+toolchains:
+  node:
+    version: "24"
+    package_managers:
+      pnpm: "11.1.3"
+tasks:
+  playwright:browsers:
+    prepare:
+      kind: tool_bootstrap
+      tool: playwright_browsers
+      browsers:
+        - chromium
+      source:
+        kind: node_package_manager
+        cwd: .
+        manager: pnpm
+        filter: web
+    requirements:
+      toolchains:
+        - node
+    effects:
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        let report = super::diagnose_preconditions_with_mode_for_task_with_overrides(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            "playwright:browsers",
+            ExecutionOverrides::default(),
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert!(
+            report.findings.iter().all(|finding| {
+                !(finding.code() == "OTA_TOOL_MISSING" && finding.summary.contains("clickhouse"))
+            }),
+            "unexpected unrelated optional tool finding: {:?}",
+            report.findings
         );
     }
 

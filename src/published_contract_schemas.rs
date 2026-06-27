@@ -1140,7 +1140,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
       "additionalProperties": false,
       "required": ["kind"],
       "properties": {
-        "kind": { "enum": ["exec", "run", "attach", "up", "down", "build", "restart", "rm", "logs"] },
+        "kind": { "enum": ["exec", "run", "attach", "up", "down", "build", "stop", "restart", "rm", "logs", "ps"] },
         "engine": { "enum": ["docker", "podman"] },
         "service": { "type": "string" },
         "services": { "$ref": "#/$defs/stringArray" },
@@ -1359,15 +1359,34 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
           "required": ["kind", "tool", "source"],
           "properties": {
             "kind": { "const": "tool_bootstrap" },
-            "tool": { "enum": ["uv"] },
+            "tool": { "enum": ["uv", "playwright_browsers"] },
+            "browsers": {
+              "type": "array",
+              "items": { "enum": ["chromium", "firefox", "webkit", "chrome", "msedge"] }
+            },
             "source": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": ["kind", "exe"],
-              "properties": {
-                "kind": { "const": "pip" },
-                "exe": { "type": "string" }
-              }
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "exe"],
+                  "properties": {
+                    "kind": { "const": "pip" },
+                    "exe": { "type": "string" }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "cwd", "manager"],
+                  "properties": {
+                    "kind": { "const": "node_package_manager" },
+                    "cwd": { "type": "string" },
+                    "manager": { "enum": ["npm", "pnpm", "yarn", "bun"] },
+                    "filter": { "type": "string" }
+                  }
+                }
+              ]
             }
           }
         },
