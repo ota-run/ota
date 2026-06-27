@@ -1998,7 +1998,11 @@ Task-effect rules:
 
 - `prepare.kind`: required preparation classifier; ota currently ships `dependency_hydration`, `tool_bootstrap`, and `sequence`
 - `prepare.kind: sequence`
-  - `prepare.steps`: required non-empty ordered list of child prepare steps
+  - `prepare.steps`: required non-empty ordered list of child setup steps
+  - `prepare.steps.kind`: ordered step kind; `sequence` accepts the structural prepare kinds
+    (`dependency_hydration`, `tool_bootstrap`, `sequence`) plus deterministic native bootstrap
+    mutations (`copy_if_missing`, `ensure_env_file`, `ensure_file`, `ensure_directory`,
+    `ensure_git_checkout`, `ensure_container_network`, `reset_compose_service_volume`)
 - `prepare.kind: tool_bootstrap`
   - `prepare.tool`: required bootstrap target; ota currently ships `uv` and `playwright_browsers`
   - `prepare.browsers`: optional explicit Playwright browser subset; ota currently ships `chromium`, `firefox`, `webkit`, `chrome`, and `msedge`
@@ -2069,7 +2073,9 @@ Task-effect rules:
 - `prepare` still needs explicit `requirements` and `effects`; ota should understand both intent and side effects
 - `prepare.kind: sequence` uses the parent task's `requirements`, `effects`, and execution path for each ordered child step
 - `prepare.kind: sequence` must declare at least one child step under `prepare.steps`
-- use `prepare.kind: sequence` when one honest setup lane needs more than one structural finite step, such as Node hydration plus Python hydration in one repo-level `setup` task
+- use `prepare.kind: sequence` when one honest setup lane needs more than one typed finite step,
+  such as env-file materialization plus Playwright browser bootstrap, or Node hydration plus
+  Python hydration in one repo-level `setup` task
 - `prepare.kind: tool_bootstrap` currently requires `effects.network: true` and `effects.network_kind: tool_bootstrap`; add toolchain requirements that match the selected bootstrap source
 - `prepare.kind: tool_bootstrap` with `source.kind: pip` currently requires `requirements.toolchains: [python]`
 - `prepare.kind: tool_bootstrap` with `source.kind: poetry` currently requires `requirements.toolchains: [python]` and currently only supports `prepare.tool: playwright_browsers`
@@ -2131,10 +2137,15 @@ Example:
 ```yaml
 tasks:
   setup:
-    description: Hydrate frontend and backend dependencies
+    description: Materialize local env and hydrate frontend and backend dependencies
     prepare:
       kind: sequence
       steps:
+        - kind: ensure_env_file
+          path: .env.local
+          vars:
+            APP_ENV:
+              value: local
         - kind: dependency_hydration
           medium: package_dependencies
           source:

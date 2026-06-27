@@ -442,8 +442,28 @@ fn prepare_spec_owns_dependency_hydration(prepare: &crate::schema::TaskPrepareSp
         crate::schema::TaskPrepareSpec::Sequence(sequence) => sequence
             .steps
             .iter()
-            .any(prepare_spec_owns_dependency_hydration),
+            .any(prepare_sequence_step_owns_dependency_hydration),
         _ => false,
+    }
+}
+
+fn prepare_sequence_step_owns_dependency_hydration(
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+) -> bool {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(_) => true,
+        crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(_) => false,
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(sequence) => sequence
+            .steps
+            .iter()
+            .any(prepare_sequence_step_owns_dependency_hydration),
+        crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_)
+        | crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(_) => false,
     }
 }
 

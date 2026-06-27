@@ -9245,7 +9245,7 @@ fn execute_prepare_task(
         let mut stderr = String::new();
         let mut last_exit_code = 0;
         for step in &spec.steps {
-            let step_output = execute_prepare_task(
+            let step_output = execute_prepare_sequence_step(
                 contract,
                 task,
                 task_name,
@@ -9356,6 +9356,136 @@ fn execute_prepare_task(
         host_port_override,
         mode,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_prepare_sequence_step(
+    contract: Option<&Contract>,
+    task: Option<&crate::schema::TaskSpec>,
+    task_name: &str,
+    runtime: Option<&TaskRuntimeSpec>,
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+    working_dir: &Path,
+    env_overrides: &BTreeMap<String, String>,
+    path_export: Option<&str>,
+    secret_env_names: &BTreeSet<String>,
+    backend: &ResolvedExecutionBackend,
+    deferred_backend_fulfillment: Option<&DeferredContainerBackendFulfillment>,
+    host_port_override: Option<u16>,
+    mode: TaskExecutionMode,
+) -> Result<TaskCommandOutput, RunError> {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+            execute_prepare_task(
+                contract,
+                task,
+                task_name,
+                runtime,
+                &crate::schema::TaskPrepareSpec::DependencyHydration(spec.clone()),
+                working_dir,
+                env_overrides,
+                path_export,
+                secret_env_names,
+                backend,
+                deferred_backend_fulfillment,
+                host_port_override,
+                mode,
+            )
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(spec) => execute_prepare_task(
+            contract,
+            task,
+            task_name,
+            runtime,
+            &crate::schema::TaskPrepareSpec::ToolBootstrap(spec.clone()),
+            working_dir,
+            env_overrides,
+            path_export,
+            secret_env_names,
+            backend,
+            deferred_backend_fulfillment,
+            host_port_override,
+            mode,
+        ),
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => execute_prepare_task(
+            contract,
+            task,
+            task_name,
+            runtime,
+            &crate::schema::TaskPrepareSpec::Sequence(spec.clone()),
+            working_dir,
+            env_overrides,
+            path_export,
+            secret_env_names,
+            backend,
+            deferred_backend_fulfillment,
+            host_port_override,
+            mode,
+        ),
+        crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(spec) => {
+            execute_native_file_action_task(
+                contract,
+                task_name,
+                &crate::schema::TaskActionSpec::CopyIfMissing(spec.clone()),
+                working_dir,
+                env_overrides,
+            )
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(spec) => {
+            execute_native_file_action_task(
+                contract,
+                task_name,
+                &crate::schema::TaskActionSpec::EnsureEnvFile(spec.clone()),
+                working_dir,
+                env_overrides,
+            )
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(spec) => {
+            execute_native_file_action_task(
+                contract,
+                task_name,
+                &crate::schema::TaskActionSpec::EnsureFile(spec.clone()),
+                working_dir,
+                env_overrides,
+            )
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(spec) => {
+            execute_native_file_action_task(
+                contract,
+                task_name,
+                &crate::schema::TaskActionSpec::EnsureDirectory(spec.clone()),
+                working_dir,
+                env_overrides,
+            )
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
+            execute_native_file_action_task(
+                contract,
+                task_name,
+                &crate::schema::TaskActionSpec::EnsureGitCheckout(spec.clone()),
+                working_dir,
+                env_overrides,
+            )
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(spec) => {
+            execute_native_file_action_task(
+                contract,
+                task_name,
+                &crate::schema::TaskActionSpec::EnsureContainerNetwork(spec.clone()),
+                working_dir,
+                env_overrides,
+            )
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(spec) => {
+            execute_native_file_action_task(
+                contract,
+                task_name,
+                &crate::schema::TaskActionSpec::ResetComposeServiceVolume(spec.clone()),
+                working_dir,
+                env_overrides,
+            )
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -9664,7 +9794,7 @@ fn prepare_task_shell_command(
         crate::schema::TaskPrepareSpec::Sequence(spec) => Ok(spec
             .steps
             .iter()
-            .map(|step| prepare_task_shell_command(_task_name, task, step, backend))
+            .map(|step| prepare_sequence_step_shell_preview(_task_name, task, step, backend))
             .collect::<Result<Vec<_>, _>>()?
             .join(" && ")),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => match &spec.source {
@@ -9958,6 +10088,64 @@ fn prepare_task_shell_command(
             }?;
             Ok(base_command)
         }
+    }
+}
+
+fn prepare_sequence_step_shell_preview(
+    task_name: &str,
+    task: Option<&TaskSpec>,
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+    backend: &ResolvedExecutionBackend,
+) -> Result<String, RunError> {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+            prepare_task_shell_command(
+                task_name,
+                task,
+                &crate::schema::TaskPrepareSpec::DependencyHydration(spec.clone()),
+                backend,
+            )
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(spec) => {
+            prepare_task_shell_command(
+                task_name,
+                task,
+                &crate::schema::TaskPrepareSpec::ToolBootstrap(spec.clone()),
+                backend,
+            )
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => prepare_task_shell_command(
+            task_name,
+            task,
+            &crate::schema::TaskPrepareSpec::Sequence(spec.clone()),
+            backend,
+        ),
+        crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(spec) => Ok(format!(
+            "copy `{}` to `{}` if missing",
+            spec.from.trim(),
+            spec.to.trim()
+        )),
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(spec) => {
+            Ok(format!("ensure env file `{}`", spec.path.trim()))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(spec) => {
+            Ok(format!("ensure file `{}`", spec.path.trim()))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(spec) => {
+            Ok(format!("ensure directory `{}`", spec.path.trim()))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
+            Ok(format!("ensure git checkout `{}`", spec.path.trim()))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(spec) => {
+            Ok(format!("ensure container network `{}`", spec.name.trim()))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(spec) => Ok(format!(
+            "reset {} compose service `{}` volume `{}`",
+            spec.provider.label(),
+            spec.service.trim(),
+            spec.volume.trim()
+        )),
     }
 }
 
@@ -58855,6 +59043,100 @@ tasks:
                     .to_string()
                     .as_str()
             ),
+            "{logged}"
+        );
+    }
+
+    #[test]
+    fn prepare_sequence_executes_mixed_setup_steps_in_declared_order() {
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+tasks:
+  setup:browsers:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: ensure_env_file
+          path: .env.local
+          vars:
+            APP_ENV:
+              value: local
+        - kind: tool_bootstrap
+          tool: playwright_browsers
+          browsers:
+            - chromium
+          with_deps: true
+          source:
+            kind: poetry
+            cwd: .
+    requirements:
+      toolchains:
+        - python
+    effects:
+      writes:
+        - .env.local
+        - ~/.cache/ms-playwright
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        );
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let python_body = if cfg!(windows) {
+            "@echo off\r\necho Python 3.12.0\r\n"
+        } else {
+            "#!/bin/sh\necho 'Python 3.12.0'\n"
+        };
+        let poetry_body = if cfg!(windows) {
+            "@echo off\r\n>> \"%OTA_POETRY_LOG%\" echo %CD%^|%*\r\n"
+        } else {
+            "#!/bin/sh\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> \"$OTA_POETRY_LOG\"\n"
+        };
+        write_fake_bin(&bin_dir, "python", python_body);
+        write_fake_bin(&bin_dir, "python3", python_body);
+        write_fake_bin(&bin_dir, "poetry", poetry_body);
+        let log_path = fixture.dir.path().join("poetry.log");
+
+        let original_path = env::var_os("PATH");
+        let original_log = env::var_os("OTA_POETRY_LOG");
+        let mut path_entries = vec![bin_dir];
+        if let Some(existing) = original_path.as_ref() {
+            path_entries.extend(env::split_paths(existing));
+        }
+        let joined_path = env::join_paths(path_entries).unwrap();
+        unsafe {
+            env::set_var("PATH", joined_path);
+            env::set_var("OTA_POETRY_LOG", &log_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup:browsers")
+            .expect("mixed prepare sequence should execute");
+
+        match original_path {
+            Some(path) => unsafe { env::set_var("PATH", path) },
+            None => unsafe { env::remove_var("PATH") },
+        }
+        match original_log {
+            Some(value) => unsafe { env::set_var("OTA_POETRY_LOG", value) },
+            None => unsafe { env::remove_var("OTA_POETRY_LOG") },
+        }
+
+        assert_eq!(outcome.exit_code, 0, "{outcome:?}");
+        assert_eq!(
+            fs::read_to_string(fixture.dir.path().join(".env.local")).unwrap(),
+            "APP_ENV=local\n"
+        );
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert!(
+            logged.contains("run playwright install --with-deps chromium"),
             "{logged}"
         );
     }

@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+- widened `prepare.kind: sequence` from structural prepare-only chaining to mixed structured setup
+  ownership: ordered `prepare.steps` can now combine typed prepare lanes such as
+  `dependency_hydration` and `tool_bootstrap` with deterministic native bootstrap mutations such
+  as `ensure_env_file`, `ensure_file`, `ensure_directory`, `ensure_git_checkout`,
+  `ensure_container_network`, and `reset_compose_service_volume`, so repos can model multi-step
+  browser/setup truth like env materialization plus browser bootstrap without collapsing back to
+  shell glue
 - widened `prepare.kind: tool_bootstrap` with `prepare.tool: playwright_browsers` and
   `prepare.source.kind: node_package_manager` and `prepare.source.kind: poetry`, so repos can own
   documented `playwright install` browser bootstrap lanes structurally under npm, pnpm, yarn, bun,

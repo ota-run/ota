@@ -38036,7 +38036,11 @@ fn collect_prepare_field_paths(
     match prepare {
         TaskPrepareSpec::Sequence(spec) => {
             for (index, step) in spec.steps.iter().enumerate() {
-                collect_prepare_field_paths(format!("{prefix}.steps.{index}"), step, fields);
+                collect_prepare_sequence_step_field_paths(
+                    format!("{prefix}.steps.{index}"),
+                    step,
+                    fields,
+                );
             }
         }
         TaskPrepareSpec::ToolBootstrap(spec) => {
@@ -38152,6 +38156,100 @@ fn collect_prepare_field_paths(
                 TaskDependencyHydrationSourceSpec::DotnetRestore(_source) => {
                     fields.push(format!("{prefix}.source.cwd"));
                 }
+            }
+        }
+    }
+}
+
+fn collect_prepare_sequence_step_field_paths(
+    prefix: String,
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+    fields: &mut Vec<String>,
+) {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+            collect_prepare_field_paths(
+                prefix,
+                &TaskPrepareSpec::DependencyHydration(spec.clone()),
+                fields,
+            );
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(spec) => {
+            collect_prepare_field_paths(
+                prefix,
+                &TaskPrepareSpec::ToolBootstrap(spec.clone()),
+                fields,
+            );
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => {
+            collect_prepare_field_paths(prefix, &TaskPrepareSpec::Sequence(spec.clone()), fields);
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(spec) => {
+            fields.push(format!("{prefix}.kind"));
+            fields.push(format!("{prefix}.from"));
+            fields.push(format!("{prefix}.to"));
+            let _ = spec;
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(spec) => {
+            fields.push(format!("{prefix}.kind"));
+            fields.push(format!("{prefix}.path"));
+            if spec.template.is_some() {
+                fields.push(format!("{prefix}.template"));
+            }
+            if !matches!(
+                spec.template_mode,
+                crate::schema::TaskEnsureEnvFileTemplateMode::Missing
+            ) {
+                fields.push(format!("{prefix}.template_mode"));
+            }
+            for key in spec.vars.keys() {
+                fields.push(format!("{prefix}.vars.{key}"));
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(spec) => {
+            fields.push(format!("{prefix}.kind"));
+            fields.push(format!("{prefix}.path"));
+            if spec.template.is_some() {
+                fields.push(format!("{prefix}.template"));
+            }
+            if spec.value.is_some() {
+                fields.push(format!("{prefix}.value"));
+            }
+            if spec.random.is_some() {
+                fields.push(format!("{prefix}.random"));
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_spec) => {
+            fields.push(format!("{prefix}.kind"));
+            fields.push(format!("{prefix}.path"));
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
+            fields.push(format!("{prefix}.kind"));
+            fields.push(format!("{prefix}.path"));
+            fields.push(format!("{prefix}.source.git"));
+            if spec.source.git_ref.is_some() {
+                fields.push(format!("{prefix}.source.ref"));
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(spec) => {
+            fields.push(format!("{prefix}.kind"));
+            fields.push(format!("{prefix}.name"));
+            if !matches!(
+                spec.provider,
+                crate::schema::TaskContainerRuntimeProvider::Docker
+            ) {
+                fields.push(format!("{prefix}.provider"));
+            }
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(spec) => {
+            fields.push(format!("{prefix}.kind"));
+            fields.push(format!("{prefix}.service"));
+            fields.push(format!("{prefix}.volume"));
+            if !matches!(
+                spec.provider,
+                crate::schema::TaskContainerRuntimeProvider::Docker
+            ) {
+                fields.push(format!("{prefix}.provider"));
             }
         }
     }

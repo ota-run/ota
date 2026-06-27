@@ -6341,7 +6341,7 @@ impl TaskPrepareSpec {
                 "prepare sequence: {}",
                 spec.steps
                     .iter()
-                    .map(TaskPrepareSpec::preview)
+                    .map(TaskPrepareSequenceStepSpec::preview)
                     .collect::<Vec<_>>()
                     .join(" -> ")
             ),
@@ -6352,7 +6352,52 @@ impl TaskPrepareSpec {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct TaskPrepareSequenceSpec {
-    pub steps: Vec<TaskPrepareSpec>,
+    pub steps: Vec<TaskPrepareSequenceStepSpec>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TaskPrepareSequenceStepSpec {
+    DependencyHydration(TaskDependencyHydrationPrepareSpec),
+    ToolBootstrap(TaskToolBootstrapPrepareSpec),
+    Sequence(TaskPrepareSequenceSpec),
+    CopyIfMissing(TaskCopyIfMissingActionSpec),
+    EnsureEnvFile(TaskEnsureEnvFileActionSpec),
+    EnsureFile(TaskEnsureFileActionSpec),
+    EnsureDirectory(TaskEnsureDirectoryActionSpec),
+    EnsureGitCheckout(TaskEnsureGitCheckoutActionSpec),
+    EnsureContainerNetwork(TaskEnsureContainerNetworkActionSpec),
+    ResetComposeServiceVolume(TaskResetComposeServiceVolumeActionSpec),
+}
+
+impl TaskPrepareSequenceStepSpec {
+    pub fn preview(&self) -> String {
+        match self {
+            Self::DependencyHydration(spec) => {
+                TaskPrepareSpec::DependencyHydration(spec.clone()).preview()
+            }
+            Self::ToolBootstrap(spec) => TaskPrepareSpec::ToolBootstrap(spec.clone()).preview(),
+            Self::Sequence(spec) => TaskPrepareSpec::Sequence(spec.clone()).preview(),
+            Self::CopyIfMissing(action) => {
+                format!("copy `{}` to `{}` if missing", action.from, action.to)
+            }
+            Self::EnsureEnvFile(action) => format!("ensure env file `{}`", action.path),
+            Self::EnsureFile(action) => format!("ensure file `{}`", action.path),
+            Self::EnsureDirectory(action) => format!("ensure directory `{}`", action.path),
+            Self::EnsureGitCheckout(action) => {
+                format!("ensure git checkout `{}`", action.path)
+            }
+            Self::EnsureContainerNetwork(action) => {
+                format!("ensure container network `{}`", action.name)
+            }
+            Self::ResetComposeServiceVolume(action) => format!(
+                "reset {} compose service `{}` volume `{}`",
+                action.provider.label(),
+                action.service,
+                action.volume
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -9052,7 +9097,7 @@ tasks:
     fn prepare_sequence_preview_joins_structural_steps() {
         let prepare = super::TaskPrepareSpec::Sequence(super::TaskPrepareSequenceSpec {
             steps: vec![
-                super::TaskPrepareSpec::DependencyHydration(
+                super::TaskPrepareSequenceStepSpec::DependencyHydration(
                     super::TaskDependencyHydrationPrepareSpec {
                         medium: super::TaskDependencyHydrationMedium::PackageDependencies,
                         source: super::TaskDependencyHydrationSourceSpec::NodePackageManager(
@@ -9069,7 +9114,7 @@ tasks:
                         targets: Vec::new(),
                     },
                 ),
-                super::TaskPrepareSpec::DependencyHydration(
+                super::TaskPrepareSequenceStepSpec::DependencyHydration(
                     super::TaskDependencyHydrationPrepareSpec {
                         medium: super::TaskDependencyHydrationMedium::PackageDependencies,
                         source: super::TaskDependencyHydrationSourceSpec::Uv(
@@ -9087,6 +9132,49 @@ tasks:
         assert_eq!(
             prepare.preview(),
             "prepare sequence: hydrate package dependencies with pnpm install --frozen-lockfile in `.` -> hydrate package dependencies with uv sync in `api`"
+        );
+    }
+
+    #[test]
+    fn prepare_sequence_preview_joins_mixed_setup_steps() {
+        let prepare = super::TaskPrepareSpec::Sequence(super::TaskPrepareSequenceSpec {
+            steps: vec![
+                super::TaskPrepareSequenceStepSpec::EnsureEnvFile(
+                    super::TaskEnsureEnvFileActionSpec {
+                        path: String::from(".env.local"),
+                        template: None,
+                        template_mode: super::TaskEnsureEnvFileTemplateMode::Missing,
+                        vars: [(
+                            String::from("APP_ENV"),
+                            super::TaskEnsureEnvVarSpec {
+                                value: Some(String::from("local")),
+                                random: None,
+                                from_env: None,
+                                mode: super::TaskEnsureEnvVarMode::Missing,
+                            },
+                        )]
+                        .into_iter()
+                        .collect(),
+                    },
+                ),
+                super::TaskPrepareSequenceStepSpec::ToolBootstrap(
+                    super::TaskToolBootstrapPrepareSpec {
+                        tool: super::TaskBootstrapToolKind::PlaywrightBrowsers,
+                        source: super::TaskToolBootstrapSourceSpec::Poetry(
+                            super::TaskPoetryToolBootstrapSourceSpec {
+                                cwd: String::from("."),
+                            },
+                        ),
+                        browsers: vec![super::TaskPlaywrightBrowserKind::Chromium],
+                        with_deps: true,
+                    },
+                ),
+            ],
+        });
+
+        assert_eq!(
+            prepare.preview(),
+            "prepare sequence: ensure env file `.env.local` -> bootstrap tool `playwright_browsers` with poetry run playwright install --with-deps chromium in `.`"
         );
     }
 

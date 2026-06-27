@@ -632,7 +632,9 @@
         "engine": { "enum": ["docker", "podman"] },
         "name": { "type": "string" },
         "file": { "type": "string" },
+        "files": { "$ref": "#/$defs/stringArray" },
         "env_file": { "type": "string" },
+        "env_files": { "$ref": "#/$defs/stringArray" },
         "profiles": { "$ref": "#/$defs/stringArray" },
         "service": { "type": "string" },
         "host": {
@@ -1119,6 +1121,7 @@
         "force": { "type": "boolean" },
         "follow": { "type": "boolean" },
         "remove_volumes": { "type": "boolean" },
+        "timeout_seconds": { "type": "integer", "minimum": 0 },
         "tty": { "type": "boolean" },
         "exe": { "type": "string" },
         "args": { "$ref": "#/$defs/stringArray" }
@@ -1185,11 +1188,13 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "cwd", "file"],
+          "required": ["kind", "cwd"],
           "properties": {
             "kind": { "const": "docker_compose" },
             "cwd": { "type": "string" },
             "file": { "type": "string" },
+            "files": { "$ref": "#/$defs/stringArray" },
+            "env_files": { "$ref": "#/$defs/stringArray" },
             "engine": { "enum": ["docker", "podman"] }
           }
         },
@@ -1332,6 +1337,7 @@
               "type": "array",
               "items": { "enum": ["chromium", "firefox", "webkit", "chrome", "msedge"] }
             },
+            "with_deps": { "type": "boolean" },
             "source": {
               "oneOf": [
                 {
@@ -1341,6 +1347,15 @@
                   "properties": {
                     "kind": { "const": "pip" },
                     "exe": { "type": "string" }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "cwd"],
+                  "properties": {
+                    "kind": { "const": "poetry" },
+                    "cwd": { "type": "string" }
                   }
                 },
                 {
@@ -1366,10 +1381,16 @@
             "kind": { "const": "sequence" },
             "steps": {
               "type": "array",
-              "items": { "$ref": "#/$defs/taskPrepare" }
+              "items": { "$ref": "#/$defs/taskPrepareSequenceStep" }
             }
           }
         }
+      ]
+    },
+    "taskPrepareSequenceStep": {
+      "oneOf": [
+        { "$ref": "#/$defs/taskPrepare" },
+        { "$ref": "#/$defs/taskActionStep" }
       ]
     },
     "taskEffects": {

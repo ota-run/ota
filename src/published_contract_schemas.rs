@@ -664,7 +664,9 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "engine": { "enum": ["docker", "podman"] },
         "name": { "type": "string" },
         "file": { "type": "string" },
+        "files": { "$ref": "#/$defs/stringArray" },
         "env_file": { "type": "string" },
+        "env_files": { "$ref": "#/$defs/stringArray" },
         "profiles": { "$ref": "#/$defs/stringArray" },
         "service": { "type": "string" },
         "host": {
@@ -1151,6 +1153,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         "force": { "type": "boolean" },
         "follow": { "type": "boolean" },
         "remove_volumes": { "type": "boolean" },
+        "timeout_seconds": { "type": "integer", "minimum": 0 },
         "tty": { "type": "boolean" },
         "exe": { "type": "string" },
         "args": { "$ref": "#/$defs/stringArray" }
@@ -1217,11 +1220,13 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "cwd", "file"],
+          "required": ["kind", "cwd"],
           "properties": {
             "kind": { "const": "docker_compose" },
             "cwd": { "type": "string" },
             "file": { "type": "string" },
+            "files": { "$ref": "#/$defs/stringArray" },
+            "env_files": { "$ref": "#/$defs/stringArray" },
             "engine": { "enum": ["docker", "podman"] }
           }
         },
@@ -1364,6 +1369,7 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
               "type": "array",
               "items": { "enum": ["chromium", "firefox", "webkit", "chrome", "msedge"] }
             },
+            "with_deps": { "type": "boolean" },
             "source": {
               "oneOf": [
                 {
@@ -1373,6 +1379,15 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
                   "properties": {
                     "kind": { "const": "pip" },
                     "exe": { "type": "string" }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind", "cwd"],
+                  "properties": {
+                    "kind": { "const": "poetry" },
+                    "cwd": { "type": "string" }
                   }
                 },
                 {
@@ -1398,10 +1413,16 @@ const CONTRACT_SCHEMA_JSON: &str = r########"{
             "kind": { "const": "sequence" },
             "steps": {
               "type": "array",
-              "items": { "$ref": "#/$defs/taskPrepare" }
+              "items": { "$ref": "#/$defs/taskPrepareSequenceStep" }
             }
           }
         }
+      ]
+    },
+    "taskPrepareSequenceStep": {
+      "oneOf": [
+        { "$ref": "#/$defs/taskPrepare" },
+        { "$ref": "#/$defs/taskActionStep" }
       ]
     },
     "taskEffects": {

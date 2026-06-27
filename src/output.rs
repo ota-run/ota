@@ -4193,7 +4193,7 @@ pub fn summarize_task_prepare(
             steps: spec
                 .steps
                 .iter()
-                .filter_map(|step| summarize_task_prepare(Some(step)))
+                .filter_map(summarize_task_prepare_sequence_step)
                 .collect(),
             medium: None,
             source_kind: None,
@@ -4217,307 +4217,382 @@ pub fn summarize_task_prepare(
             compose: None,
         }),
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
-            let (source_kind, mode, cwd, manager, filter) = match &spec.source {
-                crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
-                    ("pip", Some(spec.tool.label()), None, None, None)
-                }
-                crate::schema::TaskToolBootstrapSourceSpec::Poetry(source) => (
-                    "poetry",
-                    Some(spec.tool.label()),
-                    Some(source.cwd.trim()),
-                    None,
-                    None,
-                ),
-                crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) => (
-                    "node_package_manager",
-                    Some(spec.tool.label()),
-                    Some(source.cwd.trim()),
-                    Some(source.manager.label()),
-                    source.filter.as_deref().map(str::trim),
-                ),
-            };
-            Some(TaskPrepareSummary {
-                kind: "tool_bootstrap",
-                steps: Vec::new(),
-                medium: None,
-                source_kind: Some(source_kind),
-                cwd,
-                file: None,
-                files: Vec::new(),
-                env_files: Vec::new(),
-                manager,
-                filter,
-                mode,
-                group_mode: None,
-                groups: Vec::new(),
-                frozen_lockfile: false,
-                inline_builds: false,
-                force: false,
-                no_root: false,
-                skip_tests: false,
-                with_deps: spec.with_deps,
-                targets: Vec::new(),
-                browsers: spec
-                    .browsers
-                    .iter()
-                    .map(|browser| browser.label())
-                    .collect(),
-                compose: None,
-            })
+            Some(summarize_tool_bootstrap_prepare_spec(spec))
         }
         crate::schema::TaskPrepareSpec::DependencyHydration(spec) => {
-            let (
-                source_kind,
-                cwd,
-                file,
-                files,
-                env_files,
-                manager,
-                mode,
-                group_mode,
-                groups,
-                frozen_lockfile,
-                inline_builds,
-                force,
-                no_root,
-                skip_tests,
-                compose,
-            ) = match &spec.source {
-                crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
-                    "docker_compose",
-                    Some(source.cwd.as_str()),
-                    source.file.as_deref(),
-                    source.files.iter().map(String::as_str).collect(),
-                    source.env_files.iter().map(String::as_str).collect(),
-                    None,
-                    None,
-                    None,
-                    Vec::new(),
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    None,
-                ),
-                crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => (
-                    "node_package_manager",
-                    Some(source.cwd.as_str()),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Some(match source.manager {
-                        crate::schema::TaskNodePackageManagerKind::Npm => "npm",
-                        crate::schema::TaskNodePackageManagerKind::Pnpm => "pnpm",
-                        crate::schema::TaskNodePackageManagerKind::Yarn => "yarn",
-                        crate::schema::TaskNodePackageManagerKind::Bun => "bun",
-                    }),
-                    Some(match source.mode {
-                        crate::schema::TaskNodePackageManagerHydrationMode::Install => "install",
-                        crate::schema::TaskNodePackageManagerHydrationMode::Ci => "ci",
-                    }),
-                    None,
-                    Vec::new(),
-                    source.frozen_lockfile,
-                    source.inline_builds,
-                    source.force,
-                    false,
-                    false,
-                    summarize_task_compose_invocation(source.compose.as_ref()),
-                ),
-                crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
-                    "bundler",
-                    Some(source.cwd.as_str()),
-                    source.path.as_deref(),
-                    Vec::new(),
-                    Vec::new(),
-                    Some("bundle"),
-                    Some("install"),
-                    None,
-                    Vec::new(),
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    summarize_task_compose_invocation(source.compose.as_ref()),
-                ),
-                crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
-                    "uv",
-                    Some(source.cwd.as_str()),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Some("uv"),
-                    Some("sync"),
-                    None,
-                    Vec::new(),
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    summarize_task_compose_invocation(source.compose.as_ref()),
-                ),
-                crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => (
-                    "poetry",
-                    Some(source.cwd.as_str()),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Some("poetry"),
-                    Some("install"),
-                    Some(match source.group_mode {
-                        crate::schema::TaskPoetryHydrationGroupMode::With => "with",
-                        crate::schema::TaskPoetryHydrationGroupMode::Only => "only",
-                    }),
-                    source.groups.iter().map(String::as_str).collect(),
-                    false,
-                    false,
-                    false,
-                    source.no_root,
-                    false,
-                    summarize_task_compose_invocation(source.compose.as_ref()),
-                ),
-                crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
-                    "go_modules",
-                    Some(source.cwd.as_str()),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    Some("download"),
-                    None,
-                    Vec::new(),
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    summarize_task_compose_invocation(source.compose.as_ref()),
-                ),
-                crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => (
-                    "helm",
-                    Some(source.cwd.as_str()),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Some("helm"),
-                    Some("dependency_build"),
-                    None,
-                    Vec::new(),
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    summarize_task_compose_invocation(source.compose.as_ref()),
-                ),
-                crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => (
-                    "maven",
-                    Some(source.cwd.as_str()),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Some(if source.wrapper { "./mvnw" } else { "mvn" }),
-                    Some(source.mode.goal()),
-                    None,
-                    Vec::new(),
-                    false,
-                    false,
-                    false,
-                    false,
-                    source.skip_tests,
-                    summarize_task_compose_invocation(source.compose.as_ref()),
-                ),
-                crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => (
-                    "gradle",
-                    Some(source.cwd.as_str()),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Some(if source.wrapper {
-                        "./gradlew"
-                    } else {
-                        "gradle"
-                    }),
-                    Some("dependencies"),
-                    None,
-                    Vec::new(),
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    summarize_task_compose_invocation(source.compose.as_ref()),
-                ),
-                crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => (
-                    "cargo",
-                    Some(source.cwd.as_str()),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Some("cargo"),
-                    Some("fetch"),
-                    None,
-                    Vec::new(),
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    summarize_task_compose_invocation(source.compose.as_ref()),
-                ),
-                crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => (
-                    "dotnet_restore",
-                    Some(source.cwd.as_str()),
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Some("dotnet"),
-                    Some("restore"),
-                    None,
-                    Vec::new(),
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                    summarize_task_compose_invocation(source.compose.as_ref()),
-                ),
-            };
-            Some(TaskPrepareSummary {
-                kind: "dependency_hydration",
-                steps: Vec::new(),
-                medium: Some(match spec.medium {
-                    crate::schema::TaskDependencyHydrationMedium::ContainerImages => {
-                        "container_images"
-                    }
-                    crate::schema::TaskDependencyHydrationMedium::PackageDependencies => {
-                        "package_dependencies"
-                    }
-                }),
-                source_kind: Some(source_kind),
-                cwd,
-                file,
-                files,
-                env_files,
-                manager,
-                filter: None,
-                mode,
-                group_mode,
-                groups,
-                frozen_lockfile,
-                inline_builds,
-                force,
-                no_root,
-                skip_tests,
-                with_deps: false,
-                targets: spec.targets.iter().map(String::as_str).collect(),
-                browsers: Vec::new(),
-                compose,
-            })
+            Some(summarize_dependency_hydration_prepare_spec(spec))
         }
+    }
+}
+
+fn summarize_task_prepare_sequence_step(
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+) -> Option<TaskPrepareSummary<'_>> {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+            Some(summarize_dependency_hydration_prepare_spec(spec))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(spec) => {
+            Some(summarize_tool_bootstrap_prepare_spec(spec))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => Some(TaskPrepareSummary {
+            kind: "sequence",
+            steps: spec
+                .steps
+                .iter()
+                .filter_map(summarize_task_prepare_sequence_step)
+                .collect(),
+            ..empty_task_prepare_summary("sequence")
+        }),
+        crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(_) => {
+            Some(empty_task_prepare_summary("copy_if_missing"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(_) => {
+            Some(empty_task_prepare_summary("ensure_env_file"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(_) => {
+            Some(empty_task_prepare_summary("ensure_file"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_) => {
+            Some(empty_task_prepare_summary("ensure_directory"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_) => {
+            Some(empty_task_prepare_summary("ensure_git_checkout"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_) => {
+            Some(empty_task_prepare_summary("ensure_container_network"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(_) => {
+            Some(empty_task_prepare_summary("reset_compose_service_volume"))
+        }
+    }
+}
+
+fn summarize_tool_bootstrap_prepare_spec(
+    spec: &crate::schema::TaskToolBootstrapPrepareSpec,
+) -> TaskPrepareSummary<'_> {
+    let (source_kind, mode, cwd, manager, filter) = match &spec.source {
+        crate::schema::TaskToolBootstrapSourceSpec::Pip(_source) => {
+            ("pip", Some(spec.tool.label()), None, None, None)
+        }
+        crate::schema::TaskToolBootstrapSourceSpec::Poetry(source) => (
+            "poetry",
+            Some(spec.tool.label()),
+            Some(source.cwd.trim()),
+            None,
+            None,
+        ),
+        crate::schema::TaskToolBootstrapSourceSpec::NodePackageManager(source) => (
+            "node_package_manager",
+            Some(spec.tool.label()),
+            Some(source.cwd.trim()),
+            Some(source.manager.label()),
+            source.filter.as_deref().map(str::trim),
+        ),
+    };
+    TaskPrepareSummary {
+        kind: "tool_bootstrap",
+        steps: Vec::new(),
+        medium: None,
+        source_kind: Some(source_kind),
+        cwd,
+        file: None,
+        files: Vec::new(),
+        env_files: Vec::new(),
+        manager,
+        filter,
+        mode,
+        group_mode: None,
+        groups: Vec::new(),
+        frozen_lockfile: false,
+        inline_builds: false,
+        force: false,
+        no_root: false,
+        skip_tests: false,
+        with_deps: spec.with_deps,
+        targets: Vec::new(),
+        browsers: spec
+            .browsers
+            .iter()
+            .map(|browser| browser.label())
+            .collect(),
+        compose: None,
+    }
+}
+
+fn summarize_dependency_hydration_prepare_spec(
+    spec: &crate::schema::TaskDependencyHydrationPrepareSpec,
+) -> TaskPrepareSummary<'_> {
+    let (
+        source_kind,
+        cwd,
+        file,
+        files,
+        env_files,
+        manager,
+        mode,
+        group_mode,
+        groups,
+        frozen_lockfile,
+        inline_builds,
+        force,
+        no_root,
+        skip_tests,
+        compose,
+    ) = match &spec.source {
+        crate::schema::TaskDependencyHydrationSourceSpec::DockerCompose(source) => (
+            "docker_compose",
+            Some(source.cwd.as_str()),
+            source.file.as_deref(),
+            source.files.iter().map(String::as_str).collect(),
+            source.env_files.iter().map(String::as_str).collect(),
+            None,
+            None,
+            None,
+            Vec::new(),
+            false,
+            false,
+            false,
+            false,
+            false,
+            None,
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::NodePackageManager(source) => (
+            "node_package_manager",
+            Some(source.cwd.as_str()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some(source.manager.label()),
+            Some(match source.mode {
+                crate::schema::TaskNodePackageManagerHydrationMode::Install => "install",
+                crate::schema::TaskNodePackageManagerHydrationMode::Ci => "ci",
+            }),
+            None,
+            Vec::new(),
+            source.frozen_lockfile,
+            source.inline_builds,
+            source.force,
+            false,
+            false,
+            summarize_task_compose_invocation(source.compose.as_ref()),
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::Bundler(source) => (
+            "bundler",
+            Some(source.cwd.as_str()),
+            source.path.as_deref(),
+            Vec::new(),
+            Vec::new(),
+            Some("bundle"),
+            Some("install"),
+            None,
+            Vec::new(),
+            false,
+            false,
+            false,
+            false,
+            false,
+            summarize_task_compose_invocation(source.compose.as_ref()),
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::Uv(source) => (
+            "uv",
+            Some(source.cwd.as_str()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some("uv"),
+            Some("sync"),
+            None,
+            Vec::new(),
+            false,
+            false,
+            false,
+            false,
+            false,
+            summarize_task_compose_invocation(source.compose.as_ref()),
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::Poetry(source) => (
+            "poetry",
+            Some(source.cwd.as_str()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some("poetry"),
+            Some("install"),
+            Some(match source.group_mode {
+                crate::schema::TaskPoetryHydrationGroupMode::With => "with",
+                crate::schema::TaskPoetryHydrationGroupMode::Only => "only",
+            }),
+            source.groups.iter().map(String::as_str).collect(),
+            false,
+            false,
+            false,
+            source.no_root,
+            false,
+            summarize_task_compose_invocation(source.compose.as_ref()),
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::GoModules(source) => (
+            "go_modules",
+            Some(source.cwd.as_str()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            None,
+            Some("download"),
+            None,
+            Vec::new(),
+            false,
+            false,
+            false,
+            false,
+            false,
+            summarize_task_compose_invocation(source.compose.as_ref()),
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::Helm(source) => (
+            "helm",
+            Some(source.cwd.as_str()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some("helm"),
+            Some("dependency_build"),
+            None,
+            Vec::new(),
+            false,
+            false,
+            false,
+            false,
+            false,
+            summarize_task_compose_invocation(source.compose.as_ref()),
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::Maven(source) => (
+            "maven",
+            Some(source.cwd.as_str()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some(if source.wrapper { "./mvnw" } else { "mvn" }),
+            Some(source.mode.goal()),
+            None,
+            Vec::new(),
+            false,
+            false,
+            false,
+            false,
+            source.skip_tests,
+            summarize_task_compose_invocation(source.compose.as_ref()),
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::Gradle(source) => (
+            "gradle",
+            Some(source.cwd.as_str()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some(if source.wrapper {
+                "./gradlew"
+            } else {
+                "gradle"
+            }),
+            Some("dependencies"),
+            None,
+            Vec::new(),
+            false,
+            false,
+            false,
+            false,
+            false,
+            summarize_task_compose_invocation(source.compose.as_ref()),
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::Cargo(source) => (
+            "cargo",
+            Some(source.cwd.as_str()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some("cargo"),
+            Some("fetch"),
+            None,
+            Vec::new(),
+            false,
+            false,
+            false,
+            false,
+            false,
+            summarize_task_compose_invocation(source.compose.as_ref()),
+        ),
+        crate::schema::TaskDependencyHydrationSourceSpec::DotnetRestore(source) => (
+            "dotnet_restore",
+            Some(source.cwd.as_str()),
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some("dotnet"),
+            Some("restore"),
+            None,
+            Vec::new(),
+            false,
+            false,
+            false,
+            false,
+            false,
+            summarize_task_compose_invocation(source.compose.as_ref()),
+        ),
+    };
+    TaskPrepareSummary {
+        kind: "dependency_hydration",
+        steps: Vec::new(),
+        medium: Some(match spec.medium {
+            crate::schema::TaskDependencyHydrationMedium::ContainerImages => "container_images",
+            crate::schema::TaskDependencyHydrationMedium::PackageDependencies => {
+                "package_dependencies"
+            }
+        }),
+        source_kind: Some(source_kind),
+        cwd,
+        file,
+        files,
+        env_files,
+        manager,
+        filter: None,
+        mode,
+        group_mode,
+        groups,
+        frozen_lockfile,
+        inline_builds,
+        force,
+        no_root,
+        skip_tests,
+        with_deps: false,
+        targets: spec.targets.iter().map(String::as_str).collect(),
+        browsers: Vec::new(),
+        compose,
+    }
+}
+
+fn empty_task_prepare_summary(kind: &'static str) -> TaskPrepareSummary<'static> {
+    TaskPrepareSummary {
+        kind,
+        steps: Vec::new(),
+        medium: None,
+        source_kind: None,
+        cwd: None,
+        file: None,
+        files: Vec::new(),
+        env_files: Vec::new(),
+        manager: None,
+        filter: None,
+        mode: None,
+        group_mode: None,
+        groups: Vec::new(),
+        frozen_lockfile: false,
+        inline_builds: false,
+        force: false,
+        no_root: false,
+        skip_tests: false,
+        with_deps: false,
+        targets: Vec::new(),
+        browsers: Vec::new(),
+        compose: None,
     }
 }
 
@@ -4530,7 +4605,7 @@ pub fn summarize_task_prepare_owned(
             steps: spec
                 .steps
                 .iter()
-                .filter_map(|step| summarize_task_prepare_owned(Some(step)))
+                .filter_map(summarize_task_prepare_sequence_step_owned)
                 .collect(),
             medium: None,
             source_kind: None,
@@ -4855,6 +4930,74 @@ pub fn summarize_task_prepare_owned(
                 compose,
             })
         }
+    }
+}
+
+fn summarize_task_prepare_sequence_step_owned(
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+) -> Option<WorkspaceTaskPrepareSummary> {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+            summarize_task_prepare_owned(Some(
+                &crate::schema::TaskPrepareSpec::DependencyHydration(spec.clone()),
+            ))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(spec) => {
+            summarize_task_prepare_owned(Some(&crate::schema::TaskPrepareSpec::ToolBootstrap(
+                spec.clone(),
+            )))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => summarize_task_prepare_owned(
+            Some(&crate::schema::TaskPrepareSpec::Sequence(spec.clone())),
+        ),
+        crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(_) => {
+            Some(empty_workspace_task_prepare_summary("copy_if_missing"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(_) => {
+            Some(empty_workspace_task_prepare_summary("ensure_env_file"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(_) => {
+            Some(empty_workspace_task_prepare_summary("ensure_file"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(_) => {
+            Some(empty_workspace_task_prepare_summary("ensure_directory"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(_) => {
+            Some(empty_workspace_task_prepare_summary("ensure_git_checkout"))
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(_) => Some(
+            empty_workspace_task_prepare_summary("ensure_container_network"),
+        ),
+        crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(_) => Some(
+            empty_workspace_task_prepare_summary("reset_compose_service_volume"),
+        ),
+    }
+}
+
+fn empty_workspace_task_prepare_summary(kind: &'static str) -> WorkspaceTaskPrepareSummary {
+    WorkspaceTaskPrepareSummary {
+        kind,
+        steps: Vec::new(),
+        medium: None,
+        source_kind: None,
+        cwd: None,
+        file: None,
+        files: Vec::new(),
+        env_files: Vec::new(),
+        manager: None,
+        filter: None,
+        mode: None,
+        group_mode: None,
+        groups: Vec::new(),
+        frozen_lockfile: false,
+        inline_builds: false,
+        force: false,
+        no_root: false,
+        skip_tests: false,
+        with_deps: false,
+        targets: Vec::new(),
+        browsers: Vec::new(),
+        compose: None,
     }
 }
 

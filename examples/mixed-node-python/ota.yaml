@@ -29,11 +29,16 @@ env:
 tasks:
   setup:
     context: host
-    description: Install frontend and backend dependencies
+    description: Materialize local env and install frontend and backend dependencies
     category: setup
     prepare:
       kind: sequence
       steps:
+        - kind: ensure_env_file
+          path: .env.local
+          vars:
+            OTA_API_ENV:
+              value: local
         - kind: dependency_hydration
           medium: package_dependencies
           source:
@@ -52,6 +57,7 @@ tasks:
         - python
     effects:
       writes:
+        - .env.local
         - node_modules
         - .venv
       network: true
@@ -94,6 +100,7 @@ agent:
     - src
     - app
     - docs
+    - .env.local
     - node_modules
     - .venv
   protected_paths:

@@ -5107,8 +5107,16 @@ fn validate_task_prepare(
                     "task `{task_name}` prepare `sequence` must declare at least one entry in `prepare.steps`"
                 )));
             }
-            for step in &spec.steps {
-                validate_task_prepare(task_name, step, requirements, effects, _backend, errors);
+            for (index, step) in spec.steps.iter().enumerate() {
+                validate_task_prepare_sequence_step(
+                    task_name,
+                    index,
+                    step,
+                    requirements,
+                    effects,
+                    _backend,
+                    errors,
+                );
             }
         }
         crate::schema::TaskPrepareSpec::ToolBootstrap(spec) => {
@@ -5991,13 +5999,130 @@ fn validate_task_prepare(
     }
 }
 
+fn validate_task_prepare_sequence_step(
+    task_name: &str,
+    index: usize,
+    step: &crate::schema::TaskPrepareSequenceStepSpec,
+    requirements: &crate::schema::TaskRequirementsSpec,
+    effects: &crate::schema::TaskEffectsSpec,
+    backend: Backend,
+    errors: &mut Vec<ValidationError>,
+) {
+    match step {
+        crate::schema::TaskPrepareSequenceStepSpec::DependencyHydration(spec) => {
+            validate_task_prepare(
+                task_name,
+                &crate::schema::TaskPrepareSpec::DependencyHydration(spec.clone()),
+                requirements,
+                effects,
+                backend,
+                errors,
+            );
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ToolBootstrap(spec) => validate_task_prepare(
+            task_name,
+            &crate::schema::TaskPrepareSpec::ToolBootstrap(spec.clone()),
+            requirements,
+            effects,
+            backend,
+            errors,
+        ),
+        crate::schema::TaskPrepareSequenceStepSpec::Sequence(spec) => validate_task_prepare(
+            task_name,
+            &crate::schema::TaskPrepareSpec::Sequence(spec.clone()),
+            requirements,
+            effects,
+            backend,
+            errors,
+        ),
+        crate::schema::TaskPrepareSequenceStepSpec::CopyIfMissing(spec) => {
+            validate_structured_bootstrap_step(
+                task_name,
+                format!("prepare.steps[{index}]").as_str(),
+                format!("prepare step `{index}`").as_str(),
+                &crate::schema::TaskEnsureBundleStepSpec::CopyIfMissing(spec.clone()),
+                errors,
+            );
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureEnvFile(spec) => {
+            validate_structured_bootstrap_step(
+                task_name,
+                format!("prepare.steps[{index}]").as_str(),
+                format!("prepare step `{index}`").as_str(),
+                &crate::schema::TaskEnsureBundleStepSpec::EnsureEnvFile(spec.clone()),
+                errors,
+            );
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureFile(spec) => {
+            validate_structured_bootstrap_step(
+                task_name,
+                format!("prepare.steps[{index}]").as_str(),
+                format!("prepare step `{index}`").as_str(),
+                &crate::schema::TaskEnsureBundleStepSpec::EnsureFile(spec.clone()),
+                errors,
+            );
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureDirectory(spec) => {
+            validate_structured_bootstrap_step(
+                task_name,
+                format!("prepare.steps[{index}]").as_str(),
+                format!("prepare step `{index}`").as_str(),
+                &crate::schema::TaskEnsureBundleStepSpec::EnsureDirectory(spec.clone()),
+                errors,
+            );
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureGitCheckout(spec) => {
+            validate_structured_bootstrap_step(
+                task_name,
+                format!("prepare.steps[{index}]").as_str(),
+                format!("prepare step `{index}`").as_str(),
+                &crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckout(spec.clone()),
+                errors,
+            );
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::EnsureContainerNetwork(spec) => {
+            validate_structured_bootstrap_step(
+                task_name,
+                format!("prepare.steps[{index}]").as_str(),
+                format!("prepare step `{index}`").as_str(),
+                &crate::schema::TaskEnsureBundleStepSpec::EnsureContainerNetwork(spec.clone()),
+                errors,
+            );
+        }
+        crate::schema::TaskPrepareSequenceStepSpec::ResetComposeServiceVolume(spec) => {
+            validate_structured_bootstrap_step(
+                task_name,
+                format!("prepare.steps[{index}]").as_str(),
+                format!("prepare step `{index}`").as_str(),
+                &crate::schema::TaskEnsureBundleStepSpec::ResetComposeServiceVolume(spec.clone()),
+                errors,
+            );
+        }
+    }
+}
+
 fn validate_task_ensure_bundle_step(
     task_name: &str,
     index: usize,
     step: &crate::schema::TaskEnsureBundleStepSpec,
     errors: &mut Vec<ValidationError>,
 ) {
-    let prefix = format!("action.steps[{index}]");
+    validate_structured_bootstrap_step(
+        task_name,
+        format!("action.steps[{index}]").as_str(),
+        format!("action `ensure_bundle` step `{index}`").as_str(),
+        step,
+        errors,
+    );
+}
+
+fn validate_structured_bootstrap_step(
+    task_name: &str,
+    prefix: &str,
+    surface_label: &str,
+    step: &crate::schema::TaskEnsureBundleStepSpec,
+    errors: &mut Vec<ValidationError>,
+) {
     match step {
         crate::schema::TaskEnsureBundleStepSpec::CopyIfMissing(copy) => {
             validate_repo_relative_file_action_path(
@@ -6014,7 +6139,7 @@ fn validate_task_ensure_bundle_step(
             );
             if copy.from.trim() == copy.to.trim() && !copy.from.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` must not copy a file onto itself"
+                    "task `{task_name}` {surface_label} must not copy a file onto itself"
                 )));
             }
         }
@@ -6039,18 +6164,18 @@ fn validate_task_ensure_bundle_step(
             ) && spec.template.is_none()
             {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) must declare `{prefix}.template` when `template_mode: replace` is used"
+                    "task `{task_name}` {surface_label} (`ensure_env_file`) must declare `{prefix}.template` when `template_mode: replace` is used"
                 )));
             }
             if spec.vars.is_empty() {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) must declare at least one entry in `{prefix}.vars`"
+                    "task `{task_name}` {surface_label} (`ensure_env_file`) must declare at least one entry in `{prefix}.vars`"
                 )));
             }
             for (key, value_spec) in &spec.vars {
                 if !is_valid_env_key_name(key.as_str()) {
                     errors.push(ValidationError::new(format!(
-                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) has invalid env key `{key}` in `{prefix}.vars`; use shell-safe env key tokens like `DATABASE_URL`"
+                        "task `{task_name}` {surface_label} (`ensure_env_file`) has invalid env key `{key}` in `{prefix}.vars`; use shell-safe env key tokens like `DATABASE_URL`"
                     )));
                 }
                 let source_count = [
@@ -6064,14 +6189,14 @@ fn validate_task_ensure_bundle_step(
                 if matches!(value_spec.mode, crate::schema::TaskEnsureEnvVarMode::Remove) {
                     if source_count != 0 {
                         errors.push(ValidationError::new(format!(
-                            "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` must not declare `value`, `random`, or `from_env` when `mode: remove` is used"
+                            "task `{task_name}` {surface_label} (`ensure_env_file`) key `{key}` must not declare `value`, `random`, or `from_env` when `mode: remove` is used"
                         )));
                     }
                     continue;
                 }
                 if source_count != 1 {
                     errors.push(ValidationError::new(format!(
-                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` must declare exactly one of `value`, `random`, or `from_env`"
+                        "task `{task_name}` {surface_label} (`ensure_env_file`) key `{key}` must declare exactly one of `value`, `random`, or `from_env`"
                     )));
                     continue;
                 }
@@ -6079,21 +6204,21 @@ fn validate_task_ensure_bundle_step(
                     && value.contains('\n')
                 {
                     errors.push(ValidationError::new(format!(
-                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` must not include newline characters in `value`"
+                        "task `{task_name}` {surface_label} (`ensure_env_file`) key `{key}` must not include newline characters in `value`"
                     )));
                 }
                 if let Some(random) = value_spec.random.as_ref()
                     && !(1..=1024).contains(&random.bytes)
                 {
                     errors.push(ValidationError::new(format!(
-                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` random bytes must be between 1 and 1024"
+                        "task `{task_name}` {surface_label} (`ensure_env_file`) key `{key}` random bytes must be between 1 and 1024"
                     )));
                 }
                 if let Some(from_env) = value_spec.from_env.as_deref()
                     && !is_valid_env_key_name(from_env)
                 {
                     errors.push(ValidationError::new(format!(
-                        "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_env_file`) key `{key}` has invalid `from_env` source `{from_env}`; use shell-safe env key tokens like `DATABASE_URL`"
+                        "task `{task_name}` {surface_label} (`ensure_env_file`) key `{key}` has invalid `from_env` source `{from_env}`; use shell-safe env key tokens like `DATABASE_URL`"
                     )));
                 }
             }
@@ -6120,21 +6245,21 @@ fn validate_task_ensure_bundle_step(
                 usize::from(has_template) + usize::from(has_value) + usize::from(has_random);
             if selected != 1 {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_file`) must declare exactly one of `template`, `value`, or `random`"
+                    "task `{task_name}` {surface_label} (`ensure_file`) must declare exactly one of `template`, `value`, or `random`"
                 )));
             }
             if let Some(value) = spec.value.as_deref()
                 && value.is_empty()
             {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_file`) must not declare an empty `value`"
+                    "task `{task_name}` {surface_label} (`ensure_file`) must not declare an empty `value`"
                 )));
             }
             if let Some(random) = spec.random.as_ref()
                 && !(1..=1024).contains(&random.bytes)
             {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_file`) random bytes must be between 1 and 1024"
+                    "task `{task_name}` {surface_label} (`ensure_file`) random bytes must be between 1 and 1024"
                 )));
             }
         }
@@ -6147,47 +6272,42 @@ fn validate_task_ensure_bundle_step(
             );
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureGitCheckout(spec) => {
-            validate_task_ensure_git_checkout_action(task_name, prefix.as_str(), spec, errors);
+            validate_task_ensure_git_checkout_action(task_name, prefix, spec, errors);
         }
         crate::schema::TaskEnsureBundleStepSpec::EnsureContainerNetwork(spec) => {
             if spec.name.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_container_network`) must declare a non-empty `{prefix}.name`"
+                    "task `{task_name}` {surface_label} (`ensure_container_network`) must declare a non-empty `{prefix}.name`"
                 )));
             }
             if spec.name.contains('\n') || spec.name.contains('\r') {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`ensure_container_network`) `{prefix}.name` must not contain newline characters"
+                    "task `{task_name}` {surface_label} (`ensure_container_network`) `{prefix}.name` must not contain newline characters"
                 )));
             }
         }
         crate::schema::TaskEnsureBundleStepSpec::ResetComposeServiceVolume(spec) => {
             if spec.service.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`reset_compose_service_volume`) must declare a non-empty `{prefix}.service`"
+                    "task `{task_name}` {surface_label} (`reset_compose_service_volume`) must declare a non-empty `{prefix}.service`"
                 )));
             }
             if spec.service.contains('\n') || spec.service.contains('\r') {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`reset_compose_service_volume`) `{prefix}.service` must not contain newline characters"
+                    "task `{task_name}` {surface_label} (`reset_compose_service_volume`) `{prefix}.service` must not contain newline characters"
                 )));
             }
             if spec.volume.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`reset_compose_service_volume`) must declare a non-empty `{prefix}.volume`"
+                    "task `{task_name}` {surface_label} (`reset_compose_service_volume`) must declare a non-empty `{prefix}.volume`"
                 )));
             }
             if spec.volume.contains('\n') || spec.volume.contains('\r') {
                 errors.push(ValidationError::new(format!(
-                    "task `{task_name}` action `ensure_bundle` step `{index}` (`reset_compose_service_volume`) `{prefix}.volume` must not contain newline characters"
+                    "task `{task_name}` {surface_label} (`reset_compose_service_volume`) `{prefix}.volume` must not contain newline characters"
                 )));
             }
-            validate_compose_adapter_inputs(
-                Some(task_name),
-                prefix.as_str(),
-                &spec.compose,
-                errors,
-            );
+            validate_compose_adapter_inputs(Some(task_name), prefix, &spec.compose, errors);
         }
     }
 }
@@ -27062,6 +27182,52 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("sequence prepare should validate");
+    }
+
+    #[test]
+    fn accepts_sequence_prepare_for_mixed_bootstrap_and_env_materialization() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+toolchains:
+  python:
+    provider: uv
+    version: "3.12"
+tasks:
+  setup:browsers:
+    prepare:
+      kind: sequence
+      steps:
+        - kind: ensure_env_file
+          path: .env.local
+          vars:
+            APP_ENV:
+              value: local
+        - kind: tool_bootstrap
+          tool: playwright_browsers
+          browsers:
+            - chromium
+          with_deps: true
+          source:
+            kind: poetry
+            cwd: .
+    requirements:
+      toolchains:
+        - python
+    effects:
+      writes:
+        - .env.local
+        - ~/.cache/ms-playwright
+      network: true
+      network_kind: tool_bootstrap
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("mixed prepare sequence should validate");
     }
 
     #[test]

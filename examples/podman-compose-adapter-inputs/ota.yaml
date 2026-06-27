@@ -41,6 +41,8 @@ services:
       engine: podman
       name: local
       file: compose/compose.yml
+      env_files:
+        - .env.compose
       service: api
   postgres:
     manager:
@@ -48,6 +50,8 @@ services:
       engine: podman
       name: local
       file: compose/compose.yml
+      env_files:
+        - .env.compose
       service: postgres
 
 tasks:
