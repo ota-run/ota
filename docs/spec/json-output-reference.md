@@ -4377,6 +4377,13 @@ also carry additive `next` and `next_steps`. `summary` now also breaks the previ
 `missing` and `unresolved` buckets into additive `missing_repo_count`, `missing_contract_count`,
 `target_unavailable_count`, and `comparison_unresolved_count`.
 
+When `ota workspace diff --json --progress-json` is used, Ota also emits live workspace progress
+events as compact one-line JSON on `stderr`. Those progress events use the same
+`workspace_progress` event shape as `ota workspace doctor|check|status|receipt|run|up|refresh --json --progress-json`,
+use `status` for the repo diff verdict such as `MATCH`, `DIRTY`, or `UNRESOLVED`, and use `tail`
+for the machine `drift_kind`, while the final workspace-diff report remains the single JSON
+document on `stdout`.
+
 `ota workspace status --json` uses the operational workspace roll-up. It reports readiness and
 local git drift together, includes per-repo `ready`, `readiness_status`, `drift_status`,
 `drift_kind`, `target_source`, `branch`, `head`, `target_ref`, `ahead`, `behind`, and `dirty`

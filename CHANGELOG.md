@@ -28,11 +28,13 @@
 
 - improved workspace command observability for JSON usage: `ota workspace doctor`,
   `ota workspace check`, `ota workspace status`, `ota workspace receipt`,
-  `ota workspace run`, `ota workspace up`, and `ota workspace refresh` now accept
-  `--progress-json` to emit live machine-readable stderr progress while preserving the final JSON
-  report on stdout; workspace-run progress now surfaces both `task` and resolved `repo_task` when
-  a workspace task binding rewrites the local task name, and workspace-status / workspace-receipt
-  progress uses `tail` for the repo drift state
+  `ota workspace diff`, `ota workspace run`, `ota workspace up`, and
+  `ota workspace refresh` now accept `--progress-json` to emit live machine-readable stderr
+  progress while preserving the final JSON report on stdout; workspace-run progress now surfaces
+  both `task` and resolved `repo_task` when a workspace task binding rewrites the local task name,
+  workspace-status / workspace-receipt progress uses `tail` for the repo drift state, and
+  workspace-diff progress uses `status` for the diff verdict plus `tail` for the machine
+  `drift_kind`
 - added workspace-owned repo task bindings under `repos.<name>.tasks.<workspace_task>.task`, so
   `ota workspace run <task>` no longer requires every repo to share the same local task name;
   workspaces can now map one shared workspace verb such as `prepare-dev` onto repo-local tasks

@@ -1705,6 +1705,9 @@ enum WorkspaceCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Emit machine-readable workspace progress events on stderr while preserving the final JSON report on stdout.
+        #[arg(long, action = ArgAction::SetTrue, requires = "json")]
+        progress_json: bool,
         /// Maximum number of independent repos to compare at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
@@ -5660,10 +5663,16 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 debug,
                 receipt,
             ),
-            WorkspaceCommands::Diff { json, jobs, path } => commands::workspace_diff(
+            WorkspaceCommands::Diff {
+                json,
+                progress_json,
+                jobs,
+                path,
+            } => commands::workspace_diff(
                 path.as_deref(),
                 file.as_deref(),
                 jobs,
+                progress_json,
                 format_from_json(json),
                 debug,
             ),
@@ -13413,6 +13422,51 @@ repos:
     }
 
     #[test]
+    fn workspace_diff_progress_json_keeps_stdout_machine_readable() {
+        let dir = TempDir::new().unwrap();
+        let repo_dir = dir.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+"#,
+        )
+        .unwrap();
+        let workspace_file = dir.path().join("ota.workspace.yaml");
+        fs::write(
+            &workspace_file,
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "--file",
+            workspace_file.to_str().unwrap(),
+            "workspace",
+            "diff",
+            "--json",
+            "--progress-json",
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let stdout: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(stdout["ok"], true);
+        assert_eq!(stdout["repos"][0]["name"], "web");
+        assert_eq!(stdout["mode"], "diff");
+    }
+
+    #[test]
     fn receipt_text_reports_selected_monorepo_member() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -19385,6 +19439,7 @@ tasks:
                 super::Commands::Workspace {
                     command: super::WorkspaceCommands::Diff {
                         json: true,
+                        progress_json: false,
                         jobs: 1,
                         path: None,
                     },

@@ -3207,6 +3207,7 @@ Compare local workspace repos against their declared source state without mutati
 ```bash
 ota workspace diff [PATH]
 ota workspace diff --json [PATH]
+ota workspace diff --json --progress-json [PATH]
 ota workspace diff --jobs 4 [PATH]
 ```
 
@@ -3219,6 +3220,10 @@ Current behavior:
 - can compare independent repos concurrently when `--jobs` is greater than `1`
 - never mutates repo state
 - `--json` returns a workspace diff roll-up with `mode: "diff"`
+- `--progress-json` emits the same live workspace progress events as compact NDJSON on stderr while
+  preserving the final workspace-diff JSON report on stdout; those events use `status` for the
+  repo diff verdict such as `MATCH`, `DIRTY`, or `UNRESOLVED`, and `tail` for the machine
+  `drift_kind`
 - text and JSON now carry an additive top-level lifecycle `next` lane when ota can name the safest refresh or acquisition follow-up directly
 - text output now makes the comparison provenance explicit on each `Target:` line when ota is using declared `source.ref` versus upstream-branch fallback
 - when drift is being compared against upstream-branch fallback instead of declared `source.ref`, the repo-level follow-up lane now says that explicitly and suggests declaring `source.ref` when the workspace should own the target
