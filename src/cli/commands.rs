@@ -29804,6 +29804,7 @@ pub fn workspace_up(
     jobs: usize,
     quiet: bool,
     stream: bool,
+    progress_json: bool,
     format: OutputFormat,
     debug: bool,
     show_receipt: bool,
@@ -29871,13 +29872,14 @@ pub fn workspace_up(
         format!("DEBUG jobs={jobs}"),
         format!("DEBUG quiet={quiet}"),
         format!("DEBUG stream={stream}"),
+        format!("DEBUG progress_json={progress_json}"),
     ];
 
     finalize_debug(
         match load_and_run_workspace_up(
             &resolved_path,
             jobs,
-            workspace_progress_enabled(format, !quiet),
+            workspace_progress_mode(format, !quiet, progress_json),
             stream,
         ) {
             Ok(report) => render_workspace_up(&compact_path_display, &report, format, show_receipt),
@@ -29937,6 +29939,7 @@ pub fn workspace_refresh(
     git_ref: Option<&str>,
     quiet: bool,
     stream: bool,
+    progress_json: bool,
     format: OutputFormat,
     debug: bool,
     show_receipt: bool,
@@ -30008,6 +30011,7 @@ pub fn workspace_refresh(
         format!("DEBUG git_ref={:?}", git_ref),
         format!("DEBUG quiet={quiet}"),
         format!("DEBUG stream={stream}"),
+        format!("DEBUG progress_json={progress_json}"),
     ];
 
     finalize_debug(
@@ -30020,7 +30024,7 @@ pub fn workspace_refresh(
                 prune,
                 git_ref: git_ref.map(str::to_owned),
             },
-            workspace_progress_enabled(format, !quiet),
+            workspace_progress_mode(format, !quiet, progress_json),
             stream,
         ) {
             Ok(report) => {
@@ -30410,6 +30414,7 @@ pub fn workspace_run(
     file_override: Option<&Path>,
     jobs: usize,
     stream: bool,
+    progress_json: bool,
     format: OutputFormat,
     debug: bool,
     show_receipt: bool,
@@ -30478,6 +30483,7 @@ pub fn workspace_run(
         format!("DEBUG task={task}"),
         format!("DEBUG jobs={jobs}"),
         format!("DEBUG stream={stream}"),
+        format!("DEBUG progress_json={progress_json}"),
     ];
 
     finalize_debug(
@@ -30485,7 +30491,7 @@ pub fn workspace_run(
             task,
             &resolved_path,
             jobs,
-            workspace_progress_enabled(format, true),
+            workspace_progress_mode(format, true, progress_json),
             stream,
             &task_inputs,
         ) {
@@ -53603,27 +53609,27 @@ workflows:
     }
 
     #[test]
-    fn workspace_progress_enabled_emits_for_interactive_json_runs() {
-        assert!(super::workspace_progress_enabled_for(
-            OutputFormat::Json,
-            false,
-            true
-        ));
-        assert!(!super::workspace_progress_enabled_for(
-            OutputFormat::Json,
-            false,
-            false
-        ));
-        assert!(super::workspace_progress_enabled_for(
-            OutputFormat::Text,
-            true,
-            false
-        ));
-        assert!(!super::workspace_progress_enabled_for(
-            OutputFormat::Text,
-            false,
-            true
-        ));
+    fn workspace_progress_mode_supports_interactive_and_machine_json_progress() {
+        assert_eq!(
+            super::workspace_progress_mode_for(OutputFormat::Json, false, true, false),
+            Some(super::WorkspaceProgressMode::Text)
+        );
+        assert_eq!(
+            super::workspace_progress_mode_for(OutputFormat::Json, false, false, false),
+            None
+        );
+        assert_eq!(
+            super::workspace_progress_mode_for(OutputFormat::Json, false, false, true),
+            Some(super::WorkspaceProgressMode::Json)
+        );
+        assert_eq!(
+            super::workspace_progress_mode_for(OutputFormat::Text, true, false, false),
+            Some(super::WorkspaceProgressMode::Text)
+        );
+        assert_eq!(
+            super::workspace_progress_mode_for(OutputFormat::Text, false, true, false),
+            None
+        );
     }
 
     #[test]
@@ -53652,6 +53658,84 @@ workflows:
             super::workspace_run_progress_tail(&repo, "other"),
             "other"
         );
+    }
+
+    #[test]
+    fn workspace_progress_json_line_surfaces_task_binding_fields() {
+        let mut task_bindings = BTreeMap::new();
+        task_bindings.insert(
+            String::from("workspace:entrypoint"),
+            String::from("api:tests:contract"),
+        );
+        let repo = crate::workspace::WorkspaceRepoRef {
+            name: String::from("qredex-core"),
+            path: PathBuf::from("/tmp/qredex-core"),
+            contract_path: PathBuf::from("/tmp/qredex-core/ota.yaml"),
+            workflow: None,
+            task_bindings,
+            required: true,
+            depends_on: Vec::new(),
+            present: true,
+            source_url: None,
+            source_ref: None,
+            policy_env: BTreeMap::new(),
+        };
+
+        let detail = super::workspace_progress_run_detail(&repo, "workspace:entrypoint");
+        let line = super::workspace_progress_json_line(
+            "qredex",
+            "RUN",
+            "qredex-core",
+            Some(&detail),
+        );
+        let json: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(json["event"], "workspace_progress");
+        assert_eq!(json["workspace"], "qredex");
+        assert_eq!(json["status"], "RUN");
+        assert_eq!(json["repo"], "qredex-core");
+        assert_eq!(json["task"], "workspace:entrypoint");
+        assert_eq!(json["repo_task"], "api:tests:contract");
+        assert_eq!(
+            json["tail"],
+            "workspace:entrypoint -> api:tests:contract"
+        );
+    }
+
+    #[test]
+    fn workspace_progress_report_detail_keeps_task_context_for_terminal_events() {
+        let report = crate::output::WorkspaceRepoRunReport {
+            name: String::from("qredex-go"),
+            path: String::from("/tmp/qredex-go"),
+            contract_path: String::from("/tmp/qredex-go/ota.yaml"),
+            required: true,
+            ok: false,
+            status: String::from("TASK FAILED"),
+            task: String::from("proof"),
+            repo_task: Some(String::from("format")),
+            findings: Vec::new(),
+            source_url: None,
+            source_ref: None,
+            task_command: None,
+            exit_code: Some(1),
+            stdout: None,
+            stderr: None,
+            env_sources: Vec::new(),
+            next: None,
+            next_steps: Vec::new(),
+        };
+
+        let detail = super::workspace_progress_report_detail(&report);
+        assert_eq!(detail.task.as_deref(), Some("proof"));
+        assert_eq!(detail.repo_task.as_deref(), Some("format"));
+        assert_eq!(detail.tail.as_deref(), Some("proof -> format"));
+
+        let line =
+            super::workspace_progress_json_line("qredex-bound-proof", "TASK FAILED", "qredex-go", Some(&detail));
+        let json: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(json["status"], "TASK FAILED");
+        assert_eq!(json["task"], "proof");
+        assert_eq!(json["repo_task"], "format");
+        assert_eq!(json["tail"], "proof -> format");
     }
 
     #[test]
@@ -91361,6 +91445,32 @@ enum RepoExecutionMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkspaceProgressMode {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkspaceProgressDetail {
+    tail: Option<String>,
+    task: Option<String>,
+    repo_task: Option<String>,
+    dependency: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WorkspaceProgressEvent<'a> {
+    event: &'static str,
+    workspace: &'a str,
+    status: &'a str,
+    repo: &'a str,
+    tail: Option<&'a str>,
+    task: Option<&'a str>,
+    repo_task: Option<&'a str>,
+    dependency: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpRunBehaviorPreference {
     Auto,
     Attach,
@@ -99030,7 +99140,7 @@ fn execute_repo_up_with_behavior(
 fn load_and_run_workspace_up(
     path: &Path,
     jobs: usize,
-    emit_progress: bool,
+    progress_mode: Option<WorkspaceProgressMode>,
     stream: bool,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
@@ -99045,7 +99155,7 @@ fn load_and_run_workspace_up(
             &workspace_name,
             path,
             repo_refs,
-            emit_progress,
+            progress_mode,
         );
     }
 
@@ -99100,12 +99210,13 @@ fn load_and_run_workspace_up(
                 .find(|(blocked_index, _)| *blocked_index == pending_index)
             {
                 let report = blocked_workspace_repo_up(repo, dependency.clone());
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
+                        progress_mode,
                         &workspace_name,
                         "BLOCKED",
                         &report.name,
-                        Some(&format!("({dependency})")),
+                        Some(&workspace_progress_dependency_detail(&dependency)),
                     );
                 }
                 blocked_reports.push((order, report));
@@ -99121,8 +99232,10 @@ fn load_and_run_workspace_up(
         let handles = runnable
             .into_iter()
             .map(|(order, repo)| {
-                if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    emit_workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None);
+                if let Some(progress_mode) = progress_mode
+                    && workspace_repo_needs_acquisition(&repo)
+                {
+                    emit_workspace_progress_line(progress_mode, &workspace_name, "ACQUIRE", &repo.name, None);
                 }
                 let tx = tx.clone();
                 let workspace_path = path.to_path_buf();
@@ -99145,8 +99258,8 @@ fn load_and_run_workspace_up(
 
         for _ in 0..handles.len() {
             let (order, report) = rx.recv().expect("workspace up worker should send a report");
-            if emit_progress {
-                emit_workspace_progress_line(&workspace_name, &report.status, &report.name, None);
+            if let Some(progress_mode) = progress_mode {
+                emit_workspace_progress_line(progress_mode, &workspace_name, &report.status, &report.name, None);
             }
             if report.required && !report.ok {
                 ok = false;
@@ -99332,7 +99445,7 @@ fn load_and_run_workspace_refresh(
     path: &Path,
     jobs: usize,
     options: WorkspaceRefreshOptions,
-    emit_progress: bool,
+    progress_mode: Option<WorkspaceProgressMode>,
     stream: bool,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
@@ -99348,7 +99461,7 @@ fn load_and_run_workspace_refresh(
             path,
             repo_refs,
             &options,
-            emit_progress,
+            progress_mode,
         );
     }
 
@@ -99403,12 +99516,13 @@ fn load_and_run_workspace_refresh(
                 .find(|(blocked_index, _)| *blocked_index == pending_index)
             {
                 let report = blocked_workspace_repo_refresh(repo, dependency.clone());
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
+                        progress_mode,
                         &workspace_name,
                         "BLOCKED",
                         &report.name,
-                        Some(&format!("({dependency})")),
+                        Some(&workspace_progress_dependency_detail(&dependency)),
                     );
                 }
                 blocked_reports.push((order, report));
@@ -99424,8 +99538,9 @@ fn load_and_run_workspace_refresh(
         let handles = runnable
             .into_iter()
             .map(|(order, repo)| {
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
+                        progress_mode,
                         &workspace_name,
                         if options.dry_run {
                             "REFRESH PREVIEW"
@@ -99459,8 +99574,8 @@ fn load_and_run_workspace_refresh(
             let (order, report) = rx
                 .recv()
                 .expect("workspace refresh worker should send a report");
-            if emit_progress {
-                emit_workspace_progress_line(&workspace_name, &report.status, &report.name, None);
+            if let Some(progress_mode) = progress_mode {
+                emit_workspace_progress_line(progress_mode, &workspace_name, &report.status, &report.name, None);
             }
             if report.required && !report.ok {
                 ok = false;
@@ -99491,7 +99606,7 @@ fn load_and_run_workspace_task(
     task: &str,
     path: &Path,
     jobs: usize,
-    emit_progress: bool,
+    progress_mode: Option<WorkspaceProgressMode>,
     stream: bool,
     task_args: &[String],
 ) -> Result<WorkspaceRunReport, WorkspaceProblem> {
@@ -99508,7 +99623,7 @@ fn load_and_run_workspace_task(
             path,
             task,
             repo_refs,
-            emit_progress,
+            progress_mode,
             task_args,
         );
     }
@@ -99564,12 +99679,13 @@ fn load_and_run_workspace_task(
                 .find(|(blocked_index, _)| *blocked_index == pending_index)
             {
                 let report = blocked_workspace_repo_run(repo, task, dependency.clone());
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
+                        progress_mode,
                         &workspace_name,
                         "BLOCKED",
                         &report.name,
-                        Some(&format!("({dependency})")),
+                        Some(&workspace_progress_dependency_detail(&dependency)),
                     );
                 }
                 blocked_reports.push((order, report));
@@ -99587,16 +99703,19 @@ fn load_and_run_workspace_task(
         let handles = runnable
             .into_iter()
             .map(|(order, repo)| {
-                if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    emit_workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None);
+                if let Some(progress_mode) = progress_mode
+                    && workspace_repo_needs_acquisition(&repo)
+                {
+                    emit_workspace_progress_line(progress_mode, &workspace_name, "ACQUIRE", &repo.name, None);
                 }
-                if emit_progress {
-                    let progress_tail = workspace_run_progress_tail(&repo, &task_name);
+                if let Some(progress_mode) = progress_mode {
+                    let progress_detail = workspace_progress_run_detail(&repo, &task_name);
                     emit_workspace_progress_line(
+                        progress_mode,
                         &workspace_name,
                         "RUN",
                         &repo.name,
-                        Some(&progress_tail),
+                        Some(&progress_detail),
                     );
                 }
                 let tx = tx.clone();
@@ -99629,8 +99748,15 @@ fn load_and_run_workspace_task(
             let (order, report) = rx
                 .recv()
                 .expect("workspace run worker should send a report");
-            if emit_progress {
-                emit_workspace_progress_line(&workspace_name, &report.status, &report.name, None);
+            if let Some(progress_mode) = progress_mode {
+                let progress_detail = workspace_progress_report_detail(&report);
+                emit_workspace_progress_line(
+                    progress_mode,
+                    &workspace_name,
+                    &report.status,
+                    &report.name,
+                    Some(&progress_detail),
+                );
             }
             if report.required && !report.ok {
                 ok = false;
@@ -99658,7 +99784,7 @@ fn run_workspace_refresh_streaming(
     workspace_path: &Path,
     repo_refs: Vec<WorkspaceRepoRef>,
     options: &WorkspaceRefreshOptions,
-    emit_progress: bool,
+    progress_mode: Option<WorkspaceProgressMode>,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let mut repos = Vec::new();
     let mut ok = true;
@@ -99673,19 +99799,21 @@ fn run_workspace_refresh_streaming(
         let report = match blocked_dependency {
             Some(dependency) => {
                 let report = blocked_workspace_repo_refresh(repo, dependency.clone());
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
+                        progress_mode,
                         workspace_name,
                         "BLOCKED",
                         &report.name,
-                        Some(&format!("({dependency})")),
+                        Some(&workspace_progress_dependency_detail(&dependency)),
                     );
                 }
                 report
             }
             None => {
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
+                        progress_mode,
                         workspace_name,
                         if options.dry_run {
                             "REFRESH PREVIEW"
@@ -99697,8 +99825,9 @@ fn run_workspace_refresh_streaming(
                     );
                 }
                 let report = run_workspace_repo_refresh(repo, options, RepoExecutionMode::Stream);
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
+                        progress_mode,
                         workspace_name,
                         &report.status,
                         &report.name,
@@ -99731,7 +99860,7 @@ fn run_workspace_task_streaming(
     workspace_path: &Path,
     task: &str,
     repo_refs: Vec<WorkspaceRepoRef>,
-    emit_progress: bool,
+    progress_mode: Option<WorkspaceProgressMode>,
     task_args: &[String],
 ) -> Result<WorkspaceRunReport, WorkspaceProblem> {
     let mut repos = Vec::new();
@@ -99747,27 +99876,37 @@ fn run_workspace_task_streaming(
         let report = match blocked_dependency {
             Some(dependency) => {
                 let report = blocked_workspace_repo_run(repo, task, dependency.clone());
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
+                        progress_mode,
                         workspace_name,
                         "BLOCKED",
                         &report.name,
-                        Some(&format!("({dependency})")),
+                        Some(&workspace_progress_dependency_detail(&dependency)),
                     );
                 }
                 report
             }
             None => {
-                if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    emit_workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None);
-                }
-                if emit_progress {
-                    let progress_tail = workspace_run_progress_tail(&repo, task);
+                if let Some(progress_mode) = progress_mode
+                    && workspace_repo_needs_acquisition(&repo)
+                {
                     emit_workspace_progress_line(
+                        progress_mode,
+                        workspace_name,
+                        "ACQUIRE",
+                        &repo.name,
+                        None,
+                    );
+                }
+                if let Some(progress_mode) = progress_mode {
+                    let progress_detail = workspace_progress_run_detail(&repo, task);
+                    emit_workspace_progress_line(
+                        progress_mode,
                         workspace_name,
                         "RUN",
                         &repo.name,
-                        Some(&progress_tail),
+                        Some(&progress_detail),
                     );
                 }
                 let report = run_workspace_repo_task(
@@ -99777,12 +99916,14 @@ fn run_workspace_task_streaming(
                     RepoExecutionMode::Stream,
                     workspace_path,
                 );
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
+                    let progress_detail = workspace_progress_report_detail(&report);
                     emit_workspace_progress_line(
+                        progress_mode,
                         workspace_name,
                         &report.status,
                         &report.name,
-                        None,
+                        Some(&progress_detail),
                     );
                 }
                 report
@@ -99811,7 +99952,7 @@ fn run_workspace_up_streaming(
     workspace_name: &str,
     workspace_path: &Path,
     repo_refs: Vec<WorkspaceRepoRef>,
-    emit_progress: bool,
+    progress_mode: Option<WorkspaceProgressMode>,
 ) -> Result<WorkspaceUpReport, WorkspaceProblem> {
     let mut repos = Vec::new();
     let mut ok = true;
@@ -99826,26 +99967,36 @@ fn run_workspace_up_streaming(
         let report = match blocked_dependency {
             Some(dependency) => {
                 let report = blocked_workspace_repo_up(repo, dependency.clone());
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
+                        progress_mode,
                         workspace_name,
                         "BLOCKED",
                         &report.name,
-                        Some(&format!("({dependency})")),
+                        Some(&workspace_progress_dependency_detail(&dependency)),
                     );
                 }
                 report
             }
             None => {
-                if emit_progress && workspace_repo_needs_acquisition(&repo) {
-                    emit_workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None);
+                if let Some(progress_mode) = progress_mode
+                    && workspace_repo_needs_acquisition(&repo)
+                {
+                    emit_workspace_progress_line(
+                        progress_mode,
+                        workspace_name,
+                        "ACQUIRE",
+                        &repo.name,
+                        None,
+                    );
                 }
-                if emit_progress {
-                    emit_workspace_progress_line(workspace_name, "RUN", &repo.name, None);
+                if let Some(progress_mode) = progress_mode {
+                    emit_workspace_progress_line(progress_mode, workspace_name, "RUN", &repo.name, None);
                 }
                 let report = run_workspace_repo_up(repo, RepoExecutionMode::Stream, workspace_path);
-                if emit_progress {
+                if let Some(progress_mode) = progress_mode {
                     emit_workspace_progress_line(
+                        progress_mode,
                         workspace_name,
                         &report.status,
                         &report.name,
@@ -99881,19 +100032,37 @@ fn workspace_progress_prefix(workspace_name: &str) -> String {
     }
 }
 
-fn workspace_progress_enabled_for(
+fn workspace_progress_mode_for(
     format: OutputFormat,
     enabled_for_text: bool,
     stderr_is_terminal: bool,
-) -> bool {
+    progress_json: bool,
+) -> Option<WorkspaceProgressMode> {
     match format {
-        OutputFormat::Text => enabled_for_text,
-        OutputFormat::Json => stderr_is_terminal,
+        OutputFormat::Text => enabled_for_text.then_some(WorkspaceProgressMode::Text),
+        OutputFormat::Json => {
+            if progress_json {
+                Some(WorkspaceProgressMode::Json)
+            } else if stderr_is_terminal {
+                Some(WorkspaceProgressMode::Text)
+            } else {
+                None
+            }
+        }
     }
 }
 
-fn workspace_progress_enabled(format: OutputFormat, enabled_for_text: bool) -> bool {
-    workspace_progress_enabled_for(format, enabled_for_text, io::stderr().is_terminal())
+fn workspace_progress_mode(
+    format: OutputFormat,
+    enabled_for_text: bool,
+    progress_json: bool,
+) -> Option<WorkspaceProgressMode> {
+    workspace_progress_mode_for(
+        format,
+        enabled_for_text,
+        io::stderr().is_terminal(),
+        progress_json,
+    )
 }
 
 fn workspace_run_progress_tail(repo: &WorkspaceRepoRef, task: &str) -> String {
@@ -99905,12 +100074,51 @@ fn workspace_run_progress_tail(repo: &WorkspaceRepoRef, task: &str) -> String {
     }
 }
 
+fn workspace_progress_run_detail(repo: &WorkspaceRepoRef, task: &str) -> WorkspaceProgressDetail {
+    WorkspaceProgressDetail {
+        tail: Some(workspace_run_progress_tail(repo, task)),
+        task: Some(task.to_string()),
+        repo_task: Some(repo.resolve_workspace_task(task).to_string()),
+        dependency: None,
+    }
+}
+
+fn workspace_progress_dependency_detail(dependency: &str) -> WorkspaceProgressDetail {
+    WorkspaceProgressDetail {
+        tail: Some(format!("({dependency})")),
+        task: None,
+        repo_task: None,
+        dependency: Some(dependency.to_string()),
+    }
+}
+
+fn workspace_progress_report_detail(report: &WorkspaceRepoRunReport) -> WorkspaceProgressDetail {
+    let tail = match report.repo_task.as_deref() {
+        Some(repo_task) if repo_task != report.task => {
+            Some(format!("{} -> {}", report.task, repo_task))
+        }
+        _ => Some(report.task.clone()),
+    };
+    WorkspaceProgressDetail {
+        tail,
+        task: Some(report.task.clone()),
+        repo_task: Some(
+            report
+                .repo_task
+                .clone()
+                .unwrap_or_else(|| report.task.clone()),
+        ),
+        dependency: None,
+    }
+}
+
 fn workspace_progress_line(
     workspace_name: &str,
     status: &str,
     repo_name: &str,
-    tail: Option<&str>,
+    detail: Option<&WorkspaceProgressDetail>,
 ) -> String {
+    let tail = detail.and_then(|detail| detail.tail.as_deref());
     if plain_mode() {
         return match tail {
             Some(tail) if !tail.trim().is_empty() => format!(
@@ -99966,20 +100174,45 @@ fn task_command_preview(task: &TaskSpec) -> Option<String> {
 }
 
 fn emit_workspace_progress_line(
+    mode: WorkspaceProgressMode,
     workspace_name: &str,
     status: &str,
     repo_name: &str,
-    tail: Option<&str>,
+    detail: Option<&WorkspaceProgressDetail>,
 ) {
-    if io::stderr().is_terminal() {
+    if matches!(mode, WorkspaceProgressMode::Text) && io::stderr().is_terminal() {
         let mut stderr = io::stderr();
         let _ = write!(stderr, "\r\x1b[2K\r");
         let _ = stderr.flush();
     }
-    eprintln!(
-        "{}",
-        workspace_progress_line(workspace_name, status, repo_name, tail)
-    );
+    match mode {
+        WorkspaceProgressMode::Text => eprintln!(
+            "{}",
+            workspace_progress_line(workspace_name, status, repo_name, detail)
+        ),
+        WorkspaceProgressMode::Json => eprintln!(
+            "{}",
+            workspace_progress_json_line(workspace_name, status, repo_name, detail)
+        ),
+    }
+}
+
+fn workspace_progress_json_line(
+    workspace_name: &str,
+    status: &str,
+    repo_name: &str,
+    detail: Option<&WorkspaceProgressDetail>,
+) -> String {
+    to_json_compact(&WorkspaceProgressEvent {
+        event: "workspace_progress",
+        workspace: workspace_name,
+        status,
+        repo: repo_name,
+        tail: detail.and_then(|detail| detail.tail.as_deref()),
+        task: detail.and_then(|detail| detail.task.as_deref()),
+        repo_task: detail.and_then(|detail| detail.repo_task.as_deref()),
+        dependency: detail.and_then(|detail| detail.dependency.as_deref()),
+    })
 }
 
 fn run_workspace_repo_up(
@@ -102521,6 +102754,10 @@ fn to_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).expect("serializing CLI output should not fail")
 }
 
+fn to_json_compact<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_string(value).expect("serializing CLI output should not fail")
+}
+
 fn to_json_value(value: JsonValue) -> String {
     serde_json::to_string_pretty(&value).expect("serializing CLI output should not fail")
 }
@@ -102670,7 +102907,13 @@ fn load_and_diagnose_workspace_streaming(
                 .expect("workspace doctor worker should send a report");
             if emit_progress {
                 let status = if report.ok { "READY" } else { "NOT READY" };
-                emit_workspace_progress_line(&workspace_name, status, &report.name, None);
+                emit_workspace_progress_line(
+                    WorkspaceProgressMode::Text,
+                    &workspace_name,
+                    status,
+                    &report.name,
+                    None,
+                );
             }
             if report.required && !report.ok {
                 ok = false;

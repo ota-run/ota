@@ -2855,6 +2855,7 @@ Run one task across workspace repos in dependency order.
 ```bash
 ota workspace run <task> [PATH]
 ota workspace run <task> --json [PATH]
+ota workspace run <task> --json --progress-json [PATH]
 ota workspace run <task> --jobs 4 [PATH]
 ota workspace run <task> --stream [PATH]
 ota workspace run <task> [PATH] --base-url http://localhost:8080
@@ -2870,6 +2871,7 @@ Current behavior:
 - blocks downstream repos when a dependency repo did not complete successfully
 - captures per-repo stdout/stderr in default mode
 - `--stream` opts into raw child output (text only, currently requires `--jobs 1`)
+- `--json --progress-json` emits live NDJSON workspace progress events on stderr while keeping the final workspace run JSON report on stdout
 - optional repo task failures do not fail the overall workspace status
 - task inputs are declared in `tasks.<name>.inputs` and are passed as `--kebab-case value` flags
 - task inputs are exposed to each repo task process as `OTA_INPUT_<NAME>` env variables
@@ -3074,6 +3076,7 @@ Prepare every repo in an ota workspace contract.
 ```bash
 ota workspace up [PATH]
 ota workspace up --json [PATH]
+ota workspace up --json --progress-json [PATH]
 ota workspace up --jobs 4 [PATH]
 ota workspace up --quiet [PATH]
 ota workspace up --stream [PATH]
@@ -3092,6 +3095,7 @@ Current behavior:
 - aggregates per-repo status, phase, findings, and exit details
 - captures repo child stdout and stderr per repo so text and JSON output remain deterministic
 - emits live repo progress on stderr in text mode so users can see queued/running/completed state while buffered output is still being collected
+- `--json --progress-json` emits the same live workspace progress as NDJSON on stderr while the final workspace-up JSON report remains on stdout
 - `--quiet` suppresses live progress output and prints only the final workspace report
 - optional repo failures do not fail the overall workspace result
 - defaults to sequential execution because `--jobs` defaults to `1`
@@ -3131,6 +3135,7 @@ Refresh existing repos in an ota workspace contract without cloning missing ones
 ```bash
 ota workspace refresh [PATH]
 ota workspace refresh --json [PATH]
+ota workspace refresh --json --progress-json [PATH]
 ota workspace refresh --jobs 4 [PATH]
 ota workspace refresh --dry-run [PATH]
 ota workspace refresh --quiet [PATH]
@@ -3149,6 +3154,7 @@ Current behavior:
 - aggregates per-repo status, phase, findings, and exit details
 - captures repo child stdout and stderr per repo so text and JSON output remain deterministic
 - emits live repo progress on stderr in text mode so users can see queued/running/completed state while buffered output is still being collected
+- `--json --progress-json` emits the same live workspace progress as NDJSON on stderr while the final workspace-refresh JSON report remains on stdout
 - `--quiet` suppresses live progress output and prints only the final workspace report
 - optional repo failures do not fail the overall workspace result
 - defaults to sequential execution because `--jobs` defaults to `1`

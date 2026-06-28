@@ -95,6 +95,9 @@ Canonical JSON Schema files for the current shipped shapes live in:
 - use `ota run <task> --dry-run --json` when you want a repo task execution preview without
   starting dependencies, processes, or containers
 - use `ota workspace run --json` when you want coordinated multi-repo execution roll-up data and receipts
+- use `ota workspace run --json --progress-json`, `ota workspace up --json --progress-json`, or
+  `ota workspace refresh --json --progress-json` when you also need live machine-readable
+  workspace progress events on stderr before the final stdout JSON report arrives
 - use `ota workspace receipt --json` when you want a read-only workspace receipt artifact
 - use `ota diff --json` or `ota explain --json` when you want contract change impact or remediation planning
 
@@ -134,6 +137,10 @@ human text output:
 - `ota clean --json` and `ota clean --stale --json`: use cleanup counters and `queried_engines` on success; on classified cleanup failures use `summary`, `reason`, ordered `next` steps, and the matching structured lane: engine/resource failures expose `engine`, `resource_kind`, `resource_name`, and `details`, while active execution cleanup barriers expose `registry_path`, typed `reasons[]`, `active_execution_count`, and `owners[]`; generic repo-state failures still fall back to `summary` plus `error`
 - `ota up --json` and `ota workspace up --json`: use the top-level `summary`, `receipt`, and per-repo results; workspace repo results may also include additive `next` / `next_steps`
 - `ota workspace run --json`: use the top-level `summary`, `receipt`, and per-repo results; repo results may also include additive `next` / `next_steps`
+- `ota workspace run --json --progress-json`, `ota workspace up --json --progress-json`, and
+  `ota workspace refresh --json --progress-json`: consume newline-delimited progress events from
+  stderr for live repo transitions, then consume the final stdout JSON report as the canonical
+  roll-up artifact
 - `ota workspace receipt --json`: use the top-level `summary`, `receipt`, and per-repo results
 - `ota diff --json`: use the readiness-impact summary and semantic `changes[]`; archived receipt
   JSON and archived `.ota/contracts/...` snapshot JSON are also valid diff inputs; additive
@@ -2949,6 +2956,34 @@ Optional per-repo fields:
 - `stdout`
 - `stderr`
 - `env_sources`
+
+When you add `--progress-json` to `ota workspace run --json`, `ota workspace up --json`, or
+`ota workspace refresh --json`, ota keeps the final roll-up JSON report on stdout and emits
+newline-delimited progress events on stderr.
+
+```json
+{
+  "event": "workspace_progress",
+  "workspace": "ota-dev",
+  "status": "RUN",
+  "repo": "api",
+  "tail": "workspace:entrypoint -> api:tests:contract",
+  "task": "workspace:entrypoint",
+  "repo_task": "api:tests:contract",
+  "dependency": null
+}
+```
+
+- `event` is always `workspace_progress`
+- `workspace` is the resolved workspace name
+- `status` is the live transition label such as `ACQUIRE`, `RUN`, `READY`, `BLOCKED`, `WARN`,
+  `TASK FAILED`, `ACQUIRE FAILED`, `REFRESH`, or `REFRESH PREVIEW`
+- `repo` is the workspace repo name
+- `tail` carries the same operator-facing suffix as the text progress line when one exists
+- `task` and `repo_task` are populated for workspace-run task dispatch so agents can see the
+  requested workspace task and the resolved repo-local task separately; those fields stay present
+  on terminal repo-task events such as `READY` and `TASK FAILED`, not only the initial `RUN`
+- `dependency` is populated for blocked transitions when a repo is waiting on a failed dependency
 
 ## `ota workspace check --json`
 

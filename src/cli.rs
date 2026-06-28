@@ -1640,6 +1640,9 @@ enum WorkspaceCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Emit machine-readable workspace progress events on stderr while preserving the final JSON report on stdout.
+        #[arg(long, action = ArgAction::SetTrue, requires = "json")]
+        progress_json: bool,
         /// Maximum number of independent repos to prepare at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
@@ -1661,6 +1664,9 @@ enum WorkspaceCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Emit machine-readable workspace progress events on stderr while preserving the final JSON report on stdout.
+        #[arg(long, action = ArgAction::SetTrue, requires = "json")]
+        progress_json: bool,
         /// Maximum number of independent repos to refresh at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
@@ -1725,7 +1731,7 @@ enum WorkspaceCommands {
         path: Option<PathBuf>,
     },
     #[command(
-        after_help = "Ordering:\n  Put ota workspace run flags like `--stream`, `--receipt`, and `--jobs` before task inputs.\n\nExample:\n  ota workspace run deploy --stream --region eu"
+        after_help = "Ordering:\n  Put ota workspace run flags like `--stream`, `--receipt`, `--progress-json`, and `--jobs` before task inputs.\n\nExample:\n  ota workspace run deploy --stream --region eu"
     )]
     /// Run a task across workspace repos.
     Run {
@@ -1735,6 +1741,9 @@ enum WorkspaceCommands {
         /// Print machine-readable JSON output.
         #[arg(long, action = ArgAction::SetTrue)]
         json: bool,
+        /// Emit machine-readable workspace progress events on stderr while preserving the final JSON report on stdout.
+        #[arg(long, action = ArgAction::SetTrue, requires = "json")]
+        progress_json: bool,
         /// Maximum number of independent repos to run at once.
         #[arg(long, default_value_t = 1)]
         jobs: usize,
@@ -1747,7 +1756,7 @@ enum WorkspaceCommands {
         /// Optional workspace path. If present, put it immediately after the task name and before task inputs.
         #[arg(index = 2)]
         path: Option<PathBuf>,
-        /// Task inputs such as `--base-url http://...`, placed after the optional path. Put ota workspace run flags like `--stream`, `--receipt`, and `--jobs` before task inputs.
+        /// Task inputs such as `--base-url http://...`, placed after the optional path. Put ota workspace run flags like `--stream`, `--receipt`, `--progress-json`, and `--jobs` before task inputs.
         #[arg(index = 3)]
         #[arg(allow_hyphen_values = true)]
         inputs: Vec<String>,
@@ -3504,10 +3513,11 @@ fn workspace_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
-        "--json" | "--stream" | "--receipt" | "--debug" | "--plain" | "--concise" | "--verbose" => {
+        "--json" | "--progress-json" | "--stream" | "--receipt" | "--debug" | "--plain" | "--concise" | "--verbose" => {
             Some(RunFlagSpec {
                 canonical: match name {
                     "--json" => "json",
+                    "--progress-json" => "progress-json",
                     "--stream" => "stream",
                     "--receipt" => "receipt",
                     "--debug" => "debug",
@@ -5586,6 +5596,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             ),
             WorkspaceCommands::Up {
                 json,
+                progress_json,
                 jobs,
                 quiet,
                 stream,
@@ -5597,12 +5608,14 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 jobs,
                 quiet,
                 stream,
+                progress_json,
                 format_from_json(json),
                 debug,
                 receipt,
             ),
             WorkspaceCommands::Refresh {
                 json,
+                progress_json,
                 jobs,
                 dry_run,
                 force,
@@ -5622,6 +5635,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 git_ref.as_deref(),
                 quiet,
                 stream,
+                progress_json,
                 format_from_json(json),
                 debug,
                 receipt,
@@ -5656,6 +5670,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
             WorkspaceCommands::Run {
                 task,
                 json,
+                progress_json,
                 jobs,
                 stream,
                 receipt,
@@ -5667,6 +5682,7 @@ fn dispatch(cli: Cli) -> CommandOutput {
                 file.as_deref(),
                 jobs,
                 stream,
+                progress_json,
                 format_from_json(json),
                 debug,
                 receipt,
@@ -13131,6 +13147,55 @@ repos:
     }
 
     #[test]
+    fn workspace_run_progress_json_is_not_forwarded_as_task_input() {
+        let dir = TempDir::new().unwrap();
+        let repo_dir = dir.path().join("apps").join("web");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(
+            repo_dir.join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: web
+tasks:
+  ci:
+    script: printf ready
+"#,
+        )
+        .unwrap();
+        let workspace_file = dir.path().join("ota.workspace.yaml");
+        fs::write(
+            &workspace_file,
+            r#"
+version: 1
+workspace:
+  name: ota-dev
+repos:
+  web:
+    path: apps/web
+"#,
+        )
+        .unwrap();
+
+        let output = run_with([
+            "ota",
+            "--file",
+            workspace_file.to_str().unwrap(),
+            "workspace",
+            "run",
+            "ci",
+            "--json",
+            "--progress-json",
+        ]);
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        let json: Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["task"], "ci");
+        assert_eq!(json["repos"][0]["status"], "READY");
+    }
+
+    #[test]
     fn receipt_text_reports_selected_monorepo_member() {
         let fixture = ContractFixture::new_dir();
         fixture.write(
@@ -16532,7 +16597,7 @@ tasks:
             .stderr
             .as_deref()
             .expect("help text should be present in stderr");
-        assert!(help.contains("Put ota workspace run flags like `--stream`, `--receipt`, and `--jobs` before task inputs."));
+        assert!(help.contains("Put ota workspace run flags like `--stream`, `--receipt`, `--progress-json`, and `--jobs` before task inputs."));
         assert!(help.contains("ota workspace run deploy --stream --region eu"));
     }
 
@@ -18444,6 +18509,7 @@ tasks:
             super::command_spinner_label(&super::Commands::Workspace {
                 command: super::WorkspaceCommands::Up {
                     json: false,
+                    progress_json: false,
                     jobs: 1,
                     quiet: false,
                     stream: false,
@@ -19068,6 +19134,7 @@ tasks:
                 super::Commands::Workspace {
                     command: super::WorkspaceCommands::Up {
                         json: true,
+                        progress_json: false,
                         jobs: 1,
                         quiet: false,
                         stream: false,
@@ -19081,6 +19148,7 @@ tasks:
                 super::Commands::Workspace {
                     command: super::WorkspaceCommands::Refresh {
                         json: true,
+                        progress_json: false,
                         jobs: 1,
                         dry_run: false,
                         force: false,
@@ -19130,6 +19198,7 @@ tasks:
                     command: super::WorkspaceCommands::Run {
                         task: String::from("ci"),
                         json: true,
+                        progress_json: false,
                         jobs: 1,
                         stream: false,
                         receipt: false,
