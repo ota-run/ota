@@ -29692,6 +29692,7 @@ pub fn workspace_check(
     path: Option<&Path>,
     file_override: Option<&Path>,
     jobs: usize,
+    progress_json: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -29729,10 +29730,17 @@ pub fn workspace_check(
         String::from("DEBUG command=workspace.check"),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG jobs={jobs}"),
+        format!("DEBUG progress_json={progress_json}"),
     ];
 
+    let progress_mode = if progress_json {
+        Some(WorkspaceProgressMode::Json)
+    } else {
+        None
+    };
+
     finalize_debug(
-        match load_and_check_workspace(&resolved_path, jobs) {
+        match load_and_check_workspace(&resolved_path, jobs, progress_mode) {
             Ok(report) => {
                 let report = normalize_workspace_doctor_report(report);
                 match format {
@@ -102160,8 +102168,10 @@ fn adjust_workspace_up_findings(mut findings: Vec<Finding>, required: bool) -> V
 fn load_and_check_workspace(
     path: &Path,
     jobs: usize,
+    progress_mode: Option<WorkspaceProgressMode>,
 ) -> Result<crate::workspace::WorkspaceDoctorReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
+    let workspace_name = workspace.workspace.name.clone();
     let repo_refs =
         ordered_workspace_repo_refs(path, &workspace).map_err(WorkspaceProblem::Validation)?;
 
@@ -102212,6 +102222,16 @@ fn load_and_check_workspace(
             let (order, report) = rx
                 .recv()
                 .expect("workspace check worker should send a report");
+            if let Some(progress_mode) = progress_mode {
+                let status = if report.ok { "READY" } else { "NOT READY" };
+                emit_workspace_progress_line(
+                    progress_mode,
+                    &workspace_name,
+                    status,
+                    &report.name,
+                    None,
+                );
+            }
             if report.required && !report.ok {
                 ok = false;
             }

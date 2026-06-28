@@ -2935,6 +2935,7 @@ Run configured checks across workspace repos in dependency order.
 ```bash
 ota workspace check [PATH]
 ota workspace check --json [PATH]
+ota workspace check --json --progress-json [PATH]
 ota workspace check --jobs 4 [PATH]
 ```
 
@@ -2947,6 +2948,8 @@ Current behavior:
 - can check independent repos concurrently when `--jobs` is greater than `1`
 - preserves deterministic repo ordering in text and JSON output even when checks run concurrently
 - downgrades findings for optional repos to warnings
+- `--progress-json` emits the same live workspace progress events as compact NDJSON on stderr while
+  preserving the final workspace-check JSON report on stdout
 
 Text output:
 

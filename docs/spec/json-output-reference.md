@@ -3046,6 +3046,11 @@ including additive `finding_groups` and per-repo `primary_blocker` when present:
 }
 ```
 
+When `ota workspace check --json --progress-json` is used, Ota also emits live workspace progress
+events as compact one-line JSON on `stderr`. Those progress events use the same
+`workspace_progress` event shape as `ota workspace doctor|run|up|refresh --json --progress-json`,
+while the final workspace-check report remains the single JSON document on `stdout`.
+
 `summary` mirrors the workspace doctor roll-up so hosted gates can read the same repo and finding
 counts from checks-only output. When one repo has several findings, additive `primary_blocker`
 identifies the repo's current highest-priority next move without forcing consumers to choose one
