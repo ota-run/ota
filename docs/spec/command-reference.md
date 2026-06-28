@@ -179,6 +179,7 @@ Current progress behavior:
 - `ota workspace doctor` uses the shared spinner
 - `ota workspace status` uses the shared spinner
 - `ota workspace doctor --json` still uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
+- `ota workspace doctor --json --progress-json` switches that doctor lane from spinner updates to live NDJSON workspace progress on stderr while stdout remains the final JSON report
 - `ota workspace list --json` also uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
 - successful interactive commands may print a best-effort update notice when a newer release exists, and the notice says `A newer \`ota\` release is available: vX.Y.Z` and points to `ota self-update` or `ota upgrade`
@@ -2985,6 +2986,7 @@ ota workspace doctor --repo <name> [PATH]
 ota workspace doctor --status ready|not-ready [PATH]
 ota workspace doctor --severity error|warn|info [PATH]
 ota workspace doctor --stream [PATH]
+ota workspace doctor --json --progress-json [PATH]
 ```
 
 Current behavior:
@@ -3002,6 +3004,8 @@ Current behavior:
 - rejects required repos that depend on optional repos
 - supports repo/status/severity filtering for focused diagnosis views
 - `--stream` is text-only and emits repo completion updates while the final report is being built
+- `--progress-json` emits the same live workspace progress events as compact NDJSON on stderr while
+  preserving the final doctor JSON report on stdout
 
 Text output:
 

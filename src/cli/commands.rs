@@ -29389,6 +29389,7 @@ pub fn workspace_doctor(
     file_override: Option<&Path>,
     jobs: usize,
     stream: bool,
+    progress_json: bool,
     filters: WorkspaceDoctorFilters,
     format: OutputFormat,
     debug: bool,
@@ -29428,6 +29429,7 @@ pub fn workspace_doctor(
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG jobs={jobs}"),
         format!("DEBUG stream={stream}"),
+        format!("DEBUG progress_json={progress_json}"),
         format!("DEBUG filter_status={:?}", filters.status),
         format!("DEBUG filter_severity={:?}", filters.severity),
         format!(
@@ -29447,9 +29449,11 @@ pub fn workspace_doctor(
         );
     }
 
+    let progress_mode = workspace_progress_mode(format, stream, progress_json);
+
     finalize_debug(
-        match if stream {
-            load_and_diagnose_workspace_streaming(&resolved_path, jobs, true)
+        match if stream || progress_mode.is_some() {
+            load_and_diagnose_workspace_streaming(&resolved_path, jobs, progress_mode)
         } else {
             load_and_diagnose_workspace(&resolved_path, jobs)
         } {
@@ -102923,7 +102927,7 @@ fn load_and_diagnose_workspace(
 fn load_and_diagnose_workspace_streaming(
     path: &Path,
     jobs: usize,
-    emit_progress: bool,
+    progress_mode: Option<WorkspaceProgressMode>,
 ) -> Result<crate::workspace::WorkspaceDoctorReport, WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let workspace_name = workspace.workspace.name.clone();
@@ -102970,10 +102974,10 @@ fn load_and_diagnose_workspace_streaming(
             let (order, report) = rx
                 .recv()
                 .expect("workspace doctor worker should send a report");
-            if emit_progress {
+            if let Some(progress_mode) = progress_mode {
                 let status = if report.ok { "READY" } else { "NOT READY" };
                 emit_workspace_progress_line(
-                    WorkspaceProgressMode::Text,
+                    progress_mode,
                     &workspace_name,
                     status,
                     &report.name,

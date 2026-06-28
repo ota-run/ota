@@ -2729,6 +2729,11 @@ Failure shape can also include:
 }
 ```
 
+When `ota workspace doctor --json --progress-json` is used, Ota also emits live workspace progress
+events as compact one-line JSON on `stderr`. Those progress events use the same
+`workspace_progress` event shape as `ota workspace run|up|refresh --json --progress-json`, while
+the final doctor report remains the single JSON document on `stdout`.
+
 When a workspace repo declares runtimes or tools and policy provides approved sources for them,
 the per-repo item may also include the same `provisioning` diagnostics bundle as repo-level
 doctor output. When policy declares adapter bootstrap sources, the per-repo item may also
