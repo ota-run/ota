@@ -53739,6 +53739,49 @@ workflows:
     }
 
     #[test]
+    fn workspace_progress_blocked_run_detail_keeps_task_and_dependency_context() {
+        let report = crate::output::WorkspaceRepoRunReport {
+            name: String::from("qredex-server"),
+            path: String::from("/tmp/qredex-server"),
+            contract_path: String::from("/tmp/qredex-server/ota.yaml"),
+            required: true,
+            ok: false,
+            status: String::from("BLOCKED"),
+            task: String::from("proof"),
+            repo_task: Some(String::from("typecheck")),
+            findings: Vec::new(),
+            source_url: None,
+            source_ref: None,
+            task_command: None,
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            env_sources: Vec::new(),
+            next: None,
+            next_steps: Vec::new(),
+        };
+
+        let detail = super::workspace_progress_blocked_run_detail(&report, "qredex-go");
+        assert_eq!(detail.task.as_deref(), Some("proof"));
+        assert_eq!(detail.repo_task.as_deref(), Some("typecheck"));
+        assert_eq!(detail.dependency.as_deref(), Some("qredex-go"));
+        assert_eq!(detail.tail.as_deref(), Some("proof -> typecheck (qredex-go)"));
+
+        let line = super::workspace_progress_json_line(
+            "qredex-blocked-proof",
+            "BLOCKED",
+            "qredex-server",
+            Some(&detail),
+        );
+        let json: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(json["status"], "BLOCKED");
+        assert_eq!(json["task"], "proof");
+        assert_eq!(json["repo_task"], "typecheck");
+        assert_eq!(json["dependency"], "qredex-go");
+        assert_eq!(json["tail"], "proof -> typecheck (qredex-go)");
+    }
+
+    #[test]
     fn execution_topology_probe_json_surfaces_task_probe_resolution_plane() {
         let contract = parse_contract_str(
             Path::new("ota.yaml"),
@@ -99680,12 +99723,14 @@ fn load_and_run_workspace_task(
             {
                 let report = blocked_workspace_repo_run(repo, task, dependency.clone());
                 if let Some(progress_mode) = progress_mode {
+                    let progress_detail =
+                        workspace_progress_blocked_run_detail(&report, dependency);
                     emit_workspace_progress_line(
                         progress_mode,
                         &workspace_name,
                         "BLOCKED",
                         &report.name,
-                        Some(&workspace_progress_dependency_detail(&dependency)),
+                        Some(&progress_detail),
                     );
                 }
                 blocked_reports.push((order, report));
@@ -99877,12 +99922,14 @@ fn run_workspace_task_streaming(
             Some(dependency) => {
                 let report = blocked_workspace_repo_run(repo, task, dependency.clone());
                 if let Some(progress_mode) = progress_mode {
+                    let progress_detail =
+                        workspace_progress_blocked_run_detail(&report, &dependency);
                     emit_workspace_progress_line(
                         progress_mode,
                         workspace_name,
                         "BLOCKED",
                         &report.name,
-                        Some(&workspace_progress_dependency_detail(&dependency)),
+                        Some(&progress_detail),
                     );
                 }
                 report
@@ -100110,6 +100157,19 @@ fn workspace_progress_report_detail(report: &WorkspaceRepoRunReport) -> Workspac
         ),
         dependency: None,
     }
+}
+
+fn workspace_progress_blocked_run_detail(
+    report: &WorkspaceRepoRunReport,
+    dependency: &str,
+) -> WorkspaceProgressDetail {
+    let mut detail = workspace_progress_report_detail(report);
+    detail.dependency = Some(dependency.to_string());
+    detail.tail = match detail.tail.take() {
+        Some(tail) if !tail.trim().is_empty() => Some(format!("{tail} ({dependency})")),
+        _ => Some(format!("({dependency})")),
+    };
+    detail
 }
 
 fn workspace_progress_line(
@@ -101127,6 +101187,9 @@ fn blocked_workspace_repo_run(
     dependency: String,
 ) -> WorkspaceRepoRunReport {
     let repo_name = repo.name.clone();
+    let requested_task = task.to_string();
+    let resolved_task = repo.resolve_workspace_task(task).to_string();
+    let resolved_task_field = (resolved_task != requested_task).then(|| resolved_task.clone());
     WorkspaceRepoRunReport {
         name: repo.name,
         path: repo.path.display().to_string(),
@@ -101134,8 +101197,8 @@ fn blocked_workspace_repo_run(
         required: repo.required,
         ok: !repo.required,
         status: if repo.required { "BLOCKED" } else { "WARN" }.to_string(),
-        task: task.to_string(),
-        repo_task: None,
+        task: requested_task.clone(),
+        repo_task: resolved_task_field,
         findings: vec![Finding {
             identity: None,
             severity: if repo.required {
@@ -101148,7 +101211,9 @@ fn blocked_workspace_repo_run(
                 "workspace repo `{}` depends on `{dependency}`, which did not complete successfully",
                 repo_name
             ),
-            next: format!("repair `{dependency}` first, then rerun `ota workspace run {task}`"),
+            next: format!(
+                "repair `{dependency}` first, then rerun `ota workspace run {requested_task}`"
+            ),
         }],
         source_url: None,
         source_ref: None,

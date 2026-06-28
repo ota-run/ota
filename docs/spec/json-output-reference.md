@@ -2983,7 +2983,9 @@ newline-delimited progress events on stderr.
 - `task` and `repo_task` are populated for workspace-run task dispatch so agents can see the
   requested workspace task and the resolved repo-local task separately; those fields stay present
   on terminal repo-task events such as `READY` and `TASK FAILED`, not only the initial `RUN`
-- `dependency` is populated for blocked transitions when a repo is waiting on a failed dependency
+- `dependency` is populated for blocked transitions when a repo is waiting on a failed dependency;
+  blocked workspace-run events also keep `task` and `repo_task` when ota already knows the mapped
+  repo-local task
 
 ## `ota workspace check --json`
 
