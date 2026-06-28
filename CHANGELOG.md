@@ -32,7 +32,11 @@
   `ota workspace refresh` now accept `--progress-json` to emit live machine-readable stderr
   progress while preserving the final JSON report on stdout; workspace-run progress now surfaces
   both `task` and resolved `repo_task` when a workspace task binding rewrites the local task name,
-  workspace-status / workspace-receipt progress uses `tail` for the repo drift state, and
+  all workspace progress events now also carry a `command` field so machine consumers can
+  distinguish `workspace.doctor`, `workspace.check`, `workspace.diff`, `workspace.status`,
+  `workspace.receipt`, `workspace.run`, `workspace.up`, and `workspace.refresh` without relying
+  on out-of-band stream context, workspace-status / workspace-receipt progress uses `tail` for
+  the repo drift state, and
   workspace-diff progress uses `status` for the diff verdict plus `tail` for the machine
   `drift_kind`
 - added workspace-owned repo task bindings under `repos.<name>.tasks.<workspace_task>.task`, so

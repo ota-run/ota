@@ -2969,6 +2969,7 @@ newline-delimited progress events on stderr.
 ```json
 {
   "event": "workspace_progress",
+  "command": "workspace.run",
   "workspace": "ota-dev",
   "status": "RUN",
   "repo": "api",
@@ -2980,6 +2981,10 @@ newline-delimited progress events on stderr.
 ```
 
 - `event` is always `workspace_progress`
+- `command` identifies the workspace command emitting the event, such as `workspace.doctor`,
+  `workspace.check`, `workspace.diff`, `workspace.status`, `workspace.receipt`, `workspace.run`,
+  `workspace.up`, or `workspace.refresh`, so machine consumers do not need out-of-band stream
+  context
 - `workspace` is the resolved workspace name
 - `status` is the live transition label such as `ACQUIRE`, `RUN`, `READY`, `BLOCKED`, `WARN`,
   `TASK FAILED`, `ACQUIRE FAILED`, `REFRESH`, or `REFRESH PREVIEW`
