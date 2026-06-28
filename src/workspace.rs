@@ -1402,8 +1402,9 @@ repos:
         )
         .unwrap();
 
-        let error = validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
-            .expect_err("unknown repo task binding should fail validation");
+        let error =
+            validate_workspace_contract(&fixture.path().join("ota.workspace.yaml"), &contract)
+                .expect_err("unknown repo task binding should fail validation");
         assert!(error.errors().iter().any(|entry| {
             entry.to_string()
                 == "workspace repo `web` task binding `prepare-dev` targets unknown repo task `generate-sdk`"
