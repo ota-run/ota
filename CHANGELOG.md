@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- improved workspace command observability for interactive JSON usage: `ota workspace run`,
+  `ota workspace up`, and `ota workspace refresh` now emit live stderr progress while preserving
+  final machine-readable JSON on stdout, and workspace-run progress lines now surface repo task
+  resolution when a workspace task binding rewrites the local task name
 - added workspace-owned repo task bindings under `repos.<name>.tasks.<workspace_task>.task`, so
   `ota workspace run <task>` no longer requires every repo to share the same local task name;
   workspaces can now map one shared workspace verb such as `prepare-dev` onto repo-local tasks

@@ -29877,7 +29877,7 @@ pub fn workspace_up(
         match load_and_run_workspace_up(
             &resolved_path,
             jobs,
-            matches!(format, OutputFormat::Text) && !quiet,
+            workspace_progress_enabled(format, !quiet),
             stream,
         ) {
             Ok(report) => render_workspace_up(&compact_path_display, &report, format, show_receipt),
@@ -30020,7 +30020,7 @@ pub fn workspace_refresh(
                 prune,
                 git_ref: git_ref.map(str::to_owned),
             },
-            matches!(format, OutputFormat::Text) && !quiet,
+            workspace_progress_enabled(format, !quiet),
             stream,
         ) {
             Ok(report) => {
@@ -30485,7 +30485,7 @@ pub fn workspace_run(
             task,
             &resolved_path,
             jobs,
-            matches!(format, OutputFormat::Text),
+            workspace_progress_enabled(format, true),
             stream,
             &task_inputs,
         ) {
@@ -53600,6 +53600,58 @@ workflows:
         assert!(rendered.contains("repo_task=generate-sdk"), "{rendered}");
         assert!(rendered.contains("prepare-dev"), "{rendered}");
         assert!(rendered.contains("generate-sdk"), "{rendered}");
+    }
+
+    #[test]
+    fn workspace_progress_enabled_emits_for_interactive_json_runs() {
+        assert!(super::workspace_progress_enabled_for(
+            OutputFormat::Json,
+            false,
+            true
+        ));
+        assert!(!super::workspace_progress_enabled_for(
+            OutputFormat::Json,
+            false,
+            false
+        ));
+        assert!(super::workspace_progress_enabled_for(
+            OutputFormat::Text,
+            true,
+            false
+        ));
+        assert!(!super::workspace_progress_enabled_for(
+            OutputFormat::Text,
+            false,
+            true
+        ));
+    }
+
+    #[test]
+    fn workspace_run_progress_tail_surfaces_repo_task_binding() {
+        let mut task_bindings = BTreeMap::new();
+        task_bindings.insert(String::from("workspace:entrypoint"), String::from("api:tests:contract"));
+        let repo = crate::workspace::WorkspaceRepoRef {
+            name: String::from("qredex-core"),
+            path: PathBuf::from("/tmp/qredex-core"),
+            contract_path: PathBuf::from("/tmp/qredex-core/ota.yaml"),
+            workflow: None,
+            task_bindings,
+            required: true,
+            depends_on: Vec::new(),
+            present: true,
+            source_url: None,
+            source_ref: None,
+            policy_env: BTreeMap::new(),
+        };
+
+        assert_eq!(
+            super::workspace_run_progress_tail(&repo, "workspace:entrypoint"),
+            "workspace:entrypoint -> api:tests:contract"
+        );
+        assert_eq!(
+            super::workspace_run_progress_tail(&repo, "other"),
+            "other"
+        );
     }
 
     #[test]
@@ -99539,11 +99591,12 @@ fn load_and_run_workspace_task(
                     emit_workspace_progress_line(&workspace_name, "ACQUIRE", &repo.name, None);
                 }
                 if emit_progress {
+                    let progress_tail = workspace_run_progress_tail(&repo, &task_name);
                     emit_workspace_progress_line(
                         &workspace_name,
                         "RUN",
                         &repo.name,
-                        Some(&task_name),
+                        Some(&progress_tail),
                     );
                 }
                 let tx = tx.clone();
@@ -99708,6 +99761,15 @@ fn run_workspace_task_streaming(
                 if emit_progress && workspace_repo_needs_acquisition(&repo) {
                     emit_workspace_progress_line(workspace_name, "ACQUIRE", &repo.name, None);
                 }
+                if emit_progress {
+                    let progress_tail = workspace_run_progress_tail(&repo, task);
+                    emit_workspace_progress_line(
+                        workspace_name,
+                        "RUN",
+                        &repo.name,
+                        Some(&progress_tail),
+                    );
+                }
                 let report = run_workspace_repo_task(
                     repo,
                     task,
@@ -99816,6 +99878,30 @@ fn workspace_progress_prefix(workspace_name: &str) -> String {
         String::from("[workspace]")
     } else {
         format!("[{trimmed}]")
+    }
+}
+
+fn workspace_progress_enabled_for(
+    format: OutputFormat,
+    enabled_for_text: bool,
+    stderr_is_terminal: bool,
+) -> bool {
+    match format {
+        OutputFormat::Text => enabled_for_text,
+        OutputFormat::Json => stderr_is_terminal,
+    }
+}
+
+fn workspace_progress_enabled(format: OutputFormat, enabled_for_text: bool) -> bool {
+    workspace_progress_enabled_for(format, enabled_for_text, io::stderr().is_terminal())
+}
+
+fn workspace_run_progress_tail(repo: &WorkspaceRepoRef, task: &str) -> String {
+    let resolved = repo.resolve_workspace_task(task);
+    if resolved == task {
+        task.to_string()
+    } else {
+        format!("{task} -> {resolved}")
     }
 }
 
