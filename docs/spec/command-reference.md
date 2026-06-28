@@ -3298,6 +3298,7 @@ Capture the current workspace scan as a read-only receipt artifact for CI or arc
 ```bash
 ota workspace receipt [PATH]
 ota workspace receipt --json [PATH]
+ota workspace receipt --json --progress-json [PATH]
 ota workspace receipt --jobs 4 [PATH]
 ota workspace receipt --archive [PATH]
 ```
@@ -3311,6 +3312,10 @@ Current behavior:
 - can inspect independent repos concurrently when `--jobs` is greater than `1`
 - never clones, fetches, resets, or writes repo state
 - `--json` returns a workspace receipt roll-up with `mode: "receipt"`
+- `--progress-json` emits the same live workspace progress events as compact NDJSON on stderr while
+  preserving the final workspace-receipt JSON report on stdout; because receipt reuses the same
+  scan as `workspace status`, those events use `tail` for the repo drift state such as `MATCH`,
+  `DIRTY`, or `UNRESOLVED`
 - the workspace receipt includes additive `receipt.contract_identity` with workspace name/type and compact workspace repo/policy counts
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
 - the receipt records the same readiness, drift, and findings scan so CI or agents can archive it deterministically

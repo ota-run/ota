@@ -4405,6 +4405,13 @@ receipt artifact. It records the same readiness and drift detail, adds `"mode": 
 keeps the receipt object available for CI or archive consumers. When `--archive` is set,
 the output also includes `archive_path` pointing at the persisted receipt JSON.
 
+When `ota workspace receipt --json --progress-json` is used, Ota also emits live workspace
+progress events as compact one-line JSON on `stderr`. Those progress events use the same
+`workspace_progress` event shape as `ota workspace doctor|check|status|run|up|refresh --json --progress-json`,
+and because receipt reuses the same scan as `workspace status`, `tail` carries the repo drift
+state such as `MATCH`, `DIRTY`, or `UNRESOLVED`, while the final workspace-receipt report remains
+the single JSON document on `stdout`.
+
 `summary` mirrors the top-level execution receipt summary and lets hosted consumers read the roll-up
 without opening `receipt` first.
 

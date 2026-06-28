@@ -30286,6 +30286,7 @@ pub fn workspace_receipt(
     path: Option<&Path>,
     file_override: Option<&Path>,
     jobs: usize,
+    progress_json: bool,
     format: OutputFormat,
     archive: bool,
     debug: bool,
@@ -30324,10 +30325,19 @@ pub fn workspace_receipt(
         String::from("DEBUG command=workspace.receipt"),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG jobs={jobs}"),
+        format!("DEBUG progress_json={progress_json}"),
     ];
 
     finalize_debug(
-        match load_and_run_workspace_receipt(&resolved_path, jobs) {
+        match load_and_run_workspace_receipt(
+            &resolved_path,
+            jobs,
+            if progress_json {
+                Some(WorkspaceProgressMode::Json)
+            } else {
+                None
+            },
+        ) {
             Ok((workspace_contract, mut report)) => {
                 let root = resolved_path.parent().unwrap_or_else(|| Path::new("."));
                 let snapshot =
@@ -99493,10 +99503,11 @@ fn load_and_run_workspace_status(
 fn load_and_run_workspace_receipt(
     path: &Path,
     jobs: usize,
+    progress_mode: Option<WorkspaceProgressMode>,
 ) -> Result<(crate::workspace::WorkspaceContract, WorkspaceReceiptReport), WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let (workspace_name, workspace_identity, mut report) =
-        load_workspace_status_report(path, jobs, None)?;
+        load_workspace_status_report(path, jobs, progress_mode)?;
     normalize_workspace_status_followups(&mut report);
     let receipt = workspace_status_receipt(path, &workspace_identity, &workspace_name, &report);
 
