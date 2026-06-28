@@ -30184,6 +30184,7 @@ pub fn workspace_status(
     path: Option<&Path>,
     file_override: Option<&Path>,
     jobs: usize,
+    progress_json: bool,
     format: OutputFormat,
     debug: bool,
 ) -> CommandOutput {
@@ -30221,10 +30222,19 @@ pub fn workspace_status(
         String::from("DEBUG command=workspace.status"),
         format!("DEBUG workspace_path={path_display}"),
         format!("DEBUG jobs={jobs}"),
+        format!("DEBUG progress_json={progress_json}"),
     ];
 
     finalize_debug(
-        match load_and_run_workspace_status(&resolved_path, jobs) {
+        match load_and_run_workspace_status(
+            &resolved_path,
+            jobs,
+            if progress_json {
+                Some(WorkspaceProgressMode::Json)
+            } else {
+                None
+            },
+        ) {
             Ok(report) => render_workspace_status(&compact_path_display, &report, format),
             Err(WorkspaceProblem::Validation(errors)) => match format {
                 OutputFormat::Text => invalid_workspace_contract_output(
@@ -99399,6 +99409,7 @@ fn load_and_run_workspace_diff(
 fn load_workspace_status_report(
     path: &Path,
     jobs: usize,
+    progress_mode: Option<WorkspaceProgressMode>,
 ) -> Result<(String, ContractIdentity, WorkspaceStatusReport), WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let workspace_name = workspace.workspace.name.clone();
@@ -99437,6 +99448,16 @@ fn load_workspace_status_report(
             let (order, report) = rx
                 .recv()
                 .expect("workspace status worker should send a report");
+            if let Some(progress_mode) = progress_mode {
+                let progress_detail = workspace_progress_status_detail(&report);
+                emit_workspace_progress_line(
+                    progress_mode,
+                    &workspace_name,
+                    &report.readiness_status,
+                    &report.name,
+                    Some(&progress_detail),
+                );
+            }
             repos.insert(order, report);
         }
 
@@ -99461,8 +99482,9 @@ fn load_workspace_status_report(
 fn load_and_run_workspace_status(
     path: &Path,
     jobs: usize,
+    progress_mode: Option<WorkspaceProgressMode>,
 ) -> Result<WorkspaceStatusReport, WorkspaceProblem> {
-    load_workspace_status_report(path, jobs).map(|(_, _, mut report)| {
+    load_workspace_status_report(path, jobs, progress_mode).map(|(_, _, mut report)| {
         normalize_workspace_status_followups(&mut report);
         report
     })
@@ -99474,7 +99496,7 @@ fn load_and_run_workspace_receipt(
 ) -> Result<(crate::workspace::WorkspaceContract, WorkspaceReceiptReport), WorkspaceProblem> {
     let workspace = load_workspace_contract(path).map_err(WorkspaceProblem::Load)?;
     let (workspace_name, workspace_identity, mut report) =
-        load_workspace_status_report(path, jobs)?;
+        load_workspace_status_report(path, jobs, None)?;
     normalize_workspace_status_followups(&mut report);
     let receipt = workspace_status_receipt(path, &workspace_identity, &workspace_name, &report);
 
@@ -100182,6 +100204,15 @@ fn workspace_progress_blocked_run_detail(
         _ => Some(format!("({dependency})")),
     };
     detail
+}
+
+fn workspace_progress_status_detail(report: &WorkspaceRepoStatusReport) -> WorkspaceProgressDetail {
+    WorkspaceProgressDetail {
+        tail: Some(report.drift_status.clone()),
+        task: None,
+        repo_task: None,
+        dependency: None,
+    }
 }
 
 fn workspace_progress_line(

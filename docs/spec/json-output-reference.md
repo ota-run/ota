@@ -4388,6 +4388,12 @@ back to the repo's configured upstream branch. `summary` now also breaks the pre
 `missing` and `unresolved` buckets into additive `missing_repo_count`, `missing_contract_count`,
 `target_unavailable_count`, and `comparison_unresolved_count`.
 
+When `ota workspace status --json --progress-json` is used, Ota also emits live workspace progress
+events as compact one-line JSON on `stderr`. Those progress events use the same
+`workspace_progress` event shape as `ota workspace doctor|check|run|up|refresh --json --progress-json`,
+and use `tail` for the repo drift state such as `MATCH`, `DIRTY`, or `UNRESOLVED`, while the
+final workspace-status report remains the single JSON document on `stdout`.
+
 `ota workspace execution plan --json` uses a read-only execution roll-up. It reports one
 resolved or unresolved execution decision per selected repo, includes per-repo
 `contract_identity`, `declared_execution`, `resolved`, `error`, and `next` fields when present,

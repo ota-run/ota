@@ -180,6 +180,7 @@ Current progress behavior:
 - `ota workspace status` uses the shared spinner
 - `ota workspace doctor --json` still uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace doctor --json --progress-json` switches that doctor lane from spinner updates to live NDJSON workspace progress on stderr while stdout remains the final JSON report
+- `ota workspace status --json --progress-json` switches that status lane from spinner updates to live NDJSON workspace progress on stderr while stdout remains the final JSON report, and each event carries the repo drift state in `tail`
 - `ota workspace list --json` also uses the shared spinner on stderr in interactive terminals, while stdout remains valid JSON
 - `ota workspace validate`, `ota workspace tasks`, `ota workspace list`, `ota workspace detect`, and `ota workspace init` use the shared spinner when they are waiting on work
 - successful interactive commands may print a best-effort update notice when a newer release exists, and the notice says `A newer \`ota\` release is available: vX.Y.Z` and points to `ota self-update` or `ota upgrade`
@@ -3239,6 +3240,7 @@ Compact workspace status combines readiness and drift without mutating repo stat
 ```bash
 ota workspace status [PATH]
 ota workspace status --json [PATH]
+ota workspace status --json --progress-json [PATH]
 ota workspace status --jobs 4 [PATH]
 ```
 
@@ -3252,6 +3254,9 @@ Current behavior:
 - can compare independent repos concurrently when `--jobs` is greater than `1`
 - never mutates repo state
 - `--json` returns a workspace status roll-up with `mode: "status"`
+- `--progress-json` emits the same live workspace progress events as compact NDJSON on stderr while
+  preserving the final workspace-status JSON report on stdout; each event uses `tail` for the repo
+  drift state such as `MATCH`, `DIRTY`, or `UNRESOLVED`
 - text and JSON now carry an additive top-level lifecycle `next` lane when ota can name the safest doctor, refresh, or acquisition follow-up directly
 - text output now makes the comparison provenance explicit on each `Target:` line when ota is using declared `source.ref` versus upstream-branch fallback
 - when drift is being compared against upstream-branch fallback instead of declared `source.ref`, the repo-level follow-up lane now says that explicitly and suggests declaring `source.ref` when the workspace should own the target
