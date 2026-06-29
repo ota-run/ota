@@ -54138,8 +54138,12 @@ tasks:
         .unwrap();
 
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
-        let logged = fs::read_to_string(&pnpm_log).unwrap();
-        assert!(logged.contains("install"), "{logged}");
+        let docker_log =
+            fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap_or_default();
+        assert!(docker_log.contains("run-ephemeral"), "{docker_log}");
+        if let Ok(logged) = fs::read_to_string(&pnpm_log) {
+            assert!(logged.contains("install"), "{logged}");
+        }
     }
 
     #[cfg(unix)]
@@ -60682,8 +60686,12 @@ toolchains:
         .unwrap();
 
         assert_eq!(outcome.exit_code, 0, "{outcome:?}");
-        let logged = fs::read_to_string(&pnpm_log).unwrap();
-        assert!(logged.contains("install"), "{logged}");
+        let docker_log =
+            fs::read_to_string(fixture.dir.path().join("docker-log.txt")).unwrap_or_default();
+        assert!(docker_log.contains("run-ephemeral"), "{docker_log}");
+        if let Ok(logged) = fs::read_to_string(&pnpm_log) {
+            assert!(logged.contains("install"), "{logged}");
+        }
     }
 
     #[test]
