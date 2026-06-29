@@ -32485,7 +32485,10 @@ tasks:
             json["preview_status"].as_str(),
             Some("RUNNABLE WITH WARNINGS" | "RUNNABLE")
         ));
-        assert!(matches!(json["summary"]["verdict"].as_str(), Some("risky" | "ready")));
+        assert!(matches!(
+            json["summary"]["verdict"].as_str(),
+            Some("risky" | "ready")
+        ));
         if let Some(summary) = json["summary"]["primary_blocker"]["summary"].as_str() {
             assert_eq!(summary, "Missing tool: ota-tool-that-does-not-exist");
         }
