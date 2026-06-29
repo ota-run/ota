@@ -5431,7 +5431,7 @@ impl TaskSpec {
 
 fn task_command_executable(command: &TaskCommandSpec) -> Option<String> {
     let exe = command.exe.trim();
-    if exe.is_empty() {
+    if exe.is_empty() || is_path_lookup_utility(exe) {
         return None;
     }
     Some(exe.to_string())
@@ -5441,7 +5441,7 @@ fn command_launch_executable(launch: &TaskLaunchSpec) -> Option<String> {
     match launch {
         TaskLaunchSpec::Command(command) => {
             let exe = command.exe.trim();
-            if exe.is_empty() {
+            if exe.is_empty() || is_path_lookup_utility(exe) {
                 return None;
             }
             Some(exe.to_string())
@@ -5449,6 +5449,10 @@ fn command_launch_executable(launch: &TaskLaunchSpec) -> Option<String> {
         TaskLaunchSpec::Compose(compose) => Some(compose.engine.as_str().to_string()),
         TaskLaunchSpec::Container(_) => None,
     }
+}
+
+fn is_path_lookup_utility(exe: &str) -> bool {
+    matches!(exe, "where" | "which")
 }
 
 fn inferred_shell_command_executable(body: &str) -> Option<String> {
@@ -5483,7 +5487,7 @@ fn inferred_shell_command_executable(body: &str) -> Option<String> {
         // `where` (Windows) and `which` (Unix) are path-lookup utilities, not
         // versioned tools.  Running `where --version` exits with code 1 on
         // Windows, so skip them to avoid spurious tool-probe failures.
-        if matches!(token, "where" | "which") {
+        if is_path_lookup_utility(token) {
             return None;
         }
         if token.contains('=') {
@@ -9978,6 +9982,55 @@ tasks:
         assert_eq!(
             contract.tasks["setup"]
                 .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_command_launch_executable_for_backend_skips_path_lookup_utility_command_exe() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    command:
+      exe: where
+      args: [cl]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.tasks["setup"]
+                .effective_command_launch_executable_for_backend(Backend::Native, "windows"),
+            None
+        );
+    }
+
+    #[test]
+    fn effective_command_launch_executable_for_backend_skips_path_lookup_utility_launch_exe() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+tasks:
+  setup:
+    launch:
+      kind: command
+      exe: where
+      args: [cl]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            contract.tasks["setup"]
+                .effective_command_launch_executable_for_backend(Backend::Native, "windows"),
             None
         );
     }
