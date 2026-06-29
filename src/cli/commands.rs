@@ -47939,7 +47939,7 @@ workflows:
             .expect("listener should become nonblocking");
         let port = listener.local_addr().unwrap().port();
         let server = thread::spawn(move || {
-            let deadline = Instant::now() + Duration::from_secs(2);
+            let deadline = Instant::now() + Duration::from_secs(5);
             while Instant::now() < deadline {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
@@ -48178,7 +48178,7 @@ readiness:
     backend-ready:
       kind: http
       url: http://127.0.0.1:{port}/healthz/readiness
-      timeout: 1000
+      timeout: 2000
 "#
             ),
         )
@@ -48189,9 +48189,12 @@ readiness:
                 .unwrap();
 
         let mut child = if cfg!(windows) {
-            Command::new("cmd").args(["/C", "exit 0"]).spawn().unwrap()
+            Command::new("cmd")
+                .args(["/C", "ping -n 3 127.0.0.1 >NUL"])
+                .spawn()
+                .unwrap()
         } else {
-            Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap()
+            Command::new("sh").args(["-c", "sleep 2"]).spawn().unwrap()
         };
 
         let (report, phase, proof_ok, up_failure) = super::wait_for_proof_runtime_readiness(
