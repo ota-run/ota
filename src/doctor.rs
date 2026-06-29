@@ -16199,8 +16199,7 @@ workflows:
 
         assert!(
             report.findings.iter().all(|finding| {
-                !finding.summary.contains("pnpm")
-                    && !finding.summary.contains("corepack")
+                !finding.summary.contains("pnpm") && !finding.summary.contains("corepack")
             }),
             "{report:?}"
         );
