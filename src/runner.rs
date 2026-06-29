@@ -40554,7 +40554,7 @@ project:
   name: ota
 tasks:
   dev:
-    run: python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > detached.pid; sleep 1
+    run: nohup python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > detached.pid; sleep 2
     runtime:
       kind: service
       listeners:
