@@ -16174,7 +16174,7 @@ tasks:
 workflows:
   default: contributor
   contributor:
-    setup:
+    run:
       task: setup
   docker:
     run:
@@ -20499,6 +20499,9 @@ checks:
 tasks:
   dev:
     run: echo dev
+    requirements:
+      checks:
+        - global-precondition
 workflows:
   default: app
   app:
@@ -21358,11 +21361,21 @@ tasks:
       exe: mvn
       args:
         - test
+workflows:
+  default: app
+  app:
+    run:
+      task: setup
 "#,
         )
         .unwrap();
 
-        let report = diagnose_preconditions(&contract, synthetic_contract_path());
+        let report = super::diagnose_preconditions_with_mode_for_workflow(
+            &contract,
+            synthetic_contract_path(),
+            DoctorMode::Native,
+            Some("app"),
+        );
         let canonical_missing = report
             .findings
             .iter()
