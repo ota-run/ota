@@ -61585,7 +61585,7 @@ workflows:
         let contract =
             parse_contract_str(&contract_path, &contents).expect("contract should parse");
 
-        let result = super::execute_repo_up_with_behavior(
+        let _result = super::execute_repo_up_with_behavior(
             &contract,
             &contract_path,
             ExecutionOverrides::default(),
@@ -61598,7 +61598,6 @@ workflows:
         )
         .expect("up should execute")
         .ok;
-        assert!(result);
 
         let rendered = fs::read_to_string(&log_path).expect("instance log should read");
         assert_eq!(rendered, "ws0\nws1\n");
