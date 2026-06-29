@@ -63,7 +63,8 @@ jobs:
         with:
           command: receipt
           path: .
-          ota-version: 1.6.21
+          source: contract
+          contract-path: ota.yaml
           execution-mode: container
           archive: true
           artifact-name: ota-readiness

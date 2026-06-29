@@ -84,6 +84,7 @@ V10 is active.
 
 - [V11 plan](docs/planning/v11/plan.md)
 - [V11.1 plan](docs/planning/v11.1/plan.md)
+- [V11.2 plan](docs/planning/v11.2/plan.md)
 
 ## Implemented foundation
 
@@ -102,6 +103,8 @@ V10 is active.
 - stage V11 completion truth, reviewer evidence, and local/CI/agent convergence as the next
   planned version after the semantic snapshot thread
 - make V11.1 execution governance visibility and proof the first concrete post-`1.6.22` slice
+- make V11.2 source convergence and detection governance the next disciplined widening slice after
+  V11.1
 
 ## Archived V2 shape
 

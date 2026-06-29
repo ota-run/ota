@@ -39,6 +39,7 @@ Source direction:
 - [JSON output reference](../../spec/json-output-reference.md)
 - [V10 plan](../v10/plan.md)
 - [V11.1 plan](../v11.1/plan.md)
+- [V11.2 plan](../v11.2/plan.md)
 
 V11 theme:
 
@@ -84,6 +85,10 @@ Its first planned implementation slice is V11.1:
 - execution governance visibility and proof
 
 Later V11 slices should build on that foundation instead of competing with it.
+
+The next planned V11 slice after that is:
+
+- [V11.2: source convergence and detection governance](../v11.2/plan.md)
 
 ## Included capabilities
 
