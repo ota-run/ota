@@ -11702,7 +11702,7 @@ fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAd
             let Some(dependency_task) = contract.tasks.get(dependency_name) else {
                 continue;
             };
-            if task_is_explicit_host_prepare_action(contract, dependency_task) {
+            if task_is_explicit_host_prepare_action(dependency_task) {
                 continue;
             }
             let dependency_backend = dependency_task
@@ -11764,7 +11764,7 @@ fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAd
                     let Some(dependency_task) = contract.tasks.get(dependency_name) else {
                         continue;
                     };
-                    if task_is_explicit_host_prepare_action(contract, dependency_task) {
+                    if task_is_explicit_host_prepare_action(dependency_task) {
                         continue;
                     }
                     let dependency_backend = dependency_task
@@ -11824,11 +11824,27 @@ fn collect_depends_on_boundary_advisories(contract: &Contract) -> Vec<ContractAd
     advisories
 }
 
-fn task_is_explicit_host_prepare_action(contract: &Contract, task: &TaskSpec) -> bool {
+fn task_is_explicit_host_prepare_action(task: &TaskSpec) -> bool {
     task.action.is_some()
         && task.runtime.is_none()
+        && task.run.is_none()
+        && task.script.is_none()
+        && task.command.is_none()
+        && task.compose.is_none()
+        && task.prepare.is_none()
+        && task.launch.is_none()
+        && task.aggregate.is_none()
         && task.requires_services.is_empty()
-        && task_execution_backend(contract, task, Backend::Native) == Backend::Native
+        && match &task.execution {
+            None => true,
+            Some(execution) => {
+                execution.default_mode.unwrap_or(Backend::Native) == Backend::Native
+                    && !execution
+                        .modes
+                        .iter()
+                        .any(|(backend, _)| backend != Backend::Native)
+            }
+        }
 }
 
 fn duplicate_requirement_owners_for_toolchain(
@@ -27057,7 +27073,9 @@ tasks:
         let rendered = errors.to_string();
         assert!(rendered.contains("must declare `requirements.toolchains: [python]`"));
         assert!(
-            rendered.contains("must declare at least one durable repo write in `effects.writes`")
+            rendered.contains(
+                "must declare durable state in `effects.writes` or `effects.adapter_state`"
+            )
         );
     }
 
@@ -27126,7 +27144,9 @@ tasks:
         let rendered = errors.to_string();
         assert!(rendered.contains("must declare `requirements.toolchains: [python]`"));
         assert!(
-            rendered.contains("must declare at least one durable repo write in `effects.writes`")
+            rendered.contains(
+                "must declare durable state in `effects.writes` or `effects.adapter_state`"
+            )
         );
     }
 

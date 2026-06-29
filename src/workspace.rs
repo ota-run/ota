@@ -803,37 +803,32 @@ pub fn validate_workspace_shape(
         }
 
         if present {
-            match load_contract(&contract_path) {
-                Ok(repo_contract) => {
-                    if validate_contract_with_path(&repo_contract, Some(&contract_path)).is_ok() {
-                        for (workspace_task, binding) in &repo.tasks {
-                            let workspace_task = workspace_task.trim();
-                            let target_task = binding.task.trim();
-                            let Some(task_spec) = repo_contract.tasks.get(target_task) else {
-                                errors.push(WorkspaceValidationError::new(format!(
-                                    "workspace repo `{name}` task binding `{workspace_task}` targets unknown repo task `{target_task}`"
-                                )));
-                                continue;
-                            };
-                            if task_spec.internal {
-                                errors.push(WorkspaceValidationError::new(format!(
-                                    "workspace repo `{name}` task binding `{workspace_task}` must not target internal repo task `{target_task}`"
-                                )));
-                            }
-                            if workspace_task != target_task
-                                && repo_contract
-                                    .tasks
-                                    .get(workspace_task)
-                                    .is_some_and(|task| !task.internal)
-                            {
-                                errors.push(WorkspaceValidationError::new(format!(
-                                    "workspace repo `{name}` task binding `{workspace_task}` conflicts with visible repo task `{workspace_task}`; rename the workspace binding or the repo task so `ota workspace run {workspace_task}` stays unambiguous"
-                                )));
-                            }
-                        }
+            if let Ok(repo_contract) = load_contract(&contract_path) {
+                for (workspace_task, binding) in &repo.tasks {
+                    let workspace_task = workspace_task.trim();
+                    let target_task = binding.task.trim();
+                    let Some(task_spec) = repo_contract.tasks.get(target_task) else {
+                        errors.push(WorkspaceValidationError::new(format!(
+                            "workspace repo `{name}` task binding `{workspace_task}` targets unknown repo task `{target_task}`"
+                        )));
+                        continue;
+                    };
+                    if task_spec.internal {
+                        errors.push(WorkspaceValidationError::new(format!(
+                            "workspace repo `{name}` task binding `{workspace_task}` must not target internal repo task `{target_task}`"
+                        )));
+                    }
+                    if workspace_task != target_task
+                        && repo_contract
+                            .tasks
+                            .get(workspace_task)
+                            .is_some_and(|task| !task.internal)
+                    {
+                        errors.push(WorkspaceValidationError::new(format!(
+                            "workspace repo `{name}` task binding `{workspace_task}` conflicts with visible repo task `{workspace_task}`; rename the workspace binding or the repo task so `ota workspace run {workspace_task}` stays unambiguous"
+                        )));
                     }
                 }
-                Err(_) => {}
             }
         }
     }

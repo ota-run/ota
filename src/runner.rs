@@ -60652,8 +60652,9 @@ toolchains:
         let pnpm_log = fixture.dir.path().join("pnpm.log");
         let pnpm_path = bin_dir.join("pnpm");
         let corepack_body = format!(
-            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.24.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.24.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.24.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.24.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\nfi\nif [ \"$1\" = \"pnpm\" ]; then\nshift\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.24.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nfi\nexit 1\n",
             pnpm_path.display(),
+            pnpm_log.display(),
             pnpm_log.display(),
             pnpm_path.display()
         );
@@ -60812,8 +60813,8 @@ tasks:
             "corepack pnpm install",
         );
 
-        assert!(wrapped.contains("corepack enable --install-directory"));
         assert!(wrapped.contains("corepack prepare pnpm@10.24.0 --activate"));
+        assert!(wrapped.contains("pnpm() { corepack pnpm \"$@\"; }"));
         assert!(wrapped.ends_with("corepack pnpm install"));
     }
 

@@ -83,6 +83,7 @@ V10 is active.
 ## Next planned version
 
 - [V11 plan](docs/planning/v11/plan.md)
+- [V11.1 plan](docs/planning/v11.1/plan.md)
 
 ## Implemented foundation
 
@@ -100,6 +101,7 @@ V10 is active.
 - avoid widening into generic plugin-runtime scope
 - stage V11 completion truth, reviewer evidence, and local/CI/agent convergence as the next
   planned version after the semantic snapshot thread
+- make V11.1 execution governance visibility and proof the first concrete post-`1.6.22` slice
 
 ## Archived V2 shape
 

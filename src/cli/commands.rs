@@ -32440,6 +32440,7 @@ fn resolve_repo_receipt_snapshot(
     let snapshot_json = serde_json::to_vec_pretty(&snapshot)
         .map_err(|error| format!("failed to serialize archived contract snapshot: {error}"))?;
     let assumption_set_hash = assumption_set_hash_from_snapshot(&snapshot)?;
+    let snapshot_contract_identity: Option<String> = None;
     Ok(RepoReceiptSnapshotReport {
         source: String::from("file"),
         selection_kind: String::from("snapshot_archive"),
@@ -32453,7 +32454,7 @@ fn resolve_repo_receipt_snapshot(
         assumption_count: assumption_count_from_snapshot(&snapshot),
         snapshot_path: selection_path.to_path_buf(),
         contract: None,
-        contract_identity: None,
+        contract_identity: snapshot_contract_identity,
         snapshot,
     })
 }
@@ -32522,8 +32523,36 @@ fn receipt_diff_declared_match_rank(
     change: &DiffChange,
     finding: &Finding,
 ) -> Option<ReceiptDiffCorrelationMatchKind> {
+    let is_selected_requirement_finding = matches!(
+        finding.code(),
+        "OTA_TOOL_MISSING"
+            | "OTA_TOOL_PROBE_FAILED"
+            | "OTA_TOOL_VERSION_MISMATCH"
+            | "OTA_TOOL_VERSION_UNPARSEABLE"
+            | "OTA_RUNTIME_MISSING"
+            | "OTA_RUNTIME_PROBE_FAILED"
+            | "OTA_RUNTIME_VERSION_MISMATCH"
+            | "OTA_RUNTIME_VERSION_UNPARSEABLE"
+            | "OTA_NATIVE_PREREQUISITE_MISSING"
+            | "OTA_NATIVE_PREREQUISITE_TIMED_OUT"
+    );
+    let mut selected_requirement_owner = false;
     if let Some(entity) = finding.correlation_entity() {
-        let selected_requirement_owner = match finding.code() {
+        let direct_requirement_match =
+            matches!(
+                finding.code(),
+                "OTA_RUNTIME_MISSING"
+                    | "OTA_RUNTIME_PROBE_FAILED"
+                    | "OTA_RUNTIME_VERSION_MISMATCH"
+                    | "OTA_RUNTIME_VERSION_UNPARSEABLE"
+            ) && (change.path.starts_with(&format!("toolchains.{entity}"))
+                || change.path.starts_with(&format!("tools.{entity}"))
+                || change.path.starts_with(&format!("runtimes.{entity}")));
+        if direct_requirement_match {
+            return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
+        }
+
+        selected_requirement_owner = match finding.code() {
             "OTA_TOOL_MISSING"
             | "OTA_TOOL_PROBE_FAILED"
             | "OTA_TOOL_VERSION_MISMATCH"
@@ -32552,18 +32581,44 @@ fn receipt_diff_declared_match_rank(
             _ => false,
         };
         if selected_requirement_owner {
-            return Some(ReceiptDiffCorrelationMatchKind::ExactOwner);
+            if matches!(
+                finding.code(),
+                "OTA_RUNTIME_MISSING"
+                    | "OTA_RUNTIME_PROBE_FAILED"
+                    | "OTA_RUNTIME_VERSION_MISMATCH"
+                    | "OTA_RUNTIME_VERSION_UNPARSEABLE"
+            ) && change.path.starts_with("tasks.")
+                && (change.path.contains(".requirements.tools.")
+                    || change.path.contains(".requirements.toolchains.")
+                    || change.path.contains(".requirements.runtimes."))
+            {
+                return Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily);
+            }
+            return Some(ReceiptDiffCorrelationMatchKind::RequirementReference);
         }
     }
     if let Some(owner_prefix) = finding.correlation_owner_prefix() {
-        if finding.code() == "OTA_ENV_MISSING"
-            && change.path.starts_with(&format!("{owner_prefix}."))
-            && !change.path.ends_with(".required")
-            && !change.path.ends_with(".default")
+        if is_selected_requirement_finding
+            && finding.correlation_entity().is_some_and(|entity| {
+                owner_prefix.starts_with(&format!("toolchains.{entity}"))
+                    || owner_prefix.starts_with(&format!("tools.{entity}"))
+                    || owner_prefix.starts_with(&format!("runtimes.{entity}"))
+                    || owner_prefix.contains(".requirements.")
+            })
         {
-            return None;
+            return Some(
+                if owner_prefix.contains(".requirements.") || change.path.contains(".requirements.")
+                {
+                    ReceiptDiffCorrelationMatchKind::RequirementReference
+                } else {
+                    ReceiptDiffCorrelationMatchKind::GenericOwnerFamily
+                },
+            );
         }
         if let Some(kind) = receipt_diff_owner_match_kind(&change.path, &owner_prefix) {
+            if is_selected_requirement_finding && !selected_requirement_owner {
+                return Some(ReceiptDiffCorrelationMatchKind::GenericOwnerFamily);
+            }
             return Some(kind);
         }
     }
@@ -32892,6 +32947,13 @@ fn receipt_diff_likely_related_changes(
         .iter()
         .filter(|finding| finding.severity != FindingSeverity::Info)
     {
+        let finding_entity = finding.correlation_entity();
+        let has_matching_env_required = matches!(finding.code(), "OTA_ENV_MISSING")
+            && finding_entity.as_deref().is_some_and(|entity| {
+                contract_changes
+                    .iter()
+                    .any(|change| change.path == format!("env.vars.{entity}.required"))
+            });
         let check_prefix = if matches!(finding.code(), "OTA_CHECK_FAILED" | "OTA_CHECK_TIMED_OUT") {
             finding
                 .summary
@@ -32908,6 +32970,15 @@ fn receipt_diff_likely_related_changes(
         let best_rank = contract_changes
             .iter()
             .filter_map(|change| {
+                if has_matching_env_required
+                    && finding.code() == "OTA_ENV_MISSING"
+                    && finding_entity.as_deref().is_some_and(|entity| {
+                        change.path.starts_with(&format!("env.vars.{entity}."))
+                            && change.path.ends_with(".secret")
+                    })
+                {
+                    return None;
+                }
                 receipt_diff_correlation_match(change, finding, check_prefix.as_deref())
                     .map(|matched| matched.rank)
             })
@@ -32916,6 +32987,15 @@ fn receipt_diff_likely_related_changes(
             continue;
         };
         for change in contract_changes {
+            if has_matching_env_required
+                && finding.code() == "OTA_ENV_MISSING"
+                && finding_entity.as_deref().is_some_and(|entity| {
+                    change.path.starts_with(&format!("env.vars.{entity}."))
+                        && change.path.ends_with(".secret")
+                })
+            {
+                continue;
+            }
             let Some(matched) =
                 receipt_diff_correlation_match(change, finding, check_prefix.as_deref())
             else {
@@ -55528,7 +55608,7 @@ tasks:
         );
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
-        assert_eq!(json["preview_status"], "RUNNABLE");
+        assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
         assert_eq!(
             json["provisioning_request"]["actions"][0]["source"],
             expected_source
@@ -55618,7 +55698,7 @@ tasks:
 
         let json: serde_json::Value =
             serde_json::from_str(&output.stdout).expect("dry-run json preview");
-        assert_eq!(json["preview_status"], "RUNNABLE");
+        assert_eq!(json["preview_status"], "RUNNABLE WITH WARNINGS");
         assert_eq!(
             json["provisioning_request"]["actions"][0]["source"],
             "release-asset"
@@ -68232,7 +68312,12 @@ tasks:
         );
 
         assert_eq!(receipt.env["OTA_TEST_SECRET"], "<redacted>");
-        assert_eq!(receipt.env_sources[0].value, "<redacted>");
+        let secret_env_source = receipt
+            .env_sources
+            .iter()
+            .find(|entry| entry.name == "OTA_TEST_SECRET")
+            .expect("missing env source for OTA_TEST_SECRET");
+        assert_eq!(secret_env_source.value, "<redacted>");
         let rendered = render_execution_receipt_text(&receipt);
         assert!(rendered.contains("Env Sources"));
         assert!(rendered.contains("OTA_TEST_SECRET"));

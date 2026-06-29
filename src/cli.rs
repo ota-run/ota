@@ -3528,23 +3528,22 @@ fn workspace_run_flag_spec(name: &str) -> Option<RunFlagSpec> {
             takes_value: true,
             value_kind: RunFlagValueKind::Any,
         }),
-        "--json" | "--progress-json" | "--stream" | "--receipt" | "--debug" | "--plain" | "--concise" | "--verbose" => {
-            Some(RunFlagSpec {
-                canonical: match name {
-                    "--json" => "json",
-                    "--progress-json" => "progress-json",
-                    "--stream" => "stream",
-                    "--receipt" => "receipt",
-                    "--debug" => "debug",
-                    "--plain" => "plain",
-                    "--concise" => "concise",
-                    "--verbose" => "verbose",
-                    _ => unreachable!("matched workspace run switch"),
-                },
-                takes_value: false,
-                value_kind: RunFlagValueKind::Any,
-            })
-        }
+        "--json" | "--progress-json" | "--stream" | "--receipt" | "--debug" | "--plain"
+        | "--concise" | "--verbose" => Some(RunFlagSpec {
+            canonical: match name {
+                "--json" => "json",
+                "--progress-json" => "progress-json",
+                "--stream" => "stream",
+                "--receipt" => "receipt",
+                "--debug" => "debug",
+                "--plain" => "plain",
+                "--concise" => "concise",
+                "--verbose" => "verbose",
+                _ => unreachable!("matched workspace run switch"),
+            },
+            takes_value: false,
+            value_kind: RunFlagValueKind::Any,
+        }),
         _ => None,
     }
 }
@@ -8470,13 +8469,20 @@ project:
         ]);
 
         assert_eq!(output.exit_code, 1);
-        let json: Value = serde_json::from_str(&output.stdout).unwrap();
-        assert!(
-            json["errors"][0]
-                .as_str()
-                .unwrap()
-                .contains("does not carry `receipt.contract_snapshot_ref`")
-        );
+        let json_source = output
+            .stderr
+            .as_deref()
+            .or_else(|| (!output.stdout.trim().is_empty()).then_some(output.stdout.as_str()));
+        let Some(json_text) = json_source else {
+            panic!("diff failure output had no stdout/stderr content");
+        };
+        let json: Value = serde_json::from_str(json_text).unwrap();
+        let error = json
+            .get("error")
+            .and_then(Value::as_str)
+            .or_else(|| json["errors"].get(0).and_then(Value::as_str))
+            .unwrap_or("");
+        assert!(error.contains("does not carry `receipt.contract_snapshot_ref`"));
     }
 
     #[test]

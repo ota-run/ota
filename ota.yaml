@@ -51,6 +51,8 @@ tools:
 toolchains:
   rust:
     version: "1.95.0"
+    components:
+      - rustfmt
     fulfillment:
       mode: run
 checks:
@@ -69,6 +71,9 @@ tasks:
     category: setup
     internal: true
     run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
     safe_for_agent: true
   build:
     description: Compile the CLI
@@ -76,6 +81,9 @@ tasks:
       Use this when you want to confirm the crate still builds after code changes.
     category: build
     run: cargo build
+    requirements:
+      toolchains:
+        - rust
     depends_on:
       - setup
     safe_for_agent: true
@@ -85,6 +93,9 @@ tasks:
       Use this before committing to catch formatting drift early.
     category: test
     run: cargo fmt --check
+    requirements:
+      toolchains:
+        - rust
     safe_for_agent: true
   check:
     description: Type-check the crate
@@ -92,6 +103,9 @@ tasks:
       Use this for a fast compiler-only verification pass without running tests.
     category: test
     run: cargo check
+    requirements:
+      toolchains:
+        - rust
     depends_on:
       - setup
     safe_for_agent: true
@@ -101,6 +115,9 @@ tasks:
       Use this when you want the full unit and integration test coverage.
     category: test
     run: cargo test
+    requirements:
+      toolchains:
+        - rust
     depends_on:
       - setup
     safe_for_agent: true
@@ -140,6 +157,9 @@ tasks:
           cargo test remote_doctor_mode_probes_tool_versions_through_remote_contexts --lib -- --test-threads=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test restart_ready_activation_restarts_reachable --lib -- --test-threads=1
+    requirements:
+      toolchains:
+        - rust
     depends_on:
       - setup
     safe_for_agent: true
@@ -173,6 +193,9 @@ tasks:
       It exercises hook follow-ups inside the main repo without touching build artifacts or snapshots.
     category: dev
     run: cargo run --quiet -- validate ./ota.yaml --plain
+    requirements:
+      toolchains:
+        - rust
     after_success:
       - contract:tasks
     after_failure:
@@ -187,6 +210,9 @@ tasks:
       It keeps the repo contract self-hosting by pointing straight at the validated task surface.
     category: dev
     run: cargo run --quiet -- tasks . --use --plain
+    requirements:
+      toolchains:
+        - rust
     safe_for_agent: true
   contract:doctor:
     description: Show readiness detail after contract validation fails
@@ -195,6 +221,9 @@ tasks:
       It points the operator at concrete readiness findings instead of stopping at a raw validation error.
     category: dev
     run: cargo run --quiet -- doctor . --plain
+    requirements:
+      toolchains:
+        - rust
     safe_for_agent: true
   compat:
     description: Run the compatibility test gate
@@ -231,6 +260,9 @@ tasks:
           cargo test --test examples_validate -- --test-threads=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --test detect_fixtures
+    requirements:
+      toolchains:
+        - rust
     depends_on:
       - setup
     safe_for_agent: true
@@ -259,6 +291,9 @@ tasks:
       `docs/spec/json-schemas/workspace-contract.json` from the canonical Rust source.
     category: dev
     run: cargo run --bin sync_published_contract_schemas
+    requirements:
+      toolchains:
+        - rust
     safe_for_agent: true
   docs:manifest:sync:
     description: Regenerate the published canonical docs manifest artifact
@@ -267,6 +302,9 @@ tasks:
       It rewrites `docs/spec/published-docs/canonical-docs.json` from the canonical Rust source.
     category: dev
     run: cargo run --bin sync_published_doc_manifests
+    requirements:
+      toolchains:
+        - rust
     safe_for_agent: true
   release-gate:
     description: Run the GitHub Actions verification suite
@@ -286,6 +324,9 @@ tasks:
           os: windows
         script: |
           echo Skipping integration tests on Windows
+    requirements:
+      toolchains:
+        - rust
     depends_on:
       - ci
       - compat
@@ -300,6 +341,9 @@ tasks:
     category: test
     script: |
       cargo test snapshot_is_stable -- --test-threads=1
+    requirements:
+      toolchains:
+        - rust
     depends_on:
       - setup
     safe_for_agent: true
@@ -315,6 +359,9 @@ tasks:
         default: "1"
     script: |
       OTA_UPDATE_SNAPSHOTS=1 cargo test snapshot_is_stable -- --test-threads=${OTA_INPUT_TEST_THREADS}
+    requirements:
+      toolchains:
+        - rust
     depends_on:
       - setup
     safe_for_agent: true
@@ -346,6 +393,9 @@ tasks:
       cargo run --quiet -- validate ./ota.yaml --plain
       # Run lockfile-specific tests
       cargo test --test real_repo_fixtures -- --test-threads=1 --skip workspace_refresh_pulls_updated_git_sources_on_real_command_path
+    requirements:
+      toolchains:
+        - rust
     depends_on:
       - setup
       - ci

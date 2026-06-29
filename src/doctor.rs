@@ -10890,7 +10890,11 @@ fn selected_task_requirement_check_names(
         }
     }
 
-    (scoped || !selected.is_empty()).then_some(selected)
+    if workflow_name.is_none() {
+        (scoped || !selected.is_empty()).then_some(selected)
+    } else {
+        Some(selected)
+    }
 }
 
 fn selected_task_run_requirement_check_names(
@@ -23738,6 +23742,12 @@ tasks:
             },
             DoctorFindingReferenceEntry {
                 code: "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_NETWORK",
+                category: "contract",
+                owner_surface: "repo_contract",
+                provenance_key_surface: "repo_contract",
+            },
+            DoctorFindingReferenceEntry {
+                code: "OTA_CONTRACT_ADVISORY_AGENT_SAFE_TASK_INTEGRATION_TEST",
                 category: "contract",
                 owner_surface: "repo_contract",
                 provenance_key_surface: "repo_contract",

@@ -1413,6 +1413,11 @@ fn starter_agent_safe_tasks(contract: &DetectContract) -> Vec<String> {
             safe_tasks.push(task_name.clone());
         }
     }
+
+    if safe_tasks.is_empty() && contract.tasks.contains_key("setup") {
+        safe_tasks.push(String::from("setup"));
+    }
+
     safe_tasks
 }
 

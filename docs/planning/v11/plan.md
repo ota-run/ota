@@ -29,6 +29,7 @@ Status: planned.
 Release target:
 
 - post-`1.6.22` planning slice
+- broad version frame after `1.6.22`
 
 Source direction:
 
@@ -37,12 +38,17 @@ Source direction:
 - [Doctor finding contract](../../spec/doctor-finding-contract.md)
 - [JSON output reference](../../spec/json-output-reference.md)
 - [V10 plan](../v10/plan.md)
+- [V11.1 plan](../v11.1/plan.md)
 
 V11 theme:
 
 - completion truth for agents
 - reviewer evidence for agent-authored work
 - local, CI, and agent execution convergence
+
+The first concrete V11 implementation slice is:
+
+- [V11.1: execution governance visibility and proof](../v11.1/plan.md)
 
 This slice turns a recurring product signal into an explicit planning surface:
 
@@ -68,6 +74,16 @@ Ota already addresses parts of this, but the current product surface still leave
 done?" too implicit in many repos.
 
 V11 is the slice for making completion truth and reviewer evidence first-class.
+
+## Version structure
+
+V11 is the broader version frame.
+
+Its first planned implementation slice is V11.1:
+
+- execution governance visibility and proof
+
+Later V11 slices should build on that foundation instead of competing with it.
 
 ## Included capabilities
 
