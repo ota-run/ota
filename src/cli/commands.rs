@@ -16101,12 +16101,28 @@ fn preview_errors_are_fully_resolvable(
     provisioning_actions: &[crate::policy_pack::ProvisioningAction],
     activation_actions: &[RequirementActivationAction],
 ) -> bool {
+    preview_errors_are_fully_resolvable_with_toolchain_fulfillment(
+        findings,
+        provisioning_actions,
+        activation_actions,
+        &[],
+    )
+}
+
+fn preview_errors_are_fully_resolvable_with_toolchain_fulfillment(
+    findings: &[Finding],
+    provisioning_actions: &[crate::policy_pack::ProvisioningAction],
+    activation_actions: &[RequirementActivationAction],
+    toolchain_fulfillment_targets: &[ToolchainRunFulfillmentTarget],
+) -> bool {
     let error_findings = findings
         .iter()
         .filter(|finding| finding.severity == FindingSeverity::Error)
         .collect::<Vec<_>>();
     !error_findings.is_empty()
-        && !(provisioning_actions.is_empty() && activation_actions.is_empty())
+        && !(provisioning_actions.is_empty()
+            && activation_actions.is_empty()
+            && toolchain_fulfillment_targets.is_empty())
         && error_findings.iter().all(|finding| {
             provisioning_actions
                 .iter()
@@ -16114,13 +16130,44 @@ fn preview_errors_are_fully_resolvable(
                 || activation_actions
                     .iter()
                     .any(|action| finding_targets_activation_action(finding, action))
+                || toolchain_fulfillment_targets
+                    .iter()
+                    .any(|target| finding_targets_toolchain_run_fulfillment(finding, target))
         })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ToolchainRunFulfillmentTarget {
+    toolchain_name: String,
+    target_os: String,
+}
+
+fn finding_targets_toolchain_run_fulfillment(
+    finding: &Finding,
+    target: &ToolchainRunFulfillmentTarget,
+) -> bool {
+    if matches!(
+        finding.code(),
+        "OTA_TOOLCHAIN_COMPONENT_MISSING"
+            | "OTA_TOOLCHAIN_PROVIDER_MISSING"
+            | "OTA_TOOLCHAIN_PROVIDER_PROBE_FAILED"
+            | "OTA_TOOLCHAIN_TARGET_MISSING"
+    ) {
+        return finding
+            .why
+            .contains(format!("toolchain `{}`", target.toolchain_name).as_str());
+    }
+
+    provisionable_target_key_for_finding(finding)
+        .is_some_and(|key| key == format!("runtime:{}", target.toolchain_name))
 }
 
 fn suppress_post_up_resolved_error_findings(
     report: &mut DoctorReport,
     provisioning_actions: &[crate::policy_pack::ProvisioningAction],
     activation_actions: &[RequirementActivationAction],
+    fulfilled_toolchains: &[ToolchainFulfillmentEvidence],
+    toolchain_fulfillment_targets: &[ToolchainRunFulfillmentTarget],
 ) {
     report.findings.retain(|finding| {
         finding.severity != FindingSeverity::Error
@@ -16129,7 +16176,13 @@ fn suppress_post_up_resolved_error_findings(
                 .any(|action| finding_targets_provisioning_action(finding, action))
                 || activation_actions
                     .iter()
-                    .any(|action| finding_targets_activation_action(finding, action)))
+                    .any(|action| finding_targets_activation_action(finding, action))
+                || toolchain_fulfillment_targets.iter().any(|target| {
+                    fulfilled_toolchains
+                        .iter()
+                        .any(|evidence| evidence.name == target.toolchain_name)
+                        && finding_targets_toolchain_run_fulfillment(finding, target)
+                }))
     });
     report.ok = !report
         .findings
@@ -63688,7 +63741,7 @@ workflows:
             },
         }];
 
-        super::suppress_post_up_resolved_error_findings(&mut report, &[], &activation_actions);
+        super::suppress_post_up_resolved_error_findings(&mut report, &[], &activation_actions, &[], &[]);
 
         assert!(report.ok);
         assert!(report.findings.is_empty(), "{report:?}");
@@ -70369,6 +70422,7 @@ tasks:
             target: None,
             runtime: None,
             service_termination: None,
+            fulfilled_toolchains: Vec::new(),
             host_service_cleanup: Vec::new(),
         };
 
@@ -70393,6 +70447,7 @@ tasks:
                 exit_code: None,
                 readiness: None,
             }),
+            fulfilled_toolchains: Vec::new(),
             host_service_cleanup: Vec::new(),
         };
 
@@ -72853,6 +72908,110 @@ workflows:
                 .any(|action| action.contains("package managers `pnpm@10.32.1`")),
             "{actions:?}"
         );
+    }
+
+    #[test]
+    fn up_preview_treats_run_path_toolchain_fulfillment_as_resolvable() {
+        let contract = parse_contract_str(
+            Path::new("./ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: container
+  lifecycle: persistent
+  backends:
+    container:
+      image: rust:1.95-bookworm
+toolchains:
+  rust:
+    provider: rustup
+    version: "1.95.0"
+    components:
+      - rustfmt
+    fulfillment: run
+tasks:
+  setup:
+    run: cargo fetch
+    requirements:
+      toolchains:
+        - rust
+"#,
+        )
+        .expect("contract should parse");
+
+        let report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding::identified(
+                "OTA_TOOLCHAIN_COMPONENT_MISSING",
+                "environment",
+                "host",
+                FindingSeverity::Error,
+                "Missing toolchain component: rust.rustfmt",
+                "ota inspected toolchain `rust` through `rustup`, but component `rustfmt` is not installed",
+                "run `rustup component add rustfmt` and rerun `ota doctor --mode container --lifecycle ephemeral`",
+            )],
+        };
+
+        let preview = super::build_up_preview(
+            &contract,
+            Path::new("./ota.yaml"),
+            ExecutionOverrides {
+                backend: Some(Backend::Container),
+                ..ExecutionOverrides::default()
+            },
+            None,
+            super::UpRunBehaviorPreference::Auto,
+            &report,
+        );
+
+        assert_eq!(preview.summary.verdict, DoctorVerdict::Risky);
+        assert!(preview.blockers.is_empty(), "{:?}", preview.blockers);
+        assert!(preview.plan.actions.iter().any(|action| action.contains(
+            "check toolchain `rust` via `rustup`"
+        )));
+    }
+
+    #[test]
+    fn suppress_post_up_findings_treats_fulfilled_toolchain_run_targets_as_resolved() {
+        let mut report = DoctorReport {
+            ok: false,
+            provisioning: None,
+            adapter_bootstrap: None,
+            execution_target: None,
+            findings: vec![Finding::identified(
+                "OTA_TOOLCHAIN_COMPONENT_MISSING",
+                "environment",
+                "host",
+                FindingSeverity::Error,
+                "Missing toolchain component: rust.rustfmt",
+                "ota inspected toolchain `rust` through `rustup`, but component `rustfmt` is not installed",
+                "run `rustup component add rustfmt` and rerun `ota doctor --mode container --lifecycle ephemeral`",
+            )],
+        };
+
+        super::suppress_post_up_resolved_error_findings(
+            &mut report,
+            &[],
+            &[],
+            &[ToolchainFulfillmentEvidence {
+                name: String::from("rust"),
+                commands: vec![String::from(
+                    "rustup toolchain install 1.95.0 --profile minimal --component rustfmt",
+                )],
+            }],
+            &[super::ToolchainRunFulfillmentTarget {
+                toolchain_name: String::from("rust"),
+                target_os: String::from("linux"),
+            }],
+        );
+
+        assert!(report.ok);
+        assert!(report.findings.is_empty(), "{:?}", report.findings);
     }
 
     #[test]
@@ -91674,6 +91833,7 @@ struct CommandRunResult {
     target: Option<String>,
     runtime: Option<ResolvedTaskRuntime>,
     service_termination: Option<ServiceTermination>,
+    fulfilled_toolchains: Vec<ToolchainFulfillmentEvidence>,
     host_service_cleanup: Vec<crate::runner::HostServiceCleanupEvidence>,
 }
 
@@ -93707,6 +93867,7 @@ fn acquire_workspace_repo(
             target: None,
             runtime: None,
             service_termination: None,
+            fulfilled_toolchains: Vec::new(),
             host_service_cleanup: Vec::new(),
         });
     }
@@ -93746,6 +93907,7 @@ fn acquire_workspace_repo(
             target: None,
             runtime: None,
             service_termination: None,
+            fulfilled_toolchains: Vec::new(),
             host_service_cleanup: Vec::new(),
         });
     }
@@ -93769,6 +93931,7 @@ fn acquire_workspace_repo(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                fulfilled_toolchains: Vec::new(),
                 host_service_cleanup: Vec::new(),
             });
         }
@@ -93782,6 +93945,7 @@ fn acquire_workspace_repo(
         target: None,
         runtime: None,
         service_termination: None,
+        fulfilled_toolchains: Vec::new(),
         host_service_cleanup: Vec::new(),
     })
 }
@@ -93808,6 +93972,7 @@ fn run_git_command(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                fulfilled_toolchains: Vec::new(),
                 host_service_cleanup: Vec::new(),
             })
         }
@@ -93821,6 +93986,7 @@ fn run_git_command(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                fulfilled_toolchains: Vec::new(),
                 host_service_cleanup: Vec::new(),
             })
         }
@@ -94607,6 +94773,68 @@ fn selected_up_toolchain_preview_actions(
     }
 
     actions
+}
+
+fn selected_up_toolchain_run_fulfillment_targets(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    fallback_backend: Backend,
+) -> Vec<ToolchainRunFulfillmentTarget> {
+    let task_names = contract.selected_workflow_task_closure_names(workflow_name);
+    let mut targets = BTreeSet::new();
+
+    if task_names.is_empty() {
+        let target_os = requirement_target_os_for_backend(fallback_backend);
+        for toolchain_name in contract.selected_workflow_required_toolchain_names(workflow_name) {
+            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                continue;
+            };
+            if toolchain.fulfillment_mode() != crate::schema::ToolchainFulfillmentMode::Run
+                || !toolchain.active_for_os(target_os)
+            {
+                continue;
+            }
+            targets.insert(ToolchainRunFulfillmentTarget {
+                toolchain_name,
+                target_os: target_os.to_string(),
+            });
+        }
+        return targets.into_iter().collect();
+    }
+
+    for task_name in task_names {
+        let task_name = task_name.as_str();
+        let target_os = requirement_target_os_for_backend(
+            effective_task_execution(contract, task_name, overrides).backend,
+        );
+        let mut toolchain_names =
+            selected_task_scoped_toolchain_names(contract, task_name, overrides)
+                .into_iter()
+                .collect::<Vec<_>>();
+        if toolchain_names.is_empty() {
+            toolchain_names = contract
+                .task_required_toolchain_names(task_name)
+                .into_iter()
+                .collect::<Vec<_>>();
+        }
+        for toolchain_name in toolchain_names {
+            let Some(toolchain) = contract.toolchains.get(toolchain_name.as_str()) else {
+                continue;
+            };
+            if toolchain.fulfillment_mode() != crate::schema::ToolchainFulfillmentMode::Run
+                || !toolchain.active_for_os(target_os)
+            {
+                continue;
+            }
+            targets.insert(ToolchainRunFulfillmentTarget {
+                toolchain_name,
+                target_os: target_os.to_string(),
+            });
+        }
+    }
+
+    targets.into_iter().collect()
 }
 
 fn selected_up_native_activation_actions(
@@ -95435,6 +95663,8 @@ fn build_up_preview(
         selected_up_activation_actions(contract, overrides, workflow_name, preflight);
     let toolchain_actions =
         selected_up_toolchain_preview_actions(contract, overrides, workflow_name, backend);
+    let toolchain_fulfillment_targets =
+        selected_up_toolchain_run_fulfillment_targets(contract, overrides, workflow_name, backend);
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
@@ -95497,13 +95727,25 @@ fn build_up_preview(
 
     plan.actions.push(String::from("re-check repo readiness"));
 
-    RepoUpPreview {
-        summary: doctor_preview_summary_for_resolution(
-            preflight,
-            crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
+    let mut summary = doctor_preview_summary_for_resolution(
+        preflight,
+        crate::workspace::agent_verdict_from_agent(contract.agent.as_ref()),
+        &selected_actions,
+        &activation_actions,
+    );
+    if matches!(summary.verdict, DoctorVerdict::NotReady)
+        && preview_errors_are_fully_resolvable_with_toolchain_fulfillment(
+            &preflight.findings,
             &selected_actions,
             &activation_actions,
-        ),
+            &toolchain_fulfillment_targets,
+        )
+    {
+        summary.verdict = DoctorVerdict::Risky;
+    }
+
+    RepoUpPreview {
+        summary,
         contract_identity: repo_contract_identity(contract),
         execution: UpPreviewExecution {
             backend: format_backend(backend).to_string(),
@@ -95525,6 +95767,9 @@ fn build_up_preview(
                     && !selected_actions
                         .iter()
                         .any(|action| finding_targets_provisioning_action(finding, action))
+                    && !toolchain_fulfillment_targets
+                        .iter()
+                        .any(|target| finding_targets_toolchain_run_fulfillment(finding, target))
             })
             .cloned()
             .collect(),
@@ -95609,6 +95854,7 @@ fn run_up_task(
             target: outcome.target,
             runtime: outcome.runtime,
             service_termination: outcome.service_termination,
+            fulfilled_toolchains: outcome.fulfilled_toolchains,
             host_service_cleanup: outcome.host_service_cleanup,
         })
         .map_err(|error| error),
@@ -95628,6 +95874,7 @@ fn run_up_task(
             target: outcome.target,
             runtime: outcome.runtime,
             service_termination: outcome.service_termination,
+            fulfilled_toolchains: outcome.fulfilled_toolchains,
             host_service_cleanup: outcome.host_service_cleanup,
         })
         .map_err(|error| error),
@@ -95846,6 +96093,7 @@ fn run_up_task_detached_until_ready(
             target: None,
             runtime: None,
             service_termination: None,
+            fulfilled_toolchains: Vec::new(),
             host_service_cleanup: Vec::new(),
         });
     }
@@ -95890,6 +96138,7 @@ fn run_up_task_detached_until_ready(
         target: None,
         runtime: None,
         service_termination: None,
+        fulfilled_toolchains: Vec::new(),
         host_service_cleanup: Vec::new(),
     })
 }
@@ -97306,6 +97555,7 @@ fn run_activation_action(
                     target: None,
                     runtime: None,
                     service_termination: None,
+                    fulfilled_toolchains: Vec::new(),
                     host_service_cleanup: Vec::new(),
                 });
             }
@@ -97352,6 +97602,7 @@ fn run_corepack_activation_action(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                fulfilled_toolchains: Vec::new(),
                 host_service_cleanup: Vec::new(),
             });
         }
@@ -97375,6 +97626,7 @@ fn run_corepack_activation_action(
             target: None,
             runtime: None,
             service_termination: None,
+            fulfilled_toolchains: Vec::new(),
             host_service_cleanup: Vec::new(),
         });
     }
@@ -97406,6 +97658,7 @@ fn run_corepack_activation_action(
         target: None,
         runtime: None,
         service_termination: None,
+        fulfilled_toolchains: Vec::new(),
         host_service_cleanup: Vec::new(),
     })
 }
@@ -97493,6 +97746,7 @@ fn run_process_command(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                fulfilled_toolchains: Vec::new(),
                 host_service_cleanup: Vec::new(),
             },
             Err(error) => command_spawn_failure_result(&command_label, error),
@@ -97507,6 +97761,7 @@ fn run_process_command(
                     target: None,
                     runtime: None,
                     service_termination: None,
+                    fulfilled_toolchains: Vec::new(),
                     host_service_cleanup: Vec::new(),
                 },
                 Err(error) => command_spawn_failure_result(&command_label, error),
@@ -97536,6 +97791,7 @@ fn command_spawn_failure_result(command_label: &str, error: io::Error) -> Comman
         target: None,
         runtime: None,
         service_termination: None,
+        fulfilled_toolchains: Vec::new(),
         host_service_cleanup: Vec::new(),
     }
 }
@@ -97756,6 +98012,7 @@ fn execute_repo_up_with_behavior(
     let mut setup_runtime: Option<ResolvedTaskRuntime> = None;
     let mut run_runtime: Option<ResolvedTaskRuntime> = None;
     let mut executed_task_names = BTreeSet::<String>::new();
+    let mut fulfilled_toolchains = Vec::<ToolchainFulfillmentEvidence>::new();
     let provisioning_output_mode = match mode {
         RepoExecutionMode::Capture => ProvisioningOutputMode::Capture,
         RepoExecutionMode::Stream => ProvisioningOutputMode::StreamAndCapture,
@@ -97972,6 +98229,15 @@ fn execute_repo_up_with_behavior(
 
     let provisioning_actions =
         selected_up_provisioning_actions(contract, overrides, workflow_name, &preflight);
+    let fallback_backend = selected_up_primary_task_name(contract, workflow_name)
+        .map(|task_name| effective_task_execution(contract, task_name, overrides).backend)
+        .unwrap_or_else(|| effective_execution(contract, overrides).0);
+    let toolchain_fulfillment_targets = selected_up_toolchain_run_fulfillment_targets(
+        contract,
+        overrides,
+        workflow_name,
+        fallback_backend,
+    );
     if !provisioning_actions.is_empty() {
         let provisioning_request = crate::policy_pack::ProvisioningBackendRequest {
             actions: provisioning_actions.clone(),
@@ -98497,10 +98763,11 @@ fn execute_repo_up_with_behavior(
         && setup_task.is_none()
         && prepare_task.is_none()
         && prepare_action.is_none()
-        && !preview_errors_are_fully_resolvable(
+        && !preview_errors_are_fully_resolvable_with_toolchain_fulfillment(
             &preflight.findings,
             &provisioning_actions,
             &activation_actions,
+            &toolchain_fulfillment_targets,
         )
     {
         return Ok(RepoUpResult {
@@ -98642,10 +98909,11 @@ fn execute_repo_up_with_behavior(
                 );
                 if !preflight.ok
                     && setup_task.is_none()
-                    && !preview_errors_are_fully_resolvable(
+                    && !preview_errors_are_fully_resolvable_with_toolchain_fulfillment(
                         &preflight.findings,
                         &provisioning_actions,
                         &activation_actions,
+                        &toolchain_fulfillment_targets,
                     )
                 {
                     return Ok(RepoUpResult {
@@ -98760,10 +99028,11 @@ fn execute_repo_up_with_behavior(
                 );
                 if !preflight.ok
                     && setup_task.is_none()
-                    && !preview_errors_are_fully_resolvable(
+                    && !preview_errors_are_fully_resolvable_with_toolchain_fulfillment(
                         &preflight.findings,
                         &provisioning_actions,
                         &activation_actions,
+                        &toolchain_fulfillment_targets,
                     )
                 {
                     return Ok(RepoUpResult {
@@ -98902,6 +99171,7 @@ fn execute_repo_up_with_behavior(
                 stderr.push_str(&outcome.stderr);
                 setup_runtime = outcome.runtime;
                 executed_task_names.extend(outcome.executed_tasks);
+                fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
                 if !preflight.ok {
                     let refreshed = diagnose_preconditions_with_mode_for_workflow_with_overrides(
                         contract,
@@ -98911,10 +99181,11 @@ fn execute_repo_up_with_behavior(
                         overrides,
                     );
                     if !refreshed.ok
-                        && !preview_errors_are_fully_resolvable(
+                        && !preview_errors_are_fully_resolvable_with_toolchain_fulfillment(
                             &refreshed.findings,
                             &provisioning_actions,
                             &activation_actions,
+                            &toolchain_fulfillment_targets,
                         )
                     {
                         return Ok(RepoUpResult {
@@ -99105,6 +99376,7 @@ fn execute_repo_up_with_behavior(
                 stderr.push_str(&outcome.stderr);
                 run_runtime = outcome.runtime;
                 executed_task_names.extend(outcome.executed_tasks);
+                fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
             }
             Err(error) => {
                 if let Some(blocked_result) = up_backend_fulfillment_blocked_result(
@@ -99184,6 +99456,8 @@ fn execute_repo_up_with_behavior(
         &mut report,
         &provisioning_actions,
         &activation_actions,
+        &fulfilled_toolchains,
+        &toolchain_fulfillment_targets,
     );
     if report.ok
         && matches!(run_behavior_preference, UpRunBehaviorPreference::Attach)
@@ -99205,6 +99479,7 @@ fn execute_repo_up_with_behavior(
                 stdout.push_str(&outcome.stdout);
                 stderr.push_str(&outcome.stderr);
                 executed_task_names.extend(outcome.executed_tasks);
+                fulfilled_toolchains.extend(outcome.fulfilled_toolchains);
             }
             Ok(outcome) => {
                 stdout.push_str(&outcome.stdout);
@@ -99301,6 +99576,7 @@ fn execute_repo_up_with_behavior(
         workflow_name,
         Some(&executed_task_names),
     );
+    apply_toolchain_fulfillment_evidence(&mut receipt.toolchains, &fulfilled_toolchains);
     receipt.workloads = workloads;
     Ok(RepoUpResult {
         ok: report.ok,
@@ -101662,6 +101938,7 @@ fn run_workspace_repo_refresh_command(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                fulfilled_toolchains: Vec::new(),
                 host_service_cleanup: Vec::new(),
             });
         }
@@ -101680,6 +101957,7 @@ fn run_workspace_repo_refresh_command(
             target: None,
             runtime: None,
             service_termination: None,
+            fulfilled_toolchains: Vec::new(),
             host_service_cleanup: Vec::new(),
         });
     }
@@ -102198,6 +102476,7 @@ fn run_workspace_repo_task(
                         target: result.target,
                         runtime: result.runtime,
                         service_termination: result.service_termination,
+                        fulfilled_toolchains: result.fulfilled_toolchains,
                         host_service_cleanup: result.host_service_cleanup,
                     })
                 }
@@ -102221,6 +102500,7 @@ fn run_workspace_repo_task(
                         target: result.target,
                         runtime: result.runtime,
                         service_termination: result.service_termination,
+                        fulfilled_toolchains: result.fulfilled_toolchains,
                         host_service_cleanup: result.host_service_cleanup,
                     })
                 }
@@ -102862,6 +103142,7 @@ fn run_shell_command(
                     target: None,
                     runtime: None,
                     service_termination: None,
+                    fulfilled_toolchains: Vec::new(),
                     host_service_cleanup: Vec::new(),
                 })
                 .map_err(|error| format!("failed to execute `{command}`: {error}"))
@@ -102881,6 +103162,7 @@ fn run_shell_command(
                 target: None,
                 runtime: None,
                 service_termination: None,
+                fulfilled_toolchains: Vec::new(),
                 host_service_cleanup: Vec::new(),
             })
             .map_err(|error| format!("failed to execute `{command}`: {error}")),

@@ -1,0 +1,462 @@
+{
+  "agent": {
+    "bootstrap": {
+      "ota": {
+        "note": "Only install ota if it is missing and installation is approved.",
+        "source": {
+          "kind": "git_rev",
+          "rev": "582d0181c27ca3bee6589edba3aa4dfabb640f98"
+        }
+      }
+    },
+    "default_task": "ci",
+    "entrypoint": "setup",
+    "notes": "Treat Ota as the default workflow, the way npm is the default in Node repos.\nUse `ota validate` to verify the contract.\nUse `ota doctor` to inspect readiness and agent guidance.\nUse `ota tasks` to discover runnable repo actions.\nWhen a repo already exposes a matching safe task, prefer `ota run <task>` over raw package-manager or language-tool commands.\nFall back to direct commands only when no truthful Ota task exists or when isolating an Ota defect.\nUse `ota run setup` to prepare the repo.\nUse `ota run contract:validate` to self-host the contract validator against this checkout.\nUse `ota run ci` to run the canonical verification path.\nPrefer narrow changes with regression tests.\nKeep public docs and contracts aligned with implementation.\n",
+    "posture": "readiness_strict",
+    "protected_paths": [
+      "Cargo.lock",
+      "ota.yaml",
+      "LICENSE"
+    ],
+    "safe_tasks": [
+      "setup",
+      "build",
+      "fmt",
+      "check",
+      "test",
+      "ci",
+      "contract:validate",
+      "doctor-annotations"
+    ],
+    "verify_after_changes": [
+      "fmt",
+      "check",
+      "test",
+      "ci"
+    ],
+    "writable_paths": [
+      "src",
+      "docs",
+      "README.md",
+      "scripts",
+      "tests",
+      "CHANGELOG.md",
+      "Cargo.toml"
+    ]
+  },
+  "checks": [
+    {
+      "expect": "file",
+      "kind": "file",
+      "name": "repository-readme",
+      "path": "README.md",
+      "severity": "info"
+    }
+  ],
+  "env": {
+    "vars": {
+      "PATH": {
+        "prepend": [
+          "/usr/local/cargo/bin",
+          "/usr/local/rustup/bin"
+        ]
+      }
+    }
+  },
+  "execution": {
+    "backends": {
+      "container": {
+        "engines": [
+          "docker",
+          "podman"
+        ],
+        "image": "rust:1.95-bookworm"
+      }
+    },
+    "lifecycle": "persistent",
+    "preferred": "container",
+    "supported": [
+      "native",
+      "container"
+    ]
+  },
+  "metadata": {
+    "owner": "ota",
+    "repo_class": "open-core",
+    "team": "Engineering"
+  },
+  "project": {
+    "description": "Ota CLI and Contract Engine",
+    "name": "ota",
+    "type": "application"
+  },
+  "tasks": {
+    "build": {
+      "category": "build",
+      "depends_on": [
+        "setup"
+      ],
+      "description": "Compile the CLI",
+      "notes": "Use this when you want to confirm the crate still builds after code changes.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "run": "cargo build",
+      "safe_for_agent": true
+    },
+    "bump:version": {
+      "category": "release",
+      "depends_on": [
+        "ci"
+      ],
+      "description": "Bump the repo release version surfaces",
+      "inputs": {
+        "version": {
+          "description": "Release bump selector (`patch`, `minor`, `major`) or explicit semver version",
+          "required": true
+        }
+      },
+      "notes": "Use this through `ota run bump:version --version <patch|minor|major>` when preparing\na release and you need to update Cargo.toml, CHANGELOG.md, and the readiness workflow\npin consistently.\n",
+      "script": "./scripts/bump-version.sh\n"
+    },
+    "check": {
+      "category": "test",
+      "depends_on": [
+        "setup"
+      ],
+      "description": "Type-check the crate",
+      "notes": "Use this for a fast compiler-only verification pass without running tests.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "run": "cargo check",
+      "safe_for_agent": true
+    },
+    "ci": {
+      "category": "test",
+      "depends_on": [
+        "setup"
+      ],
+      "description": "Run the standard local verification suite",
+      "notes": "Use this as the canonical local pre-commit gate.\nIt matches the light-weight verification path used during development.\nA few process-global tests run in separate cargo invocations so container CI\npreserves coverage without leaking test-local PATH or service state.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "safe_for_agent": true,
+      "script": "set -e\ncargo fmt --check\ncargo check\ncargo test --lib -- --test-threads=1 \\\n  --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready \\\n  --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts \\\n  --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer \\\n  --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target \\\n  --skip runner::tests::restart_ready_activation_restarts_reachable_native_producer\ncargo test up_skips_policy_backed_provisioning_when_doctor_is_ready --lib -- --test-threads=1\ncargo test remote_doctor_mode_probes_tool_versions_through_remote_contexts --lib -- --test-threads=1\ncargo test restart_ready_activation_restarts_reachable --lib -- --test-threads=1\n",
+      "variants": [
+        {
+          "script": "cargo fmt --check\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ncargo check\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ncargo test --lib -- --test-threads=1 --skip cli::tests::up_skips_policy_backed_provisioning_when_doctor_is_ready --skip doctor::tests::remote_doctor_mode_probes_tool_versions_through_remote_contexts --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_host_producer --skip runner::tests::restart_ready_activation_restarts_reachable_backend_provider_topology_target --skip runner::tests::restart_ready_activation_restarts_reachable_native_producer\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ncargo test up_skips_policy_backed_provisioning_when_doctor_is_ready --lib -- --test-threads=1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ncargo test remote_doctor_mode_probes_tool_versions_through_remote_contexts --lib -- --test-threads=1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ncargo test restart_ready_activation_restarts_reachable --lib -- --test-threads=1\n",
+          "when": {
+            "os": "windows"
+          }
+        }
+      ]
+    },
+    "compat": {
+      "category": "test",
+      "depends_on": [
+        "setup"
+      ],
+      "description": "Run the compatibility test gate",
+      "notes": "Use this to validate generated schema/doc publication sync, schema stability, and fixture coverage before release work.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "safe_for_agent": true,
+      "script": "set -e\ncargo run --bin sync_published_contract_schemas\ncargo run --bin sync_published_doc_manifests\ngit diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json docs/spec/published-docs/canonical-docs.json\nCARGO_INCREMENTAL=0 cargo test contract_is_stable\nCARGO_INCREMENTAL=0 cargo test --test json_schema_contracts\nCARGO_INCREMENTAL=0 cargo test --test json_output_conformance\nCARGO_INCREMENTAL=0 cargo test --test examples_validate -- --test-threads=1\nCARGO_INCREMENTAL=0 cargo test --test detect_fixtures\n",
+      "variants": [
+        {
+          "script": "cargo run --bin sync_published_contract_schemas\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ncargo run --bin sync_published_doc_manifests\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ngit diff --exit-code -- docs/spec/json-schemas/contract.json docs/spec/json-schemas/workspace-contract.json docs/spec/published-docs/canonical-docs.json\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\n$env:CARGO_INCREMENTAL = \"0\"\ncargo test contract_is_stable\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ncargo test --test json_schema_contracts\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ncargo test --test json_output_conformance\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ncargo test --test examples_validate -- --test-threads=1\nif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }\ncargo test --test detect_fixtures\n",
+          "when": {
+            "os": "windows"
+          }
+        }
+      ]
+    },
+    "contract:doctor": {
+      "category": "dev",
+      "description": "Show readiness detail after contract validation fails",
+      "notes": "Use this as the failure follow-up for `ota run contract:validate`.\nIt points the operator at concrete readiness findings instead of stopping at a raw validation error.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "run": "cargo run --quiet -- doctor . --plain",
+      "safe_for_agent": true
+    },
+    "contract:tasks": {
+      "category": "dev",
+      "description": "Show the next runnable task surface after contract validation succeeds",
+      "notes": "Use this as the success follow-up for `ota run contract:validate`.\nIt keeps the repo contract self-hosting by pointing straight at the validated task surface.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "run": "cargo run --quiet -- tasks . --use --plain",
+      "safe_for_agent": true
+    },
+    "contract:validate": {
+      "after_failure": [
+        "contract:doctor"
+      ],
+      "after_success": [
+        "contract:tasks"
+      ],
+      "category": "dev",
+      "depends_on": [
+        "setup"
+      ],
+      "description": "Validate the ota repo contract with the current checkout",
+      "notes": "Use this to self-host the contract validator against `./ota.yaml`.\nIt exercises hook follow-ups inside the main repo without touching build artifacts or snapshots.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "run": "cargo run --quiet -- validate ./ota.yaml --plain",
+      "safe_for_agent": true
+    },
+    "dependency-update": {
+      "category": "test",
+      "depends_on": [
+        "setup",
+        "ci"
+      ],
+      "description": "Validate dependency updates with schema/contract tests and lockfile bump tests",
+      "notes": "Use this to validate that dependency updates are safe and deterministic.\nRuns schema/contract validation and a focused test subset for lockfile bumps\nto ensure CI-owned proof independent of local wrapper quirks.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "safe_for_agent": true,
+      "script": "set -e\n# Run schema/contract validation\ncargo run --quiet -- validate ./ota.yaml --plain\n# Run lockfile-specific tests\ncargo test --test real_repo_fixtures -- --test-threads=1 --skip workspace_refresh_pulls_updated_git_sources_on_real_command_path\n"
+    },
+    "docs:manifest:sync": {
+      "category": "dev",
+      "description": "Regenerate the published canonical docs manifest artifact",
+      "notes": "Use this after changing the Rust-owned canonical docs publication surface.\nIt rewrites `docs/spec/published-docs/canonical-docs.json` from the canonical Rust source.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "run": "cargo run --bin sync_published_doc_manifests",
+      "safe_for_agent": true
+    },
+    "doctor-annotations": {
+      "category": "dev",
+      "depends_on": [
+        "setup"
+      ],
+      "description": "Render ota doctor findings for CI or local review",
+      "inputs": {
+        "render_format": {
+          "allowed": [
+            "plain",
+            "github"
+          ],
+          "default": "plain",
+          "description": "Output format for findings rendering"
+        }
+      },
+      "notes": "Use this to turn ota doctor JSON into plain CI output or GitHub annotations.\nIt is the repo-side adapter for hosted validation demos and PR checks.\n",
+      "safe_for_agent": true,
+      "script": "ota doctor --json . | ota annotations --mode doctor --format \"${OTA_INPUT_RENDER_FORMAT}\" --input -\n",
+      "variants": [
+        {
+          "script": "ota doctor --json . | ota annotations --mode doctor --format $env:OTA_INPUT_RENDER_FORMAT --input -\n",
+          "when": {
+            "os": "windows"
+          }
+        }
+      ]
+    },
+    "first-party:sync:check": {
+      "category": "test",
+      "description": "Enforce first-party consumer sync governance for governed surface changes",
+      "notes": "Use this when contract-shape, governance-surface, or canonical-docs ownership files change\nand you need to prove first-party consumer repos such as ota-run/skills or ota-run/ota-site\nwere either synced or explicitly waived.\n",
+      "run": "./scripts/check-first-party-sync.sh",
+      "safe_for_agent": true
+    },
+    "fmt": {
+      "category": "test",
+      "description": "Check Rust formatting",
+      "notes": "Use this before committing to catch formatting drift early.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "run": "cargo fmt --check",
+      "safe_for_agent": true
+    },
+    "install": {
+      "category": "dev",
+      "description": "Reinstall ota from the local workspace",
+      "execution": {
+        "default_mode": "native"
+      },
+      "notes": "Use this after local changes when you want the installed ota binary to point at this checkout.\n",
+      "run": "./scripts/install.sh --from-source",
+      "variants": [
+        {
+          "run": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install.ps1 -FromSource",
+          "when": {
+            "os": "windows"
+          }
+        }
+      ]
+    },
+    "install:from:source": {
+      "category": "dev",
+      "description": "Reinstall ota from the local workspace source",
+      "execution": {
+        "default_mode": "native"
+      },
+      "notes": "Use this when you want a task name that makes the source-based reinstall path explicit.\n",
+      "run": "./scripts/install.sh --from-source",
+      "variants": [
+        {
+          "run": "powershell -ExecutionPolicy Bypass -File .\\scripts\\install.ps1 -FromSource",
+          "when": {
+            "os": "windows"
+          }
+        }
+      ]
+    },
+    "release-gate": {
+      "category": "test",
+      "depends_on": [
+        "ci",
+        "compat",
+        "first-party:sync:check",
+        "dependency-update"
+      ],
+      "description": "Run the GitHub Actions verification suite",
+      "notes": "Use this to verify the repo against the release gate checks that run in GitHub Actions.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "safe_for_agent": true,
+      "script": "set -e\nif [ \"$OSTYPE\" != \"msys\" ] && [ \"$OSTYPE\" != \"win32\" ]; then\n  cargo test --test real_repo_fixtures -- --test-threads=1\n  cargo test --test examples_validate -- --test-threads=1\nelse\n  echo \"Skipping integration tests on Windows\"\nfi\n",
+      "variants": [
+        {
+          "script": "echo Skipping integration tests on Windows\n",
+          "when": {
+            "os": "windows"
+          }
+        }
+      ]
+    },
+    "schemas:sync": {
+      "category": "dev",
+      "description": "Regenerate the published repo and workspace contract schema artifacts",
+      "notes": "Use this after changing the Rust-owned published contract schema generator.\nIt rewrites `docs/spec/json-schemas/contract.json` and\n`docs/spec/json-schemas/workspace-contract.json` from the canonical Rust source.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "run": "cargo run --bin sync_published_contract_schemas",
+      "safe_for_agent": true
+    },
+    "setup": {
+      "category": "setup",
+      "description": "Prepare the Rust toolchain and fetch dependencies",
+      "internal": true,
+      "notes": "Use this as the first step in a fresh checkout or after dependency changes.\nOta fulfills the declared Rust toolchain on the selected execution path, then\nprepares the workspace without compiling the crate.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "run": "cargo fetch",
+      "safe_for_agent": true
+    },
+    "skills:sync:check": {
+      "category": "test",
+      "description": "Compatibility alias for the first-party consumer sync governance check",
+      "notes": "Prefer `first-party:sync:check`. This alias keeps older maintainer flows working while the\ngovernance surface widens beyond ota-run/skills alone.\n",
+      "run": "./scripts/check-skills-sync.sh",
+      "safe_for_agent": true
+    },
+    "test": {
+      "category": "test",
+      "depends_on": [
+        "setup"
+      ],
+      "description": "Run the Rust test suite",
+      "notes": "Use this when you want the full unit and integration test coverage.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "run": "cargo test",
+      "safe_for_agent": true
+    },
+    "ux-review": {
+      "category": "test",
+      "depends_on": [
+        "setup"
+      ],
+      "description": "Run the premium CLI UX review suite",
+      "notes": "Use this after changing help text, human-readable command output, or docs that promise\nspecific CLI presentation. It keeps the premium snapshot-backed text surfaces honest.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "safe_for_agent": true,
+      "script": "cargo test snapshot_is_stable -- --test-threads=1\n"
+    },
+    "ux:refresh": {
+      "category": "test",
+      "depends_on": [
+        "setup"
+      ],
+      "description": "Refresh premium CLI UX snapshots",
+      "inputs": {
+        "test_threads": {
+          "default": "1",
+          "description": "Test threads for snapshot refresh (default 1)"
+        }
+      },
+      "notes": "Use this when snapshot-backed output intentionally changes. It updates snapshots before\nrerunning `ota run ux-review`.\n",
+      "requirements": {
+        "toolchains": [
+          "rust"
+        ]
+      },
+      "safe_for_agent": true,
+      "script": "OTA_UPDATE_SNAPSHOTS=1 cargo test snapshot_is_stable -- --test-threads=${OTA_INPUT_TEST_THREADS}\n"
+    }
+  },
+  "toolchains": {
+    "rust": {
+      "components": [
+        "rustfmt"
+      ],
+      "fulfillment": {
+        "mode": "run"
+      },
+      "required": true,
+      "version": "1.95.0"
+    }
+  },
+  "version": 1
+}

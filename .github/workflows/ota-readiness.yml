@@ -63,14 +63,9 @@ jobs:
         with:
           source: contract
       - name: Prepare ota repo readiness path
-        run: ota up --mode container .
-      - name: Publish ota readiness
-        uses: ota-run/action@v1
+        run: ota up --mode container --json . > ota-readiness.json
+      - name: Upload ota readiness artifact
+        uses: actions/upload-artifact@v4
         with:
-          command: receipt
-          path: .
-          install: never
-          execution-mode: container
-          archive: true
-          artifact-name: ota-readiness
-          github-token: ${{ github.token }}
+          name: ota-readiness
+          path: ota-readiness.json
