@@ -54106,7 +54106,10 @@ tasks:
 "#,
         );
         let _docker = install_fake_docker_on_path(fixture.dir.path());
-        fixture.write("package.json", "{\"name\":\"flowise\",\"version\":\"1.0.0\"}\n");
+        fixture.write(
+            "package.json",
+            "{\"name\":\"flowise\",\"version\":\"1.0.0\"}\n",
+        );
         let bin_dir = fixture.dir.path().join("bin");
         let pnpm_log = fixture.dir.path().join("pnpm.log");
         let pnpm_path = bin_dir.join("pnpm");
