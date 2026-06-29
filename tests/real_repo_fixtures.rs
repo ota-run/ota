@@ -517,8 +517,9 @@ project:
 tasks:
   setup:
     command:
-      exe: true
-      args: []
+      exe: git
+      args:
+        - --version
 "#,
     )
     .unwrap();
@@ -564,8 +565,9 @@ project:
 tasks:
   setup:
     command:
-      exe: true
-      args: []
+      exe: git
+      args:
+        - --version
 "#,
     )
     .unwrap();
@@ -681,8 +683,9 @@ project:
 tasks:
   setup:
     command:
-      exe: true
-      args: []
+      exe: git
+      args:
+        - --version
 "#,
     )
     .unwrap();
@@ -782,8 +785,9 @@ project:
 tasks:
   setup:
     command:
-      exe: true
-      args: []
+      exe: git
+      args:
+        - --version
 "#,
     )
     .unwrap();
