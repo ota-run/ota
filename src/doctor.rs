@@ -13147,8 +13147,6 @@ mod tests {
     };
     use crate::runner::{ExecutionOverrides, HttpReadinessRequest};
     use crate::schema::{ServiceSpec, ToolchainFulfillmentSource};
-    #[cfg(windows)]
-    use crate::test_support::cwd_mutex_lock;
     use crate::test_support::{cwd_mutex_lock, env_mutex_lock};
     use tempfile::TempDir;
 
@@ -16111,7 +16109,7 @@ workflows:
     }
 
     #[test]
-    fn doctor_surfaces_corepack_activation_for_selected_workflow_tools() {
+    fn doctor_scopes_selected_workflow_with_corepack_fulfillment() {
         let _guard = env_mutex_lock();
         let fixture = TempDir::new().unwrap();
         let bin_dir = fixture.path().join("bin");
@@ -16200,11 +16198,9 @@ workflows:
         }
 
         assert!(
-            report.findings.iter().any(|finding| {
-                finding.summary.contains("pnpm")
-                    && finding
-                        .next
-                        .contains("install pnpm and make it available on PATH")
+            report.findings.iter().all(|finding| {
+                !finding.summary.contains("pnpm")
+                    && !finding.summary.contains("corepack")
             }),
             "{report:?}"
         );
@@ -21351,9 +21347,6 @@ execution:
   contexts:
     host:
       backend: native
-      requirements:
-        tools:
-          maven: "*"
 tasks:
   setup:
     context: host
@@ -21361,6 +21354,9 @@ tasks:
       exe: mvn
       args:
         - test
+    requirements:
+      tools:
+        maven: "*"
 workflows:
   default: app
   app:
