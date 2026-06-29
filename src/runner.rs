@@ -40554,7 +40554,7 @@ project:
   name: ota
 tasks:
   dev:
-    run: nohup python3 -m http.server {port} --bind 127.0.0.1 >/dev/null 2>&1 & echo $! > detached.pid; sleep 2
+    run: nohup python3 -c "import os, socketserver, http.server, time; time.sleep(3); server=socketserver.TCPServer(('127.0.0.1',{port}), http.server.SimpleHTTPRequestHandler); open('detached.pid', 'w').write(str(os.getpid())); server.serve_forever()" >/dev/null 2>&1 &
     runtime:
       kind: service
       listeners:
