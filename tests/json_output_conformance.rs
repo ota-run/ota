@@ -348,7 +348,13 @@ checks:
 tasks:
   setup:
     context: host
-    run: echo setup-ready
+    command:
+      exe: echo
+      args:
+        - setup-ready
+    requirements:
+      checks:
+        - required-tool
 workflows:
   default: app
   app:
