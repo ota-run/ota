@@ -63741,7 +63741,13 @@ workflows:
             },
         }];
 
-        super::suppress_post_up_resolved_error_findings(&mut report, &[], &activation_actions, &[], &[]);
+        super::suppress_post_up_resolved_error_findings(
+            &mut report,
+            &[],
+            &activation_actions,
+            &[],
+            &[],
+        );
 
         assert!(report.ok);
         assert!(report.findings.is_empty(), "{report:?}");
@@ -72971,9 +72977,13 @@ tasks:
 
         assert_eq!(preview.summary.verdict, DoctorVerdict::Risky);
         assert!(preview.blockers.is_empty(), "{:?}", preview.blockers);
-        assert!(preview.plan.actions.iter().any(|action| action.contains(
-            "check toolchain `rust` via `rustup`"
-        )));
+        assert!(
+            preview
+                .plan
+                .actions
+                .iter()
+                .any(|action| action.contains("check toolchain `rust` via `rustup`"))
+        );
     }
 
     #[test]
