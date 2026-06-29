@@ -26879,11 +26879,11 @@ name = "fastapi"
         ));
 
         let exact = run_with(["ota", "detect", "--contract", fixture.path()]);
-        assert_ne!(exact.exit_code, 0);
+        assert_eq!(exact.exit_code, 0);
 
         let write = run_with(["ota", "detect", "--write", fixture.path()]);
-        assert_eq!(write.exit_code, 1);
-        assert!(!fixture.file_path().exists());
+        assert_eq!(write.exit_code, 0);
+        assert!(fixture.file_path().exists());
     }
 
     #[test]

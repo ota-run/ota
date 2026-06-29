@@ -26,6 +26,9 @@
 
 ## Unreleased
 
+
+## 1.6.22
+
 - improved workspace command observability for JSON usage: `ota workspace doctor`,
   `ota workspace check`, `ota workspace status`, `ota workspace receipt`,
   `ota workspace diff`, `ota workspace run`, `ota workspace up`, and

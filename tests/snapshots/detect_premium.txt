@@ -80,7 +80,7 @@ agent:
       note: Only install ota if it is missing and installation is approved.
       source:
         kind: version
-        version: v1.6.22
+        version: v1.6.24
   notes: |
     Review `agent.writable_paths` and `agent.protected_paths`, then set `agent.inferred_boundary.reviewed: true` before letting automation edit this repo.
     Use `ota validate` before changes and `ota doctor` after edits.
