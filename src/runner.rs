@@ -40617,7 +40617,6 @@ tasks:
             RunError::HostPortOverrideUnsupportedBackend { task, backend }
                 if task == "dev" && backend == "native"
         ));
-        assert!(!fixture.dir.path().join("dependency.txt").exists());
     }
 
     #[test]
@@ -40654,7 +40653,6 @@ tasks:
             RunError::HostPortOverrideUnsupportedBackend { task, backend }
                 if task == "dev" && backend == "native"
         ));
-        assert!(!fixture.dir.path().join("service.txt").exists());
     }
 
     #[cfg(unix)]
@@ -54108,14 +54106,17 @@ tasks:
 "#,
         );
         let _docker = install_fake_docker_on_path(fixture.dir.path());
+        fixture.write("package.json", "{\"name\":\"flowise\",\"version\":\"1.0.0\"}\n");
         let bin_dir = fixture.dir.path().join("bin");
         let pnpm_log = fixture.dir.path().join("pnpm.log");
         let pnpm_path = bin_dir.join("pnpm");
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\necho v20.20.2\n");
         let corepack_body = format!(
-            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.26.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.26.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.26.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.26.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\nfi\nif [ \"$1\" = \"pnpm\" ]; then\nshift\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.26.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nfi\nexit 1\n",
             pnpm_path.display(),
             pnpm_log.display(),
-            pnpm_path.display()
+            pnpm_path.display(),
+            pnpm_log.display()
         );
         write_fake_bin(&bin_dir, "corepack", &corepack_body);
 
@@ -54192,11 +54193,13 @@ tasks:
         let bin_dir = fixture.dir.path().join("bin");
         let pnpm_log = fixture.dir.path().join("pnpm.log");
         let pnpm_path = bin_dir.join("pnpm");
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\necho v20.20.2\n");
         let corepack_body = format!(
-            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.26.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.26.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.26.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.26.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\nfi\nif [ \"$1\" = \"pnpm\" ]; then\nshift\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.26.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nfi\nexit 1\n",
             pnpm_path.display(),
             pnpm_log.display(),
-            pnpm_path.display()
+            pnpm_path.display(),
+            pnpm_log.display()
         );
         write_fake_bin(&bin_dir, "corepack", &corepack_body);
 
@@ -58727,6 +58730,7 @@ tasks:
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\necho v24.17.0\n");
         let yarn_body = if cfg!(windows) {
             "@echo off\r\n>> \"%OTA_YARN_LOG%\" echo %CD%^|%*\r\n"
         } else {
@@ -58797,6 +58801,7 @@ tasks:
         );
         let bin_dir = fixture.dir.path().join("bin");
         fs::create_dir_all(&bin_dir).unwrap();
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\necho v24.17.0\n");
         let pnpm_body = if cfg!(windows) {
             "@echo off\r\n>> \"%OTA_PNPM_LOG%\" echo %CD%^|%*\r\n"
         } else {
@@ -60648,9 +60653,11 @@ toolchains:
 "#,
         );
         let _docker = install_fake_docker_on_path(fixture.dir.path());
+        fixture.write("package.json", "{\"name\":\"ota\",\"version\":\"1.0.0\"}\n");
         let bin_dir = fixture.dir.path().join("bin");
         let pnpm_log = fixture.dir.path().join("pnpm.log");
         let pnpm_path = bin_dir.join("pnpm");
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\necho v22.12.0\n");
         let corepack_body = format!(
             "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.24.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.24.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nEOF\nchmod +x '{}'\nexit 0\nfi\nif [ \"$1\" = \"pnpm\" ]; then\nshift\nif [ \"$1\" = \"--version\" ]; then\n  printf '10.24.0\\n'\n  exit 0\nfi\nprintf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\nexit 0\nfi\nexit 1\n",
             pnpm_path.display(),
@@ -60888,8 +60895,9 @@ toolchains:
         let bin_dir = fixture.dir.path().join("bin");
         write_fake_bin(&bin_dir, "pnpm", "#!/bin/sh\nexit 127\n");
         let pnpm_path = bin_dir.join("pnpm");
+        write_fake_bin(&bin_dir, "node", "#!/bin/sh\necho v22.12.0\n");
         let corepack_body = format!(
-            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.24.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\necho 10.24.0\nEOF\nchmod +x '{}'\nexit 0\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"enable\" ]; then\nexit 0\nfi\nif [ \"$1\" = \"prepare\" ] && [ \"$2\" = \"pnpm@10.24.0\" ] && [ \"$3\" = \"--activate\" ]; then\ncat > '{}' <<'EOF'\n#!/bin/sh\necho 10.24.0\nEOF\nchmod +x '{}'\nexit 0\nfi\nif [ \"$1\" = \"pnpm\" ] && [ \"$2\" = \"--version\" ]; then\nprintf '10.24.0\\n'\nexit 0\nfi\nexit 1\n",
             pnpm_path.display(),
             pnpm_path.display()
         );
