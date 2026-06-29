@@ -31,6 +31,10 @@
   `approved_version`, and related optional metadata) now validate against published
   `run-preview.json` / `doctor.json` references instead of failing smoke validation when blocked
   provisioning entries include explicit `null` values
+- fixed selected-backend command executable inference so explicit `command.exe` or
+  `launch.kind: command` values of `where`/`which` are treated as path-lookup utilities (not
+  versioned tool requirements), which prevents false `OTA_TOOL_PROBE_FAILED` blockers in the
+  Windows native proof workflow
 
 
 ## 1.6.22

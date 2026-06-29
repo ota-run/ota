@@ -5371,26 +5371,10 @@ impl TaskSpec {
     ) -> Option<String> {
         let execution = self.resolved_execution_for_backend(backend, os)?;
         if let Some(command) = execution.command() {
-            let exe = command.exe.trim();
-            if exe.is_empty() {
-                return None;
-            }
-            return Some(exe.to_string());
+            return task_command_executable(command);
         }
         if let Some(launch) = execution.launch() {
-            match launch {
-                TaskLaunchSpec::Command(command) => {
-                    let exe = command.exe.trim();
-                    if exe.is_empty() {
-                        return None;
-                    }
-                    return Some(exe.to_string());
-                }
-                TaskLaunchSpec::Compose(compose) => {
-                    return Some(compose.engine.as_str().to_string());
-                }
-                TaskLaunchSpec::Container(_) => return None,
-            }
+            return command_launch_executable(launch);
         }
         execution
             .shell_body()
