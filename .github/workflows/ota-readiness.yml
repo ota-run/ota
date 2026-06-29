@@ -58,13 +58,18 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+      - name: Install ota from contract truth
+        uses: ota-run/setup@v1
+        with:
+          source: contract
+      - name: Prepare ota repo readiness path
+        run: ota up --mode container .
       - name: Publish ota readiness
         uses: ota-run/action@v1
         with:
           command: receipt
           path: .
-          source: contract
-          contract-path: ota.yaml
+          install: never
           execution-mode: container
           archive: true
           artifact-name: ota-readiness
