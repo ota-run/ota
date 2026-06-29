@@ -21335,6 +21335,10 @@ tasks:
     #[test]
     fn preconditions_dedupe_missing_tool_alias_for_owned_requirement() {
         let _guard = env_mutex_lock();
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", "");
+        }
         let contract = parse_contract_str(
             synthetic_contract_path(),
             r#"
@@ -21371,6 +21375,14 @@ workflows:
             DoctorMode::Native,
             Some("app"),
         );
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
         let canonical_missing = report
             .findings
             .iter()
