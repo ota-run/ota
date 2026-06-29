@@ -26,6 +26,12 @@
 
 ## Unreleased
 
+- fixed JSON schema compatibility for provisioning diagnostics so `ota run --dry-run --json`
+  previews that include nullable provisioning fields (`source`, `source_config`,
+  `approved_version`, and related optional metadata) now validate against published
+  `run-preview.json` / `doctor.json` references instead of failing smoke validation when blocked
+  provisioning entries include explicit `null` values
+
 
 ## 1.6.22
 

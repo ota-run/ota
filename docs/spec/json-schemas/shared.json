@@ -164,14 +164,14 @@
         "kind": { "enum": ["runtime", "tool"] },
         "name": { "type": "string" },
         "requested_version": { "type": "string" },
-        "normalized_requirement": { "type": "string" },
-        "resolved_version": { "type": "string" },
-        "package": { "type": "string" },
-        "source": { "type": "string" },
-        "source_config": { "type": "object" },
-        "approved_version": { "type": "string" },
-        "policy_match": { "type": "string" },
-        "blocked_reason": { "type": "string" }
+        "normalized_requirement": { "type": ["string", "null"] },
+        "resolved_version": { "type": ["string", "null"] },
+        "package": { "type": ["string", "null"] },
+        "source": { "type": ["string", "null"] },
+        "source_config": { "type": ["object", "null"] },
+        "approved_version": { "type": ["string", "null"] },
+        "policy_match": { "type": ["string", "null"] },
+        "blocked_reason": { "type": ["string", "null"] }
       }
     },
     "provisioningAction": {
@@ -183,13 +183,13 @@
         "target_kind": { "enum": ["runtime", "tool"] },
         "name": { "type": "string" },
         "requested_version": { "type": "string" },
-        "normalized_requirement": { "type": "string" },
-        "resolved_version": { "type": "string" },
-        "package": { "type": "string" },
+        "normalized_requirement": { "type": ["string", "null"] },
+        "resolved_version": { "type": ["string", "null"] },
+        "package": { "type": ["string", "null"] },
         "source": { "type": "string" },
-        "source_config": { "type": "object" },
-        "approved_version": { "type": "string" },
-        "policy_match": { "type": "string" }
+        "source_config": { "type": ["object", "null"] },
+        "approved_version": { "type": ["string", "null"] },
+        "policy_match": { "type": ["string", "null"] }
       }
     },
     "provisioningPlan": {
