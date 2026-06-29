@@ -11394,7 +11394,10 @@ workflows:
                 assert_eq!(json["mode"], "snapshot");
                 assert_eq!(json["source"], "latest");
                 assert_eq!(json["selection_kind"], "receipt_archive");
-                assert_eq!(json["archive_path"], archive_path.to_string_lossy().as_ref());
+                assert_eq!(
+                    compact_path_separator_style(json["archive_path"].as_str().unwrap()),
+                    compact_path_separator_style(&archive_path.to_string_lossy())
+                );
                 assert!(json["snapshot_hash"].as_str().unwrap().starts_with("sha256:"));
             })
             .expect("spawn receipt snapshot lineage fallback worker");
