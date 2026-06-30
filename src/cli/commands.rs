@@ -18060,7 +18060,7 @@ fn doctor_invalid_contract_next_steps(contract_path: &Path) -> Vec<String> {
 }
 
 const DOCTOR_FIX_ACTION_OTA_STATE_GITIGNORE: &str = "repo_gitignore_ota_state";
-const DOCTOR_FIXABLE_OTA_STATE_GITIGNORE_CODE: &str = "OTA_REPO_HYGIENE_OTA_STATE_GITIGNORE";
+const DOCTOR_FIX_ACTION_TOOL_ACTIVATION_PREFIX: &str = "tool_activation:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DoctorFixFileChange {
@@ -18198,12 +18198,10 @@ fn doctor_fix_change_label(change: DoctorFixFileChange) -> &'static str {
     }
 }
 
-fn doctor_fixable_finding_count(report: &DoctorReport) -> usize {
-    report
-        .findings
-        .iter()
-        .filter(|finding| finding.code() == DOCTOR_FIXABLE_OTA_STATE_GITIGNORE_CODE)
-        .count()
+#[derive(Debug, Clone)]
+struct DoctorFixRunOutcome {
+    summary: DoctorFixSummary,
+    applied_changes: bool,
 }
 
 fn contractless_doctor_fix_summary(dry_run: bool) -> DoctorFixSummary {
@@ -18222,10 +18220,14 @@ fn contractless_doctor_fix_summary(dry_run: bool) -> DoctorFixSummary {
 }
 
 fn run_doctor_fix(
+    contract: &Contract,
     report: &DoctorReport,
+    workflow_name: Option<&str>,
+    mode: DoctorMode,
+    overrides: ExecutionOverrides,
     repo_root: &Path,
     dry_run: bool,
-) -> Result<DoctorFixSummary, String> {
+) -> Result<DoctorFixRunOutcome, String> {
     let mut summary = DoctorFixSummary {
         requested: true,
         dry_run,
@@ -18236,10 +18238,7 @@ fn run_doctor_fix(
         actions: Vec::new(),
         errors: Vec::new(),
     };
-
-    if doctor_fixable_finding_count(report) == 0 {
-        return Ok(summary);
-    }
+    let mut applied_changes = false;
 
     let action = plan_ota_state_gitignore_fix(repo_root)?;
     if let Some(action) = action {
@@ -18248,20 +18247,25 @@ fn run_doctor_fix(
         if dry_run {
             summary.actions.push(DoctorFixActionSummary {
                 key: action.key.to_string(),
+                kind: String::from("repo_hygiene"),
                 path: action.path_display,
                 change: doctor_fix_change_label(action.change).to_string(),
                 status: String::from("planned"),
+                command: None,
                 preview: Some(action.preview),
             });
         } else {
             match apply_ota_state_gitignore_fix(&action) {
                 Ok(()) => {
                     summary.applied_count = 1;
+                    applied_changes = true;
                     summary.actions.push(DoctorFixActionSummary {
                         key: action.key.to_string(),
+                        kind: String::from("repo_hygiene"),
                         path: action.path_display,
                         change: doctor_fix_change_label(action.change).to_string(),
                         status: String::from("applied"),
+                        command: None,
                         preview: None,
                     });
                 }
@@ -18269,31 +18273,99 @@ fn run_doctor_fix(
                     summary.errors.push(error);
                     summary.actions.push(DoctorFixActionSummary {
                         key: action.key.to_string(),
+                        kind: String::from("repo_hygiene"),
                         path: action.path_display,
                         change: doctor_fix_change_label(action.change).to_string(),
                         status: String::from("failed"),
+                        command: None,
                         preview: Some(action.preview),
                     });
                 }
             }
         }
     }
+    let activation_actions =
+        selected_doctor_activation_actions(contract, overrides, workflow_name, report, mode);
+    if !activation_actions.is_empty() {
+        summary.fixable_count += activation_actions.len();
+        summary.planned_count += activation_actions.len();
+        for action in &activation_actions {
+            let command = activation_action_command(action);
+            let action_key = format!("{DOCTOR_FIX_ACTION_TOOL_ACTIVATION_PREFIX}{}", action.tool_name);
+            let path = format!("tool `{}`", action.tool_name);
+            if dry_run {
+                summary.actions.push(DoctorFixActionSummary {
+                    key: action_key,
+                    kind: String::from("activation"),
+                    path,
+                    change: String::from("activate"),
+                    status: String::from("planned"),
+                    command: Some(command.clone()),
+                    preview: Some(command),
+                });
+                continue;
+            }
 
-    Ok(summary)
+            match run_activation_action(action, repo_root, RepoExecutionMode::Capture) {
+                Ok(outcome) if outcome.exit_code == 0 => {
+                    summary.applied_count += 1;
+                    applied_changes = true;
+                    summary.actions.push(DoctorFixActionSummary {
+                        key: action_key,
+                        kind: String::from("activation"),
+                        path,
+                        change: String::from("activate"),
+                        status: String::from("applied"),
+                        command: Some(command),
+                        preview: None,
+                    });
+                }
+                Ok(outcome) => {
+                    summary.errors.push(format!(
+                        "activation for `{}` failed with exit code {}",
+                        action.tool_name, outcome.exit_code
+                    ));
+                    summary.actions.push(DoctorFixActionSummary {
+                        key: action_key,
+                        kind: String::from("activation"),
+                        path,
+                        change: String::from("activate"),
+                        status: String::from("failed"),
+                        command: Some(command.clone()),
+                        preview: Some(command),
+                    });
+                }
+                Err(error) => {
+                    summary.errors.push(error);
+                    summary.actions.push(DoctorFixActionSummary {
+                        key: action_key,
+                        kind: String::from("activation"),
+                        path,
+                        change: String::from("activate"),
+                        status: String::from("failed"),
+                        command: Some(command.clone()),
+                        preview: Some(command),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(DoctorFixRunOutcome {
+        summary,
+        applied_changes,
+    })
 }
 
 fn render_doctor_fix_text(summary: &DoctorFixSummary) -> String {
     let mut stdout = String::new();
-    stdout.push_str(&format!(
-        "\n\n{}",
-        paint_section_title("Fixes (repo hygiene)")
-    ));
+    stdout.push_str(&format!("\n\n{}", paint_section_title("Fixes")));
 
     if summary.fixable_count == 0 {
         let note = summary
             .note
             .as_deref()
-            .unwrap_or("no supported deterministic repo-hygiene fixes are needed");
+            .unwrap_or("no supported deterministic fixes are needed");
         stdout.push_str(&format!("\n  {} {}", list_bullet(), note));
         return stdout;
     }
@@ -18327,12 +18399,20 @@ fn render_doctor_fix_text(summary: &DoctorFixSummary) -> String {
 
     for action in &summary.actions {
         stdout.push_str(&format!(
-            "\n  {} {} ({}, {})",
+            "\n  {} {} ({}, {}, {})",
             list_bullet(),
             paint_code(&action.path),
+            action.kind,
             action.change,
             action.status
         ));
+        if let Some(command) = action.command.as_ref() {
+            stdout.push_str(&format!(
+                "\n    {} {}",
+                paint_key("Command:"),
+                paint_code(command)
+            ));
+        }
         if let Some(preview) = action.preview.as_ref() {
             stdout.push_str("\n    Planned change:");
             for line in preview.lines() {
@@ -19882,13 +19962,18 @@ pub fn doctor(
                     &mut report.findings,
                 );
                 let fix_summary = if fix {
-                    let summary = match run_doctor_fix(
+                    let outcome = match run_doctor_fix(
+                        contract,
                         &report,
+                        workflow_name,
+                        mode,
+                        diagnosis_overrides,
                         contract_working_dir(&target.contract_path),
                         fix_dry_run,
                     ) {
-                        Ok(summary) => summary,
-                        Err(error) => DoctorFixSummary {
+                        Ok(outcome) => outcome,
+                        Err(error) => DoctorFixRunOutcome {
+                            summary: DoctorFixSummary {
                             requested: true,
                             dry_run: fix_dry_run,
                             fixable_count: 0,
@@ -19898,8 +19983,25 @@ pub fn doctor(
                             actions: Vec::new(),
                             errors: vec![error],
                         },
+                            applied_changes: false,
+                        },
                     };
-                    Some(summary)
+                    if outcome.applied_changes && !fix_dry_run {
+                        report = diagnose_contract_with_mode_and_lifecycle_for_workflow_with_overrides(
+                            contract,
+                            &target.contract_path,
+                            mode,
+                            doctor_lifecycle,
+                            workflow_name,
+                            diagnosis_overrides,
+                        );
+                        append_contract_drift_findings(
+                            contract,
+                            &target.contract_path,
+                            &mut report.findings,
+                        );
+                    }
+                    Some(outcome.summary)
                 } else {
                     None
                 };
@@ -56066,7 +56168,11 @@ tasks:
 
         let original_path = env::var_os("PATH");
         unsafe {
-            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            );
         }
 
         let output = super::run_command(
@@ -64944,7 +65050,11 @@ workflows:
         fs::create_dir_all(&bin_dir).unwrap();
         let original_path = env::var_os("PATH");
         unsafe {
-            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            );
         }
 
         let acquisition = ToolAcquisitionSpec {
@@ -64995,7 +65105,11 @@ workflows:
         );
         let original_path = env::var_os("PATH");
         unsafe {
-            env::set_var("PATH", env::join_paths([bin_dir.as_path()]).unwrap());
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            );
         }
 
         let contract = parse_contract_str(
@@ -65113,6 +65227,120 @@ workflows:
             log.lines()
                 .any(|line| line == "prepare pnpm@10.22.0 --activate"),
             "{log}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn doctor_fix_applies_command_acquisition_activation_and_reruns_report() {
+        let _guard = env_mutex_lock();
+        let repo = TempDir::new().unwrap();
+        let bin_dir = repo.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let node_path = fake_command_path(&bin_dir, "node");
+        let activation_log = repo.path().join("activation.log");
+        write_executable_script(
+            &node_path,
+            if cfg!(windows) {
+                "@echo off\r\nif \"%1\"==\"--version\" echo v24.0.0\r\n"
+            } else {
+                "#!/bin/sh\nif [ \"${1:-}\" = \"--version\" ]; then echo 'v24.0.0'; fi\n"
+            },
+        );
+        fs::write(
+            repo.path().join("ota.yaml"),
+            format!(
+                r#"
+version: 1
+project:
+  name: doctor-fix-activation
+tools:
+  devbox:
+    version: "*"
+    acquisition:
+      provider: command
+      shell: sh
+      run: |
+        printf 'activated\n' > '{activation_log}'
+        cat > '{devbox_path}' <<'EOF'
+        #!/bin/sh
+        set -eu
+        if [ "${{1:-}}" = "--version" ]; then
+          printf '0.14.2\n'
+          exit 0
+        fi
+        exit 0
+        EOF
+        chmod +x '{devbox_path}'
+tasks:
+  verify:
+    command:
+      exe: devbox
+      args:
+        - --version
+"#,
+                activation_log = activation_log.display(),
+                devbox_path = bin_dir.join("devbox").display(),
+            ),
+        )
+        .unwrap();
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var(
+                "PATH",
+                env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")])
+                    .unwrap(),
+            );
+        }
+
+        let output = super::doctor(
+            Some(repo.path()),
+            None,
+            &[],
+            None,
+            true,
+            false,
+            ExecutionOverrides::default(),
+            OutputFormat::Json,
+            false,
+        );
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(output.exit_code, 0, "{output:?}");
+        assert_eq!(fs::read_to_string(activation_log).unwrap(), "activated\n");
+
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("doctor fix json");
+        assert_eq!(json["ok"], true, "{json}");
+        assert!(
+            json["fix"]["applied_count"].as_u64().unwrap_or_default() >= 1,
+            "{json}"
+        );
+        let actions = json["fix"]["actions"].as_array().unwrap();
+        assert!(
+            actions.iter().any(|action| {
+                action["kind"] == "activation"
+                    && action["change"] == "activate"
+                    && action["status"] == "applied"
+            }),
+            "{json}"
+        );
+        assert!(
+            json["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|finding| finding["summary"] != "Missing tool: devbox"),
+            "{json}"
         );
     }
 
@@ -95910,25 +96138,49 @@ fn selected_up_activation_actions(
     workflow_name: Option<&str>,
     preflight: &DoctorReport,
 ) -> Vec<RequirementActivationAction> {
+    selected_activation_actions_for_mode(
+        contract,
+        overrides,
+        workflow_name,
+        preflight,
+        up_doctor_mode(contract, overrides, workflow_name),
+    )
+}
+
+fn selected_doctor_activation_actions(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    preflight: &DoctorReport,
+    mode: DoctorMode,
+) -> Vec<RequirementActivationAction> {
+    if mode != DoctorMode::Native {
+        return Vec::new();
+    }
+    selected_activation_actions_for_mode(contract, overrides, workflow_name, preflight, mode)
+}
+
+fn selected_activation_actions_for_mode(
+    contract: &Contract,
+    overrides: ExecutionOverrides,
+    workflow_name: Option<&str>,
+    preflight: &DoctorReport,
+    mode: DoctorMode,
+) -> Vec<RequirementActivationAction> {
     let requirement_surface = up_activation_requirement_surface(contract, overrides, workflow_name);
-    let target_os = requirement_target_os_for_backend(
-        match up_doctor_mode(contract, overrides, workflow_name) {
-            DoctorMode::Container => Backend::Container,
-            DoctorMode::Native => Backend::Native,
-            DoctorMode::Remote => Backend::Remote,
-        },
-    );
+    let activation_backend = match mode {
+        DoctorMode::Container => Backend::Container,
+        DoctorMode::Native => Backend::Native,
+        DoctorMode::Remote => Backend::Remote,
+    };
+    let target_os = requirement_target_os_for_backend(activation_backend);
     let policy_provisioned_tools =
         selected_up_policy_provisioned_tool_names(contract, overrides, workflow_name, preflight);
 
     requirement_surface_activation_actions(
         &requirement_surface,
         target_os,
-        match up_doctor_mode(contract, overrides, workflow_name) {
-            DoctorMode::Container => Backend::Container,
-            DoctorMode::Native => Backend::Native,
-            DoctorMode::Remote => Backend::Remote,
-        },
+        activation_backend,
     )
     .into_iter()
     .filter(|action| {

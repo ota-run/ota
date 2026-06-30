@@ -131,9 +131,12 @@ pub struct DoctorFixSummary {
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct DoctorFixActionSummary {
     pub key: String,
+    pub kind: String,
     pub path: String,
     pub change: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preview: Option<String>,
 }

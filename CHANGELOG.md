@@ -35,6 +35,10 @@
   as `devbox` can now be activated from `tools.<name>.acquisition.provider: command` before
   orchestrator preparation or other selected task execution depends on them, instead of failing
   early with a missing-binary spawn error
+- widened `ota doctor --fix` beyond repo-hygiene-only file edits so native doctor can now apply
+  deterministic command-acquired tool activation (for example a declared `devbox` command
+  acquisition) and rerun diagnosis before returning the final readiness verdict, while plain
+  `ota doctor` stays non-mutating
 - widened `ota detect` with the first V11.2 source-family ingestion step: repo-owned
   `mise.toml [tools]` entries now contribute high-confidence runtime and Node package-manager
   inference with explicit precedence over `.tool-versions` while still yielding to more specific
