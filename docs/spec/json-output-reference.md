@@ -770,6 +770,8 @@ Notes:
   `setup`, `services`, `run`, `readiness`, `cleanup`, and `interrupted`
 - `stage_family` is always `proof`, so CI and agents can classify this wrapper without inferring
   from proof phase names
+- `artifact_routing[]` points at the proof artifact bundle this wrapper governs, such as
+  `proof_runtime_json`, `proof_topology`, `proof_doctor`, and `proof_up_log`
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
 - `artifacts` points at the captured canonical payloads; machine consumers should inspect those
   files directly when they need the full topology or doctor surface
@@ -2268,6 +2270,8 @@ Use this when a human or agent needs the selected run plan before execution:
 - `governance` is the compact CI/agent-friendly summary for the selected lane:
   `safety_posture`, `review_required`, effective `default_mode`, runnable mode commands, selected
   effect surface, and the next durable receipt command
+- `artifact_routing[]` is the additive artifact guide for this selected lane; it points to the
+  next receipt/proof artifact or capture command using typed `role`, `kind`, and `stage_family`
 - `toolchains[]` keeps toolchain-owned capabilities on the toolchain instead of duplicating them as
   standalone runtime/tool evidence
 - `plan.dependency_chain` is the ordered task graph ota would execute
@@ -2997,6 +3001,8 @@ newline-delimited progress events on stderr.
   "workspace": "ota-dev",
   "status": "RUN",
   "repo": "api",
+  "phase": "run",
+  "stage_family": "verify",
   "tail": "workspace:entrypoint -> api:tests:contract",
   "task": "workspace:entrypoint",
   "repo_task": "api:tests:contract",
@@ -3013,6 +3019,11 @@ newline-delimited progress events on stderr.
 - `status` is the live transition label such as `ACQUIRE`, `RUN`, `READY`, `BLOCKED`, `WARN`,
   `TASK FAILED`, `ACQUIRE FAILED`, `REFRESH`, or `REFRESH PREVIEW`
 - `repo` is the workspace repo name
+- `phase` is the command-local operational lane such as `acquisition`, `run`, `prepare`,
+  `refresh`, `doctor`, `check`, `diff`, `status`, or `receipt`, so consumers do not need to infer
+  intent from the `command` field alone
+- `stage_family` carries the broader governance family for the event such as `prepare`, `setup`,
+  `verify`, or `receipt`
 - `tail` carries the same operator-facing suffix as the text progress line when one exists
 - `task` and `repo_task` are populated for workspace-run task dispatch so agents can see the
   requested workspace task and the resolved repo-local task separately; those fields stay present
@@ -3702,6 +3713,7 @@ Current receipt JSON fields:
 - `path`
 - `mode` (`receipt`)
 - `archive_path` (when `--archive` is set)
+- `artifact_routing`
 - `summary`
 - `receipt`
 - `findings`
@@ -3711,6 +3723,8 @@ The nested `receipt` object can also include:
 - `contract_identity` with the declared project, selected metadata, execution intent, and compact contract counts
 - `steps[*].stage_family` with the broad execution-governance family for that recorded step:
   `prepare`, `setup`, `verify`, `proof`, or `receipt`
+- `artifact_routing[]` with the receipt/proof/snapshot artifact guide for the current receipt lane,
+  including which artifact to inspect now and which archived artifact to keep when available
 - `contract_snapshot_hash` with the normalized semantic contract snapshot identity used for this
   receipt; the hash is content-addressed and stable across formatting-only contract edits
 - `contract_snapshot_ref` when Ota archived the normalized snapshot under `.ota/contracts`; plain
@@ -3995,6 +4009,9 @@ Current receipt diff JSON fields:
   - ordering prefers the sharpest declared semantic owner or named reference ota can recover
     honestly, for example reusable `surfaces.<name>` or `readiness.probes.<name>`, before broader
     adjacent workflow-family drift
+  - when several nearby semantic changes tie on directness, ota then prefers the change whose
+    governance stage best matches the failure lane, so check failures prefer verify-lane drift,
+    setup blockers prefer prepare-lane drift, and readiness/proof failures prefer proof-lane drift
 - `gate.rule`, `gate.passed`, and `gate.new_blocker_count` when `--fail-on-new-blockers` is active
 - additive `gate.blocking_summary`, `gate.blocking_next`, and provenance fields when the gate is blocked by at least one newly introduced error
 - `introduced[]`

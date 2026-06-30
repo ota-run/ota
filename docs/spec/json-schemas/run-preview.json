@@ -222,6 +222,10 @@
         "provisioning": { "$ref": "./doctor.json#/properties/provisioning" },
         "provisioning_request": { "$ref": "./doctor.json#/properties/provisioning_request" },
         "governance": { "$ref": "#/$defs/governance" },
+        "artifact_routing": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/artifactRoute" }
+        },
         "plan": { "$ref": "#/$defs/plan" }
       }
     },

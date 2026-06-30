@@ -39,6 +39,18 @@
   `stage_family: "proof"`, letting CI and agents classify broad execution-governance stages
   (`prepare`, `setup`, `verify`, `proof`, `receipt`) without inferring them from free-form labels
   or proof phase names
+- widened execution-governance machine output with additive `artifact_routing[]` on dry-run,
+  receipt, proof, repo `up`, and workspace execution/status/receipt lanes so operators, CI, and
+  agents can see which receipt/proof artifact to inspect, archive, or capture next instead of
+  reconstructing that path from scattered `next` text and command-specific fields
+- widened workspace `--progress-json` NDJSON events with additive `phase` and `stage_family`, so
+  long-running workspace machine streams now publish command-local operational lane plus broad
+  governance family directly instead of leaving automation to infer those semantics from progress
+  status strings and command names
+- refined receipt-diff correlation ordering so `likely_related_changes[]` now prefers the sharpest
+  governance-stage match when several nearby semantic changes are otherwise equally plausible,
+  which keeps verify failures, setup blockers, and proof/readiness drift ordered by the failure
+  lane they most directly explain
 - fixed JSON schema compatibility for provisioning diagnostics so `ota run --dry-run --json`
   previews that include nullable provisioning fields (`source`, `source_config`,
   `approved_version`, and related optional metadata) now validate against published

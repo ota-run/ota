@@ -12,6 +12,10 @@
         "path": { "type": "string" },
         "mode": { "const": "receipt" },
         "archive_path": { "type": "string" },
+        "artifact_routing": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/artifactRoute" }
+        },
         "promoted_baseline": {
           "type": "object",
           "additionalProperties": false,

@@ -22,6 +22,39 @@
 
 use super::*;
 
+fn workspace_follow_up_artifact_routing(path: &str) -> Vec<crate::output::ArtifactRoute> {
+    vec![artifact_route(
+        "follow_up",
+        "workspace_receipt_json",
+        "receipt",
+        Some(workspace_receipt_command_for_workspace(path, true)),
+        None,
+    )]
+}
+
+fn workspace_receipt_artifact_routing(
+    path: &str,
+    archive_path: Option<&str>,
+) -> Vec<crate::output::ArtifactRoute> {
+    let mut routes = vec![artifact_route(
+        "inspect",
+        "workspace_receipt_json",
+        "receipt",
+        Some(workspace_receipt_command_for_workspace(path, false)),
+        None,
+    )];
+    if let Some(archive_path) = archive_path {
+        routes.push(artifact_route(
+            "keep",
+            "workspace_receipt_archive",
+            "receipt",
+            None,
+            Some(archive_path.to_string()),
+        ));
+    }
+    routes
+}
+
 pub(crate) fn render_workspace_up(
     path: &str,
     report: &WorkspaceUpReport,
@@ -128,6 +161,7 @@ pub(crate) fn render_workspace_up(
                 mode: None,
                 summary: report.receipt.summary,
                 receipt: report.receipt.clone(),
+                artifact_routing: workspace_follow_up_artifact_routing(path),
                 repos: &report.repos,
             }),
             stderr: None,
@@ -242,6 +276,7 @@ pub(crate) fn render_workspace_refresh(
                 mode: Some(if report.dry_run { "preview" } else { "refresh" }),
                 summary: report.receipt.summary,
                 receipt: report.receipt.clone(),
+                artifact_routing: workspace_follow_up_artifact_routing(path),
                 repos: &report.repos,
             }),
             stderr: None,
@@ -1076,6 +1111,7 @@ pub(crate) fn render_workspace_status(
                 summary,
                 next: report.next.as_deref(),
                 next_steps: &report.next_steps,
+                artifact_routing: workspace_follow_up_artifact_routing(path),
                 repos: &report.repos,
             }),
             stderr: None,
@@ -1125,6 +1161,10 @@ pub(crate) fn render_workspace_receipt(
                     summary: report.receipt.summary,
                     receipt: report.receipt.clone(),
                     archive_path: archive_path.as_deref(),
+                    artifact_routing: workspace_receipt_artifact_routing(
+                        path,
+                        archive_path.as_deref(),
+                    ),
                     repos: &report.repos,
                 };
                 to_json(&payload)
@@ -1442,6 +1482,7 @@ pub(crate) fn render_workspace_run(
                 task,
                 summary: report.receipt.summary,
                 receipt: report.receipt.clone(),
+                artifact_routing: workspace_follow_up_artifact_routing(path),
                 repos: &report.repos,
             }),
             stderr: None,

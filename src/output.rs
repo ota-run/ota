@@ -756,6 +756,17 @@ pub struct RunPreviewRunnableMode {
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct ArtifactRoute {
+    pub role: String,
+    pub kind: String,
+    pub stage_family: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
 pub struct RunPreviewGovernanceSummary {
     pub safety_posture: String,
     pub review_required: bool,
@@ -810,6 +821,8 @@ pub struct RunPreviewSuccess<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning_request: Option<&'a ProvisioningBackendRequest>,
     pub governance: RunPreviewGovernanceSummary,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifact_routing: Vec<ArtifactRoute>,
     pub plan: RunPreviewPlan,
 }
 
@@ -1645,6 +1658,8 @@ pub struct WorkspaceUpSuccess<'a> {
     pub mode: Option<&'a str>,
     pub summary: ExecutionReceiptSummary,
     pub receipt: ExecutionReceipt,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifact_routing: Vec<ArtifactRoute>,
     pub repos: &'a [WorkspaceRepoUpReport],
 }
 
@@ -1781,6 +1796,8 @@ pub struct WorkspaceStatusSuccess<'a> {
     pub next: Option<&'a str>,
     #[serde(skip_serializing_if = "slice_is_empty")]
     pub next_steps: &'a [String],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifact_routing: Vec<ArtifactRoute>,
     pub repos: &'a [WorkspaceRepoStatusReport],
 }
 
@@ -1793,6 +1810,8 @@ pub struct WorkspaceReceiptSuccess<'a> {
     pub receipt: ExecutionReceipt,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub archive_path: Option<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifact_routing: Vec<ArtifactRoute>,
     pub repos: &'a [WorkspaceRepoStatusReport],
 }
 
@@ -1809,6 +1828,8 @@ pub struct ReceiptSuccess<'a> {
     pub archive_path: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub promoted_baseline: Option<ReceiptPromotedBaseline>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifact_routing: Vec<ArtifactRoute>,
     pub findings: &'a [Finding],
 }
 
@@ -2095,6 +2116,8 @@ pub struct WorkspaceRunSuccess<'a> {
     pub task: &'a str,
     pub summary: ExecutionReceiptSummary,
     pub receipt: ExecutionReceipt,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifact_routing: Vec<ArtifactRoute>,
     pub repos: &'a [WorkspaceRepoRunReport],
 }
 
@@ -2342,6 +2365,8 @@ pub struct UpStatus<'a> {
     pub cause: Option<&'a str>,
     pub findings: &'a [Finding],
     pub receipt: ExecutionReceipt,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifact_routing: Vec<ArtifactRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stderr: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2395,6 +2420,8 @@ pub struct ProofRuntimeStatus<'a> {
     pub artifacts: Option<ProofRuntimeArtifacts<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub workflow_env_artifacts: Vec<EnvRenderedArtifactEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artifact_routing: Vec<ArtifactRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_class: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

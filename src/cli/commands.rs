@@ -2678,6 +2678,13 @@ pub fn proof_runtime(
                                 up_log: &up_log_artifact_display,
                             }),
                             workflow_env_artifacts,
+                            artifact_routing: proof_artifact_routing(
+                                &resolved_path,
+                                effective_workflow_selector.as_deref(),
+                                &topology_artifact_display,
+                                &doctor_artifact_display,
+                                &up_log_artifact_display,
+                            ),
                             failure_class: proof_failure_class,
                             error: proof_error.as_deref(),
                             cleanup_failure: cleanup_failure_detail,
@@ -15863,6 +15870,8 @@ fn render_run_preview_target(
                 OutputFormat::Text => CommandOutput::failure(text),
                 OutputFormat::Json => {
                     let governance = run_preview_governance_summary(&requested_task);
+                    let artifact_routing =
+                        run_preview_artifact_routing(&target.contract_path, None);
                     CommandOutput {
                     stdout: to_json(&RunPreviewSuccess {
                         ok: false,
@@ -15888,6 +15897,7 @@ fn render_run_preview_target(
                         provisioning: None,
                         provisioning_request: None,
                         governance,
+                        artifact_routing,
                         plan,
                     }),
                     stderr: None,
@@ -15922,6 +15932,7 @@ fn render_run_preview_target(
         overrides,
     );
     let governance = run_preview_governance_summary(&requested_task);
+    let artifact_routing = run_preview_artifact_routing(&target.contract_path, None);
     let summary = run_preview_summary(
         &target.contract,
         task_name.as_str(),
@@ -15995,6 +16006,7 @@ fn render_run_preview_target(
                     .as_ref()
                     .map(|value| &value.request),
                 governance,
+                artifact_routing,
                 plan,
             }),
             stderr: None,
@@ -23219,6 +23231,12 @@ pub fn receipt(
                         receipt: receipt.clone(),
                         archive_path: Some(archive_path_display.as_str()),
                         promoted_baseline: None,
+                        artifact_routing: receipt_artifact_routing(
+                            &target.contract_path,
+                            selected_workflow_name,
+                            &receipt,
+                            Some(archive_path_display.as_str()),
+                        ),
                         findings: &findings,
                     };
                     if let Err(error) = write_receipt_archive(&archive_path, &payload) {
@@ -30444,6 +30462,25 @@ pub fn workspace_receipt(
                         summary: report.receipt.summary,
                         receipt: report.receipt.clone(),
                         archive_path: Some(archive_path_display.as_str()),
+                        artifact_routing: vec![
+                            artifact_route(
+                                "inspect",
+                                "workspace_receipt_json",
+                                "receipt",
+                                Some(workspace_receipt_command_for_workspace(
+                                    &path_display,
+                                    false,
+                                )),
+                                None,
+                            ),
+                            artifact_route(
+                                "keep",
+                                "workspace_receipt_archive",
+                                "receipt",
+                                None,
+                                Some(archive_path_display.clone()),
+                            ),
+                        ],
                         repos: &report.repos,
                     };
                     if let Err(error) = write_receipt_archive(&archive_path, &payload) {
@@ -32973,13 +33010,14 @@ fn receipt_diff_likely_related_changes(
         change: DiffChange,
         rank: ReceiptDiffCorrelationMatchKind,
         lane_priority: i8,
-        specificity: (i8, i8, i8, i8, usize, String, String),
+        specificity: (i8, i8, i8, i8, i8, usize, String, String),
     }
 
     fn candidate_sort_key(
         candidate: &RelatedCandidate,
     ) -> (
         std::cmp::Reverse<ReceiptDiffCorrelationMatchKind>,
+        i8,
         i8,
         i8,
         i8,
@@ -32997,8 +33035,9 @@ fn receipt_diff_likely_related_changes(
             candidate.specificity.2,
             candidate.specificity.3,
             candidate.specificity.4,
-            candidate.specificity.5.as_str(),
+            candidate.specificity.5,
             candidate.specificity.6.as_str(),
+            candidate.specificity.7.as_str(),
         )
     }
 
@@ -33075,8 +33114,9 @@ fn receipt_diff_likely_related_changes(
                     specificity.2,
                     specificity.3,
                     specificity.4,
-                    specificity.5.to_string(),
+                    specificity.5,
                     specificity.6.to_string(),
+                    specificity.7.to_string(),
                 ),
             };
             match best_by_path.get(change.path.as_str()) {
@@ -33113,8 +33153,12 @@ fn receipt_diff_change_owner_distance(finding: &Finding, change: &DiffChange) ->
 fn receipt_diff_change_specificity_key<'a>(
     finding: &Finding,
     change: &'a DiffChange,
-) -> (i8, i8, i8, i8, usize, &'a str, &'a str) {
+) -> (i8, i8, i8, i8, i8, usize, &'a str, &'a str) {
     let path = change.path.as_str();
+    let stage_bias = receipt_diff_stage_distance(
+        receipt_diff_finding_stage_family(finding),
+        receipt_diff_change_stage_family(change),
+    );
     let code_bias = match finding.code() {
         "OTA_ENV_MISSING" => {
             if path.ends_with(".required") {
@@ -33242,6 +33286,7 @@ fn receipt_diff_change_specificity_key<'a>(
         None => 4,
     };
     (
+        stage_bias,
         code_bias,
         owner_distance,
         status_bias,
@@ -33250,6 +33295,79 @@ fn receipt_diff_change_specificity_key<'a>(
         path,
         change.status.as_str(),
     )
+}
+
+fn receipt_diff_finding_stage_family(finding: &Finding) -> &'static str {
+    match finding.code() {
+        "OTA_ENV_MISSING"
+        | "OTA_RUNTIME_MISSING"
+        | "OTA_RUNTIME_VERSION_MISMATCH"
+        | "OTA_TOOL_MISSING"
+        | "OTA_NATIVE_PREREQUISITE_MISSING"
+        | "OTA_SERVICE_UNVERIFIABLE" => "prepare",
+        "OTA_SERVICE_READINESS_FAILED"
+        | "OTA_SERVICE_READINESS_CONTEXT_UNEXECUTABLE"
+        | "OTA_SERVICE_CHECK_FAILED"
+        | "OTA_SERVICE_CHECK_TIMED_OUT"
+        | "OTA_WORKFLOW_PROBE_FAILED"
+        | "OTA_WORKFLOW_PROBE_TIMED_OUT"
+        | "OTA_WORKFLOW_SIGNAL_PROBE_FAILED"
+        | "OTA_WORKFLOW_SIGNAL_PROBE_TIMED_OUT"
+        | "OTA_WORKFLOW_SURFACE_READINESS_FAILED"
+        | "OTA_WORKFLOW_SURFACE_READINESS_TIMED_OUT"
+        | "OTA_WORKFLOW_SURFACE_READINESS_UNEVALUABLE"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_FAILED"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_TIMED_OUT"
+        | "OTA_WORKFLOW_SIGNAL_SURFACE_READINESS_UNEVALUABLE" => "proof",
+        _ => "verify",
+    }
+}
+
+fn receipt_diff_change_stage_family(change: &DiffChange) -> &'static str {
+    let path = change.path.as_str();
+    if path.starts_with("env.")
+        || path.starts_with("tools.")
+        || path.starts_with("toolchains.")
+        || path.starts_with("runtimes.")
+        || path.starts_with("native_prerequisites.")
+        || path.starts_with("execution.")
+        || path.contains(".requirements.")
+        || path.contains(".acquisition")
+        || path.contains(".prepare")
+    {
+        return "prepare";
+    }
+    if path.starts_with("readiness.")
+        || path.starts_with("surfaces.")
+        || path.contains(".readiness.")
+        || path.contains(".runtime.surfaces.")
+        || path.contains(".runtime.listeners.")
+        || path.contains(".manager.kind")
+        || path.contains(".manager.files")
+        || path.contains(".manager.env_file")
+        || path.contains(".manager.env_files")
+        || path.contains(".manager.project_name")
+    {
+        return "proof";
+    }
+    if path == "status" || path.starts_with("receipt.") {
+        return "receipt";
+    }
+    "verify"
+}
+
+fn receipt_diff_stage_distance(expected: &str, actual: &str) -> i8 {
+    if expected == actual {
+        return 0;
+    }
+    match (expected, actual) {
+        ("prepare", "setup") | ("setup", "prepare") => 1,
+        ("prepare", "verify") | ("verify", "prepare") => 2,
+        ("verify", "proof") | ("proof", "verify") => 1,
+        ("prepare", "proof") | ("proof", "prepare") => 3,
+        ("receipt", _) | (_, "receipt") => 4,
+        _ => 2,
+    }
 }
 
 fn receipt_diff_declared_category_surfaces(finding: &Finding) -> BTreeSet<&'static str> {
@@ -33944,6 +34062,36 @@ tasks:
 
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].path, check.path);
+    }
+
+    #[test]
+    fn receipt_diff_prefers_verify_lane_over_prepare_lane_when_check_failure_ties() {
+        let run = DiffChange {
+            path: String::from("checks[0].run"),
+            status: String::from("change"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: Some(String::from("bin/lint")),
+            target: Some(String::from("bin/lint --strict")),
+            provenance: None,
+        };
+        let prepare = DiffChange {
+            path: String::from("checks[0].prepare.kind"),
+            status: String::from("change"),
+            category: Some(String::from("task")),
+            risk: Some(String::from("medium")),
+            base: Some(String::from("dependency_hydration")),
+            target: Some(String::from("tool_bootstrap")),
+            provenance: None,
+        };
+        let finding = identified_finding("OTA_CHECK_FAILED", "Check failed");
+
+        let related =
+            receipt_diff_likely_related_changes(&[prepare.clone(), run.clone()], &[finding], None);
+
+        assert_eq!(related.len(), 2);
+        assert_eq!(related[0].path, run.path);
+        assert_eq!(related[1].path, prepare.path);
     }
 
     #[test]
@@ -46662,6 +46810,7 @@ fn looks_like_repo_file_path(value: &str) -> bool {
 
 fn render_up(
     path: &str,
+    contract_path: &Path,
     member: Option<&str>,
     status: &str,
     phase: &str,
@@ -46705,6 +46854,7 @@ fn render_up(
         ),
         OutputFormat::Json => render_up_json(
             path,
+            contract_path,
             member,
             status,
             phase,
@@ -46783,6 +46933,7 @@ fn render_up_result(
         }
         OutputFormat::Json => render_up(
             path,
+            Path::new(result.receipt.contract.as_str()),
             member_from_display_contract_target(text_path),
             result.status,
             result.phase,
@@ -51213,6 +51364,7 @@ workflows:
                         &contract_path,
                         Some("docker-build"),
                     ),
+                artifact_routing: Vec::new(),
                 failure_class: None,
                 error: None,
                 cleanup_failure: None,
@@ -51249,6 +51401,7 @@ workflows:
                     up_log: "up.log",
                 }),
                 workflow_env_artifacts: Vec::new(),
+                artifact_routing: Vec::new(),
                 failure_class: Some(String::from("config_drift")),
                 error: None,
                 cleanup_failure: None,
@@ -51299,6 +51452,7 @@ workflows:
                     up_log: "up.log",
                 }),
                 workflow_env_artifacts: Vec::new(),
+                artifact_routing: Vec::new(),
                 failure_class: Some(String::from("readiness_target_mismatch")),
                 error: None,
                 cleanup_failure: None,
@@ -51432,6 +51586,7 @@ workflows:
                     up_log: "up.log",
                 }),
                 workflow_env_artifacts: Vec::new(),
+                artifact_routing: Vec::new(),
                 failure_class: Some(String::from("dns_service_name_resolution_failure")),
                 error: None,
                 cleanup_failure: None,
@@ -51481,6 +51636,7 @@ workflows:
                     up_log: "up.log",
                 }),
                 workflow_env_artifacts: Vec::new(),
+                artifact_routing: Vec::new(),
                 failure_class: Some(String::from("auth_credential_failure")),
                 error: None,
                 cleanup_failure: None,
@@ -51530,6 +51686,7 @@ workflows:
                     up_log: "up.log",
                 }),
                 workflow_env_artifacts: Vec::new(),
+                artifact_routing: Vec::new(),
                 failure_class: Some(String::from("bind_conflict")),
                 error: None,
                 cleanup_failure: None,
@@ -51576,6 +51733,7 @@ workflows:
                     up_log: "up.log",
                 }),
                 workflow_env_artifacts: Vec::new(),
+                artifact_routing: Vec::new(),
                 failure_class: Some(String::from("install_or_toolchain_failure")),
                 error: None,
                 cleanup_failure: None,
@@ -51625,6 +51783,7 @@ workflows:
                     up_log: "up.log",
                 }),
                 workflow_env_artifacts: Vec::new(),
+                artifact_routing: Vec::new(),
                 failure_class: Some(String::from("missing_env")),
                 error: None,
                 cleanup_failure: None,
@@ -51891,6 +52050,7 @@ workflows:
                     up_log: "up.log",
                 }),
                 workflow_env_artifacts: Vec::new(),
+                artifact_routing: Vec::new(),
                 failure_class: Some(String::from("cleanup_failure")),
                 error: Some("cleanup failed"),
                 cleanup_failure: Some(serde_json::json!({
@@ -54121,6 +54281,8 @@ workflows:
         assert_eq!(json["workspace"], "qredex");
         assert_eq!(json["status"], "RUN");
         assert_eq!(json["repo"], "qredex-core");
+        assert_eq!(json["phase"], "run");
+        assert_eq!(json["stage_family"], "verify");
         assert_eq!(json["task"], "workspace:entrypoint");
         assert_eq!(json["repo_task"], "api:tests:contract");
         assert_eq!(json["tail"], "workspace:entrypoint -> api:tests:contract");
@@ -54164,6 +54326,8 @@ workflows:
         let json: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(json["command"], "workspace.run");
         assert_eq!(json["status"], "TASK FAILED");
+        assert_eq!(json["phase"], "run");
+        assert_eq!(json["stage_family"], "verify");
         assert_eq!(json["task"], "proof");
         assert_eq!(json["repo_task"], "format");
         assert_eq!(json["tail"], "proof -> format");
@@ -54211,10 +54375,127 @@ workflows:
         let json: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(json["command"], "workspace.run");
         assert_eq!(json["status"], "BLOCKED");
+        assert_eq!(json["phase"], "run");
+        assert_eq!(json["stage_family"], "verify");
         assert_eq!(json["task"], "proof");
         assert_eq!(json["repo_task"], "typecheck");
         assert_eq!(json["dependency"], "qredex-go");
         assert_eq!(json["tail"], "proof -> typecheck (qredex-go)");
+    }
+
+    #[test]
+    fn workspace_progress_json_line_surfaces_governance_fields_for_acquisition_and_receipt() {
+        let acquire = super::workspace_progress_json_line(
+            "workspace.up",
+            "qredex",
+            "ACQUIRE",
+            "qredex-core",
+            None,
+        );
+        let acquire_json: serde_json::Value = serde_json::from_str(&acquire).unwrap();
+        assert_eq!(acquire_json["phase"], "acquisition");
+        assert_eq!(acquire_json["stage_family"], "prepare");
+
+        let receipt = super::workspace_progress_json_line(
+            "workspace.receipt",
+            "qredex",
+            "READY",
+            "qredex-core",
+            None,
+        );
+        let receipt_json: serde_json::Value = serde_json::from_str(&receipt).unwrap();
+        assert_eq!(receipt_json["phase"], "receipt");
+        assert_eq!(receipt_json["stage_family"], "receipt");
+    }
+
+    #[test]
+    fn repo_receipt_command_for_repo_keeps_non_default_contract_target() {
+        let command = super::repo_receipt_command_for_repo(
+            Some("dev"),
+            true,
+            Path::new("/tmp/demo/contracts/custom-ota.yaml"),
+        );
+
+        assert_eq!(
+            command,
+            "ota receipt --json --archive --workflow dev /tmp/demo/contracts/custom-ota.yaml"
+        );
+    }
+
+    #[test]
+    fn receipt_artifact_routing_uses_explicit_snapshot_selection_path() {
+        let receipt = crate::output::ExecutionReceipt {
+            ok: true,
+            path: String::from("/tmp/demo"),
+            scope: String::from("repo"),
+            contract: String::from("/tmp/demo/contracts/custom-ota.yaml"),
+            contract_identity: None,
+            contract_snapshot_hash: Some(String::from("sha256:abc")),
+            contract_snapshot_ref: Some(String::from(".ota/contracts/sha256-abc.json")),
+            assumption_set_hash: None,
+            workspace: None,
+            backend: None,
+            context: None,
+            lifecycle: None,
+            image: None,
+            container_memory_bytes: None,
+            target: None,
+            provider: None,
+            cwd: None,
+            acquired: Vec::new(),
+            env: BTreeMap::new(),
+            env_sources: Vec::new(),
+            workflow_env_artifacts: Vec::new(),
+            native_prerequisites: Vec::new(),
+            toolchains: Vec::new(),
+            runtime: None,
+            service_termination: None,
+            host_service_cleanup: Vec::new(),
+            backend_fulfillment: None,
+            logs: None,
+            workloads: BTreeMap::new(),
+            policy: Vec::new(),
+            dependency_steps: Vec::new(),
+            steps: Vec::new(),
+            status: None,
+            failed_task: None,
+            failed_dependency: None,
+            failure_origin: None,
+            blocked: Vec::new(),
+            summary: crate::output::ExecutionReceiptSummary {
+                error_count: 0,
+                warn_count: 0,
+                info_count: 0,
+                step_count: 0,
+                repo_count: None,
+                ready_count: None,
+                not_ready_count: None,
+            },
+            next: None,
+        };
+
+        let routes = super::receipt_artifact_routing(
+            Path::new("/tmp/demo/contracts/custom-ota.yaml"),
+            Some("dev"),
+            &receipt,
+            Some(".ota/receipts/repo-receipt.json"),
+        );
+
+        let snapshot = routes
+            .iter()
+            .find(|route| route.kind == "contract_snapshot")
+            .expect("snapshot route should exist");
+
+        assert_eq!(
+            snapshot.command.as_deref(),
+            Some(
+                "ota receipt --snapshot .ota/contracts/sha256-abc.json /tmp/demo/contracts/custom-ota.yaml"
+            )
+        );
+        assert_eq!(
+            snapshot.path.as_deref(),
+            Some(".ota/contracts/sha256-abc.json")
+        );
     }
 
     #[test]
@@ -89604,6 +89885,175 @@ fn proof_runtime_phase_label(phase: &str) -> &str {
     phase
 }
 
+fn artifact_route(
+    role: &str,
+    kind: &str,
+    stage_family: &str,
+    command: Option<String>,
+    path: Option<String>,
+) -> crate::output::ArtifactRoute {
+    crate::output::ArtifactRoute {
+        role: role.to_string(),
+        kind: kind.to_string(),
+        stage_family: stage_family.to_string(),
+        command,
+        path,
+    }
+}
+
+fn repo_receipt_command_for_repo(
+    workflow: Option<&str>,
+    archive: bool,
+    contract_path: &Path,
+) -> String {
+    let mut command = String::from("ota receipt --json");
+    if archive {
+        command.push_str(" --archive");
+    }
+    if let Some(workflow) = workflow {
+        command.push_str(" --workflow ");
+        command.push_str(workflow);
+    }
+    command_for_repo_contract_target(&command, contract_path)
+}
+
+fn repo_receipt_snapshot_command_for_repo(
+    contract_path: &Path,
+    snapshot_selection: &str,
+) -> String {
+    let command = format!("ota receipt --snapshot {snapshot_selection}");
+    command_for_repo_contract_target(&command, contract_path)
+}
+
+pub(crate) fn workspace_receipt_command_for_workspace(path: &str, archive: bool) -> String {
+    let mut command = String::from("ota workspace receipt --json");
+    if archive {
+        command.push_str(" --archive");
+    }
+    format!("{command} {path}")
+}
+
+fn run_preview_artifact_routing(
+    contract_path: &Path,
+    workflow: Option<&str>,
+) -> Vec<crate::output::ArtifactRoute> {
+    vec![artifact_route(
+        "follow_up",
+        "receipt_json",
+        "receipt",
+        Some(repo_receipt_command_for_repo(workflow, true, contract_path)),
+        None,
+    )]
+}
+
+fn receipt_artifact_routing(
+    contract_path: &Path,
+    workflow: Option<&str>,
+    receipt: &ExecutionReceipt,
+    archive_path: Option<&str>,
+) -> Vec<crate::output::ArtifactRoute> {
+    let mut routes = vec![artifact_route(
+        "inspect",
+        "receipt_json",
+        "receipt",
+        Some(repo_receipt_command_for_repo(workflow, false, contract_path)),
+        None,
+    )];
+    if let Some(path) = archive_path {
+        routes.push(artifact_route(
+            "keep",
+            "receipt_archive",
+            "receipt",
+            None,
+            Some(path.to_string()),
+        ));
+    }
+    if let Some(snapshot_path) = receipt.contract_snapshot_ref.as_ref() {
+        routes.push(artifact_route(
+            "inspect",
+            "contract_snapshot",
+            "receipt",
+            Some(repo_receipt_snapshot_command_for_repo(
+                contract_path,
+                snapshot_path,
+            )),
+            Some(snapshot_path.clone()),
+        ));
+    }
+    routes
+}
+
+fn up_artifact_routing(
+    contract_path: &Path,
+    workflow: Option<&str>,
+) -> Vec<crate::output::ArtifactRoute> {
+    vec![
+        artifact_route(
+            "follow_up",
+            "receipt_json",
+            "receipt",
+            Some(repo_receipt_command_for_repo(workflow, true, contract_path)),
+            None,
+        ),
+        artifact_route(
+            "follow_up",
+            "proof_runtime_json",
+            "proof",
+            Some(proof_runtime_command_for_repo(
+                "ota proof runtime --json",
+                workflow,
+                None,
+                contract_path,
+            )),
+            None,
+        ),
+    ]
+}
+
+fn proof_artifact_routing(
+    contract_path: &Path,
+    workflow: Option<&str>,
+    topology_artifact: &str,
+    doctor_artifact: &str,
+    up_log_artifact: &str,
+) -> Vec<crate::output::ArtifactRoute> {
+    vec![
+        artifact_route(
+            "keep",
+            "proof_runtime_json",
+            "proof",
+            Some(proof_runtime_command_for_repo(
+                "ota proof runtime --json",
+                workflow,
+                None,
+                contract_path,
+            )),
+            None,
+        ),
+        artifact_route(
+            "inspect",
+            "proof_topology",
+            "proof",
+            None,
+            Some(topology_artifact.to_string()),
+        ),
+        artifact_route(
+            "inspect",
+            "proof_doctor",
+            "proof",
+            None,
+            Some(doctor_artifact.to_string()),
+        ),
+        artifact_route(
+            "inspect",
+            "proof_up_log",
+            "proof",
+            None,
+            Some(up_log_artifact.to_string()),
+        ),
+    ]
+}
+
 fn proof_runtime_command_for_repo(
     command: &str,
     workflow: Option<&str>,
@@ -90696,6 +91146,7 @@ fn render_contract_identity_text(identity: &ContractIdentity) -> String {
 
 fn render_up_json(
     path: &str,
+    contract_path: &Path,
     member: Option<&str>,
     status: &str,
     phase: &str,
@@ -90718,6 +91169,7 @@ fn render_up_json(
             cause,
             findings: &report.findings,
             receipt,
+            artifact_routing: up_artifact_routing(contract_path, None),
             stderr,
             service,
             task,
@@ -92155,6 +92607,8 @@ struct WorkspaceProgressEvent<'a> {
     workspace: &'a str,
     status: &'a str,
     repo: &'a str,
+    phase: &'a str,
+    stage_family: &'a str,
     tail: Option<&'a str>,
     task: Option<&'a str>,
     repo_task: Option<&'a str>,
@@ -93345,6 +93799,12 @@ fn render_repo_receipt(
                     receipt: report.receipt.clone(),
                     archive_path: archive_path.as_deref(),
                     promoted_baseline: report.promoted_baseline.clone(),
+                    artifact_routing: receipt_artifact_routing(
+                        contract_path,
+                        report.workflow.as_deref(),
+                        &report.receipt,
+                        archive_path.as_deref(),
+                    ),
                     findings: &findings,
                 };
                 to_json(&payload)
@@ -101152,17 +101612,62 @@ fn workspace_progress_json_line(
     repo_name: &str,
     detail: Option<&WorkspaceProgressDetail>,
 ) -> String {
+    let phase = workspace_progress_phase(command, status);
+    let stage_family = workspace_progress_stage_family(command, status);
     to_json_compact(&WorkspaceProgressEvent {
         event: "workspace_progress",
         command,
         workspace: workspace_name,
         status,
         repo: repo_name,
+        phase,
+        stage_family,
         tail: detail.and_then(|detail| detail.tail.as_deref()),
         task: detail.and_then(|detail| detail.task.as_deref()),
         repo_task: detail.and_then(|detail| detail.repo_task.as_deref()),
         dependency: detail.and_then(|detail| detail.dependency.as_deref()),
     })
+}
+
+fn workspace_progress_phase(command: &str, status: &str) -> &'static str {
+    match command.trim() {
+        "workspace.run" => {
+            if status.trim() == "ACQUIRE" {
+                "acquisition"
+            } else {
+                "run"
+            }
+        }
+        "workspace.up" => {
+            if status.trim() == "ACQUIRE" {
+                "acquisition"
+            } else {
+                "prepare"
+            }
+        }
+        "workspace.refresh" => "refresh",
+        "workspace.receipt" => "receipt",
+        "workspace.status" => "status",
+        "workspace.diff" => "diff",
+        "workspace.check" => "check",
+        "workspace.doctor" => "doctor",
+        _ => "status",
+    }
+}
+
+fn workspace_progress_stage_family(command: &str, status: &str) -> &'static str {
+    if status.trim() == "ACQUIRE" {
+        return "prepare";
+    }
+    match workspace_progress_phase(command, status) {
+        "run" => "verify",
+        "prepare" => "prepare",
+        "refresh" => "setup",
+        "receipt" | "status" => "receipt",
+        "diff" | "check" | "doctor" => "verify",
+        "acquisition" => "prepare",
+        _ => "verify",
+    }
 }
 
 fn run_workspace_repo_up(

@@ -3109,7 +3109,7 @@ Current behavior:
 - aggregates per-repo status, phase, findings, and exit details
 - captures repo child stdout and stderr per repo so text and JSON output remain deterministic
 - emits live repo progress on stderr in text mode so users can see queued/running/completed state while buffered output is still being collected
-- `--json --progress-json` emits the same live workspace progress as NDJSON on stderr while the final workspace-up JSON report remains on stdout
+- `--json --progress-json` emits the same live workspace progress as NDJSON on stderr while the final workspace-up JSON report remains on stdout; each event now carries additive `phase` and `stage_family` so machine consumers can classify acquisition vs prepare/result lanes without inferring from status text alone
 - `--quiet` suppresses live progress output and prints only the final workspace report
 - optional repo failures do not fail the overall workspace result
 - defaults to sequential execution because `--jobs` defaults to `1`
@@ -3168,7 +3168,7 @@ Current behavior:
 - aggregates per-repo status, phase, findings, and exit details
 - captures repo child stdout and stderr per repo so text and JSON output remain deterministic
 - emits live repo progress on stderr in text mode so users can see queued/running/completed state while buffered output is still being collected
-- `--json --progress-json` emits the same live workspace progress as NDJSON on stderr while the final workspace-refresh JSON report remains on stdout
+- `--json --progress-json` emits the same live workspace progress as NDJSON on stderr while the final workspace-refresh JSON report remains on stdout; each event now carries additive `phase` and `stage_family` so machine consumers can distinguish refresh/setup progress from generic status strings
 - `--quiet` suppresses live progress output and prints only the final workspace report
 - optional repo failures do not fail the overall workspace result
 - defaults to sequential execution because `--jobs` defaults to `1`
@@ -3267,7 +3267,9 @@ Current behavior:
 - `--json` returns a workspace status roll-up with `mode: "status"`
 - `--progress-json` emits the same live workspace progress events as compact NDJSON on stderr while
   preserving the final workspace-status JSON report on stdout; each event uses `tail` for the repo
-  drift state such as `MATCH`, `DIRTY`, or `UNRESOLVED`
+  drift state such as `MATCH`, `DIRTY`, or `UNRESOLVED`, and now also publishes additive `phase`
+  and `stage_family` so machines can tell this is a status/receipt reporting lane without
+  recovering that intent from `command` plus status text alone
 - text and JSON now carry an additive top-level lifecycle `next` lane when ota can name the safest doctor, refresh, or acquisition follow-up directly
 - text output now makes the comparison provenance explicit on each `Target:` line when ota is using declared `source.ref` versus upstream-branch fallback
 - when drift is being compared against upstream-branch fallback instead of declared `source.ref`, the repo-level follow-up lane now says that explicitly and suggests declaring `source.ref` when the workspace should own the target
@@ -3326,7 +3328,9 @@ Current behavior:
 - `--progress-json` emits the same live workspace progress events as compact NDJSON on stderr while
   preserving the final workspace-receipt JSON report on stdout; because receipt reuses the same
   scan as `workspace status`, those events use `tail` for the repo drift state such as `MATCH`,
-  `DIRTY`, or `UNRESOLVED`
+  `DIRTY`, or `UNRESOLVED`, and now also publish additive `phase` and `stage_family` so machine
+  consumers can keep receipt/status reporting semantics separate from prepare or task-execution
+  progress
 - the workspace receipt includes additive `receipt.contract_identity` with workspace name/type and compact workspace repo/policy counts
 - `--archive` writes the JSON receipt to `.ota/receipts` and keeps the newest 50 archives
 - the receipt records the same readiness, drift, and findings scan so CI or agents can archive it deterministically

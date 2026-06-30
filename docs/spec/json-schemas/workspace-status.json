@@ -52,6 +52,10 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "artifact_routing": {
+      "type": "array",
+      "items": { "$ref": "./shared.json#/$defs/artifactRoute" }
+    },
     "repos": {
       "type": "array",
       "items": {

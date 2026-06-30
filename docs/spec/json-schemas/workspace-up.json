@@ -22,6 +22,10 @@
         "not_ready_count": { "type": "integer", "minimum": 0 }
       }
     },
+    "artifact_routing": {
+      "type": "array",
+      "items": { "$ref": "./shared.json#/$defs/artifactRoute" }
+    },
     "receipt": {
       "type": "object",
       "additionalProperties": false,
@@ -70,10 +74,14 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["order", "label", "status"],
+            "required": ["order", "label", "stage_family", "status"],
             "properties": {
               "order": { "type": "integer", "minimum": 1 },
               "label": { "type": "string" },
+              "stage_family": {
+                "type": "string",
+                "enum": ["prepare", "setup", "verify", "proof", "receipt"]
+              },
               "status": { "type": "string" },
               "detail": { "type": "string" },
               "task": { "type": "string" },

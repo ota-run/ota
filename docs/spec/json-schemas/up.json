@@ -227,6 +227,10 @@
           "type": "array",
           "items": { "$ref": "./shared.json#/$defs/finding" }
         },
+        "artifact_routing": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/artifactRoute" }
+        },
         "stderr": { "type": "string" },
         "receipt": {
           "type": "object",
@@ -326,16 +330,20 @@
             },
             "steps": {
               "type": "array",
-              "items": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["order", "label", "status"],
-                "properties": {
-                  "order": { "type": "integer", "minimum": 1 },
-                  "label": { "type": "string" },
-                  "status": { "type": "string" },
-                  "detail": { "type": "string" },
-                  "exit_code": { "type": "integer" }
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["order", "label", "stage_family", "status"],
+              "properties": {
+                "order": { "type": "integer", "minimum": 1 },
+                "label": { "type": "string" },
+                "stage_family": {
+                  "type": "string",
+                  "enum": ["prepare", "setup", "verify", "proof", "receipt"]
+                },
+                "status": { "type": "string" },
+                "detail": { "type": "string" },
+                "exit_code": { "type": "integer" }
                 }
               }
             },

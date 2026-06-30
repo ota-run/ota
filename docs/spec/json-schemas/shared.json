@@ -2,6 +2,22 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://dist.ota.run/spec/json-schemas/latest/shared.json",
   "$defs": {
+    "artifactRoute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "kind", "stage_family"],
+      "properties": {
+        "role": {
+          "enum": ["follow_up", "inspect", "keep"]
+        },
+        "kind": { "type": "string" },
+        "stage_family": {
+          "enum": ["prepare", "setup", "verify", "proof", "receipt"]
+        },
+        "command": { "type": "string" },
+        "path": { "type": "string" }
+      }
+    },
     "finding": {
       "type": "object",
       "additionalProperties": false,

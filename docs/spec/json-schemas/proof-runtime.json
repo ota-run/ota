@@ -15,6 +15,10 @@
         "phase": { "type": "string" },
         "stage_family": { "const": "proof" },
         "summary": { "$ref": "./doctor.json#/properties/summary" },
+        "artifact_routing": {
+          "type": "array",
+          "items": { "$ref": "./shared.json#/$defs/artifactRoute" }
+        },
         "workflow_env_artifacts": {
           "type": "array",
           "items": { "$ref": "#/$defs/workflowEnvArtifact" }
