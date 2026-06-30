@@ -115,6 +115,53 @@
         }
       }
     },
+    "governanceRunnableMode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "command"],
+      "properties": {
+        "mode": { "type": "string" },
+        "default": { "type": "boolean" },
+        "command": { "type": "string" }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "safety_posture",
+        "review_required",
+        "default_mode",
+        "network",
+        "receipt_follow_up_command"
+      ],
+      "properties": {
+        "safety_posture": { "enum": ["agent_safe", "review_required"] },
+        "review_required": { "type": "boolean" },
+        "default_mode": { "type": "string" },
+        "runnable_modes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/governanceRunnableMode" }
+        },
+        "network": { "type": "boolean" },
+        "network_kind": {
+          "enum": ["broad", "dependency_hydration", "integration_test", "tool_bootstrap"]
+        },
+        "writes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "adapter_state": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "external_state": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "receipt_follow_up_command": { "type": "string" }
+      }
+    },
     "singleTarget": {
       "type": "object",
       "additionalProperties": false,
@@ -130,6 +177,7 @@
         "resolved",
         "requested_task",
         "env_summary",
+        "governance",
         "plan"
       ],
       "properties": {
@@ -173,6 +221,7 @@
         },
         "provisioning": { "$ref": "./doctor.json#/properties/provisioning" },
         "provisioning_request": { "$ref": "./doctor.json#/properties/provisioning_request" },
+        "governance": { "$ref": "#/$defs/governance" },
         "plan": { "$ref": "#/$defs/plan" }
       }
     },

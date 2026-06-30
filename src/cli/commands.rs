@@ -15860,7 +15860,9 @@ fn render_run_preview_target(
             );
             return match format {
                 OutputFormat::Text => CommandOutput::failure(text),
-                OutputFormat::Json => CommandOutput {
+                OutputFormat::Json => {
+                    let governance = run_preview_governance_summary(&requested_task);
+                    CommandOutput {
                     stdout: to_json(&RunPreviewSuccess {
                         ok: false,
                         path: &text_path_display,
@@ -15884,11 +15886,13 @@ fn render_run_preview_target(
                         native_prerequisites,
                         provisioning: None,
                         provisioning_request: None,
+                        governance,
                         plan,
                     }),
                     stderr: None,
                     exit_code: 1,
-                },
+                }
+                }
             };
         }
     };
@@ -15916,6 +15920,7 @@ fn render_run_preview_target(
         task_name.as_str(),
         overrides,
     );
+    let governance = run_preview_governance_summary(&requested_task);
     let summary = run_preview_summary(
         &target.contract,
         task_name.as_str(),
@@ -15988,6 +15993,7 @@ fn render_run_preview_target(
                     .provisioning
                     .as_ref()
                     .map(|value| &value.request),
+                governance,
                 plan,
             }),
             stderr: None,
@@ -39771,7 +39777,33 @@ fn render_task_aggregate_text(aggregate: &crate::output::TaskAggregateSummary) -
 }
 
 fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
+    let runnable_modes = run_preview_runnable_modes(task);
+    if runnable_modes.len() <= 1 {
+        return Vec::new();
+    }
+
+    runnable_modes
+        .into_iter()
+        .map(|entry| {
+            if entry.default {
+                format!("default ({}): `{}`", entry.mode, paint_code(&entry.command))
+            } else {
+                format!("{}: `{}`", entry.mode, paint_code(&entry.command))
+            }
+        })
+        .collect()
+}
+
+fn run_preview_runnable_modes(
+    task: &TaskSummary<'_>,
+) -> Vec<crate::output::RunPreviewRunnableMode> {
     let default_mode = render_task_default_mode(task);
+
+    let mut modes = vec![crate::output::RunPreviewRunnableMode {
+        mode: default_mode.to_string(),
+        default: true,
+        command: format!("ota run {}", task.name),
+    }];
 
     let mut override_modes = task
         .modes
@@ -39794,21 +39826,39 @@ fn render_task_mode_commands(task: &TaskSummary<'_>) -> Vec<String> {
         _ => 3,
     });
     override_modes.dedup();
-    if override_modes.is_empty() {
-        return Vec::new();
+
+    modes.extend(
+        override_modes
+            .into_iter()
+            .map(|mode| crate::output::RunPreviewRunnableMode {
+                mode: mode.to_string(),
+                default: false,
+                command: format!("ota run {} --mode {}", task.name, mode),
+            }),
+    );
+
+    modes
+}
+
+fn run_preview_governance_summary(
+    task: &TaskSummary<'_>,
+) -> crate::output::RunPreviewGovernanceSummary {
+    crate::output::RunPreviewGovernanceSummary {
+        safety_posture: if task.safe_for_agent {
+            String::from("agent_safe")
+        } else {
+            String::from("review_required")
+        },
+        review_required: !task.safe_for_agent,
+        default_mode: render_task_default_mode(task).to_string(),
+        runnable_modes: run_preview_runnable_modes(task),
+        network: task.effects.network,
+        network_kind: task.effects.network_kind,
+        writes: task.effects.writes.clone(),
+        adapter_state: task.effects.adapter_state.clone(),
+        external_state: task.effects.external_state.clone(),
+        receipt_follow_up_command: String::from("ota receipt --json --archive"),
     }
-
-    let mut commands = vec![format!(
-        "default ({default_mode}): `{}`",
-        paint_code(&format!("ota run {}", task.name))
-    )];
-
-    commands.extend(override_modes.into_iter().map(|mode| {
-        let command = format!("ota run {} --mode {}", task.name, mode);
-        format!("{mode}: `{}`", paint_code(&command))
-    }));
-
-    commands
 }
 
 fn render_task_launch_text(launch: &crate::output::TaskLaunchSummary<'_>) -> String {
@@ -55684,7 +55734,100 @@ tasks:
         assert_eq!(json["preview_status"], "RUNNABLE");
         assert_eq!(json["task"], "ci");
         assert_eq!(json["resolved"]["backend"], "native");
+        assert_eq!(json["governance"]["safety_posture"], "review_required");
+        assert_eq!(json["governance"]["review_required"], true);
+        assert_eq!(json["governance"]["default_mode"], "native");
+        assert_eq!(
+            json["governance"]["receipt_follow_up_command"],
+            "ota receipt --json --archive"
+        );
+        assert_eq!(json["governance"]["runnable_modes"][0]["mode"], "native");
+        assert_eq!(
+            json["governance"]["runnable_modes"][0]["command"],
+            "ota run ci"
+        );
         assert!(json["plan"]["actions"].is_array());
+    }
+
+    #[test]
+    fn run_dry_run_json_includes_governance_modes_and_effects() {
+        let _guard = crate::test_support::env_mutex_lock();
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+execution:
+  default_context: host
+  contexts:
+    host:
+      backend: native
+    app:
+      backend: container
+      lifecycle: persistent
+      container:
+        image: ghcr.io/ota/dev:latest
+tasks:
+  verify:live:
+    context: host
+    command:
+      exe: pnpm
+      args:
+        - test:live
+    safe_for_agent: false
+    effects:
+      network: true
+      network_kind: integration_test
+      external_state:
+        - staging_api
+    execution:
+      default_mode: container
+      modes:
+        container:
+          run: pnpm test:live
+"#,
+        )
+        .expect("write contract");
+
+        let output = super::run_command(
+            "verify:live",
+            Some(repo.path()),
+            None,
+            OutputFormat::Json,
+            ExecutionOverrides::default(),
+            &[],
+            &[],
+            &[],
+            true,
+            false,
+            false,
+            false,
+            false,
+        );
+
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("dry-run json preview");
+        assert_eq!(json["governance"]["safety_posture"], "review_required");
+        assert_eq!(json["governance"]["review_required"], true);
+        assert_eq!(json["governance"]["default_mode"], "container");
+        assert_eq!(json["governance"]["network"], true);
+        assert_eq!(json["governance"]["network_kind"], "integration_test");
+        assert_eq!(json["governance"]["external_state"][0], "staging_api");
+        assert_eq!(json["governance"]["runnable_modes"][0]["mode"], "container");
+        assert_eq!(
+            json["governance"]["runnable_modes"][0]["command"],
+            "ota run verify:live"
+        );
+        assert_eq!(
+            json["governance"]["runnable_modes"][1]["mode"],
+            "native"
+        );
+        assert_eq!(
+            json["governance"]["runnable_modes"][1]["command"],
+            "ota run verify:live --mode native"
+        );
     }
 
     #[test]

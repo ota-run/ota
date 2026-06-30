@@ -2140,6 +2140,10 @@ and `ota workspace run --json` for coordinated multi-repo execution receipts.
 `RUNNABLE`, `RUNNABLE WITH WARNINGS`, or `BLOCKED`. Keep using `summary.verdict` for the canonical
 shared readiness verdict.
 
+`governance` is the compact machine-readable execution-governance summary for this selected task
+path. It keeps the fast-consumption fields together so CI and agents do not have to reconstruct the
+selected safety posture from `requested_task`, effect declarations, and mode branches separately.
+
 ```json
 {
   "ok": true,
@@ -2222,6 +2226,20 @@ shared readiness verdict.
       }
     ]
   },
+  "governance": {
+    "safety_posture": "review_required",
+    "review_required": true,
+    "default_mode": "native",
+    "runnable_modes": [
+      {
+        "mode": "native",
+        "default": true,
+        "command": "ota run ci"
+      }
+    ],
+    "network": false,
+    "receipt_follow_up_command": "ota receipt --json --archive"
+  },
   "plan": {
     "dependency_chain": ["ci"],
     "dependency_steps": [
@@ -2244,6 +2262,9 @@ Use this when a human or agent needs the selected run plan before execution:
 - `requested_context` is the task-declared context (when present)
 - `selected_context` is the resolved execution context ota will apply for this preview
 - `env_summary`, `sources`, and `env` show the selected env state and blockers
+- `governance` is the compact CI/agent-friendly summary for the selected lane:
+  `safety_posture`, `review_required`, effective `default_mode`, runnable mode commands, selected
+  effect surface, and the next durable receipt command
 - `toolchains[]` keeps toolchain-owned capabilities on the toolchain instead of duplicating them as
   standalone runtime/tool evidence
 - `plan.dependency_chain` is the ordered task graph ota would execute

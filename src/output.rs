@@ -746,6 +746,33 @@ pub struct RunPreviewDependencyStep {
     pub backend_selection_source: String,
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct RunPreviewRunnableMode {
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default: bool,
+    pub command: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct RunPreviewGovernanceSummary {
+    pub safety_posture: String,
+    pub review_required: bool,
+    pub default_mode: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub runnable_modes: Vec<RunPreviewRunnableMode>,
+    pub network: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network_kind: Option<crate::schema::TaskNetworkEffectKind>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub writes: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub adapter_state: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub external_state: Vec<String>,
+    pub receipt_follow_up_command: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct RunPreviewSuccess<'a> {
     pub ok: bool,
@@ -781,6 +808,7 @@ pub struct RunPreviewSuccess<'a> {
     pub provisioning: Option<&'a ProvisioningPlan>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provisioning_request: Option<&'a ProvisioningBackendRequest>,
+    pub governance: RunPreviewGovernanceSummary,
     pub plan: RunPreviewPlan,
 }
 

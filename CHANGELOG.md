@@ -30,6 +30,10 @@
   command preview, safety posture, declared effects, runnable mode commands, task dry-run JSON,
   and the receipt follow-up command directly in one operator-facing view instead of leaving
   execution-governance proof split across separate commands or implicit inference
+- widened `ota run --dry-run --json` with an additive top-level `governance` summary so CI and
+  agents can read the selected task lane’s safety posture, review requirement, default mode,
+  runnable mode commands, effect surface, and receipt follow-up command without stitching those
+  facts together from `requested_task`, task effects, and preview planning fields by hand
 - fixed JSON schema compatibility for provisioning diagnostics so `ota run --dry-run --json`
   previews that include nullable provisioning fields (`source`, `source_config`,
   `approved_version`, and related optional metadata) now validate against published
