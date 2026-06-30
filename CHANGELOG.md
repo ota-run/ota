@@ -26,6 +26,13 @@
 
 ## Unreleased
 
+### Added
+
+- detect JSON and detect-written metadata now publish additive detector source-class governance
+  (`source_class` on inferred/comparison entries and `metadata.ota.detect.field_source_class` on
+  detect-written contracts) so ecosystem-source convergence can stay explicit without inventing a
+  parallel detector artifact
+
 - widened `ota tasks --use` and `ota tasks --safe --use` so the runnable task surface now shows
   command preview, safety posture, declared effects, runnable mode commands, task dry-run JSON,
   and the receipt follow-up command directly in one operator-facing view instead of leaving

@@ -2306,6 +2306,8 @@ pub struct ContractFieldProvenance {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_class: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<Confidence>,
 }
 
@@ -2337,6 +2339,8 @@ pub struct DetectComparisonChange {
     pub provenance_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_class: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<Confidence>,
 }

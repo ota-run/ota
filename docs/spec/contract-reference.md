@@ -3938,12 +3938,20 @@ metadata:
         project.name: merged
         tools.pnpm: merged
         tools.curl: manual
+      field_source_class:
+        project.name: environment_toolchain
+        tools.pnpm: environment_toolchain
 ```
 
 This is an open map for extra repo-specific values.
 
 `ota detect --write`, `ota detect --merge`, and `ota detect --rewrite` record ota-managed detect
 fields under `metadata.ota.detect.field_ownership` using `merged`.
+
+When ota writes detector-owned fields, it can also record the additive detector-governance class
+for those fields under `metadata.ota.detect.field_source_class`, for example
+`environment_toolchain`, `task_command`, `runtime_service`, `ci_verification`,
+`agent_boundary`, `workspace_bootstrap`, or `heuristic`.
 
 The `metadata.ota.detect` subtree is ota-reserved and must remain mapping-shaped. If `metadata.ota`
 or `metadata.ota.detect` is repurposed as a scalar or list, detect merge cannot persist ownership

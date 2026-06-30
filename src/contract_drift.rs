@@ -1025,6 +1025,7 @@ fn push_detect_change_with_inference(
             provenance: Some(detect_change_provenance()),
             provenance_key: Some(detect_change_provenance_key()),
             source: inference.map(|value| value.source.clone()),
+            source_class: inference.map(|value| value.source_class.to_string()),
             confidence: inference.map(|value| value.confidence),
         }),
         Some(existing) if existing != detected => changes.push(DetectComparisonChange {
@@ -1037,6 +1038,7 @@ fn push_detect_change_with_inference(
             provenance: Some(detect_change_provenance()),
             provenance_key: Some(detect_change_provenance_key()),
             source: inference.map(|value| value.source.clone()),
+            source_class: inference.map(|value| value.source_class.to_string()),
             confidence: inference.map(|value| value.confidence),
         }),
         Some(_) => {}

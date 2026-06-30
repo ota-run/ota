@@ -49,6 +49,38 @@ pub enum Confidence {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InferenceSourceClass {
+    EnvironmentToolchain,
+    TaskCommand,
+    RuntimeService,
+    CiVerification,
+    AgentBoundary,
+    WorkspaceBootstrap,
+    Heuristic,
+}
+
+impl InferenceSourceClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::EnvironmentToolchain => "environment_toolchain",
+            Self::TaskCommand => "task_command",
+            Self::RuntimeService => "runtime_service",
+            Self::CiVerification => "ci_verification",
+            Self::AgentBoundary => "agent_boundary",
+            Self::WorkspaceBootstrap => "workspace_bootstrap",
+            Self::Heuristic => "heuristic",
+        }
+    }
+}
+
+impl fmt::Display for InferenceSourceClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InferenceFieldType {
     Project,
@@ -167,6 +199,7 @@ pub struct Inference {
     pub field: String,
     #[serde(rename = "type")]
     pub field_type: InferenceFieldType,
+    pub source_class: InferenceSourceClass,
     pub value: String,
     pub source: String,
     pub signal: InferenceSignal,
@@ -180,12 +213,14 @@ pub struct Inference {
 impl Inference {
     pub fn new(field: String, value: String, source: String, confidence: Confidence) -> Self {
         let field_type = inference_type_for_field(&field);
+        let source_class = inference_source_class_for_field_and_source(&field, &source);
         let signal = inference_signal_for_source(&source);
         let agent_safe = inference_agent_safe_for_field(&field, &value);
         let agent_signal = inference_agent_signal_for_field(&field, &value);
         Self {
             field,
             field_type,
+            source_class,
             value,
             source,
             signal,
@@ -5226,6 +5261,105 @@ fn inference_signal_for_source(source: &str) -> InferenceSignal {
     } else {
         InferenceSignal::File
     }
+}
+
+fn inference_source_class_for_field_and_source(
+    field: &str,
+    source: &str,
+) -> InferenceSourceClass {
+    let normalized = source.trim();
+    let source_file = normalized.split('#').next().unwrap_or(normalized);
+
+    if matches!(source_file, "AGENTS.md" | "CLAUDE.md") {
+        return InferenceSourceClass::AgentBoundary;
+    }
+    if source_file.starts_with(".github/workflows/") {
+        return InferenceSourceClass::CiVerification;
+    }
+    if matches!(source_file, "ota.workspace.yaml" | "ota.workspace.yml") {
+        return InferenceSourceClass::WorkspaceBootstrap;
+    }
+    if is_task_command_source(normalized, source_file, field) {
+        return InferenceSourceClass::TaskCommand;
+    }
+    if is_runtime_service_source(source_file, field) {
+        return InferenceSourceClass::RuntimeService;
+    }
+    if is_environment_toolchain_source(source_file) {
+        return InferenceSourceClass::EnvironmentToolchain;
+    }
+    if source_file == "directory-name" {
+        return InferenceSourceClass::Heuristic;
+    }
+
+    match inference_type_for_field(field) {
+        InferenceFieldType::Task => InferenceSourceClass::TaskCommand,
+        InferenceFieldType::Service | InferenceFieldType::Execution => {
+            InferenceSourceClass::RuntimeService
+        }
+        InferenceFieldType::Agent => InferenceSourceClass::AgentBoundary,
+        InferenceFieldType::Runtime
+        | InferenceFieldType::Tool
+        | InferenceFieldType::Env
+        | InferenceFieldType::Check => InferenceSourceClass::EnvironmentToolchain,
+        _ => InferenceSourceClass::Heuristic,
+    }
+}
+
+fn is_environment_toolchain_source(source_file: &str) -> bool {
+    matches!(
+        source_file,
+        "package.json"
+            | "pyproject.toml"
+            | "Pipfile"
+            | "setup.cfg"
+            | "pom.xml"
+            | "build.gradle"
+            | "build.gradle.kts"
+            | "Cargo.toml"
+            | "composer.json"
+            | "Gemfile"
+            | "go.mod"
+            | "mise.toml"
+            | "devbox.json"
+            | "devenv.nix"
+            | ".tool-versions"
+            | ".nvmrc"
+            | ".node-version"
+            | ".python-version"
+            | ".java-version"
+            | ".ruby-version"
+            | "rust-toolchain"
+            | "rust-toolchain.toml"
+            | "global.json"
+            | "Dockerfile"
+    ) || source_file.starts_with(".devcontainer/")
+        || source_file.ends_with(".lock")
+}
+
+fn is_runtime_service_source(source_file: &str, field: &str) -> bool {
+    source_file.contains("docker-compose")
+        || source_file.ends_with("compose.yml")
+        || source_file.ends_with("compose.yaml")
+        || source_file.starts_with("compose.")
+        || field.starts_with("services.")
+        || field.starts_with("execution.")
+}
+
+fn is_task_command_source(source: &str, source_file: &str, field: &str) -> bool {
+    source.contains("#scripts.")
+        || matches!(
+            source_file,
+            "Taskfile.yml"
+                | "Taskfile.yaml"
+                | "justfile"
+                | "Makefile"
+                | "GNUmakefile"
+                | "makefile"
+                | "bash-script"
+                | "powershell-script"
+        )
+        || field.starts_with("tasks.")
 }
 
 fn inference_task_name(field: &str) -> Option<&str> {

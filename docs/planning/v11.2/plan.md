@@ -98,6 +98,7 @@ V11.2 is the slice for defining that posture formally.
 
 - one canonical product principle for source convergence
 - a governance model for external source classes, precedence, provenance, confidence, and drift
+- exact command-surface expectations for detect, init, doctor, and compare-first review
 - a disciplined widening roadmap for high-value external source families
 - explicit conflict handling rules for detect/init/doctor surfaces
 - pressure-test criteria for deciding when a source widening is real leverage instead of noise
@@ -173,6 +174,13 @@ Meaning:
 - CI is evidence of what the repo verifies, not automatically the canonical local contract
 - agent docs are guidance evidence, not execution truth by themselves
 
+Two important boundaries follow from this:
+
+- `ota.yaml` stays authoritative once it exists; widening detection must compare against it, not
+  silently replace it
+- `ota.workspace.yaml` stays authoritative for multi-repo topology and acquisition truth; repo-local
+  source widening must not backdoor workspace bootstrap ownership
+
 ### 3. Provenance and confidence
 
 Every promoted detection should carry:
@@ -211,6 +219,22 @@ Conflict classes Ota should call out clearly:
 - service/runtime drift
 - agent-boundary drift
 
+Conflict handling should also stay shaped by action:
+
+- `ota detect`
+  - conservative preview of promoted truth
+  - comparison-first when an existing contract already owns the field
+  - no silent overwrite of conflicting manual contract values
+- `ota detect --write` / `--merge`
+  - only direct high-confidence detector-owned fields write automatically
+  - wider ecosystem-source conflict remains advisory or review-shaped unless the contract is empty
+- `ota init`
+  - may use widened sources for starter quality
+  - must still distinguish detector-owned truth from starter-policy promotion
+- `ota doctor`
+  - should surface split-brain or stale-source governance findings when the contract and active
+    ecosystem files disagree in a materially reviewable way
+
 ### 5. Convergence behavior
 
 The goal is not permanent multi-source coexistence.
@@ -222,6 +246,67 @@ The goal is convergence:
 - let the repo keep Ota as the explicit execution-governance contract
 
 This means `ota detect` and `ota init` should act as convergence tools, not file mirrors.
+
+## Required command-surface behavior
+
+V11.2 should not stop at file detection. The value is whether Ota exposes source-governance truth
+clearly on the command paths operators and agents actually use.
+
+### 1. `ota detect`
+
+`ota detect` is the primary convergence surface.
+
+It should make these questions answerable without human reconstruction:
+
+- which external sources contributed to the candidate contract
+- which source class each promoted field came from
+- whether the field was detector-direct, policy-promoted, or left advisory
+- which conflicts blocked automatic promotion
+
+The current shipped `metadata.ota.detect.field_ownership` and
+`metadata.ota.detect.field_admission` are the right foundation. V11.2 should widen them with
+source-class governance, not replace them with looser summaries.
+
+### 2. `ota init`
+
+`ota init` should benefit from widened source detection, but it must preserve the starter boundary.
+
+It should stay clear about:
+
+- what came from direct detector evidence
+- what came from conservative starter policy
+- what remained omitted because the source was weak or conflicting
+
+`ota init` should not become a bulk importer for arbitrary repo config files.
+
+### 3. `ota doctor`
+
+`ota doctor` is where split-brain truth becomes operational.
+
+When widened sources expose a real mismatch between:
+
+- the declared Ota contract
+- current ecosystem config
+- and the repo's enforced verification/runtime path
+
+doctor should be able to say that clearly as governance drift instead of forcing the operator to
+notice it indirectly through failed setup or CI.
+
+### 4. Compare-first review surfaces
+
+V11.2 should also strengthen compare-first review, not only first-write onboarding.
+
+That means:
+
+- detect preview should stay the first review surface before writing
+- detect merge/rewrite output should keep provenance and admission explicit
+- diff and receipt correlation should remain the later semantic contract truth surfaces, not get
+  overloaded with detector-source authorship
+
+The product boundary stays:
+
+- detect/init = source convergence and promotion
+- diff/receipt correlation = semantic contract drift after contract truth already exists
 
 ## Detection roadmap
 
@@ -243,6 +328,8 @@ Questions to extract:
 - what toolchains are required
 - what runtime image or environment is assumed
 - what declared services or shells define the local execution path
+- whether the source is a direct execution owner, a setup prerequisite, or only a local-convenience
+  environment hint
 
 ### 2. Task and command sources second
 
@@ -260,6 +347,8 @@ Questions to extract:
 - what finite tasks are real public lanes
 - which commands are setup, verify, or long-running launch
 - where shell glue should be decomposed into stronger Ota task bodies
+- where the file is only a convenience runner over truth that should still converge into task,
+  workflow, and launch surfaces instead of being preserved as a parallel contract
 
 ### 3. CI and verification sources third
 
@@ -274,6 +363,8 @@ Questions to extract:
 - what verification lanes are actually enforced
 - what setup and service truth CI requires
 - where CI and repo-local contract truth drift
+- whether CI is proving local contract truth or carrying a repo-specific workaround that should be
+  fixed in Ota or in the contract
 
 ### 4. Agent-boundary sources fourth
 
@@ -290,13 +381,30 @@ Questions to extract:
 - what verification or stop/review guidance is explicit
 - where prose instruction drifts from contract truth
 
+## Source-family admission bar
+
+A new source family should only widen when all of these are true:
+
+- it carries stable execution-governance truth, not only convenience aliases
+- ota can classify it into one or more existing source classes cleanly
+- ota can publish honest provenance and confidence for promoted fields
+- ota can explain conflicts without silently overwriting declared contract truth
+- at least one real pressure repo proves the widening improves `ota detect` or `ota init`
+  materially
+
+If a source family only adds filename count without improving convergence quality, it should stay
+out of scope.
+
 ## Proposed rollout order
 
 1. Publish the canonical product principle.
 2. Implement the governance model in planning and product framing.
-3. Widen high-confidence environment/toolchain sources first.
-4. Add stronger task-runner source integration with explicit conflict governance.
-5. Widen CI and agent-doc integrations after the precedence model is already stable.
+3. Define required command-surface behavior for detect, init, and doctor.
+4. Widen high-confidence environment/toolchain sources first.
+5. Add stronger task-runner source integration with explicit conflict governance.
+6. Widen CI source integration after the precedence model is already stable.
+7. Widen agent-doc integrations last, because they are guidance evidence rather than executable
+   truth.
 
 This order keeps widening disciplined:
 
@@ -321,9 +429,9 @@ Every source-family widening used for this slice should prove:
 - doctor or comparison surfaces can explain meaningful drift when sources disagree
 
 ## Acceptance bar
-
 - Ota has one canonical public principle for integrating ecosystem tools
 - source precedence is explicit and product-aligned
+- detect/init/doctor command expectations are defined before detector widening ships
 - conflict handling is defined before broad detection widening
 - the first widened source families are chosen for leverage, not popularity
 - `ota.yaml` remains the canonical execution-governance contract while Ota still learns from the

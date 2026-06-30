@@ -30733,12 +30733,15 @@ fn write_detected_contract(report: DetectReport, format: OutputFormat) -> Comman
     apply_detected_agent_boundary(&mut candidate, &report);
     let detect_field_paths = detect_field_paths(&detected_candidate);
     let detect_field_admission = detect_field_admission_for_write(&report, &detected_candidate);
+    let detect_field_source_class =
+        detect_field_source_class_for_write(&report, &detected_candidate);
     let mut document = serde_yaml::to_value(&candidate)
         .expect("serializing detected write candidate should not fail");
     if let Err(error) = record_detect_owned_fields(
         &mut document,
         &detect_field_paths,
         Some(&detect_field_admission),
+        Some(&detect_field_source_class),
     ) {
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -31155,8 +31158,17 @@ fn write_detected_merge(
         if apply_detect_change(&mut document, change) {
             let owned_fields = vec![change.field.clone()];
             let field_admission = direct_detect_field_admission(&owned_fields);
+            let field_source_class = change
+                .source_class
+                .clone()
+                .map(|source_class| BTreeMap::from([(change.field.clone(), source_class)]));
             if let Err(error) =
-                record_detect_owned_fields(&mut document, &owned_fields, Some(&field_admission))
+                record_detect_owned_fields(
+                    &mut document,
+                    &owned_fields,
+                    Some(&field_admission),
+                    field_source_class.as_ref(),
+                )
             {
                 let error = format!(
                     "{}{}",
@@ -31187,6 +31199,7 @@ fn write_detected_merge(
                 provenance: change.provenance.clone(),
                 provenance_key: change.provenance_key.clone(),
                 source: change.source.clone(),
+                source_class: change.source_class.clone(),
                 confidence: change.confidence,
             });
         }
@@ -31395,8 +31408,14 @@ fn write_detected_rewrite(report: DetectReport, format: OutputFormat) -> Command
     };
     let owned_fields = detect_field_paths(&report.contract);
     let field_admission = direct_detect_field_admission(&owned_fields);
+    let field_source_class = detect_field_source_class_for_write(&report, &report.contract);
     if let Err(error) =
-        record_detect_owned_fields(&mut document, &owned_fields, Some(&field_admission))
+        record_detect_owned_fields(
+            &mut document,
+            &owned_fields,
+            Some(&field_admission),
+            Some(&field_source_class),
+        )
     {
         return match format {
             OutputFormat::Text => CommandOutput::failure(error),
@@ -36197,6 +36216,12 @@ fn render_detect_comparison_owner_detail(change: &DetectComparisonChange) -> Opt
 fn render_detect_comparison_source_detail(change: &DetectComparisonChange) -> Option<String> {
     let source = change.source.as_deref()?;
     let mut detail = format!("{} {}", paint_key("Source:"), source);
+    if let Some(source_class) = change.source_class.as_deref() {
+        detail.push(' ');
+        detail.push('(');
+        detail.push_str(source_class);
+        detail.push(')');
+    }
     if let Some(confidence) = change.confidence {
         detail.push(' ');
         detail.push('[');
@@ -38326,6 +38351,26 @@ fn detect_field_admission_for_write(
         .collect()
 }
 
+fn detect_field_source_class_for_write(
+    report: &DetectReport,
+    detected_candidate: &DetectContract,
+) -> BTreeMap<String, String> {
+    let inference_index = report
+        .inferences
+        .iter()
+        .map(|inference| (inference.field.as_str(), inference.source_class.to_string()))
+        .collect::<BTreeMap<_, _>>();
+    detect_field_paths(detected_candidate)
+        .into_iter()
+        .filter_map(|field| {
+            inference_index
+                .get(field.as_str())
+                .cloned()
+                .map(|source_class| (field, source_class))
+        })
+        .collect()
+}
+
 fn direct_detect_field_admission(fields: &[String]) -> BTreeMap<String, &'static str> {
     fields
         .iter()
@@ -38616,6 +38661,7 @@ fn record_detect_owned_fields(
     document: &mut YamlValue,
     fields: &[String],
     field_admission: Option<&BTreeMap<String, &'static str>>,
+    field_source_class: Option<&BTreeMap<String, String>>,
 ) -> Result<(), String> {
     if fields.is_empty() {
         return Ok(());
@@ -38661,6 +38707,26 @@ fn record_detect_owned_fields(
             &["metadata", "ota", "detect", "field_admission"],
             &admission_entries,
         )?;
+    }
+    if let Some(field_source_class) = field_source_class {
+        let source_class_entries = fields
+            .iter()
+            .filter_map(|field| {
+                field_source_class.get(field).map(|source_class| {
+                    (
+                        YamlValue::String(field.clone()),
+                        YamlValue::String(source_class.clone()),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        if !source_class_entries.is_empty() {
+            insert_mapping_entries(
+                root,
+                &["metadata", "ota", "detect", "field_source_class"],
+                &source_class_entries,
+            )?;
+        }
     }
 
     Ok(())
@@ -39179,6 +39245,7 @@ fn inferred_field_provenance(
         provenance: String::from(CONTRACT_PROVENANCE_DETECTOR_INFERRED),
         provenance_key: String::from(CONTRACT_PROVENANCE_REPO_SIGNALS_KEY),
         source: Some(inference.source.clone()),
+        source_class: Some(inference.source_class.to_string()),
         confidence: Some(inference.confidence),
     }
 }
@@ -39189,6 +39256,7 @@ fn template_field_provenance(field: impl Into<String>, source: &str) -> Contract
         provenance: String::from(CONTRACT_PROVENANCE_TEMPLATE_DERIVED),
         provenance_key: String::from(CONTRACT_PROVENANCE_TEMPLATE_DERIVED_KEY),
         source: Some(String::from(source)),
+        source_class: None,
         confidence: None,
     }
 }
@@ -39199,6 +39267,7 @@ fn workspace_field_provenance(field: impl Into<String>, source: &str) -> Contrac
         provenance: String::from(CONTRACT_PROVENANCE_WORKSPACE_DERIVED),
         provenance_key: String::from(CONTRACT_PROVENANCE_WORKSPACE_SCAFFOLD_KEY),
         source: Some(String::from(source)),
+        source_class: None,
         confidence: None,
     }
 }
@@ -39212,6 +39281,7 @@ fn workspace_declared_field_provenance(
         provenance: String::from(CONTRACT_PROVENANCE_WORKSPACE_DECLARED),
         provenance_key: String::from(CONTRACT_PROVENANCE_WORKSPACE_CONTRACT_KEY),
         source: Some(String::from(source)),
+        source_class: None,
         confidence: None,
     }
 }
@@ -55204,6 +55274,136 @@ env:
         assert!(
             json["toolchain_opportunities"].as_array().is_none(),
             "{json}"
+        );
+    }
+
+    #[test]
+    fn detect_dry_run_json_exposes_source_class_on_inferred_and_comparison_changes() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        fs::write(
+            repo.path().join("package.json"),
+            r#"{
+  "name": "demo",
+  "scripts": {
+    "test": "npm test"
+  }
+}"#,
+        )
+        .expect("write package.json");
+        fs::write(
+            repo.path().join("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+"#,
+        )
+        .expect("write ota.yaml");
+
+        let output = super::detect(
+            Some(repo.path()),
+            false,
+            true,
+            false,
+            false,
+            &[],
+            false,
+            false,
+            false,
+            OutputFormat::Json,
+            false,
+        );
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let json: serde_json::Value =
+            serde_json::from_str(&output.stdout).expect("parse detect json");
+        let inferred_project = json["inferred"]
+            .as_array()
+            .expect("inferred array")
+            .iter()
+            .find(|entry| entry["field"] == "project.name")
+            .expect("project inference");
+        assert_eq!(
+            inferred_project["source_class"],
+            "environment_toolchain",
+            "{json}"
+        );
+        let inferred_task = json["inferred"]
+            .as_array()
+            .expect("inferred array")
+            .iter()
+            .find(|entry| entry["field"] == "tasks.test.run")
+            .expect("task inference");
+        assert_eq!(inferred_task["source_class"], "task_command", "{json}");
+
+        let change = json["comparison"]["changes"]
+            .as_array()
+            .expect("comparison changes")
+            .iter()
+            .find(|entry| entry["field"] == "tasks.test.run")
+            .expect("task comparison change");
+        assert_eq!(change["source_class"], "task_command", "{json}");
+    }
+
+    #[test]
+    fn detect_merge_records_field_source_class_metadata() {
+        let repo = tempfile::tempdir().expect("repo tempdir");
+        let contract_path = repo.path().join("ota.yaml");
+        fs::write(
+            &contract_path,
+            r#"
+version: 1
+project:
+  name: demo
+"#,
+        )
+        .expect("write existing contract");
+
+        let mut tasks = BTreeMap::new();
+        tasks.insert(
+            String::from("test"),
+            DetectTask {
+                description: None,
+                run: String::from("npm test"),
+                command: None,
+                action: None,
+                prepare: None,
+                requirements: crate::schema::TaskRequirementsSpec::default(),
+                effects: crate::schema::TaskEffectsSpec::default(),
+                depends_on: Vec::new(),
+                notes: None,
+                internal: false,
+                safe_for_agent: false,
+            },
+        );
+        let report = DetectReport {
+            root: repo.path().to_path_buf(),
+            contract: DetectContract {
+                version: 1,
+                project: Some(DetectProject {
+                    name: String::from("demo"),
+                }),
+                tasks,
+                ..DetectContract::default()
+            },
+            inferences: vec![Inference::new(
+                String::from("tasks.test.run"),
+                String::from("npm test"),
+                String::from("package.json#scripts.test"),
+                Confidence::High,
+            )],
+        };
+
+        let apply = vec![String::from("tasks.test.run")];
+        let output = write_detected_merge(report, &apply, false, OutputFormat::Json);
+
+        assert_eq!(output.exit_code, 0, "{}", output.stdout);
+        let merged = fs::read_to_string(&contract_path).expect("read merged contract");
+        let yaml: serde_yaml::Value = serde_yaml::from_str(&merged).expect("parse merged yaml");
+        assert_eq!(
+            yaml["metadata"]["ota"]["detect"]["field_source_class"]["tasks.test.run"].as_str(),
+            Some("task_command"),
+            "{merged}"
         );
     }
 

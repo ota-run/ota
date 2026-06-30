@@ -3111,6 +3111,7 @@ from the full list themselves.
     {
       "field": "project.name",
       "type": "project",
+      "source_class": "environment_toolchain",
       "value": "ota-app",
       "source": "package.json#name",
       "signal": "config",
@@ -3148,6 +3149,7 @@ present and point at the matching `ota run <task>` command.
 Each `inferred[*]` entry now carries additive metadata for human and machine consumers:
 
 - `type` is one of `project`, `runtime`, `tool`, `env`, `service`, `check`, `task`, `agent`, or `field`
+- `source_class` is one of `environment_toolchain`, `task_command`, `runtime_service`, `ci_verification`, `agent_boundary`, `workspace_bootstrap`, or `heuristic`
 - `signal` is one of `config`, `script`, `lockfile`, `file`, `template`, or `convention`
 - task-shaped entries can also include `agent_safe` (`yes`, `no`, `unknown`) and `agent_signal` (`verification_candidate` or `bootstrap_candidate`) when ota can classify the task for agent workflows
 
@@ -4261,6 +4263,7 @@ shape used by `ota clean --json` instead of this success shape.
 - `written: false` when there was nothing eligible to add
 - `config` is the detected candidate contract for preview-only results; when a detect write mode succeeds (`--write`, `--merge`, or `--rewrite` with `written: true`), `config` is the exact contract ota wrote to disk, including `metadata.ota.detect.field_ownership` and `metadata.ota.detect.field_admission`
 - `config.metadata.ota.detect.field_admission[*]` is `direct` when ota wrote the field from direct high-confidence detector evidence and `promoted` when ota admitted the field through the conservative detect-write promotion policy
+- `config.metadata.ota.detect.field_source_class[*]` records the detector-governance class ota associated with each detect-owned field it wrote, such as `task_command` or `environment_toolchain`
 - `comparison` describing detected adds and updates against the existing contract
 - `comparison.removals` describing stale contract fields that are no longer detected in the repo
 - `comparison.changes[*].ownership` is `repo_signals` for add candidates and `repo_contract` for updates against existing fields
@@ -4269,7 +4272,7 @@ shape used by `ota clean --json` instead of this success shape.
 - `comparison.removals[*].owner_kind` is `merged` on normal drift surfaces, while rewrite preview can also surface `manual` removals because a full replacement would drop those fields
 - `comparison.*.provenance` preserves the stable machine label `repo_signals`
 - `comparison.*.provenance_key` is the stable machine label `repo_signals`
-- `comparison.changes[*].source` and `comparison.changes[*].confidence` copy the detector evidence for that proposed add or update so consumers do not need to join back to `inferred[*]`
+- `comparison.changes[*].source`, `comparison.changes[*].source_class`, and `comparison.changes[*].confidence` copy the detector evidence for that proposed add or update so consumers do not need to join back to `inferred[*]`
 - `comparison` may include lower-confidence add candidates that remain preview-only
 - `toolchain_opportunities` appears only when repo signals strongly suggest a managed ecosystem
   that ota still models through lower-level `runtimes` / `tools` declarations because no shipped
