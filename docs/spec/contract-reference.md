@@ -849,10 +849,10 @@ orchestrators:
 Rules:
 
 - orchestrator names must not be empty
-- shipped orchestrator kinds are currently `mise`
+- shipped orchestrator kinds are currently `mise`, `devbox`, and `devenv`
 - `config_files` entries must not be empty
-- `activation.trust: true` tells ota to run the orchestrator trust step on the selected path
-- `prepare.install: true` tells ota to run the orchestrator install step on the selected path
+- `activation.trust: true` is currently supported only for `mise`
+- `prepare.install: true` is currently supported for `mise` and `devbox`, but not `devenv`
 - orchestrators do not replace `toolchains`; use `toolchains` for capability truth and
   `tasks.<name>.execution.orchestrator` when the selected task body must run through that manager
 

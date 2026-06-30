@@ -2468,8 +2468,10 @@ Current detect sources:
 - `.nvmrc`
 - `.node-version`
 - `.devcontainer/devcontainer.json`
+- `devbox.json`
 - `.tool-versions`
 - `mise.toml`
+- `devenv.nix`
 - `pyproject.toml`
 - `Pipfile`
 - `uv.lock`
@@ -2624,6 +2626,10 @@ Current precedence is conservative:
 - `.devcontainer/devcontainer.json` can contribute high-confidence Node image and bootstrap
   package-manager truth, but those hints remain lower precedence than repo-local runtime markers,
   `package.json#packageManager`, and `mise.toml`
+- `devbox.json` can contribute high-confidence `tools.devbox` ownership and `shell.scripts.*`
+  task inference
+- `devenv.nix` currently contributes only high-confidence `tools.devenv` presence; ota does not
+  yet infer broader Nix environment truth from it in this slice
 - when `package.json#packageManager` is present for versioned `pnpm` or `yarn`,
   `package.json#engines.node` is treated as high-confidence `toolchains.node` runtime truth;
   without a package manager signal, it stays conservative
@@ -2638,6 +2644,9 @@ Current precedence is conservative:
 - `.devcontainer/devcontainer.json` can contribute high-confidence Node runtime inference from the
   declared image and Node package-manager inference from `postCreateCommand` /
   `updateContentCommand`
+- `devbox.json` can contribute high-confidence `devbox` tool inference plus `devbox run <script>`
+  tasks from declared `shell.scripts`
+- `devenv.nix` can contribute high-confidence `devenv` tool presence conservatively
 - for example, `.nvmrc`, `.node-version`, `.python-version`, `.java-version`, `.sdkmanrc`, `go.mod`, `rust-toolchain.toml`, and `rust-toolchain` win over conflicting `.tool-versions` runtime values
 
 Write behavior:

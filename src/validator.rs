@@ -1230,6 +1230,25 @@ fn validate_orchestrators(contract: &Contract, errors: &mut Vec<ValidationError>
         }
         match orchestrator.kind {
             OrchestratorKind::Mise => {}
+            OrchestratorKind::Devbox => {
+                if orchestrator.activation.trust {
+                    errors.push(ValidationError::new(format!(
+                        "orchestrator `{name}` kind `devbox` does not support `activation.trust` in this slice"
+                    )));
+                }
+            }
+            OrchestratorKind::Devenv => {
+                if orchestrator.activation.trust {
+                    errors.push(ValidationError::new(format!(
+                        "orchestrator `{name}` kind `devenv` does not support `activation.trust` in this slice"
+                    )));
+                }
+                if orchestrator.prepare.install {
+                    errors.push(ValidationError::new(format!(
+                        "orchestrator `{name}` kind `devenv` does not support `prepare.install` in this slice"
+                    )));
+                }
+            }
         }
         for config_file in &orchestrator.config_files {
             if config_file.trim().is_empty() {
@@ -38272,6 +38291,92 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("new orchestration model should validate");
+    }
+
+    #[test]
+    fn accepts_devbox_and_devenv_orchestrators() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+orchestrators:
+  devbox:
+    kind: devbox
+    required: true
+    config_files:
+      - devbox.json
+    prepare:
+      install: true
+  devenv:
+    kind: devenv
+    required: true
+    config_files:
+      - devenv.nix
+tasks:
+  verify:
+    run: unit
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: task
+  shell:
+    command:
+      exe: echo
+      args:
+        - ok
+    execution:
+      orchestrator:
+        ref: devenv
+        mode: exec
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("devbox/devenv orchestrators should validate");
+    }
+
+    #[test]
+    fn rejects_unsupported_devenv_prepare_install_and_devbox_trust() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+orchestrators:
+  devbox:
+    kind: devbox
+    activation:
+      trust: true
+  devenv:
+    kind: devenv
+    prepare:
+      install: true
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("unsupported orchestrator knobs should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered
+                .iter()
+                .any(|error| error.contains("kind `devbox` does not support `activation.trust`")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|error| error.contains("kind `devenv` does not support `prepare.install`")),
+            "{rendered:?}"
+        );
     }
 
     #[test]

@@ -710,6 +710,8 @@ pub fn detect_repo(root: &Path) -> Result<DetectReport, DetectError> {
     detect_package_json(&root, &mut builder)?;
     detect_composer_json(&root, &mut builder)?;
     detect_devcontainer_json(&root, &mut builder)?;
+    detect_devbox_json(&root, &mut builder)?;
+    detect_devenv_nix(&root, &mut builder);
     detect_nvmrc(&root, &mut builder)?;
     detect_node_version_file(&root, &mut builder)?;
     detect_ruby_version_file(&root, &mut builder)?;
@@ -913,6 +915,57 @@ fn detect_devcontainer_json(root: &Path, builder: &mut DetectBuilder) -> Result<
     }
 
     Ok(())
+}
+
+fn detect_devbox_json(root: &Path, builder: &mut DetectBuilder) -> Result<(), DetectError> {
+    let path = root.join("devbox.json");
+    if !path.exists() {
+        return Ok(());
+    }
+
+    let contents = read_file(&path)?;
+    let devbox: JsonValue = serde_json::from_str(&contents).map_err(|source| DetectError::Parse {
+        path: path.display().to_string(),
+        message: source.to_string(),
+    })?;
+
+    builder.set_tool(
+        "devbox".to_string(),
+        "*".to_string(),
+        "devbox.json".to_string(),
+        Confidence::High,
+    );
+
+    if let Some(scripts) = devbox
+        .get("shell")
+        .and_then(|shell| shell.get("scripts"))
+        .and_then(JsonValue::as_object)
+    {
+        for (name, _) in scripts {
+            builder.set_task(
+                name.to_string(),
+                format!("devbox run {name}"),
+                format!("devbox.json#shell.scripts.{name}"),
+                Confidence::High,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn detect_devenv_nix(root: &Path, builder: &mut DetectBuilder) {
+    let path = root.join("devenv.nix");
+    if !path.exists() {
+        return;
+    }
+
+    builder.set_tool(
+        "devenv".to_string(),
+        "*".to_string(),
+        "devenv.nix".to_string(),
+        Confidence::High,
+    );
 }
 
 fn normalize_detected_node_engine_requirement(value: &str) -> Option<String> {
@@ -5771,6 +5824,8 @@ fn source_priority(field: &str, source: &str) -> u8 {
             "mise.toml#tools.npm" => 2,
             "mise.toml#tools.yarn" => 2,
             "mise.toml#tools.bun" => 2,
+            "devbox.json" => 2,
+            "devenv.nix" => 2,
             "build.gradle.kts" => 2,
             "build.gradle" => 2,
             ".mvn/wrapper/maven-wrapper.properties#distributionUrl" => 3,
@@ -8636,6 +8691,77 @@ pnpm = "9.9.0"
                     toolchain.package_managers.get("pnpm").map(String::as_str)
                 )),
             Some(("22", Some("10.4.0")))
+        );
+    }
+
+    #[test]
+    fn detects_devbox_tool_and_shell_scripts() {
+        let fixture = Fixture::new();
+        fixture.write(
+            "devbox.json",
+            r#"{
+  "packages": ["nodejs@24"],
+  "shell": {
+    "scripts": {
+      "test": ["pnpm", "test"],
+      "dev": "pnpm dev"
+    }
+  }
+}"#,
+        );
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.tools.get("devbox"), Some(&String::from("*")));
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("test")
+                .map(|task| (task.run.as_str(), task.safe_for_agent)),
+            Some(("devbox run test", true))
+        );
+        assert_eq!(
+            report
+                .contract
+                .tasks
+                .get("dev")
+                .map(|task| task.run.as_str()),
+            Some("devbox run dev")
+        );
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "tools.devbox"
+                    && inference.source == "devbox.json"
+                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                    && inference.confidence == Confidence::High
+            })
+        );
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "tasks.test.run"
+                    && inference.source == "devbox.json#shell.scripts.test"
+                    && inference.source_class == InferenceSourceClass::TaskCommand
+                    && inference.confidence == Confidence::High
+            })
+        );
+    }
+
+    #[test]
+    fn detects_devenv_tool_marker() {
+        let fixture = Fixture::new();
+        fixture.write("devenv.nix", "{ pkgs, ... }: { }");
+
+        let report = detect_repo(fixture.path()).unwrap();
+
+        assert_eq!(report.contract.tools.get("devenv"), Some(&String::from("*")));
+        assert!(
+            report.inferences.iter().any(|inference| {
+                inference.field == "tools.devenv"
+                    && inference.source == "devenv.nix"
+                    && inference.source_class == InferenceSourceClass::EnvironmentToolchain
+                    && inference.confidence == Confidence::High
+            })
         );
     }
 

@@ -2304,6 +2304,8 @@ impl Default for ToolchainFulfillmentSpec {
 #[serde(rename_all = "snake_case")]
 pub enum OrchestratorKind {
     Mise,
+    Devbox,
+    Devenv,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq, Eq)]

@@ -12059,6 +12059,17 @@ fn orchestrator_command_specs(
             }
             commands
         }
+        crate::schema::OrchestratorKind::Devbox => {
+            let mut commands = Vec::new();
+            if orchestrator.prepare.install {
+                commands.push(ToolchainCommandSpec {
+                    program: "devbox",
+                    args: vec![String::from("install")],
+                });
+            }
+            commands
+        }
+        crate::schema::OrchestratorKind::Devenv => Vec::new(),
     }
 }
 
@@ -12071,6 +12082,12 @@ fn wrap_prepared_execution_for_orchestrator(
     match orchestrator.kind {
         crate::schema::OrchestratorKind::Mise => {
             wrap_prepared_execution_for_mise(execution, backend, selection)
+        }
+        crate::schema::OrchestratorKind::Devbox => {
+            wrap_prepared_execution_for_devbox(execution, backend, selection)
+        }
+        crate::schema::OrchestratorKind::Devenv => {
+            wrap_prepared_execution_for_devenv(execution, backend, selection)
         }
     }
 }
@@ -12154,6 +12171,140 @@ fn wrap_mise_exec_argv_command(
 ) -> String {
     let mut wrapped = mise_command_prefix();
     wrapped.push_str(" exec -- ");
+    wrapped.push_str(&shell_quote_command_argv(backend, exe, args));
+    wrapped
+}
+
+fn wrap_prepared_execution_for_devbox(
+    execution: PreparedTaskExecution,
+    backend: &ResolvedExecutionBackend,
+    selection: &crate::schema::TaskExecutionOrchestratorSpec,
+) -> Result<PreparedTaskExecution, RunError> {
+    match selection.mode {
+        crate::schema::TaskExecutionOrchestratorMode::Task => match execution {
+            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_devbox_task_command(backend, command.as_str()),
+                cwd,
+            }),
+            _ => Err(RunError::InvalidTaskExecution {
+                task: selection.ref_name.clone(),
+            }),
+        },
+        crate::schema::TaskExecutionOrchestratorMode::Exec => match execution {
+            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_devbox_exec_shell_command(command.as_str()),
+                cwd,
+            }),
+            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
+                Ok(PreparedTaskExecution::Shell {
+                    command: wrap_devbox_exec_argv_command(backend, exe.as_str(), &args),
+                    cwd,
+                })
+            }
+            _ => Err(RunError::InvalidTaskExecution {
+                task: selection.ref_name.clone(),
+            }),
+        },
+    }
+}
+
+fn wrap_devbox_task_command(backend: &ResolvedExecutionBackend, task_name: &str) -> String {
+    let mut wrapped = String::from("devbox run ");
+    wrapped.push_str(&shell_quote_command_word(
+        task_name,
+        shell_quote_style_for_backend(backend),
+    ));
+    wrapped
+}
+
+fn wrap_devbox_exec_shell_command(command: &str) -> String {
+    #[cfg(windows)]
+    {
+        let mut wrapped = String::from("devbox run -- cmd /C ");
+        wrapped.push_str(&cmd_quote(command));
+        wrapped
+    }
+    #[cfg(not(windows))]
+    {
+        let mut wrapped = String::from("devbox run -- sh -lc ");
+        wrapped.push_str(&shell_quote(command));
+        wrapped
+    }
+}
+
+fn wrap_devbox_exec_argv_command(
+    backend: &ResolvedExecutionBackend,
+    exe: &str,
+    args: &[String],
+) -> String {
+    let mut wrapped = String::from("devbox run -- ");
+    wrapped.push_str(&shell_quote_command_argv(backend, exe, args));
+    wrapped
+}
+
+fn wrap_prepared_execution_for_devenv(
+    execution: PreparedTaskExecution,
+    backend: &ResolvedExecutionBackend,
+    selection: &crate::schema::TaskExecutionOrchestratorSpec,
+) -> Result<PreparedTaskExecution, RunError> {
+    match selection.mode {
+        crate::schema::TaskExecutionOrchestratorMode::Task => match execution {
+            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_devenv_task_command(backend, command.as_str()),
+                cwd,
+            }),
+            _ => Err(RunError::InvalidTaskExecution {
+                task: selection.ref_name.clone(),
+            }),
+        },
+        crate::schema::TaskExecutionOrchestratorMode::Exec => match execution {
+            PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_devenv_exec_shell_command(command.as_str()),
+                cwd,
+            }),
+            PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
+                Ok(PreparedTaskExecution::Shell {
+                    command: wrap_devenv_exec_argv_command(backend, exe.as_str(), &args),
+                    cwd,
+                })
+            }
+            _ => Err(RunError::InvalidTaskExecution {
+                task: selection.ref_name.clone(),
+            }),
+        },
+    }
+}
+
+fn wrap_devenv_task_command(backend: &ResolvedExecutionBackend, task_name: &str) -> String {
+    let mut wrapped = String::from("devenv tasks run ");
+    wrapped.push_str(&shell_quote_command_word(
+        task_name,
+        shell_quote_style_for_backend(backend),
+    ));
+    wrapped
+}
+
+fn wrap_devenv_exec_shell_command(command: &str) -> String {
+    #[cfg(windows)]
+    {
+        let mut wrapped = String::from("devenv shell cmd /C ");
+        wrapped.push_str(&cmd_quote(command));
+        wrapped
+    }
+    #[cfg(not(windows))]
+    {
+        let mut wrapped = String::from("devenv shell sh -lc ");
+        wrapped.push_str(&shell_quote(command));
+        wrapped
+    }
+}
+
+fn wrap_devenv_exec_argv_command(
+    backend: &ResolvedExecutionBackend,
+    exe: &str,
+    args: &[String],
+) -> String {
+    let mut wrapped = String::from("devenv shell ");
     wrapped.push_str(&shell_quote_command_argv(backend, exe, args));
     wrapped
 }
@@ -44375,6 +44526,164 @@ esac
             mise_log.contains("exec|/workspace/.ota/mise/cache"),
             "{mise_log}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn devbox_orchestrator_prepares_and_wraps_exec_commands() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  supported:
+    - native
+orchestrators:
+  devbox:
+    kind: devbox
+    required: true
+    config_files:
+      - devbox.json
+    prepare:
+      install: true
+tasks:
+  setup:
+    command:
+      exe: git
+      args:
+        - --version
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: exec
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let devbox_path = bin_dir.join("devbox");
+        fs::write(
+            &devbox_path,
+            r#"#!/bin/sh
+set -eu
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+if [ "${1:-}" = "--version" ]; then
+  printf '0.14.2\n'
+  exit 0
+fi
+printf '%s\n' "$*" >> "$script_dir/devbox.log"
+exit 0
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&devbox_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&devbox_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let joined_path =
+            env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "setup")
+            .expect("devbox orchestrator should wrap exec command");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        let log = fs::read_to_string(bin_dir.join("devbox.log")).unwrap();
+        assert!(log.contains("install"), "{log}");
+        assert!(log.contains("run -- git --version"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn devenv_orchestrator_wraps_task_mode_commands() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  supported:
+    - native
+orchestrators:
+  devenv:
+    kind: devenv
+    required: true
+    config_files:
+      - devenv.nix
+tasks:
+  verify:
+    run: git
+    execution:
+      orchestrator:
+        ref: devenv
+        mode: task
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let devenv_path = bin_dir.join("devenv");
+        fs::write(
+            &devenv_path,
+            r#"#!/bin/sh
+set -eu
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+if [ "${1:-}" = "--version" ]; then
+  printf '1.0.0\n'
+  exit 0
+fi
+printf '%s\n' "$*" >> "$script_dir/devenv.log"
+exit 0
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&devenv_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&devenv_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let joined_path =
+            env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "verify")
+            .expect("devenv orchestrator should wrap task command");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        let log = fs::read_to_string(bin_dir.join("devenv.log")).unwrap();
+        assert!(log.contains("tasks run git"), "{log}");
     }
 
     #[cfg(unix)]

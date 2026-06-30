@@ -78,7 +78,7 @@ ecosystem ownership matters.
 
 ## Canonical orchestrator model
 
-`orchestrators` capture repo-level mediation such as `mise`.
+`orchestrators` capture repo-level mediation such as `mise`, `devbox`, or `devenv`.
 
 They answer:
 
@@ -105,6 +105,25 @@ orchestrators:
 
 Use `orchestrators` when the repo truth is not just "install node" or "install python", but
 "trust this manager, install through it, and run selected tasks through it."
+
+Additional shipped kinds:
+
+```yaml
+orchestrators:
+  devbox:
+    kind: devbox
+    required: true
+    config_files:
+      - devbox.json
+    prepare:
+      install: true
+
+  devenv:
+    kind: devenv
+    required: true
+    config_files:
+      - devenv.nix
+```
 
 Do not force that truth into `run: mise ...` shell strings if ota can model it directly.
 
@@ -134,6 +153,22 @@ tasks:
 Use `mode: task` when the task body is the orchestrator task name.
 Use `mode: exec` when the task body is a normal command that should run inside the orchestrated
 environment.
+
+Shipped mediation semantics:
+
+- `mise`
+  - `mode: task` -> `mise run <task>`
+  - `mode: exec` -> `mise exec -- <command>`
+  - supports `activation.trust` and `prepare.install`
+- `devbox`
+  - `mode: task` -> `devbox run <task>`
+  - `mode: exec` -> `devbox run -- <command>`
+  - supports `prepare.install`
+  - does not support `activation.trust` in this slice
+- `devenv`
+  - `mode: task` -> `devenv tasks run <task>`
+  - `mode: exec` -> `devenv shell <command>`
+  - does not support `activation.trust` or `prepare.install` in this slice
 
 ## Ownership rule
 

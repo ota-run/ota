@@ -36,6 +36,14 @@
   `.devcontainer/devcontainer.json` now contributes high-confidence Node image and bootstrap
   package-manager inference while still yielding to stronger repo-local runtime and package-manager
   truth
+- widened `ota detect` again across the next V11.2 source families so `devbox.json` now
+  contributes high-confidence `tools.devbox` and `shell.scripts` task inference, while
+  `devenv.nix` contributes conservative high-confidence `tools.devenv` presence without
+  overclaiming broader Nix environment ownership
+- widened first-class orchestrator ownership beyond `mise`: ota now ships `devbox` and `devenv`
+  orchestrator kinds, with validator and runner support for mediated task execution; `devbox`
+  supports `prepare.install`, `devenv` supports task/exec mediation, and unsupported trust/install
+  knobs now fail validation instead of pretending the contract owns behavior it does not
 - detect JSON and detect-written metadata now publish additive detector source-class governance
   (`source_class` on inferred/comparison entries and `metadata.ota.detect.field_source_class` on
   detect-written contracts) so ecosystem-source convergence can stay explicit without inventing a
