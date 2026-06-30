@@ -32,7 +32,7 @@ use crate::runner::{
     BackendFulfillmentEvidence, ExecutionOverrides, ResolvedExecutionBackend, ResolvedTaskRuntime,
     SharedLocalBackendEvidence, TaskTargetResolutionEvidence, blocking_declared_env_source_label,
     effective_task_execution, env_resolution_source_label, load_declared_env_sources,
-    load_policy_env_overlay, resolve_declared_env_source_value,
+    load_policy_env_overlay, orchestrator_execution_preview, resolve_declared_env_source_value,
     resolve_execution_backend_with_contract_path,
 };
 use crate::schema::{
@@ -3489,9 +3489,9 @@ impl<'a> TaskSummary<'a> {
         let effective_adapter_inputs =
             effective_task_adapter_inputs_summary(task, selected_backend, current_os);
         let preview =
-            effective_task_execution_preview(contract, task, selected_backend, current_os);
+            effective_task_execution_preview(contract, name, task, selected_backend, current_os);
         let launch_preview =
-            effective_task_launch_preview(contract, task, selected_backend, current_os);
+            effective_task_launch_preview(contract, name, task, selected_backend, current_os);
         Self {
             name,
             context: effective.context_name,
@@ -3634,11 +3634,12 @@ impl<'a> TaskSummary<'a> {
 
 fn effective_task_execution_preview(
     contract: &Contract,
+    task_name: &str,
     task: &TaskSpec,
     backend: Backend,
     current_os: &str,
 ) -> String {
-    effective_task_orchestrator_subcommand_preview(contract, task, backend, current_os)
+    orchestrator_execution_preview(contract, task_name, task, backend, current_os)
         .or_else(|| {
             task.resolved_execution_for_backend(backend, current_os)
                 .map(|execution| execution.preview())
@@ -3648,47 +3649,15 @@ fn effective_task_execution_preview(
 
 fn effective_task_launch_preview(
     contract: &Contract,
+    task_name: &str,
     task: &TaskSpec,
     backend: Backend,
     current_os: &str,
 ) -> Option<String> {
     let execution = task.resolved_execution_for_backend(backend, current_os)?;
     execution.launch()?;
-    effective_task_orchestrator_subcommand_preview(contract, task, backend, current_os)
+    orchestrator_execution_preview(contract, task_name, task, backend, current_os)
         .or_else(|| execution.launch().map(crate::schema::TaskLaunchSpec::preview))
-}
-
-fn effective_task_orchestrator_subcommand_preview(
-    contract: &Contract,
-    task: &TaskSpec,
-    backend: Backend,
-    current_os: &str,
-) -> Option<String> {
-    let selection = task.orchestrator_for_backend(backend)?;
-    if selection.mode != crate::schema::TaskExecutionOrchestratorMode::Subcommand {
-        return None;
-    }
-    let orchestrator = contract.orchestrators.get(selection.ref_name.as_str())?;
-    let execution = task.resolved_execution_for_backend(backend, current_os)?;
-    let mut parts = if let Some(launcher) = orchestrator.launcher.as_ref() {
-        std::iter::once(launcher.exe.clone())
-            .chain(launcher.args.iter().cloned())
-            .collect::<Vec<_>>()
-    } else {
-        vec![selection.ref_name.clone()]
-    };
-
-    if let Some(command) = execution.command() {
-        parts.push(command.exe.clone());
-        parts.extend(command.args.iter().cloned());
-        return Some(parts.join(" "));
-    }
-    if let Some(crate::schema::TaskLaunchSpec::Command(command)) = execution.launch() {
-        parts.push(command.exe.clone());
-        parts.extend(command.args.iter().cloned());
-        return Some(parts.join(" "));
-    }
-    None
 }
 
 pub fn summarize_task_aggregate(

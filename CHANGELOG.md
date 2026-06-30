@@ -30,6 +30,10 @@
   mediation so repos can declare truth like `nix run ...#devenv -- test` or `devenv up` without
   faking direct PATH ownership or misusing `task` / `exec`; validator, selected-path diagnosis,
   dry-run previews, and task execution now all consume the same orchestrator-owned command shape
+- widened orchestrator-mediated command previews across all shipped orchestrator modes (`task`,
+  `exec`, and `subcommand`) so `ota tasks --use` and `ota run --dry-run` now render the same
+  mediated command truth operators will actually execute, including readable `devbox run -- ...`
+  and `nix run ...#devenv -- ...` previews instead of split-brain raw host bodies
 - widened orchestrator-mediated first-class prepare execution so command-backed
   `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap` can now run through
   `execution.orchestrator.mode: exec` for declared orchestrators such as `devbox` and `devenv`,

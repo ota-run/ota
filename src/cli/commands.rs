@@ -16570,15 +16570,20 @@ fn run_preview_task_execution_action(
             .unwrap_or_else(|| String::from(" through remote execution")),
         _ => String::from(" on the host"),
     };
-    if let Some(preview) = run_preview_orchestrator_subcommand_preview(
-        contract,
-        task_name,
-        overrides,
-    ) {
-        if task.launch.is_some() {
-            return format!("would launch `{preview}`{backend_detail}");
+    if let Some(task_spec) = contract.tasks.get(task_name) {
+        let effective = effective_task_execution(contract, task_name, overrides);
+        if let Some(preview) = crate::runner::orchestrator_execution_preview(
+            contract,
+            task_name,
+            task_spec,
+            effective.backend,
+            current_os(),
+        ) {
+            if task.launch.is_some() {
+                return format!("would launch `{preview}`{backend_detail}");
+            }
+            return format!("would execute `{preview}`{backend_detail}");
         }
-        return format!("would execute `{preview}`{backend_detail}");
     }
     if let Some(command) = task.run.or(task.script) {
         return format!("would execute `{command}`{backend_detail}");
@@ -16633,40 +16638,6 @@ fn run_preview_task_execution_action(
         );
     }
     format!("would execute task `{}`{backend_detail}", task.name)
-}
-
-fn run_preview_orchestrator_subcommand_preview(
-    contract: &Contract,
-    task_name: &str,
-    overrides: ExecutionOverrides,
-) -> Option<String> {
-    let task = contract.tasks.get(task_name)?;
-    let effective = effective_task_execution(contract, task_name, overrides);
-    let selection = task.orchestrator_for_backend(effective.backend)?;
-    if selection.mode != crate::schema::TaskExecutionOrchestratorMode::Subcommand {
-        return None;
-    }
-    let orchestrator = contract.orchestrators.get(selection.ref_name.as_str())?;
-    let execution = task.resolved_execution_for_backend(effective.backend, current_os())?;
-    let mut parts = if let Some(launcher) = orchestrator.launcher.as_ref() {
-        std::iter::once(launcher.exe.clone())
-            .chain(launcher.args.iter().cloned())
-            .collect::<Vec<_>>()
-    } else {
-        vec![selection.ref_name.clone()]
-    };
-
-    if let Some(command) = execution.command() {
-        parts.push(command.exe.clone());
-        parts.extend(command.args.iter().cloned());
-        return Some(parts.join(" "));
-    }
-    if let Some(crate::schema::TaskLaunchSpec::Command(command)) = execution.launch() {
-        parts.push(command.exe.clone());
-        parts.extend(command.args.iter().cloned());
-        return Some(parts.join(" "));
-    }
-    None
 }
 
 fn run_preview_context_selection<'a>(

@@ -2740,6 +2740,248 @@ fn projected_compose_launch_command_for_task(
     }
 }
 
+pub(crate) fn orchestrator_execution_preview(
+    contract: &Contract,
+    task_name: &str,
+    task: &TaskSpec,
+    backend_kind: Backend,
+    current_os: &str,
+) -> Option<String> {
+    let selection = task.orchestrator_for_backend(backend_kind)?;
+    let orchestrator = contract.orchestrators.get(selection.ref_name.as_str())?;
+    let execution = task.resolved_execution_for_backend(backend_kind, current_os)?;
+    let backend = preview_backend_for_kind(backend_kind);
+
+    match orchestrator.kind {
+        crate::schema::OrchestratorKind::Mise => orchestrator_execution_preview_for_mise(
+            &backend,
+            orchestrator,
+            selection,
+            task_name,
+            task,
+            backend_kind,
+            execution,
+        ),
+        crate::schema::OrchestratorKind::Devbox => orchestrator_execution_preview_for_devbox(
+            &backend,
+            orchestrator,
+            selection,
+            task_name,
+            task,
+            backend_kind,
+            execution,
+        ),
+        crate::schema::OrchestratorKind::Devenv => orchestrator_execution_preview_for_devenv(
+            &backend,
+            orchestrator,
+            selection,
+            task_name,
+            task,
+            backend_kind,
+            execution,
+        ),
+    }
+}
+
+fn preview_backend_for_kind(backend_kind: Backend) -> ResolvedExecutionBackend {
+    match backend_kind {
+        Backend::Native => ResolvedExecutionBackend::Native {
+            shared_local_backend: None,
+        },
+        Backend::Container => ResolvedExecutionBackend::Container {
+            context_name: None,
+            shared_local_backend: None,
+            image: String::new(),
+            engine: String::new(),
+            lifecycle: Lifecycle::Ephemeral,
+            memory_bytes: None,
+            compose_networks: Vec::new(),
+            publications: Vec::new(),
+            dependency_isolation_paths: Vec::new(),
+        },
+        Backend::Remote => ResolvedExecutionBackend::Remote {
+            shared_local_backend: None,
+            provider: String::new(),
+            target: String::new(),
+            cwd: None,
+            ssh: None,
+        },
+    }
+}
+
+fn projected_execution_command_for_preview(
+    task: &TaskSpec,
+    backend_kind: Backend,
+    execution: crate::schema::TaskExecution<'_>,
+) -> Option<crate::schema::TaskCommandSpec> {
+    if let Some(command) = execution.command() {
+        return Some(projected_structured_command_for_task(
+            task,
+            backend_kind,
+            command,
+        ));
+    }
+    if let Some(compose) = execution.compose() {
+        return Some(projected_compose_command_for_task(task, backend_kind, compose));
+    }
+    match execution.launch() {
+        Some(crate::schema::TaskLaunchSpec::Command(command)) => Some(
+            projected_structured_command_for_task(task, backend_kind, command),
+        ),
+        Some(crate::schema::TaskLaunchSpec::Compose(compose)) => Some(
+            projected_compose_launch_command_for_task(task, backend_kind, compose),
+        ),
+        _ => None,
+    }
+}
+
+fn orchestrator_execution_preview_for_mise(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    selection: &crate::schema::TaskExecutionOrchestratorSpec,
+    task_name: &str,
+    task: &TaskSpec,
+    backend_kind: Backend,
+    execution: crate::schema::TaskExecution<'_>,
+) -> Option<String> {
+    match selection.mode {
+        crate::schema::TaskExecutionOrchestratorMode::Task => execution
+            .shell_body()
+            .map(|_| orchestrator_invocation_display_command(orchestrator, "mise", vec![String::from("run"), task_name.to_string()])),
+        crate::schema::TaskExecutionOrchestratorMode::Exec => {
+            if let Some(command) =
+                projected_execution_command_for_preview(task, backend_kind, execution)
+            {
+                let mut tail = vec![String::from("exec"), String::from("--"), command.exe];
+                tail.extend(command.args);
+                Some(orchestrator_invocation_display_command(
+                    orchestrator,
+                    "mise",
+                    tail,
+                ))
+            } else {
+                execution
+                    .shell_body()
+                    .map(|body| wrap_mise_exec_shell_command(backend, orchestrator, body))
+            }
+        }
+        crate::schema::TaskExecutionOrchestratorMode::Subcommand => {
+            let command = projected_execution_command_for_preview(task, backend_kind, execution)?;
+            let mut tail = vec![command.exe];
+            tail.extend(command.args);
+            Some(orchestrator_invocation_display_command(
+                orchestrator,
+                "mise",
+                tail,
+            ))
+        }
+    }
+}
+
+fn orchestrator_execution_preview_for_devbox(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    selection: &crate::schema::TaskExecutionOrchestratorSpec,
+    task_name: &str,
+    task: &TaskSpec,
+    backend_kind: Backend,
+    execution: crate::schema::TaskExecution<'_>,
+) -> Option<String> {
+    match selection.mode {
+        crate::schema::TaskExecutionOrchestratorMode::Task => execution
+            .shell_body()
+            .map(|_| orchestrator_invocation_display_command(orchestrator, "devbox", vec![String::from("run"), task_name.to_string()])),
+        crate::schema::TaskExecutionOrchestratorMode::Exec => {
+            if let Some(command) =
+                projected_execution_command_for_preview(task, backend_kind, execution)
+            {
+                let mut tail = vec![String::from("run"), String::from("--"), command.exe];
+                tail.extend(command.args);
+                Some(orchestrator_invocation_display_command(
+                    orchestrator,
+                    "devbox",
+                    tail,
+                ))
+            } else {
+                execution
+                    .shell_body()
+                    .map(|body| wrap_devbox_exec_shell_command(backend, orchestrator, body))
+            }
+        }
+        crate::schema::TaskExecutionOrchestratorMode::Subcommand => {
+            let command = projected_execution_command_for_preview(task, backend_kind, execution)?;
+            let mut tail = vec![command.exe];
+            tail.extend(command.args);
+            Some(orchestrator_invocation_display_command(
+                orchestrator,
+                "devbox",
+                tail,
+            ))
+        }
+    }
+}
+
+fn orchestrator_execution_preview_for_devenv(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    selection: &crate::schema::TaskExecutionOrchestratorSpec,
+    task_name: &str,
+    task: &TaskSpec,
+    backend_kind: Backend,
+    execution: crate::schema::TaskExecution<'_>,
+) -> Option<String> {
+    match selection.mode {
+        crate::schema::TaskExecutionOrchestratorMode::Task => execution
+            .shell_body()
+            .map(|_| orchestrator_invocation_display_command(orchestrator, "devenv", vec![String::from("tasks"), String::from("run"), task_name.to_string()])),
+        crate::schema::TaskExecutionOrchestratorMode::Exec => {
+            if let Some(command) =
+                projected_execution_command_for_preview(task, backend_kind, execution)
+            {
+                let mut tail = vec![String::from("shell"), command.exe];
+                tail.extend(command.args);
+                Some(orchestrator_invocation_display_command(
+                    orchestrator,
+                    "devenv",
+                    tail,
+                ))
+            } else {
+                execution
+                    .shell_body()
+                    .map(|body| wrap_devenv_exec_shell_command(backend, orchestrator, body))
+            }
+        }
+        crate::schema::TaskExecutionOrchestratorMode::Subcommand => {
+            let command = projected_execution_command_for_preview(task, backend_kind, execution)?;
+            let mut tail = vec![command.exe];
+            tail.extend(command.args);
+            Some(orchestrator_invocation_display_command(
+                orchestrator,
+                "devenv",
+                tail,
+            ))
+        }
+    }
+}
+
+fn orchestrator_invocation_display_command(
+    orchestrator: &crate::schema::OrchestratorSpec,
+    exe: &str,
+    tail: Vec<String>,
+) -> String {
+    let parts = if let Some(launcher) = orchestrator.launcher.as_ref() {
+        std::iter::once(launcher.exe.clone())
+            .chain(launcher.args.iter().cloned())
+            .chain(tail)
+            .collect::<Vec<_>>()
+    } else {
+        std::iter::once(exe.to_string())
+            .chain(tail)
+            .collect::<Vec<_>>()
+    };
+    parts.join(" ")
+}
+
 fn projected_compose_invocation_command_for_task(
     task: &TaskSpec,
     backend: Backend,
@@ -55705,6 +55947,85 @@ tasks:
         assert!(wrapped.contains("mise"), "{wrapped}");
         assert!(wrapped.contains("'exec' '--'"), "{wrapped}");
         assert!(wrapped.contains("'pnpm' '--version'"), "{wrapped}");
+    }
+
+    #[test]
+    fn orchestrator_execution_preview_renders_devbox_exec_commands() {
+        let contract = crate::parser::parse_contract_str(
+            std::path::Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+orchestrators:
+  devbox:
+    kind: devbox
+tasks:
+  test:
+    command:
+      exe: pnpm
+      args:
+        - run
+        - test
+    execution:
+      orchestrator:
+        ref: devbox
+        mode: exec
+"#,
+        )
+        .expect("contract should parse");
+        let task = contract.tasks.get("test").expect("task should exist");
+        let preview = super::orchestrator_execution_preview(
+            &contract,
+            "test",
+            task,
+            Backend::Native,
+            "linux",
+        )
+        .expect("preview should exist");
+
+        assert_eq!(preview, "devbox run -- pnpm run test");
+    }
+
+    #[test]
+    fn orchestrator_execution_preview_renders_launcher_subcommands_readably() {
+        let contract = crate::parser::parse_contract_str(
+            std::path::Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: demo
+orchestrators:
+  devenv:
+    kind: devenv
+    launcher:
+      exe: nix
+      args:
+        - run
+        - github:cachix/devenv/main#devenv
+        - --
+tasks:
+  test:
+    command:
+      exe: test
+    execution:
+      orchestrator:
+        ref: devenv
+        mode: subcommand
+"#,
+        )
+        .expect("contract should parse");
+        let task = contract.tasks.get("test").expect("task should exist");
+        let preview = super::orchestrator_execution_preview(
+            &contract,
+            "test",
+            task,
+            Backend::Native,
+            "linux",
+        )
+        .expect("preview should exist");
+
+        assert_eq!(preview, "nix run github:cachix/devenv/main#devenv -- test");
     }
 
     #[cfg(windows)]
