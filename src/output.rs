@@ -257,6 +257,7 @@ pub struct ExecutionReceiptSummary {
 pub struct ExecutionReceiptStep {
     pub order: usize,
     pub label: String,
+    pub stage_family: String,
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
@@ -2388,6 +2389,7 @@ pub struct ProofRuntimeStatus<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow: Option<&'a str>,
     pub phase: &'a str,
+    pub stage_family: &'a str,
     pub summary: DoctorSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifacts: Option<ProofRuntimeArtifacts<'a>>,

@@ -768,6 +768,8 @@ Notes:
 - `workflow` is present when the proof targeted one explicit or effective workflow
 - `phase` stays machine-stable and uses the proof phase keys `preconditions`, `prepare`,
   `setup`, `services`, `run`, `readiness`, `cleanup`, and `interrupted`
+- `stage_family` is always `proof`, so CI and agents can classify this wrapper without inferring
+  from proof phase names
 - `summary` reuses the doctor verdict/count shape instead of inventing a second readiness dialect
 - `artifacts` points at the captured canonical payloads; machine consumers should inspect those
   files directly when they need the full topology or doctor surface
@@ -829,6 +831,7 @@ Success:
   "mode": "runtime-proof",
   "workflow": "app",
   "phase": "readiness",
+  "stage_family": "proof",
   "summary": {
     "verdict": "ready",
     "agent_verdict": "ready",
@@ -3678,6 +3681,7 @@ selected or effective workflow owns a rendered env artifact, receipt JSON keeps 
       {
         "order": 1,
         "label": "readiness",
+        "stage_family": "proof",
         "status": "READY"
       }
     ],
@@ -3705,6 +3709,8 @@ Current receipt JSON fields:
 The nested `receipt` object can also include:
 
 - `contract_identity` with the declared project, selected metadata, execution intent, and compact contract counts
+- `steps[*].stage_family` with the broad execution-governance family for that recorded step:
+  `prepare`, `setup`, `verify`, `proof`, or `receipt`
 - `contract_snapshot_hash` with the normalized semantic contract snapshot identity used for this
   receipt; the hash is content-addressed and stable across formatting-only contract edits
 - `contract_snapshot_ref` when Ota archived the normalized snapshot under `.ota/contracts`; plain

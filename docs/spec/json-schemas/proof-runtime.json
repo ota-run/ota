@@ -6,13 +6,14 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "path", "mode", "phase", "summary"],
+      "required": ["ok", "path", "mode", "phase", "stage_family", "summary"],
       "properties": {
         "ok": { "type": "boolean" },
         "path": { "type": "string" },
         "mode": { "const": "runtime-proof" },
         "workflow": { "type": "string" },
         "phase": { "type": "string" },
+        "stage_family": { "const": "proof" },
         "summary": { "$ref": "./doctor.json#/properties/summary" },
         "workflow_env_artifacts": {
           "type": "array",

@@ -106,6 +106,9 @@ When a receipt comes from a selected task-backed execution path, it can also inc
 `dependency_steps`; each entry records the executed task step's selected backend, optional
 selected context, optional parent task, and `backend_selection_source` such as `override`,
 `task default mode`, or `inherited parent backend`.
+Each `steps[]` entry also carries additive `stage_family` truth using the execution-governance
+families `prepare`, `setup`, `verify`, `proof`, or `receipt`, so machine consumers do not need to
+infer broad stage ownership from free-form labels alone.
 `target` is only present when the actual recorded execution phase used a real named target.
 That includes persistent backends, remote targets, and named ephemeral task or diagnosis
 containers. Previews and host-side phases stay targetless.

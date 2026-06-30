@@ -34,6 +34,11 @@
   agents can read the selected task lane’s safety posture, review requirement, default mode,
   runnable mode commands, effect surface, and receipt follow-up command without stitching those
   facts together from `requested_task`, task effects, and preview planning fields by hand
+- widened receipt/proof machine surfaces with explicit stage-family truth so execution receipts now
+  publish `steps[*].stage_family` and `ota proof runtime --json` now publishes
+  `stage_family: "proof"`, letting CI and agents classify broad execution-governance stages
+  (`prepare`, `setup`, `verify`, `proof`, `receipt`) without inferring them from free-form labels
+  or proof phase names
 - fixed JSON schema compatibility for provisioning diagnostics so `ota run --dry-run --json`
   previews that include nullable provisioning fields (`source`, `source_config`,
   `approved_version`, and related optional metadata) now validate against published

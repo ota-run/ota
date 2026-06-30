@@ -267,10 +267,14 @@
               "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["order", "label", "status"],
+                "required": ["order", "label", "stage_family", "status"],
                 "properties": {
                   "order": { "type": "integer", "minimum": 1 },
                   "label": { "type": "string" },
+                  "stage_family": {
+                    "type": "string",
+                    "enum": ["prepare", "setup", "verify", "proof", "receipt"]
+                  },
                   "status": { "type": "string" },
                   "detail": { "type": "string" },
                   "exit_code": { "type": "integer" }

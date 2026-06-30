@@ -2670,6 +2670,7 @@ pub fn proof_runtime(
                             mode: "runtime-proof",
                             workflow: effective_workflow_selector.as_deref(),
                             phase: json_phase,
+                            stage_family: "proof",
                             summary: proof_summary_for_output,
                             artifacts: Some(ProofRuntimeArtifacts {
                                 topology: &topology_artifact_display,
@@ -50992,6 +50993,7 @@ workflows:
             body["workflow_env_artifacts"][0]["consumers"][0],
             "task:build"
         );
+        assert_eq!(body["steps"][0]["stage_family"].as_str(), Some("proof"));
         assert_eq!(
             body["workflow_env_artifacts"][0]["consumers"][1],
             "service:postgres"
@@ -51060,6 +51062,7 @@ workflows:
             body["workflow_env_artifacts"][0]["consumers"][0],
             "task:build"
         );
+        assert_eq!(body["steps"][0]["stage_family"].as_str(), Some("proof"));
     }
 
     #[test]
@@ -51197,6 +51200,7 @@ workflows:
                 mode: "runtime-proof",
                 workflow: Some("docker-build"),
                 phase: "run",
+                stage_family: "proof",
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -51237,6 +51241,7 @@ workflows:
                 mode: "runtime-proof",
                 workflow: Some("app"),
                 phase: "readiness",
+                stage_family: "proof",
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -51286,6 +51291,7 @@ workflows:
                 mode: "runtime-proof",
                 workflow: Some("app"),
                 phase: "run",
+                stage_family: "proof",
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -51418,6 +51424,7 @@ workflows:
                 mode: "runtime-proof",
                 workflow: Some("app"),
                 phase: "run",
+                stage_family: "proof",
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -51466,6 +51473,7 @@ workflows:
                 mode: "runtime-proof",
                 workflow: Some("app"),
                 phase: "run",
+                stage_family: "proof",
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -51514,6 +51522,7 @@ workflows:
                 mode: "runtime-proof",
                 workflow: Some("app"),
                 phase: "run",
+                stage_family: "proof",
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -51559,6 +51568,7 @@ workflows:
                 mode: "runtime-proof",
                 workflow: Some("app"),
                 phase: "run",
+                stage_family: "proof",
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -51607,6 +51617,7 @@ workflows:
                 mode: "runtime-proof",
                 workflow: Some("app"),
                 phase: "run",
+                stage_family: "proof",
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -51872,6 +51883,7 @@ workflows:
                 mode: "runtime-proof",
                 workflow: Some("app"),
                 phase: "cleanup",
+                stage_family: "proof",
                 summary: DoctorSummary::default(),
                 artifacts: Some(crate::output::ProofRuntimeArtifacts {
                     topology: "topology.json",
@@ -85162,6 +85174,7 @@ fn run_execution_receipt_with_shared(
                 execution_receipt_step_detail(step, task_name),
                 Some(step.exit_code),
             );
+            receipt_step.stage_family = String::from("verify");
             if let Some(step_resolutions) = step_target_resolutions.get(index)
                 && !step_resolutions.is_empty()
             {
@@ -92556,9 +92569,11 @@ fn execution_receipt_step(
     detail: Option<String>,
     exit_code: Option<i32>,
 ) -> ExecutionReceiptStep {
+    let label = label.into();
     ExecutionReceiptStep {
         order,
-        label: label.into(),
+        stage_family: canonical_execution_stage_family_key(&label).to_string(),
+        label,
         status: status.into(),
         detail,
         exit_code,
@@ -92568,14 +92583,26 @@ fn execution_receipt_step(
     }
 }
 
+fn canonical_execution_stage_family_key(value: &str) -> &'static str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "preconditions" | "provisioning" | "activation" | "prepare" | "dependencies"
+        | "acquisition" => "prepare",
+        "setup" | "services" | "refresh" => "setup",
+        "readiness" | "post-up diagnosis" | "proof" | "cleanup" => "proof",
+        "receipt" | "status" => "receipt",
+        "validation" | "task" | "run" | "attach" | "aggregate" => "verify",
+        _ => "verify",
+    }
+}
+
 fn execution_summary_status_for_step(step: &ExecutionReceiptStep) -> &'static str {
     match step.status.trim() {
         "READY" => "success",
         "INTERRUPTED" => "interrupted",
         "PREVIEW" => "preview",
         "SKIPPED" | "NOT ACQUIRED" => "skipped",
-        "NOT READY" => match step.label.trim() {
-            "preconditions" | "provisioning" | "validation" | "dependencies" => "blocked",
+        "NOT READY" => match step.stage_family.trim() {
+            "prepare" | "receipt" => "blocked",
             _ => "failed",
         },
         "BLOCKED" | "WARN" | "MISSING" | "MISSING CONTRACT" | "UNRESOLVED" | "INVALID CONTRACT" => {
@@ -93736,6 +93763,9 @@ fn workspace_up_receipt(
             }),
             repo.exit_code,
         ));
+        if let Some(step) = steps.last_mut() {
+            step.stage_family = canonical_execution_stage_family_key(repo.phase.as_str()).to_string();
+        }
     }
 
     let next = repos
@@ -93824,6 +93854,9 @@ fn workspace_status_receipt(
             Some(format!("{} · {}", repo.readiness_status, repo.drift_status)),
             None,
         ));
+        if let Some(step) = steps.last_mut() {
+            step.stage_family = String::from("receipt");
+        }
     }
 
     let next = report.next.clone().or_else(|| {
@@ -93921,6 +93954,9 @@ fn workspace_run_receipt(
             }),
             repo.exit_code,
         ));
+        if let Some(step) = steps.last_mut() {
+            step.stage_family = String::from("verify");
+        }
     }
 
     let next = repos
