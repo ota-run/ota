@@ -1257,6 +1257,20 @@ fn validate_orchestrators(contract: &Contract, errors: &mut Vec<ValidationError>
                 )));
             }
         }
+        if let Some(launcher) = orchestrator.launcher.as_ref() {
+            if launcher.exe.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "orchestrator `{name}` launcher `exe` must not be empty"
+                )));
+            }
+            for arg in &launcher.args {
+                if arg.trim().is_empty() {
+                    errors.push(ValidationError::new(format!(
+                        "orchestrator `{name}` launcher `args` must not contain empty entries"
+                    )));
+                }
+            }
+        }
     }
 }
 
@@ -3344,6 +3358,7 @@ fn validate_task_mode_execution(
             task_name,
             "task",
             task.prepare.as_ref(),
+            task.launch.as_ref(),
             has_fallback_execution,
             task.run.is_some(),
             task.script.is_some(),
@@ -3505,6 +3520,13 @@ fn validate_task_mode_execution(
                 task_name,
                 &format!("task mode `{mode_name}`"),
                 effective_prepare,
+                branch.launch.as_ref().or_else(|| {
+                    if has_mode_execution_body(branch) {
+                        None
+                    } else {
+                        task.launch.as_ref()
+                    }
+                }),
                 has_fallback_execution,
                 branch.run.is_some() || (!has_mode_execution_body(branch) && task.run.is_some()),
                 branch.script.is_some()
@@ -3565,6 +3587,7 @@ fn validate_task_execution_orchestrator(
     task_name: &str,
     scope: &str,
     prepare: Option<&crate::schema::TaskPrepareSpec>,
+    launch: Option<&crate::schema::TaskLaunchSpec>,
     has_fallback_execution: bool,
     has_run: bool,
     has_script: bool,
@@ -3645,6 +3668,48 @@ fn validate_task_execution_orchestrator(
                         "{scope} `{task_name}` uses `execution.orchestrator.mode: exec`, but only command-backed `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap` are orchestrator-managed in this slice"
                     )));
                 }
+            }
+        }
+        crate::schema::TaskExecutionOrchestratorMode::Subcommand => {
+            if has_action {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: subcommand`, but file `action` tasks are not orchestrator-managed"
+                )));
+            }
+            if has_prepare {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: subcommand`, but `prepare` tasks are not orchestrator subcommand lanes in this slice"
+                )));
+            }
+            if has_run || has_script {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: subcommand`, but shell-backed `run`/`script` bodies are not structured enough for direct orchestrator subcommand ownership"
+                )));
+            }
+            if has_compose {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: subcommand`, but `compose` execution already owns its adapter command shape"
+                )));
+            }
+            if has_launch
+                && !matches!(
+                    launch,
+                    Some(crate::schema::TaskLaunchSpec::Command(_))
+                )
+            {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: subcommand`, but only `launch.kind: command` is orchestrator-managed in this slice"
+                )));
+            }
+            if !has_command
+                && !matches!(
+                    launch,
+                    Some(crate::schema::TaskLaunchSpec::Command(_))
+                )
+            {
+                errors.push(ValidationError::new(format!(
+                    "{scope} `{task_name}` uses `execution.orchestrator.mode: subcommand`, but it must declare either `command` or `launch.kind: command`"
+                )));
             }
         }
     }
@@ -38334,6 +38399,12 @@ orchestrators:
     required: true
     config_files:
       - devenv.nix
+    launcher:
+      exe: nix
+      args:
+        - run
+        - github:cachix/devenv/main#devenv
+        - --
 tasks:
   verify:
     run: unit
@@ -38355,6 +38426,87 @@ tasks:
         .unwrap();
 
         validate_contract(&contract).expect("devbox/devenv orchestrators should validate");
+    }
+
+    #[test]
+    fn rejects_empty_orchestrator_launcher_fields() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+orchestrators:
+  devenv:
+    kind: devenv
+    launcher:
+      exe: " "
+      args:
+        - run
+        - " "
+"#,
+        )
+        .unwrap();
+
+        let rendered = validate_contract(&contract)
+            .expect_err("invalid launcher fields should fail")
+            .errors()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        assert!(
+            rendered
+                .iter()
+                .any(|error| error.contains("launcher `exe` must not be empty")),
+            "{rendered:?}"
+        );
+        assert!(
+            rendered
+                .iter()
+                .any(|error| error.contains("launcher `args` must not contain empty entries")),
+            "{rendered:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_orchestrator_subcommand_mode_with_launcher() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+orchestrators:
+  devenv:
+    kind: devenv
+    launcher:
+      exe: nix
+      args:
+        - run
+        - github:cachix/devenv/main#devenv
+        - --
+tasks:
+  test:
+    command:
+      exe: test
+    execution:
+      orchestrator:
+        ref: devenv
+        mode: subcommand
+  dev:
+    launch:
+      kind: command
+      exe: up
+    execution:
+      orchestrator:
+        ref: devenv
+        mode: subcommand
+"#,
+        )
+        .unwrap();
+
+        validate_contract(&contract).expect("subcommand launcher shape should validate");
     }
 
     #[test]

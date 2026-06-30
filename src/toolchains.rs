@@ -204,7 +204,7 @@ pub(crate) struct ToolchainOwnedCapability {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ToolchainCommandSpec {
-    pub(crate) program: &'static str,
+    pub(crate) program: String,
     pub(crate) args: Vec<String>,
 }
 
@@ -1533,7 +1533,7 @@ fn rustup_fulfillment_commands(
         args.push(target);
     }
     vec![ToolchainCommandSpec {
-        program: "rustup",
+        program: String::from("rustup"),
         args,
     }]
 }
@@ -1561,7 +1561,7 @@ fn uv_fulfillment_commands(
 ) -> Vec<ToolchainCommandSpec> {
     let python_version = toolchain.version_for_os(target_os).to_string();
     let mut commands = vec![ToolchainCommandSpec {
-        program: "uv",
+        program: String::from("uv"),
         args: vec![
             String::from("python"),
             String::from("install"),
@@ -1570,7 +1570,7 @@ fn uv_fulfillment_commands(
     }];
     if let Some(poetry_version) = toolchain.package_managers_for_os(target_os).get("poetry") {
         commands.push(ToolchainCommandSpec {
-            program: "uv",
+            program: String::from("uv"),
             args: vec![
                 String::from("tool"),
                 String::from("install"),
@@ -1602,7 +1602,7 @@ fn ruby_fulfillment_commands(
         .cloned()
         .map(|version| {
             vec![ToolchainCommandSpec {
-                program: "ruby",
+                program: String::from("ruby"),
                 args: vec![
                     String::from("-S"),
                     String::from("gem"),
@@ -1646,7 +1646,7 @@ fn mise_fulfillment_commands(
     target_os: &str,
 ) -> Vec<ToolchainCommandSpec> {
     let mut commands = vec![ToolchainCommandSpec {
-        program: "mise",
+        program: String::from("mise"),
         args: vec![
             String::from("install"),
             format!("{name}@{}", toolchain.version_for_os(target_os)),
@@ -1658,7 +1658,7 @@ fn mise_fulfillment_commands(
             .package_managers_for_os(target_os)
             .into_iter()
             .map(|(package_name, version)| ToolchainCommandSpec {
-                program: "mise",
+                program: String::from("mise"),
                 args: vec![String::from("install"), format!("{package_name}@{version}")],
             }),
     );

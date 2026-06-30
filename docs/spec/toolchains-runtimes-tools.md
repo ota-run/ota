@@ -123,9 +123,17 @@ orchestrators:
     required: true
     config_files:
       - devenv.nix
+    launcher:
+      exe: nix
+      args:
+        - run
+        - github:cachix/devenv/main#devenv
+        - --
 ```
 
 Do not force that truth into `run: mise ...` shell strings if ota can model it directly.
+Use `launcher` when the repo does not expect the orchestrator itself to already exist on PATH and
+instead runs it through another host command such as `nix run ... --`.
 
 ## Task mediation through an orchestrator
 
@@ -148,13 +156,25 @@ tasks:
       orchestrator:
         ref: mise
         mode: exec
+
+  verify:
+    context: host
+    command:
+      exe: test
+    execution:
+      orchestrator:
+        ref: devenv
+        mode: subcommand
 ```
 
 Use `mode: task` when the task body is the orchestrator task name.
 Use `mode: exec` when the task body is a normal command that should run inside the orchestrated
 environment.
+Use `mode: subcommand` when the structured task body is direct orchestrator CLI argv such as
+`devenv test` or `devenv up`.
 Command-backed `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap` also
 support `mode: exec` in the current shipped slice.
+`mode: subcommand` currently supports task `command` bodies and `launch.kind: command`.
 Mixed/native `prepare.kind: sequence` does not.
 
 Shipped mediation semantics:
@@ -162,16 +182,23 @@ Shipped mediation semantics:
 - `mise`
   - `mode: task` -> `mise run <task>`
   - `mode: exec` -> `mise exec -- <command>`
+  - `mode: subcommand` -> `mise <subcommand...>`
   - supports `activation.trust` and `prepare.install`
 - `devbox`
   - `mode: task` -> `devbox run <task>`
   - `mode: exec` -> `devbox run -- <command>`
+  - `mode: subcommand` -> `devbox <subcommand...>`
   - supports `prepare.install`
   - does not support `activation.trust` in this slice
 - `devenv`
   - `mode: task` -> `devenv tasks run <task>`
   - `mode: exec` -> `devenv shell <command>`
+  - `mode: subcommand` -> `devenv <subcommand...>`
   - does not support `activation.trust` or `prepare.install` in this slice
+- when `launcher` is declared, ota appends the selected orchestrator invocation onto that launcher
+  instead of invoking the orchestrator name directly; for example
+  `nix run ...#devenv -- test` for `mode: subcommand`, or
+  `nix run ...#devenv -- tasks run test` for `mode: task`
 
 ## Ownership rule
 
@@ -179,6 +206,7 @@ Pick the highest useful owner and do not repeat the same capability below it.
 
 - `toolchains` own managed ecosystem capability truth
 - `orchestrators` own repo-level trust, prepare, and mediated task execution
+- orchestrator `launcher` also owns how the orchestrator executable is reached on the host path
 - `runtimes` own simple unmanaged runtime version checks
 - `tools` own standalone commands on PATH
 - `native_prerequisites` own OS-native bundles

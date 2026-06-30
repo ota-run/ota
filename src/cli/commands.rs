@@ -3555,11 +3555,11 @@ fn render_execution_topology_tasks_text(tasks: &[ExecutionTopologyTaskSummary<'_
             task.task.context.unwrap_or("-")
         ));
         output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.task.kind));
-        if let Some(launch) = task.task.launch.as_ref() {
+        if task.task.launch.is_some() {
             output.push_str(&format!(
                 "\n  {} {}",
                 paint_key("Launch:"),
-                render_task_launch_text(launch)
+                render_task_summary_launch_text(&task.task)
             ));
         }
         if let Some(runtime) = task.runtime.as_ref() {
@@ -16503,6 +16503,9 @@ fn build_run_preview_plan(
         }
     }
     plan.actions.push(run_preview_task_execution_action(
+        contract,
+        task_name,
+        overrides,
         requested_task,
         execution_plan,
     ));
@@ -16548,6 +16551,9 @@ fn planned_dependency_steps_for_task(
 }
 
 fn run_preview_task_execution_action(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
     task: &TaskSummary<'_>,
     execution_plan: &ExecutionPlanResolved,
 ) -> String {
@@ -16564,6 +16570,16 @@ fn run_preview_task_execution_action(
             .unwrap_or_else(|| String::from(" through remote execution")),
         _ => String::from(" on the host"),
     };
+    if let Some(preview) = run_preview_orchestrator_subcommand_preview(
+        contract,
+        task_name,
+        overrides,
+    ) {
+        if task.launch.is_some() {
+            return format!("would launch `{preview}`{backend_detail}");
+        }
+        return format!("would execute `{preview}`{backend_detail}");
+    }
     if let Some(command) = task.run.or(task.script) {
         return format!("would execute `{command}`{backend_detail}");
     }
@@ -16617,6 +16633,40 @@ fn run_preview_task_execution_action(
         );
     }
     format!("would execute task `{}`{backend_detail}", task.name)
+}
+
+fn run_preview_orchestrator_subcommand_preview(
+    contract: &Contract,
+    task_name: &str,
+    overrides: ExecutionOverrides,
+) -> Option<String> {
+    let task = contract.tasks.get(task_name)?;
+    let effective = effective_task_execution(contract, task_name, overrides);
+    let selection = task.orchestrator_for_backend(effective.backend)?;
+    if selection.mode != crate::schema::TaskExecutionOrchestratorMode::Subcommand {
+        return None;
+    }
+    let orchestrator = contract.orchestrators.get(selection.ref_name.as_str())?;
+    let execution = task.resolved_execution_for_backend(effective.backend, current_os())?;
+    let mut parts = if let Some(launcher) = orchestrator.launcher.as_ref() {
+        std::iter::once(launcher.exe.clone())
+            .chain(launcher.args.iter().cloned())
+            .collect::<Vec<_>>()
+    } else {
+        vec![selection.ref_name.clone()]
+    };
+
+    if let Some(command) = execution.command() {
+        parts.push(command.exe.clone());
+        parts.extend(command.args.iter().cloned());
+        return Some(parts.join(" "));
+    }
+    if let Some(crate::schema::TaskLaunchSpec::Command(command)) = execution.launch() {
+        parts.push(command.exe.clone());
+        parts.extend(command.args.iter().cloned());
+        return Some(parts.join(" "));
+    }
+    None
 }
 
 fn run_preview_context_selection<'a>(
@@ -16870,8 +16920,11 @@ fn selected_task_requirement_surface(
 ) -> Option<RequirementSurface> {
     let effective = effective_task_execution(contract, task_name, overrides);
     let task = contract.tasks.get(task_name)?;
-    let scoped =
-        task.scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
+    let scoped = contract.resolved_task_requirement_surface_for_execution(
+        task,
+        effective.backend,
+        effective.context_name,
+    );
     let mut selected_tool_names = scoped.tools.keys().cloned().collect::<BTreeSet<_>>();
     let mut surface = scoped;
     for (name, requirement) in &surface.runtimes.clone() {
@@ -16890,8 +16943,12 @@ fn selected_task_requirement_surface(
         surface.runtimes = contract.runtimes.clone();
     }
     if !matches!(effective.backend, Backend::Native)
-        && task
-            .scoped_requirement_surface_for_execution(effective.backend, effective.context_name)
+        && contract
+            .resolved_task_requirement_surface_for_execution(
+                task,
+                effective.backend,
+                effective.context_name,
+            )
             .tools
             .is_empty()
     {
@@ -17103,8 +17160,11 @@ fn requirement_surface_for_run_plan_steps(
         let Some(task) = contract.tasks.get(step.task.as_str()) else {
             continue;
         };
-        let scoped =
-            task.scoped_requirement_surface_for_execution(step.backend, step.context.as_deref());
+        let scoped = contract.resolved_task_requirement_surface_for_execution(
+            task,
+            step.backend,
+            step.context.as_deref(),
+        );
         if matches!(step.backend, Backend::Native) && scoped.tools.is_empty() {
             retains_global_tool_fallback = true;
         }
@@ -39920,11 +39980,11 @@ fn render_tasks_text(
             output.push_str(&format!("\n  {} {}", paint_key("Env:"), env));
         }
         output.push_str(&format!("\n  {} {}", paint_key("Kind:"), task.kind));
-        if let Some(launch) = task.launch.as_ref() {
+        if task.launch.is_some() {
             output.push_str(&format!(
                 "\n  {} {}",
                 paint_key("Launch:"),
-                render_task_launch_text(launch)
+                render_task_summary_launch_text(task)
             ));
         }
         if let Some(prepare) = task.prepare.as_ref() {
@@ -40128,20 +40188,6 @@ fn render_task_launch_preview(launch: &crate::output::TaskLaunchSummary<'_>) -> 
     }
 }
 
-fn render_task_command_text(command: &crate::output::TaskCommandSummary<'_>) -> String {
-    let mut preview = command.exe.to_string();
-    if !command.args.is_empty() {
-        preview.push(' ');
-        preview.push_str(&command.args.join(" "));
-    }
-    if let Some(cwd) = command.cwd.filter(|cwd| !cwd.trim().is_empty()) {
-        preview.push_str(" in `");
-        preview.push_str(cwd);
-        preview.push('`');
-    }
-    preview
-}
-
 fn render_task_compose_text(compose: &crate::output::TaskComposeExecutionSummary<'_>) -> String {
     let mut preview = format!(
         "{} compose {}",
@@ -40210,19 +40256,7 @@ fn render_task_default_mode(task: &TaskSummary<'_>) -> &'static str {
 }
 
 fn render_task_command_preview(task: &TaskSummary<'_>) -> String {
-    task.run
-        .map(str::to_string)
-        .or_else(|| {
-            task.script
-                .map(|script| script.lines().next().unwrap_or(script).trim().to_string())
-        })
-        .or_else(|| task.command.as_ref().map(render_task_command_text))
-        .or_else(|| task.compose.as_ref().map(render_task_compose_text))
-        .or_else(|| task.launch.as_ref().map(render_task_launch_preview))
-        .or_else(|| task.action.as_ref().map(render_task_action_text))
-        .or_else(|| task.prepare.as_ref().map(render_task_prepare_text))
-        .or_else(|| task.aggregate.as_ref().map(render_task_aggregate_text))
-        .unwrap_or_else(|| String::from("-"))
+    task.preview.clone()
 }
 
 fn render_joined_or_none(values: &[String]) -> Option<String> {
@@ -40378,6 +40412,13 @@ fn render_task_launch_text(launch: &crate::output::TaskLaunchSummary<'_>) -> Str
         }
         _ => String::from("-"),
     }
+}
+
+fn render_task_summary_launch_text(task: &TaskSummary<'_>) -> String {
+    task.launch_preview
+        .clone()
+        .or_else(|| task.launch.as_ref().map(render_task_launch_text))
+        .unwrap_or_else(|| String::from("-"))
 }
 
 fn render_task_action_text(action: &crate::output::TaskActionSummary<'_>) -> String {
@@ -40857,11 +40898,11 @@ fn render_tasks_use_text(path: &str, tasks: &[TaskSummary<'_>]) -> String {
             render_non_placeholder(&command_preview),
         );
         let mode_commands = render_task_mode_commands(task);
-        if let Some(launch) = task.launch.as_ref() {
+        if task.launch.is_some() {
             output.push_str(&format!(
                 "\n  {} {}",
                 paint_key("Launch:"),
-                render_task_launch_text(launch)
+                render_task_summary_launch_text(task)
             ));
         }
         if let Some(prepare) = task.prepare.as_ref() {
@@ -52563,6 +52604,8 @@ tasks:
             description: Some("Run the live API automation suite"),
             notes: None,
             category: None,
+            preview: String::from("./scripts/api/run-api-tests.sh"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -52639,6 +52682,8 @@ tasks:
             description: Some("Run the live API automation suite"),
             notes: None,
             category: None,
+            preview: String::from("./scripts/api/run-api-tests.sh"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -52714,6 +52759,8 @@ tasks:
             description: Some("Run the live verification lane"),
             notes: None,
             category: None,
+            preview: String::from("pnpm test:live"),
+            launch_preview: None,
             env: BTreeMap::new(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -52805,6 +52852,8 @@ tasks:
             description: Some("Run the canonical verification entrypoint"),
             notes: None,
             category: Some("test"),
+            preview: String::from("aggregate: lint, test"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -52877,6 +52926,8 @@ tasks:
             description: Some("Run the app"),
             notes: None,
             category: None,
+            preview: String::from("pnpm dev"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -52994,6 +53045,8 @@ tasks:
             description: Some("Prepare the repo"),
             notes: None,
             category: None,
+            preview: String::from("pnpm install"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53050,6 +53103,8 @@ tasks:
             description: Some("Prepare the repo"),
             notes: None,
             category: None,
+            preview: String::from("sequence: hydrate package dependencies with npm install in `.` -> ensure env file `.env`"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53178,6 +53233,8 @@ tasks:
             description: Some("Hydrate Yarn dependencies"),
             notes: None,
             category: None,
+            preview: String::from("hydrate package dependencies with yarn install --immutable in `.`"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53236,6 +53293,8 @@ tasks:
             description: Some("Hydrate Bun dependencies"),
             notes: None,
             category: None,
+            preview: String::from("hydrate package dependencies with bun install --frozen-lockfile in `.`"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53316,6 +53375,10 @@ tasks:
             description: Some("Hydrate Yarn dependencies"),
             notes: None,
             category: None,
+            preview: String::from(
+                "hydrate package dependencies with yarn install --immutable --inline-builds in `.`",
+            ),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53389,6 +53452,8 @@ tasks:
             description: Some("Hydrate npm dependencies with force"),
             notes: None,
             category: None,
+            preview: String::from("hydrate package dependencies with npm install --force in `.`"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53462,6 +53527,8 @@ tasks:
             description: Some("Hydrate dependencies through compose"),
             notes: None,
             category: None,
+            preview: String::from("hydrate package dependencies with npm install in `app` via docker compose run --rm -T app"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53549,6 +53616,8 @@ tasks:
             description: Some("Hydrate Ruby dependencies through compose"),
             notes: None,
             category: None,
+            preview: String::from("hydrate package dependencies with bundler install in `.` via docker compose run --rm -T api"),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53637,6 +53706,8 @@ tasks:
             description: Some("Install Playwright browsers"),
             notes: None,
             category: None,
+            preview: String::from("bootstrap tool `playwright_browsers` with `yarn playwright install chromium firefox` in `.`"),
+            launch_preview: None,
             env,
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53710,6 +53781,10 @@ tasks:
             description: Some("Install filtered Playwright browsers"),
             notes: None,
             category: None,
+            preview: String::from(
+                "bootstrap tool `playwright_browsers` with `pnpm --filter web exec playwright install --with-deps chromium` in `.`",
+            ),
+            launch_preview: None,
             env,
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53783,6 +53858,10 @@ tasks:
             description: Some("Install Playwright browsers via Poetry"),
             notes: None,
             category: None,
+            preview: String::from(
+                "bootstrap tool `playwright_browsers` with `poetry run playwright install chromium` in `.`",
+            ),
+            launch_preview: None,
             env,
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -53856,6 +53935,10 @@ tasks:
             description: Some("Run database migrations"),
             notes: None,
             category: None,
+            preview: String::from(
+                "docker compose exec -T -w /workspace api bundle exec rails db:migrate",
+            ),
+            launch_preview: None,
             env: env.clone(),
             env_files: Vec::new(),
             adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -54208,6 +54291,8 @@ workflows:
                 description: Some("Run packaged quickstart"),
                 notes: None,
                 category: None,
+                preview: String::from("npx n8n"),
+                launch_preview: Some(String::from("npx n8n")),
                 env: env.clone(),
                 env_files: Vec::new(),
                 adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -54296,6 +54381,8 @@ workflows:
                 description: Some("Start packaged compose stack"),
                 notes: None,
                 category: None,
+                preview: String::from("docker compose up -d api worker"),
+                launch_preview: Some(String::from("docker compose up -d api worker")),
                 env: env.clone(),
                 env_files: Vec::new(),
                 adapter_inputs: crate::output::TaskAdapterInputsSummary::default(),
@@ -95764,7 +95851,11 @@ fn selected_workflow_task_requirement_surface(
     let retains_global_tool_fallback = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-            task.scoped_requirement_surface_for_execution(effective.backend, effective.context_name)
+            contract.resolved_task_requirement_surface_for_execution(
+                task,
+                effective.backend,
+                effective.context_name,
+            )
                 .tools
                 .is_empty()
                 && matches!(effective.backend, Backend::Native)
@@ -95776,8 +95867,11 @@ fn selected_workflow_task_requirement_surface(
             continue;
         };
         let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-        let scoped = task
-            .scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
+        let scoped = contract.resolved_task_requirement_surface_for_execution(
+            task,
+            effective.backend,
+            effective.context_name,
+        );
         if !scoped.runtimes.is_empty() {
             scoped_runtimes = true;
         }
@@ -97126,6 +97220,9 @@ fn append_up_preview_service_actions_for_workflow(
                 ));
             }
             plan.actions.push(run_preview_task_execution_action(
+                contract,
+                run_task,
+                overrides,
                 &requested_task,
                 &execution_plan,
             ));

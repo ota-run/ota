@@ -12044,7 +12044,7 @@ fn maybe_fulfill_toolchains_on_run_path(
             let task_label = format!("toolchain-fulfill:{toolchain_name}");
             let output = run_backend_argv_command_captured_with_env(
                 &task_label,
-                command_spec.program,
+                command_spec.program.as_str(),
                 &command_spec.args,
                 contract_working_dir(contract_path),
                 env_overrides,
@@ -12124,7 +12124,7 @@ fn maybe_activate_corepack_shims_on_run_path(
             let task_label = format!("toolchain-activate:{toolchain_name}");
             let output = run_backend_argv_command_captured_with_env(
                 &task_label,
-                command_spec.program,
+                command_spec.program.as_str(),
                 &command_spec.args,
                 contract_working_dir(contract_path),
                 env_overrides,
@@ -12188,7 +12188,7 @@ fn maybe_activate_command_acquisition_tools_on_run_path(
         let step_label = format!("tool-activate:{tool_name}");
         let output = run_backend_argv_command_captured_with_env(
             &step_label,
-            command_spec.program,
+            command_spec.program.as_str(),
             &command_spec.args,
             contract_working_dir(contract_path),
             env_overrides,
@@ -12242,7 +12242,7 @@ fn maybe_prepare_task_orchestrator_on_run_path(
         let step_label = format!("orchestrator-prepare:{}", orchestrator_selection.ref_name);
         let output = run_backend_argv_command_captured_with_env(
             &step_label,
-            command_spec.program,
+            command_spec.program.as_str(),
             &command_spec.args,
             contract_working_dir(contract_path),
             env_overrides,
@@ -12269,30 +12269,53 @@ fn orchestrator_command_specs(
         crate::schema::OrchestratorKind::Mise => {
             let mut commands = Vec::new();
             if orchestrator.activation.trust {
-                commands.push(ToolchainCommandSpec {
-                    program: "mise",
-                    args: vec![String::from("trust")],
-                });
+                commands.push(orchestrator_command_spec(
+                    orchestrator,
+                    "mise",
+                    vec![String::from("trust")],
+                ));
             }
             if orchestrator.prepare.install {
-                commands.push(ToolchainCommandSpec {
-                    program: "mise",
-                    args: vec![String::from("install")],
-                });
+                commands.push(orchestrator_command_spec(
+                    orchestrator,
+                    "mise",
+                    vec![String::from("install")],
+                ));
             }
             commands
         }
         crate::schema::OrchestratorKind::Devbox => {
             let mut commands = Vec::new();
             if orchestrator.prepare.install {
-                commands.push(ToolchainCommandSpec {
-                    program: "devbox",
-                    args: vec![String::from("install")],
-                });
+                commands.push(orchestrator_command_spec(
+                    orchestrator,
+                    "devbox",
+                    vec![String::from("install")],
+                ));
             }
             commands
         }
         crate::schema::OrchestratorKind::Devenv => Vec::new(),
+    }
+}
+
+fn orchestrator_command_spec(
+    orchestrator: &crate::schema::OrchestratorSpec,
+    program: &str,
+    tail: Vec<String>,
+) -> ToolchainCommandSpec {
+    if let Some(launcher) = orchestrator.launcher.as_ref() {
+        let mut args = launcher.args.clone();
+        args.extend(tail);
+        ToolchainCommandSpec {
+            program: launcher.exe.clone(),
+            args,
+        }
+    } else {
+        ToolchainCommandSpec {
+            program: program.to_string(),
+            args: tail,
+        }
     }
 }
 
@@ -12304,7 +12327,8 @@ fn selected_task_activation_requirement_surface_for_run_path(
 ) -> RequirementSurface {
     let backend_kind = resolved_execution_backend_kind(backend);
     let context_name = task.context_for_backend(contract.execution.as_ref(), backend_kind);
-    let mut surface = task.scoped_requirement_surface_for_execution(backend_kind, context_name);
+    let mut surface =
+        contract.resolved_task_requirement_surface_for_execution(task, backend_kind, context_name);
     for (name, requirement) in &surface.tools.clone() {
         surface.tools.insert(
             name.clone(),
@@ -12366,19 +12390,19 @@ fn command_activation_command_spec(acquisition: &ToolAcquisitionSpec) -> Toolcha
         .expect("validated command acquisition run");
     match shell {
         crate::schema::NativePrerequisiteActivationShell::Sh => ToolchainCommandSpec {
-            program: "sh",
+            program: String::from("sh"),
             args: vec![String::from("-lc"), run.to_string()],
         },
         crate::schema::NativePrerequisiteActivationShell::Bash => ToolchainCommandSpec {
-            program: "bash",
+            program: String::from("bash"),
             args: vec![String::from("-lc"), run.to_string()],
         },
         crate::schema::NativePrerequisiteActivationShell::Zsh => ToolchainCommandSpec {
-            program: "zsh",
+            program: String::from("zsh"),
             args: vec![String::from("-lc"), run.to_string()],
         },
         crate::schema::NativePrerequisiteActivationShell::Pwsh => ToolchainCommandSpec {
-            program: "pwsh",
+            program: String::from("pwsh"),
             args: vec![
                 String::from("-NoProfile"),
                 String::from("-NonInteractive"),
@@ -12387,7 +12411,7 @@ fn command_activation_command_spec(acquisition: &ToolAcquisitionSpec) -> Toolcha
             ],
         },
         crate::schema::NativePrerequisiteActivationShell::Cmd => ToolchainCommandSpec {
-            program: "cmd",
+            program: String::from("cmd"),
             args: vec![
                 String::from("/d"),
                 String::from("/s"),
@@ -12406,13 +12430,13 @@ fn wrap_prepared_execution_for_orchestrator(
 ) -> Result<PreparedTaskExecution, RunError> {
     match orchestrator.kind {
         crate::schema::OrchestratorKind::Mise => {
-            wrap_prepared_execution_for_mise(execution, backend, selection)
+            wrap_prepared_execution_for_mise(execution, backend, selection, orchestrator)
         }
         crate::schema::OrchestratorKind::Devbox => {
-            wrap_prepared_execution_for_devbox(execution, backend, selection)
+            wrap_prepared_execution_for_devbox(execution, backend, selection, orchestrator)
         }
         crate::schema::OrchestratorKind::Devenv => {
-            wrap_prepared_execution_for_devenv(execution, backend, selection)
+            wrap_prepared_execution_for_devenv(execution, backend, selection, orchestrator)
         }
     }
 }
@@ -12421,11 +12445,12 @@ fn wrap_prepared_execution_for_mise(
     execution: PreparedTaskExecution,
     backend: &ResolvedExecutionBackend,
     selection: &crate::schema::TaskExecutionOrchestratorSpec,
+    orchestrator: &crate::schema::OrchestratorSpec,
 ) -> Result<PreparedTaskExecution, RunError> {
     match selection.mode {
         crate::schema::TaskExecutionOrchestratorMode::Task => match execution {
             PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
-                command: wrap_mise_task_command(backend, command.as_str()),
+                command: wrap_mise_task_command(backend, orchestrator, command.as_str()),
                 cwd,
             }),
             _ => Err(RunError::InvalidTaskExecution {
@@ -12434,15 +12459,24 @@ fn wrap_prepared_execution_for_mise(
         },
         crate::schema::TaskExecutionOrchestratorMode::Exec => match execution {
             PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
-                command: wrap_mise_exec_shell_command(command.as_str()),
+                command: wrap_mise_exec_shell_command(backend, orchestrator, command.as_str()),
                 cwd,
             }),
             PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
                 Ok(PreparedTaskExecution::Shell {
-                    command: wrap_mise_exec_argv_command(backend, exe.as_str(), &args),
+                    command: wrap_mise_exec_argv_command(backend, orchestrator, exe.as_str(), &args),
                     cwd,
                 })
             }
+            _ => Err(RunError::InvalidTaskExecution {
+                task: selection.ref_name.clone(),
+            }),
+        },
+        crate::schema::TaskExecutionOrchestratorMode::Subcommand => match execution {
+            PreparedTaskExecution::NativeCommand { exe, args, cwd } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_mise_subcommand_argv_command(backend, orchestrator, exe.as_str(), &args),
+                cwd,
+            }),
             _ => Err(RunError::InvalidTaskExecution {
                 task: selection.ref_name.clone(),
             }),
@@ -12464,51 +12498,88 @@ fn mise_command_prefix() -> String {
     )
 }
 
-fn wrap_mise_task_command(backend: &ResolvedExecutionBackend, task_name: &str) -> String {
-    let mut wrapped = mise_command_prefix();
-    wrapped.push_str(" run ");
-    wrapped.push_str(&shell_quote_command_word(
-        task_name,
-        shell_quote_style_for_backend(backend),
-    ));
-    wrapped
+fn wrap_mise_task_command(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    task_name: &str,
+) -> String {
+    orchestrator_invocation_shell_command(
+        backend,
+        orchestrator,
+        "mise",
+        vec![String::from("run"), task_name.to_string()],
+    )
 }
 
-fn wrap_mise_exec_shell_command(command: &str) -> String {
-    let mut wrapped = mise_command_prefix();
+fn wrap_mise_exec_shell_command(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    command: &str,
+) -> String {
     #[cfg(windows)]
     {
-        wrapped.push_str(" exec -- cmd /C ");
-        wrapped.push_str(&cmd_quote(command));
+        orchestrator_invocation_shell_command(
+            backend,
+            orchestrator,
+            "mise",
+            vec![
+                String::from("exec"),
+                String::from("--"),
+                String::from("cmd"),
+                String::from("/C"),
+                command.to_string(),
+            ],
+        )
     }
     #[cfg(not(windows))]
     {
-        wrapped.push_str(" exec -- sh -lc ");
-        wrapped.push_str(&shell_quote(command));
+        orchestrator_invocation_shell_command(
+            backend,
+            orchestrator,
+            "mise",
+            vec![
+                String::from("exec"),
+                String::from("--"),
+                String::from("sh"),
+                String::from("-lc"),
+                command.to_string(),
+            ],
+        )
     }
-    wrapped
 }
 
 fn wrap_mise_exec_argv_command(
     backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
     exe: &str,
     args: &[String],
 ) -> String {
-    let mut wrapped = mise_command_prefix();
-    wrapped.push_str(" exec -- ");
-    wrapped.push_str(&shell_quote_command_argv(backend, exe, args));
-    wrapped
+    let mut tail = vec![String::from("exec"), String::from("--"), exe.to_string()];
+    tail.extend(args.iter().cloned());
+    orchestrator_invocation_shell_command(backend, orchestrator, "mise", tail)
+}
+
+fn wrap_mise_subcommand_argv_command(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    exe: &str,
+    args: &[String],
+) -> String {
+    let mut tail = vec![exe.to_string()];
+    tail.extend(args.iter().cloned());
+    orchestrator_invocation_shell_command(backend, orchestrator, "mise", tail)
 }
 
 fn wrap_prepared_execution_for_devbox(
     execution: PreparedTaskExecution,
     backend: &ResolvedExecutionBackend,
     selection: &crate::schema::TaskExecutionOrchestratorSpec,
+    orchestrator: &crate::schema::OrchestratorSpec,
 ) -> Result<PreparedTaskExecution, RunError> {
     match selection.mode {
         crate::schema::TaskExecutionOrchestratorMode::Task => match execution {
             PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
-                command: wrap_devbox_task_command(backend, command.as_str()),
+                command: wrap_devbox_task_command(backend, orchestrator, command.as_str()),
                 cwd,
             }),
             _ => Err(RunError::InvalidTaskExecution {
@@ -12517,12 +12588,12 @@ fn wrap_prepared_execution_for_devbox(
         },
         crate::schema::TaskExecutionOrchestratorMode::Exec => match execution {
             PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
-                command: wrap_devbox_exec_shell_command(command.as_str()),
+                command: wrap_devbox_exec_shell_command(backend, orchestrator, command.as_str()),
                 cwd,
             }),
             PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
                 Ok(PreparedTaskExecution::Shell {
-                    command: wrap_devbox_exec_argv_command(backend, exe.as_str(), &args),
+                    command: wrap_devbox_exec_argv_command(backend, orchestrator, exe.as_str(), &args),
                     cwd,
                 })
             }
@@ -12530,52 +12601,100 @@ fn wrap_prepared_execution_for_devbox(
                 task: selection.ref_name.clone(),
             }),
         },
+        crate::schema::TaskExecutionOrchestratorMode::Subcommand => match execution {
+            PreparedTaskExecution::NativeCommand { exe, args, cwd } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_devbox_subcommand_argv_command(backend, orchestrator, exe.as_str(), &args),
+                cwd,
+            }),
+            _ => Err(RunError::InvalidTaskExecution {
+                task: selection.ref_name.clone(),
+            }),
+        },
     }
 }
 
-fn wrap_devbox_task_command(backend: &ResolvedExecutionBackend, task_name: &str) -> String {
-    let mut wrapped = String::from("devbox run ");
-    wrapped.push_str(&shell_quote_command_word(
-        task_name,
-        shell_quote_style_for_backend(backend),
-    ));
-    wrapped
+fn wrap_devbox_task_command(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    task_name: &str,
+) -> String {
+    orchestrator_invocation_shell_command(
+        backend,
+        orchestrator,
+        "devbox",
+        vec![String::from("run"), task_name.to_string()],
+    )
 }
 
-fn wrap_devbox_exec_shell_command(command: &str) -> String {
+fn wrap_devbox_exec_shell_command(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    command: &str,
+) -> String {
     #[cfg(windows)]
     {
-        let mut wrapped = String::from("devbox run -- cmd /C ");
-        wrapped.push_str(&cmd_quote(command));
-        wrapped
+        orchestrator_invocation_shell_command(
+            backend,
+            orchestrator,
+            "devbox",
+            vec![
+                String::from("run"),
+                String::from("--"),
+                String::from("cmd"),
+                String::from("/C"),
+                command.to_string(),
+            ],
+        )
     }
     #[cfg(not(windows))]
     {
-        let mut wrapped = String::from("devbox run -- sh -lc ");
-        wrapped.push_str(&shell_quote(command));
-        wrapped
+        orchestrator_invocation_shell_command(
+            backend,
+            orchestrator,
+            "devbox",
+            vec![
+                String::from("run"),
+                String::from("--"),
+                String::from("sh"),
+                String::from("-lc"),
+                command.to_string(),
+            ],
+        )
     }
 }
 
 fn wrap_devbox_exec_argv_command(
     backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
     exe: &str,
     args: &[String],
 ) -> String {
-    let mut wrapped = String::from("devbox run -- ");
-    wrapped.push_str(&shell_quote_command_argv(backend, exe, args));
-    wrapped
+    let mut tail = vec![String::from("run"), String::from("--"), exe.to_string()];
+    tail.extend(args.iter().cloned());
+    orchestrator_invocation_shell_command(backend, orchestrator, "devbox", tail)
+}
+
+fn wrap_devbox_subcommand_argv_command(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    exe: &str,
+    args: &[String],
+) -> String {
+    let mut tail = vec![exe.to_string()];
+    tail.extend(args.iter().cloned());
+    orchestrator_invocation_shell_command(backend, orchestrator, "devbox", tail)
 }
 
 fn wrap_prepared_execution_for_devenv(
     execution: PreparedTaskExecution,
     backend: &ResolvedExecutionBackend,
     selection: &crate::schema::TaskExecutionOrchestratorSpec,
+    orchestrator: &crate::schema::OrchestratorSpec,
 ) -> Result<PreparedTaskExecution, RunError> {
     match selection.mode {
         crate::schema::TaskExecutionOrchestratorMode::Task => match execution {
             PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
-                command: wrap_devenv_task_command(backend, command.as_str()),
+                command: wrap_devenv_task_command(backend, orchestrator, command.as_str()),
                 cwd,
             }),
             _ => Err(RunError::InvalidTaskExecution {
@@ -12584,12 +12703,12 @@ fn wrap_prepared_execution_for_devenv(
         },
         crate::schema::TaskExecutionOrchestratorMode::Exec => match execution {
             PreparedTaskExecution::Shell { command, cwd } => Ok(PreparedTaskExecution::Shell {
-                command: wrap_devenv_exec_shell_command(command.as_str()),
+                command: wrap_devenv_exec_shell_command(backend, orchestrator, command.as_str()),
                 cwd,
             }),
             PreparedTaskExecution::NativeCommand { exe, args, cwd } => {
                 Ok(PreparedTaskExecution::Shell {
-                    command: wrap_devenv_exec_argv_command(backend, exe.as_str(), &args),
+                    command: wrap_devenv_exec_argv_command(backend, orchestrator, exe.as_str(), &args),
                     cwd,
                 })
             }
@@ -12597,41 +12716,111 @@ fn wrap_prepared_execution_for_devenv(
                 task: selection.ref_name.clone(),
             }),
         },
+        crate::schema::TaskExecutionOrchestratorMode::Subcommand => match execution {
+            PreparedTaskExecution::NativeCommand { exe, args, cwd } => Ok(PreparedTaskExecution::Shell {
+                command: wrap_devenv_subcommand_argv_command(backend, orchestrator, exe.as_str(), &args),
+                cwd,
+            }),
+            _ => Err(RunError::InvalidTaskExecution {
+                task: selection.ref_name.clone(),
+            }),
+        },
     }
 }
 
-fn wrap_devenv_task_command(backend: &ResolvedExecutionBackend, task_name: &str) -> String {
-    let mut wrapped = String::from("devenv tasks run ");
-    wrapped.push_str(&shell_quote_command_word(
-        task_name,
-        shell_quote_style_for_backend(backend),
-    ));
-    wrapped
+fn wrap_devenv_task_command(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    task_name: &str,
+) -> String {
+    orchestrator_invocation_shell_command(
+        backend,
+        orchestrator,
+        "devenv",
+        vec![String::from("tasks"), String::from("run"), task_name.to_string()],
+    )
 }
 
-fn wrap_devenv_exec_shell_command(command: &str) -> String {
+fn wrap_devenv_exec_shell_command(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    command: &str,
+) -> String {
     #[cfg(windows)]
     {
-        let mut wrapped = String::from("devenv shell cmd /C ");
-        wrapped.push_str(&cmd_quote(command));
-        wrapped
+        orchestrator_invocation_shell_command(
+            backend,
+            orchestrator,
+            "devenv",
+            vec![
+                String::from("shell"),
+                String::from("cmd"),
+                String::from("/C"),
+                command.to_string(),
+            ],
+        )
     }
     #[cfg(not(windows))]
     {
-        let mut wrapped = String::from("devenv shell sh -lc ");
-        wrapped.push_str(&shell_quote(command));
-        wrapped
+        orchestrator_invocation_shell_command(
+            backend,
+            orchestrator,
+            "devenv",
+            vec![
+                String::from("shell"),
+                String::from("sh"),
+                String::from("-lc"),
+                command.to_string(),
+            ],
+        )
     }
 }
 
 fn wrap_devenv_exec_argv_command(
     backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
     exe: &str,
     args: &[String],
 ) -> String {
-    let mut wrapped = String::from("devenv shell ");
-    wrapped.push_str(&shell_quote_command_argv(backend, exe, args));
-    wrapped
+    let mut tail = vec![String::from("shell"), exe.to_string()];
+    tail.extend(args.iter().cloned());
+    orchestrator_invocation_shell_command(backend, orchestrator, "devenv", tail)
+}
+
+fn wrap_devenv_subcommand_argv_command(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    exe: &str,
+    args: &[String],
+) -> String {
+    let mut tail = vec![exe.to_string()];
+    tail.extend(args.iter().cloned());
+    orchestrator_invocation_shell_command(backend, orchestrator, "devenv", tail)
+}
+
+fn orchestrator_invocation_shell_command(
+    backend: &ResolvedExecutionBackend,
+    orchestrator: &crate::schema::OrchestratorSpec,
+    exe: &str,
+    tail: Vec<String>,
+) -> String {
+    if let Some(launcher) = orchestrator.launcher.as_ref() {
+        let mut args = launcher.args.clone();
+        args.extend(tail);
+        shell_quote_command_argv(backend, launcher.exe.as_str(), &args)
+    } else if exe == "mise" {
+        let mut wrapped = mise_command_prefix();
+        for arg in tail {
+            wrapped.push(' ');
+            wrapped.push_str(&shell_quote_command_word(
+                arg.as_str(),
+                shell_quote_style_for_backend(backend),
+            ));
+        }
+        wrapped
+    } else {
+        shell_quote_command_argv(backend, exe, &tail)
+    }
 }
 
 fn shell_quote_style_for_backend(backend: &ResolvedExecutionBackend) -> ShellQuoteStyle {
@@ -12683,7 +12872,7 @@ fn corepack_activation_command_specs(
     let mut commands = Vec::new();
     if !crate::doctor::command_available("corepack") && crate::doctor::command_available("npm") {
         commands.push(ToolchainCommandSpec {
-            program: "npm",
+            program: String::from("npm"),
             args: vec![
                 String::from("install"),
                 String::from("-g"),
@@ -12692,7 +12881,7 @@ fn corepack_activation_command_specs(
         });
     }
     commands.push(ToolchainCommandSpec {
-        program: "corepack",
+        program: String::from("corepack"),
         args: vec![String::from("enable")],
     });
     commands.extend(
@@ -12700,7 +12889,7 @@ fn corepack_activation_command_specs(
             .package_managers_for_os(target_os)
             .into_iter()
             .map(|(package_name, version)| ToolchainCommandSpec {
-                program: "corepack",
+                program: String::from("corepack"),
                 args: vec![
                     String::from("prepare"),
                     format!("{package_name}@{version}"),
@@ -12836,7 +13025,7 @@ fn render_toolchain_command(
     backend: &ResolvedExecutionBackend,
     command: ToolchainCommandSpec,
 ) -> String {
-    shell_quote_command_argv(backend, command.program, &command.args)
+    shell_quote_command_argv(backend, command.program.as_str(), &command.args)
 }
 
 fn target_os_for_toolchain_backend<'a>(
@@ -13376,7 +13565,8 @@ fn direct_task_requirement_versions_for_backend(
     context_name: Option<&str>,
     target_os: &str,
 ) -> Result<(BTreeMap<String, String>, BTreeMap<String, String>), String> {
-    let mut surface = task.scoped_requirement_surface_for_execution(backend, context_name);
+    let mut surface =
+        contract.resolved_task_requirement_surface_for_execution(task, backend, context_name);
     let scoped_tools_empty = surface.tools.is_empty();
 
     for (name, requirement) in &surface.runtimes.clone() {
@@ -45273,6 +45463,88 @@ exit 0
 
     #[cfg(unix)]
     #[test]
+    fn devenv_orchestrator_launcher_wraps_task_mode_commands() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = env_mutex_lock();
+        let fixture = ContractFixture::new(
+            r#"
+version: 1
+project:
+  name: ota
+execution:
+  preferred: native
+  supported:
+    - native
+orchestrators:
+  devenv:
+    kind: devenv
+    required: true
+    config_files:
+      - devenv.nix
+    launcher:
+      exe: nix
+      args:
+        - run
+        - github:cachix/devenv/main#devenv
+        - --
+tasks:
+  verify:
+    run: git
+    execution:
+      orchestrator:
+        ref: devenv
+        mode: task
+"#,
+        );
+
+        let bin_dir = fixture.dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).unwrap();
+        let nix_path = bin_dir.join("nix");
+        fs::write(
+            &nix_path,
+            r#"#!/bin/sh
+set -eu
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+if [ "${1:-}" = "--version" ]; then
+  printf '2.24.0\n'
+  exit 0
+fi
+printf '%s\n' "$*" >> "$script_dir/nix.log"
+exit 0
+"#,
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&nix_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&nix_path, permissions).unwrap();
+
+        let original_path = env::var_os("PATH");
+        let joined_path =
+            env::join_paths([bin_dir.as_path(), Path::new("/usr/bin"), Path::new("/bin")]).unwrap();
+        unsafe {
+            env::set_var("PATH", &joined_path);
+        }
+
+        let outcome = run_task(&fixture.contract, fixture.file_path(), "verify")
+            .expect("devenv launcher should wrap task command");
+
+        match original_path {
+            Some(path) => unsafe {
+                env::set_var("PATH", path);
+            },
+            None => unsafe {
+                env::remove_var("PATH");
+            },
+        }
+
+        assert_eq!(outcome.exit_code, 0);
+        let log = fs::read_to_string(bin_dir.join("nix.log")).unwrap();
+        assert!(log.contains("run github:cachix/devenv/main#devenv -- tasks run git"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn native_setup_uses_mise_exec_for_source_managed_tool_actions() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -55393,10 +55665,19 @@ tasks:
         let backend = ResolvedExecutionBackend::Native {
             shared_local_backend: None,
         };
-        let wrapped = super::wrap_mise_task_command(&backend, "//server:ci-unit");
+        let orchestrator = crate::schema::OrchestratorSpec {
+            kind: crate::schema::OrchestratorKind::Mise,
+            required: true,
+            config_files: Vec::new(),
+            activation: crate::schema::OrchestratorActivationSpec::default(),
+            prepare: crate::schema::OrchestratorPrepareSpec::default(),
+            launcher: None,
+        };
+        let wrapped =
+            super::wrap_mise_task_command(&backend, &orchestrator, "//server:ci-unit");
 
         assert!(wrapped.contains("mise"), "{wrapped}");
-        assert!(wrapped.contains(" run "), "{wrapped}");
+        assert!(wrapped.contains("'run'"), "{wrapped}");
         assert!(wrapped.contains("'//server:ci-unit'"), "{wrapped}");
     }
 
@@ -55406,11 +55687,23 @@ tasks:
         let backend = ResolvedExecutionBackend::Native {
             shared_local_backend: None,
         };
-        let wrapped =
-            super::wrap_mise_exec_argv_command(&backend, "pnpm", &[String::from("--version")]);
+        let orchestrator = crate::schema::OrchestratorSpec {
+            kind: crate::schema::OrchestratorKind::Mise,
+            required: true,
+            config_files: Vec::new(),
+            activation: crate::schema::OrchestratorActivationSpec::default(),
+            prepare: crate::schema::OrchestratorPrepareSpec::default(),
+            launcher: None,
+        };
+        let wrapped = super::wrap_mise_exec_argv_command(
+            &backend,
+            &orchestrator,
+            "pnpm",
+            &[String::from("--version")],
+        );
 
         assert!(wrapped.contains("mise"), "{wrapped}");
-        assert!(wrapped.contains(" exec -- "), "{wrapped}");
+        assert!(wrapped.contains("'exec' '--'"), "{wrapped}");
         assert!(wrapped.contains("'pnpm' '--version'"), "{wrapped}");
     }
 

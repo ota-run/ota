@@ -1768,7 +1768,7 @@ impl Contract {
             let backend = task.workflow_backend(self.execution.as_ref());
             let context_name = task.context_for_backend(self.execution.as_ref(), backend);
             let scoped_surface =
-                task.scoped_requirement_surface_for_execution(backend, context_name);
+                self.resolved_task_requirement_surface_for_execution(task, backend, context_name);
             if !scoped_surface.runtimes.is_empty() {
                 scoped_runtimes = true;
             }
@@ -1845,6 +1845,42 @@ impl Contract {
                 self.resolve_scoped_tool_requirement(name, requirement),
             );
         }
+        surface
+    }
+
+    pub(crate) fn resolved_task_requirement_surface_for_execution(
+        &self,
+        task: &TaskSpec,
+        backend: Backend,
+        context_name: Option<&str>,
+    ) -> RequirementSurface {
+        let mut surface = task.scoped_requirement_surface_for_execution(backend, context_name);
+        let Some(selection) = task.orchestrator_for_backend(backend) else {
+            return surface;
+        };
+        let Some(orchestrator) = self.orchestrators.get(selection.ref_name.as_str()) else {
+            return surface;
+        };
+        let Some(launcher) = orchestrator.launcher.as_ref() else {
+            return surface;
+        };
+
+        if let Some(requirement) = surface.tools.remove(selection.ref_name.as_str()) {
+            let launcher_requirement = surface
+                .tools
+                .get(launcher.exe.as_str())
+                .map(|base| base.merged_with_overlay(&requirement))
+                .unwrap_or(requirement);
+            surface
+                .tools
+                .insert(launcher.exe.clone(), launcher_requirement);
+        } else {
+            surface
+                .tools
+                .entry(launcher.exe.clone())
+                .or_insert(ToolRequirement::Simple(String::from("*")));
+        }
+
         surface
     }
 
@@ -2324,6 +2360,14 @@ pub struct OrchestratorPrepareSpec {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct OrchestratorLauncherSpec {
+    pub exe: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct OrchestratorSpec {
     pub kind: OrchestratorKind,
     #[serde(default = "default_required")]
@@ -2334,6 +2378,8 @@ pub struct OrchestratorSpec {
     pub activation: OrchestratorActivationSpec,
     #[serde(default)]
     pub prepare: OrchestratorPrepareSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launcher: Option<OrchestratorLauncherSpec>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -2341,6 +2387,7 @@ pub struct OrchestratorSpec {
 pub enum TaskExecutionOrchestratorMode {
     Task,
     Exec,
+    Subcommand,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -5371,6 +5418,12 @@ impl TaskSpec {
         backend: Backend,
         os: &str,
     ) -> Option<String> {
+        if self
+            .orchestrator_for_backend(backend)
+            .is_some_and(|selection| selection.mode == TaskExecutionOrchestratorMode::Subcommand)
+        {
+            return None;
+        }
         let execution = self.resolved_execution_for_backend(backend, os)?;
         if let Some(command) = execution.command() {
             return task_command_executable(command);
@@ -6439,6 +6492,7 @@ impl TaskPipToolBootstrapSourceSpec {
             tool.label()
         )
     }
+
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
@@ -9970,6 +10024,42 @@ tasks:
                 .effective_command_launch_executable_for_backend(Backend::Native, "linux"),
             None
         );
+    }
+
+    #[test]
+    fn resolved_task_requirement_surface_uses_orchestrator_launcher_executable() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+orchestrators:
+  devenv:
+    kind: devenv
+    launcher:
+      exe: nix
+      args:
+        - run
+        - github:cachix/devenv/main#devenv
+        - --
+tasks:
+  verify:
+    run: unit
+    execution:
+      orchestrator:
+        ref: devenv
+        mode: task
+"#,
+        )
+        .unwrap();
+
+        let task = contract.tasks.get("verify").unwrap();
+        let surface =
+            contract.resolved_task_requirement_surface_for_execution(task, Backend::Native, None);
+
+        assert!(surface.tools.contains_key("nix"));
+        assert!(!surface.tools.contains_key("devenv"));
     }
 
     #[test]

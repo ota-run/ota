@@ -26,6 +26,10 @@
 
 ## Unreleased
 
+- widened `orchestrators` with first-class launcher ownership and direct `mode: subcommand`
+  mediation so repos can declare truth like `nix run ...#devenv -- test` or `devenv up` without
+  faking direct PATH ownership or misusing `task` / `exec`; validator, selected-path diagnosis,
+  dry-run previews, and task execution now all consume the same orchestrator-owned command shape
 - widened orchestrator-mediated first-class prepare execution so command-backed
   `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap` can now run through
   `execution.orchestrator.mode: exec` for declared orchestrators such as `devbox` and `devenv`,

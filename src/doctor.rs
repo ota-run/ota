@@ -504,8 +504,8 @@ fn selected_backend_precondition_selections(
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let backend = effective_task_execution(contract, task_name.as_str(), overrides).backend;
             let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
-            !task
-                .scoped_requirement_surface_for_execution(backend, context_name)
+            !contract
+                .resolved_task_requirement_surface_for_execution(task, backend, context_name)
                 .runtimes
                 .is_empty()
         })
@@ -560,7 +560,8 @@ fn selected_backend_precondition_selections(
 
         selection.dependency_hydration_owned |=
             task_execution_owns_dependency_hydration(task, backend);
-        let scoped_surface = task.scoped_requirement_surface_for_execution(backend, context_name);
+        let scoped_surface =
+            contract.resolved_task_requirement_surface_for_execution(task, backend, context_name);
         for (name, requirement) in &scoped_surface.runtimes {
             selection.requirement_surface.runtimes.insert(
                 name.clone(),
@@ -660,8 +661,12 @@ fn selected_task_backend_precondition_selections(
     let scoped_runtimes = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let effective = effective_task_execution(contract, task_name.as_str(), overrides);
-            !task
-                .scoped_requirement_surface_for_execution(effective.backend, effective.context_name)
+            !contract
+                .resolved_task_requirement_surface_for_execution(
+                    task,
+                    effective.backend,
+                    effective.context_name,
+                )
                 .runtimes
                 .is_empty()
         })
@@ -713,8 +718,11 @@ fn selected_task_backend_precondition_selections(
 
         selection.dependency_hydration_owned |=
             task_execution_owns_dependency_hydration(task, effective.backend);
-        let scoped_surface = task
-            .scoped_requirement_surface_for_execution(effective.backend, effective.context_name);
+        let scoped_surface = contract.resolved_task_requirement_surface_for_execution(
+            task,
+            effective.backend,
+            effective.context_name,
+        );
         for (name, requirement) in &scoped_surface.runtimes {
             selection.requirement_surface.runtimes.insert(
                 name.clone(),
@@ -825,8 +833,8 @@ fn scoped_precondition_selection(
     let scoped_runtimes = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
-            !task
-                .scoped_requirement_surface_for_execution(backend, context_name)
+            !contract
+                .resolved_task_requirement_surface_for_execution(task, backend, context_name)
                 .runtimes
                 .is_empty()
         })
@@ -834,8 +842,8 @@ fn scoped_precondition_selection(
     let scoped_tools = task_names.iter().any(|task_name| {
         contract.tasks.get(task_name.as_str()).is_some_and(|task| {
             let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
-            !task
-                .scoped_requirement_surface_for_execution(backend, context_name)
+            !contract
+                .resolved_task_requirement_surface_for_execution(task, backend, context_name)
                 .tools
                 .is_empty()
         })
@@ -855,11 +863,12 @@ fn scoped_precondition_selection(
         let context_name = task.context_for_backend(contract.execution.as_ref(), backend);
         selection.dependency_hydration_owned |=
             task_execution_owns_dependency_hydration(task, backend);
-        selection
-            .requirement_surface
-            .merge(&task.scoped_requirement_surface_for_execution(backend, context_name));
+        selection.requirement_surface.merge(
+            &contract.resolved_task_requirement_surface_for_execution(task, backend, context_name),
+        );
         selected_tool_names.extend(
-            task.scoped_requirement_surface_for_execution(backend, context_name)
+            contract
+                .resolved_task_requirement_surface_for_execution(task, backend, context_name)
                 .tools
                 .keys()
                 .cloned(),
@@ -984,8 +993,8 @@ fn selected_remote_task_requirement_selection(
             &mut fallback
         };
         let context_name = task.context_for_backend(contract.execution.as_ref(), Backend::Remote);
-        let scoped_surface =
-            task.scoped_requirement_surface_for_execution(Backend::Remote, context_name);
+        let scoped_surface = contract
+            .resolved_task_requirement_surface_for_execution(task, Backend::Remote, context_name);
         if !scoped_surface.runtimes.is_empty() {
             target.scoped_runtimes = true;
         }
@@ -16683,8 +16692,8 @@ tasks:
         .unwrap();
 
         let task = contract.tasks.get("verify").expect("verify task");
-        let requirement_surface =
-            task.scoped_requirement_surface_for_execution(crate::schema::Backend::Native, None);
+        let requirement_surface = contract
+            .resolved_task_requirement_surface_for_execution(task, crate::schema::Backend::Native, None);
         let actions = super::merged_provisioning_actions_for_requirement_surface(
             &contract,
             Vec::new(),

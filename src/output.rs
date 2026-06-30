@@ -3303,6 +3303,10 @@ pub struct TaskSummary<'a> {
     pub notes: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<&'a str>,
+    #[serde(skip_serializing)]
+    pub preview: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_preview: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -3484,6 +3488,10 @@ impl<'a> TaskSummary<'a> {
         let effective_env_files = task.env_files_for_backend_for_os(selected_backend, current_os);
         let effective_adapter_inputs =
             effective_task_adapter_inputs_summary(task, selected_backend, current_os);
+        let preview =
+            effective_task_execution_preview(contract, task, selected_backend, current_os);
+        let launch_preview =
+            effective_task_launch_preview(contract, task, selected_backend, current_os);
         Self {
             name,
             context: effective.context_name,
@@ -3492,6 +3500,8 @@ impl<'a> TaskSummary<'a> {
             description: task.description.as_deref(),
             notes: task.notes.as_deref(),
             category: task.category.as_deref(),
+            preview,
+            launch_preview,
             env: effective_env,
             env_files: effective_env_files,
             adapter_inputs: effective_adapter_inputs,
@@ -3620,6 +3630,65 @@ impl<'a> TaskSummary<'a> {
         self.after_always
             .retain(|task| visible_task_names.contains(task.as_str()));
     }
+}
+
+fn effective_task_execution_preview(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: Backend,
+    current_os: &str,
+) -> String {
+    effective_task_orchestrator_subcommand_preview(contract, task, backend, current_os)
+        .or_else(|| {
+            task.resolved_execution_for_backend(backend, current_os)
+                .map(|execution| execution.preview())
+        })
+        .unwrap_or_else(|| String::from("-"))
+}
+
+fn effective_task_launch_preview(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: Backend,
+    current_os: &str,
+) -> Option<String> {
+    let execution = task.resolved_execution_for_backend(backend, current_os)?;
+    execution.launch()?;
+    effective_task_orchestrator_subcommand_preview(contract, task, backend, current_os)
+        .or_else(|| execution.launch().map(crate::schema::TaskLaunchSpec::preview))
+}
+
+fn effective_task_orchestrator_subcommand_preview(
+    contract: &Contract,
+    task: &TaskSpec,
+    backend: Backend,
+    current_os: &str,
+) -> Option<String> {
+    let selection = task.orchestrator_for_backend(backend)?;
+    if selection.mode != crate::schema::TaskExecutionOrchestratorMode::Subcommand {
+        return None;
+    }
+    let orchestrator = contract.orchestrators.get(selection.ref_name.as_str())?;
+    let execution = task.resolved_execution_for_backend(backend, current_os)?;
+    let mut parts = if let Some(launcher) = orchestrator.launcher.as_ref() {
+        std::iter::once(launcher.exe.clone())
+            .chain(launcher.args.iter().cloned())
+            .collect::<Vec<_>>()
+    } else {
+        vec![selection.ref_name.clone()]
+    };
+
+    if let Some(command) = execution.command() {
+        parts.push(command.exe.clone());
+        parts.extend(command.args.iter().cloned());
+        return Some(parts.join(" "));
+    }
+    if let Some(crate::schema::TaskLaunchSpec::Command(command)) = execution.launch() {
+        parts.push(command.exe.clone());
+        parts.extend(command.args.iter().cloned());
+        return Some(parts.join(" "));
+    }
+    None
 }
 
 pub fn summarize_task_aggregate(
@@ -5355,6 +5424,71 @@ tasks:
         assert_eq!(compose.services, vec!["web", "worker"]);
         assert_eq!(compose.exe, None);
         assert!(compose.detach);
+    }
+
+    #[test]
+    fn task_summary_uses_orchestrator_launcher_subcommand_preview() {
+        let contract = parse_contract_str(
+            Path::new("ota.yaml"),
+            r#"
+version: 1
+project:
+  name: ota
+orchestrators:
+  devenv:
+    kind: devenv
+    launcher:
+      exe: nix
+      args:
+        - run
+        - github:cachix/devenv/main#devenv
+        - --
+tasks:
+  test:
+    command:
+      exe: test
+    execution:
+      orchestrator:
+        ref: devenv
+        mode: subcommand
+  dev:
+    launch:
+      kind: command
+      exe: up
+    execution:
+      orchestrator:
+        ref: devenv
+        mode: subcommand
+"#,
+        )
+        .expect("contract should parse");
+
+        let test_summary = super::TaskSummary::from_spec(
+            "test",
+            contract.tasks.get("test").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+        assert_eq!(
+            test_summary.preview,
+            "nix run github:cachix/devenv/main#devenv -- test"
+        );
+        assert_eq!(test_summary.launch_preview, None);
+
+        let dev_summary = super::TaskSummary::from_spec(
+            "dev",
+            contract.tasks.get("dev").expect("task should exist"),
+            "linux",
+            &contract,
+        );
+        assert_eq!(
+            dev_summary.preview,
+            "nix run github:cachix/devenv/main#devenv -- up"
+        );
+        assert_eq!(
+            dev_summary.launch_preview,
+            Some(String::from("nix run github:cachix/devenv/main#devenv -- up"))
+        );
     }
 
     #[test]

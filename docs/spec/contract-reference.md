@@ -844,6 +844,18 @@ orchestrators:
       trust: true
     prepare:
       install: true
+
+  devenv:
+    kind: devenv
+    required: true
+    config_files:
+      - devenv.nix
+    launcher:
+      exe: nix
+      args:
+        - run
+        - github:cachix/devenv/main#devenv
+        - --
 ```
 
 Rules:
@@ -851,8 +863,13 @@ Rules:
 - orchestrator names must not be empty
 - shipped orchestrator kinds are currently `mise`, `devbox`, and `devenv`
 - `config_files` entries must not be empty
+- `launcher.exe`, when declared, must not be empty
+- `launcher.args`, when declared, must not contain empty entries
 - `activation.trust: true` is currently supported only for `mise`
 - `prepare.install: true` is currently supported for `mise` and `devbox`, but not `devenv`
+- `launcher` is the first-class lane for repos whose orchestrator is executed through another host
+  command instead of a direct PATH binary; ota then requires and probes the launcher executable on
+  the selected path instead of the orchestrator name itself
 - orchestrators do not replace `toolchains`; use `toolchains` for capability truth and
   `tasks.<name>.execution.orchestrator` when the selected task body must run through that manager
 
@@ -2131,6 +2148,9 @@ Task-effect rules:
     - `bunx playwright install --with-deps [browsers...]`
 - `prepare` does not replace workflow-owned host bootstrap; workflow prepare is still the explicit host bootstrap lane and now points at one native finite owner (`prepare.task` or `prepare.action`)
 - `execution.orchestrator.mode: exec` can mediate command-backed `prepare.kind: dependency_hydration` and `prepare.kind: tool_bootstrap`
+- `execution.orchestrator.mode: subcommand` is the direct orchestrator CLI lane for structured
+  task `command` bodies and `launch.kind: command`; use it for truth like `devenv test` or
+  `devenv up` rather than forcing those lanes into `task` or `exec`
 - mixed/native `prepare.kind: sequence` stays outside orchestrator mediation in the current shipped slice
 
 Example:
